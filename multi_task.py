@@ -1,5 +1,4 @@
 from typing import Sequence
-from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 import torch
@@ -21,82 +20,112 @@ def set_random_seed(seed):
 
 
 class CompoundDataset(Dataset):
-    ATTRIBUTES = [
-        "Seebeck coefficient",
-        "Thermal conductivity",
-        "Electrical resistivity",
-        "Magnetic susceptibility",
-        "Specific heat capacity",
-        "Hall coefficient",
-        "ZT",
-        "Power factor",
-        "Carrier concentration",
-        "Electrical conductivity",
-        "Thermopower",
-        "Lattice thermal conductivity",
-        "Hall mobility",
-        "Electronic contribution",
-        "Electronic thermal conductivity",
-        "Band gap",
-        "Density",
-        "Efermi",
-        "Final energy per atom",
-        "Formation energy per atom",
-        "Total magnetization",
-        "Volume",
-    ]
-
     def __init__(
         self,
         descriptor: pd.DataFrame,
         property: pd.DataFrame,
-        *,
-        attributes: None | list[str] = None,
         **known_attributes,
     ):
         """
         Custom dataset for compounds.
+
+        Parameters
+        ----------
+        descriptor : pd.DataFrame
+            Input features for the compounds
+        property : pd.DataFrame
+            Target properties for the compounds
+        known_attributes : dict
+            Dictionary specifying the percentage of known values for each property
+            e.g., {"property_name": 0.8} means 80% of values for that property are known
         """
-        CompoundDataset.ATTRIBUTES = attributes or self.ATTRIBUTES
+        # Ensure descriptor and property have matching indices
+        if not descriptor.index.equals(property.index):
+            raise ValueError("descriptor and property must have matching indices")
+
+        # Get attributes from property columns
+        self.attributes = list(property.columns)
+        if not self.attributes:
+            raise ValueError("property DataFrame must have at least one column")
 
         # Input features
         self.x = descriptor.values
 
-        # Output attributes
-        self.y = property.loc[descriptor.index][self.ATTRIBUTES].values.astype(
-            np.float32
-        )
+        # Output attributes - select all columns from property
+        self.y = property.values.astype(np.float32)
 
-        # Create masks based on known_attributes
+        # Create initial masks based on non-nan values
         self.mask = (~np.isnan(self.y)).astype(int)
 
-        # fill all nan to 0
-        self.y = np.nan_to_num(self.y)
+        # Initialize known_attributes with default values
+        self._known_attributes = {attr: 1.0 for attr in self.attributes}
 
-        # Apply known_attributes percentages
+        # Validate and update known_attributes if provided
         if known_attributes:
-            for attr_idx, attr_name in enumerate(self.ATTRIBUTES):
-                # Default percentage is 1.0
-                percent = known_attributes.get(attr_name, 1.0)
-                num_samples = len(descriptor)
-                num_known = int(num_samples * percent)
-                known_indices = np.random.choice(num_samples, num_known, replace=False)
-                unknown_indices = np.setdiff1d(np.arange(num_samples), known_indices)
-                self.mask[unknown_indices, attr_idx] = 0
+            # Validate attributes
+            invalid_attrs = set(known_attributes.keys()) - set(self.attributes)
+            if invalid_attrs:
+                raise ValueError(
+                    f"Invalid attributes in known_attributes: {invalid_attrs}. "
+                    f"Valid attributes are: {self.attributes}"
+                )
+
+            # Validate percentages
+            invalid_percents = [
+                (attr, percent)
+                for attr, percent in known_attributes.items()
+                if not 0 <= percent <= 1
+            ]
+            if invalid_percents:
+                raise ValueError(
+                    "Percentages must be between 0 and 1. Invalid values: "
+                    f"{invalid_percents}"
+                )
+
+            # Update with provided values
+            self._known_attributes.update(known_attributes)
+
+            # Apply percentages only to non-nan values
+            for attr_name, percent in self._known_attributes.items():
+                attr_idx = self.attributes.index(attr_name)
+                # Get indices where values are not nan
+                valid_indices = np.where(~np.isnan(self.y[:, attr_idx]))[0]
+                if len(valid_indices) > 0:  # Only proceed if there are valid values
+                    # Calculate number of known samples from valid data
+                    num_known = int(len(valid_indices) * percent)
+                    # Randomly select indices to keep
+                    keep_indices = np.random.choice(
+                        valid_indices, num_known, replace=False
+                    )
+                    # Mask all valid indices except those we keep
+                    mask_indices = np.setdiff1d(valid_indices, keep_indices)
+                    self.mask[mask_indices, attr_idx] = 0
+
+        # Fill all nan to 0 after masking
+        self.y = np.nan_to_num(self.y)
 
         # Convert to tensors
         self.x = torch.tensor(self.x, dtype=torch.float32)
         self.y = torch.tensor(self.y, dtype=torch.float32)
         self.mask = torch.tensor(self.mask, dtype=torch.float32)
 
-        # Set random seed for reproducibility
-        self.random_state = None
-
     def __len__(self):
         return len(self.x)
 
     def __getitem__(self, idx):
         return self.x[idx], self.y[idx], self.mask[idx]
+
+    @property
+    def property(self) -> dict[str, float]:
+        """
+        Get the known attributes percentages.
+
+        Returns
+        -------
+        dict[str, float]
+            Dictionary containing all attributes and their percentages.
+        """
+        return self._known_attributes.copy()
 
 
 class LinearLayer(nn.Module):
@@ -351,8 +380,10 @@ def train_and_evaluate(
     # Evaluation
     model.eval()
     with torch.no_grad():
-        total_losses = np.zeros(len(CompoundDataset.ATTRIBUTES))
-        total_known = np.zeros(len(CompoundDataset.ATTRIBUTES))
+        # Get number of attributes from the first batch
+        num_attributes = next(iter(test_loader))[1].shape[1]
+        total_losses = np.zeros(num_attributes)
+        total_known = np.zeros(num_attributes)
         all_preds = []
         all_targets = []
         all_masks = []
@@ -380,8 +411,10 @@ def train_and_evaluate(
         # Calculate average loss for each attribute
         avg_test_losses = total_losses / total_known
 
+        # Get dataset attributes from test_loader
+        test_dataset = test_loader.dataset
         print("\nTest Losses by Attribute:")
-        for attr_idx, attr_name in enumerate(CompoundDataset.ATTRIBUTES):
+        for attr_idx, attr_name in enumerate(test_dataset.attributes):
             print(f"{attr_name}: {avg_test_losses[attr_idx]:.4f}")
 
     return avg_test_losses, all_preds, all_targets, all_masks
@@ -391,33 +424,59 @@ def plot_predictions(
     all_preds,
     all_targets,
     all_masks,
+    dataset: CompoundDataset,
     *,
     savefig=None,
     suffix=None,
     no_show=False,
     return_stat=False,
 ):
+    """
+    Plot prediction results for each attribute.
+
+    Parameters
+    ----------
+    all_preds : list
+        List of prediction arrays
+    all_targets : list
+        List of target arrays
+    all_masks : list
+        List of mask arrays
+    dataset : CompoundDataset
+        Dataset containing the attributes information
+    savefig : str, optional
+        Path to save the figures
+    suffix : str, optional
+        Suffix to append to saved figure names
+    no_show : bool, optional
+        If True, close figures after saving
+    return_stat : bool, optional
+        If True, return statistics DataFrame
+
+    Returns
+    -------
+    pd.DataFrame
+        Statistics of the predictions if return_stat is True
+    """
     all_preds = np.concatenate(all_preds, axis=0)
     all_targets = np.concatenate(all_targets, axis=0)
     all_masks = np.concatenate(all_masks, axis=0)
 
     all_stat = []
-    for m in range(6):
+    for m in range(min(6, len(dataset.attributes))):
         mask_m = all_masks[:, m] == 1
         preds_m = all_preds[mask_m, m]
         targets_m = all_targets[mask_m, m]
 
         # Create DataFrame for plotting
         fig, (ax,), stat = plot_scatter_comparison(
-            targets_m, preds_m, title=CompoundDataset.ATTRIBUTES[m], return_stat=True
+            targets_m, preds_m, title=dataset.attributes[m], return_stat=True
         )
         if savefig and isinstance(savefig, str):
             savefig_ = f"{savefig}/{suffix if suffix else ''}"
             _ = Path(savefig_).mkdir(parents=True, exist_ok=True)
-            fig.savefig(
-                f"{savefig_}/{CompoundDataset.ATTRIBUTES[m]}.png", bbox_inches="tight"
-            )
-        stat["property"] = CompoundDataset.ATTRIBUTES[m]
+            fig.savefig(f"{savefig_}/{dataset.attributes[m]}.png", bbox_inches="tight")
+        stat["property"] = dataset.attributes[m]
         all_stat.append(stat)
 
         if no_show:
@@ -449,10 +508,12 @@ def scaling_laws_test(
         device: Device to run the model on
         num_runs: Number of runs for each configuration
     """
-    if target_property not in CompoundDataset.ATTRIBUTES:
-        raise ValueError(f"target_property must be one of {CompoundDataset.ATTRIBUTES}")
+    # Create a temporary dataset to get the list of attributes
+    temp_dataset = CompoundDataset(descriptor, property_data)
+    if target_property not in temp_dataset.attributes:
+        raise ValueError(f"target_property must be one of {temp_dataset.attributes}")
 
-    target_idx = CompoundDataset.ATTRIBUTES.index(target_property)
+    target_idx = temp_dataset.attributes.index(target_property)
 
     # Define fractions to test
     fractions = [0.1, 0.2, 0.4, 0.6, 0.8, 1.0]
@@ -483,13 +544,11 @@ def scaling_laws_test(
             # Set up known_attributes based on mode
             if mode == "vary_target":
                 # Fix other properties at 100% and vary target property
-                known_attributes = {attr: 1.0 for attr in CompoundDataset.ATTRIBUTES}
+                known_attributes = {attr: 1.0 for attr in temp_dataset.attributes}
                 known_attributes[target_property] = fraction
             else:  # vary_others
                 # Fix target property at 100% and vary other properties
-                known_attributes = {
-                    attr: fraction for attr in CompoundDataset.ATTRIBUTES
-                }
+                known_attributes = {attr: fraction for attr in temp_dataset.attributes}
                 known_attributes[target_property] = 1.0
 
             # Create datasets with specified known_attributes
@@ -502,8 +561,9 @@ def scaling_laws_test(
 
             # Initialize model
             model = CompoundPropertyPredictor(
-                shared_block_dims=train_data.shape[1],
-                task_block_dims=len(CompoundDataset.ATTRIBUTES),
+                shared_block_dims=[train_data.shape[1], 512, 256, 128],
+                task_block_dims=[128, 64, 32, 1],
+                n_tasks=len(train_dataset.attributes),
             ).to(device)
             optimizer = optim.Adam(model.parameters(), lr=0.0005)
 
@@ -519,6 +579,7 @@ def scaling_laws_test(
                     all_preds,
                     all_targets,
                     all_masks,
+                    test_dataset,
                     savefig=str(save_dir),
                     suffix=f"run_{run}",
                     return_stat=True,
