@@ -1,4 +1,5 @@
 import lightning as L
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -99,7 +100,7 @@ class MultiTaskPropertyPredictor(L.LightningModule):
         lr1, lr2 = self.lr_schedulers()
         opt1.zero_grad()
         opt2.zero_grad()
-        x, y, mask = batch
+        x, y, mask, attrs = batch
         y_pred = self(x)
 
         # Calculate per-attribute losses
@@ -115,8 +116,12 @@ class MultiTaskPropertyPredictor(L.LightningModule):
             logger=True,
             sync_dist=True,
         )
+        attrs = np.array(attrs)
         self.log_dict(
-            {f"train_loss_attr_{i}": loss for i, loss in enumerate(per_attr_losses)},
+            {
+                f"{attr} (train_loss)": loss
+                for attr, loss in zip(attrs[:, 0], per_attr_losses)
+            },
             on_step=False,
             on_epoch=True,
             prog_bar=False,
@@ -132,7 +137,7 @@ class MultiTaskPropertyPredictor(L.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x, y, mask = batch
+        x, y, mask, attrs = batch
         y_pred = self(x)
 
         # Calculate per-attribute losses
@@ -148,8 +153,12 @@ class MultiTaskPropertyPredictor(L.LightningModule):
             logger=True,
             sync_dist=True,
         )
+        attrs = np.array(attrs)
         self.log_dict(
-            {f"val_loss_attr_{i}": loss for i, loss in enumerate(per_attr_losses)},
+            {
+                f"{attr} (val_loss)": loss
+                for attr, loss in zip(attrs[:, 0], per_attr_losses)
+            },
             on_step=False,
             on_epoch=True,
             prog_bar=False,
@@ -158,7 +167,7 @@ class MultiTaskPropertyPredictor(L.LightningModule):
         )
 
     def test_step(self, batch, batch_idx):
-        x, y, mask = batch
+        x, y, mask, attrs = batch
         y_pred = self(x)
 
         # Calculate per-attribute losses
@@ -174,8 +183,12 @@ class MultiTaskPropertyPredictor(L.LightningModule):
             logger=True,
             sync_dist=True,
         )
+        attrs = np.array(attrs)
         self.log_dict(
-            {f"test_loss_attr_{i}": loss for i, loss in enumerate(per_attr_losses)},
+            {
+                f"{attr} (test_loss)": loss
+                for attr, loss in zip(attrs[:, 0], per_attr_losses)
+            },
             on_step=False,
             on_epoch=True,
             prog_bar=False,
@@ -184,12 +197,13 @@ class MultiTaskPropertyPredictor(L.LightningModule):
         )
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
-        x, y, mask = batch
+        x, y, mask, attrs = batch
         y_pred = self(x)
         return {
             "preds": y_pred,
             "targets": y,
             "masks": mask,
+            "attributes": attrs[0],
         }
 
     def configure_optimizers(self):

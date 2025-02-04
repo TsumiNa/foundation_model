@@ -11,6 +11,7 @@ class CompoundDataset(Dataset):
         self,
         descriptor: pd.DataFrame,
         property: pd.DataFrame,
+        filter_properties: bool = False,
         **property_fractions,
     ):
         """
@@ -22,6 +23,9 @@ class CompoundDataset(Dataset):
             Input features for the compounds
         property : pd.DataFrame
             Target properties for the compounds
+        filter_properties : bool, optional
+            If True, only keeps properties specified in property_fractions.
+            If False (default), keeps all properties and only applies masking.
         property_fractions : dict
             Dictionary specifying what fraction of data to use for each property
             e.g., {"property_name": 0.8} means use 80% of available data for that property
@@ -30,15 +34,31 @@ class CompoundDataset(Dataset):
         if not descriptor.index.equals(property.index):
             raise ValueError("descriptor and property must have matching indices")
 
-        # Get attributes from property columns
-        self.attributes = list(property.columns)
-        if not self.attributes:
+        # Get initial attributes from property columns
+        initial_attributes = list(property.columns)
+        if not initial_attributes:
             raise ValueError("property DataFrame must have at least one column")
 
         # Input features
         self.x = descriptor.values
 
-        # Output attributes - select all columns from property
+        # Initialize attributes and property data
+        if property_fractions and filter_properties:
+            # Only keep properties that are in property_fractions
+            self.attributes = list(property_fractions.keys())
+            # Validate that all requested properties exist
+            invalid_attrs = set(self.attributes) - set(initial_attributes)
+            if invalid_attrs:
+                raise ValueError(
+                    f"Invalid attributes in property_fractions: {invalid_attrs}. "
+                    f"Valid attributes are: {initial_attributes}"
+                )
+            # Select only the specified properties
+            property = property[self.attributes]
+        else:
+            self.attributes = initial_attributes
+
+        # Output attributes - select columns from property
         self.y = property.values.astype(np.float32)
 
         # Create initial masks based on non-nan values
@@ -100,7 +120,7 @@ class CompoundDataset(Dataset):
         return len(self.x)
 
     def __getitem__(self, idx):
-        return self.x[idx], self.y[idx], self.mask[idx]
+        return self.x[idx], self.y[idx], self.mask[idx], self.attributes
 
     @property
     def fractions(self) -> Dict[str, float]:

@@ -4,6 +4,8 @@ from typing import Dict, List
 
 @dataclass
 class ModelConfig:
+    """Model architecture and optimization configuration"""
+
     # Model architecture configuration
     shared_block_dims: List[int] = field(
         default_factory=lambda: [None, 128, 64, 32]
@@ -15,8 +17,33 @@ class ModelConfig:
     residual_tasks: bool = False
 
     # Optimizer configuration
-    shared_block_lr: float = 0.005
-    task_block_lr: float = 0.01
+    shared_block_lr: float = 0.01
+    task_block_lr: float = 0.05
+
+
+@dataclass
+class ExperimentConfig:
+    """Training experiment configuration"""
+
+    # Experiment configuration
+    exp_name: str = "default_experiment"
+
+    # Path configuration
+    data_dir: str = "data/raw"
+    results_dir: str = "results"
+    model_save_dir: str = "results/models"
+    log_dir: str = "results/logs"
+    figures_dir: str = "results/figures"
+
+    # Feature extraction configuration
+    xenonpy_featurizers: List[str] = field(
+        default_factory=lambda: [
+            "WeightedAverage",
+            "WeightedVariance",
+            "MaxPooling",
+            "MinPooling",
+        ]
+    )
 
     # Training configuration
     batch_size: int = 128
@@ -36,7 +63,7 @@ class ModelConfig:
             "Thermal conductivity": 1.0,
             "Electrical resistivity": 1.0,
             "Magnetic susceptibility": 1.0,
-            "Specific heat capacity": 1.0,
+            # "Specific heat capacity": 1.0, # Not available in dataset
             "Electrical conductivity": 1.0,
             "ZT": 1.0,
             "Hall coefficient": 1.0,
@@ -57,7 +84,7 @@ class ModelConfig:
         }
     )
 
-    # Trainer configuration
+    # Training configuration
     trainer_config: Dict = field(
         default_factory=lambda: {
             "accelerator": "auto",
@@ -83,24 +110,4 @@ class ModelConfig:
             "mode": "min",
             "save_last": True,
         }
-    )
-
-
-@dataclass
-class ExperimentConfig:
-    # Experiment path configuration
-    data_dir: str = "data/raw"
-    results_dir: str = "results"
-    model_save_dir: str = "results/models"
-    log_dir: str = "results/logs"
-    figures_dir: str = "results/figures"
-
-    # Feature extraction configuration
-    xenonpy_featurizers: List[str] = field(
-        default_factory=lambda: [
-            "WeightedAverage",
-            "WeightedVariance",
-            "MaxPooling",
-            "MinPooling",
-        ]
     )
