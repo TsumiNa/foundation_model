@@ -11,7 +11,7 @@ from multi_task import (
     CompoundDataset,
     MultiTaskPropertyPredictor,
     plot_predictions,
-    train_and_evaluate,
+    training,
 )
 
 
@@ -127,7 +127,7 @@ def scaling_laws_test(
                 exp_dir = save_dir / f"run_{run}"
                 exp_dir.mkdir(parents=True, exist_ok=True)
 
-                avg_test_losses, all_preds, all_targets, all_masks = train_and_evaluate(
+                avg_test_losses, all_preds, all_targets, all_masks = training(
                     model=model,
                     datamodule=data_module,
                     max_epochs=100,

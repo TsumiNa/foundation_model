@@ -628,7 +628,7 @@ class MultiTaskPropertyPredictor(L.LightningModule):
         )
 
 
-def train_and_evaluate(
+def training(
     model: L.LightningModule,
     datamodule: L.LightningDataModule,
     max_epochs: int = 100,

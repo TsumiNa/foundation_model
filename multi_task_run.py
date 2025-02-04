@@ -13,8 +13,7 @@ import torch
 from multi_task import (
     CompoundDataModule,
     MultiTaskPropertyPredictor,
-    plot_predictions,
-    train_and_evaluate,
+    training,
 )
 from multi_task_splitter import MultiTaskSplitter
 
@@ -217,7 +216,7 @@ def main():
     )
     # model = torch.compile(model)
 
-    return train_and_evaluate(
+    return training(
         model=model,
         datamodule=datamodule,
         max_epochs=args.max_epochs,
