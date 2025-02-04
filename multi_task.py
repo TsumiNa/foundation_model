@@ -1,15 +1,23 @@
-from typing import Sequence
+from pathlib import Path
+from typing import Callable, Literal, Sequence
+
+import lightning as L
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-from pathlib import Path
-from sklearn.model_selection import train_test_split
+from lightning.pytorch.callbacks import (
+    BasePredictionWriter,
+    EarlyStopping,
+    ModelCheckpoint,
+)
+from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
+from torch.functional import F
+from torch.utils.data import DataLoader, Dataset
 
-import seaborn as sns
-import matplotlib.pyplot as plt
+from multi_task_splitter import MultiTaskSplitter
 from plot_utils import plot_scatter_comparison
 
 
@@ -19,12 +27,126 @@ def set_random_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 
+class CompoundDataModule(L.LightningDataModule):
+    def __init__(
+        self,
+        descriptor: pd.DataFrame,
+        property_data: pd.DataFrame,
+        splitter: Callable,
+        property_fractions: dict[str, float],
+        batch_size=32,
+        num_workers=0,
+    ):
+        """
+        Initialize the data module.
+
+        Parameters
+        ----------
+        descriptor : pd.DataFrame
+            Input features for the compounds
+        property_data : pd.DataFrame
+            Target properties for the compounds
+        splitter : Callable
+            Function to split data into train/val/test sets
+        property_fractions : dict[str, float]
+            Dictionary specifying what fraction of data to use for each property
+            e.g., {"property_name": 0.8} means use 80% of available data for that property
+        batch_size : int, optional
+            Batch size for dataloaders, by default 32
+        num_workers : int, optional
+            Number of workers for dataloaders, by default 0
+        """
+        super().__init__()
+        self.descriptor = descriptor
+        self.property_data = property_data
+        self.property_fractions = property_fractions
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        if isinstance(splitter, MultiTaskSplitter):
+            self.splitter = splitter
+        else:
+            # Default to MultiTaskSplitter if a custom splitter is not provided
+            self.splitter = MultiTaskSplitter(train_ratio=0.9, val_ratio=0.1)
+
+    def setup(self, stage: str = None):
+        # Split indices using MultiTaskSplitter
+        indices = self.splitter.split(self.property_data)
+        if len(indices) < 2:
+            raise ValueError("Splitter must return at least two sets of indices")
+        if len(indices) == 2:
+            train_indices, test_indices = indices
+            val_indices = []
+        else:
+            train_indices, val_indices, test_indices = indices
+        self.train_dataset = CompoundDataset(
+            self.descriptor.iloc[train_indices],
+            self.property_data.iloc[train_indices],
+            **self.property_fractions,
+        )
+        # Create validation dataset if validation indices are provided
+        if len(val_indices) > 0:
+            self.val_dataset = CompoundDataset(
+                self.descriptor.iloc[val_indices],
+                self.property_data.iloc[val_indices],
+            )
+
+        # Create test dataset if test indices are provided
+        if len(test_indices) > 0:
+            self.test_dataset = CompoundDataset(
+                self.descriptor.iloc[test_indices],
+                self.property_data.iloc[test_indices],
+            )
+        else:
+            self.test_dataset = CompoundDataset(
+                self.descriptor.iloc[val_indices],
+                self.property_data.iloc[val_indices],
+            )
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+        )
+
+    def val_dataloader(self):
+        if hasattr(self, "val_dataset"):
+            return DataLoader(
+                self.val_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+            )
+        return None
+
+    def test_dataloader(self):
+        if hasattr(self, "test_dataset"):
+            return DataLoader(
+                self.test_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+            )
+        return None
+
+    def predict_dataloader(self):
+        if hasattr(self, "test_dataset"):
+            return DataLoader(
+                self.test_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+            )
+        return None
+
+
 class CompoundDataset(Dataset):
     def __init__(
         self,
         descriptor: pd.DataFrame,
         property: pd.DataFrame,
-        **known_attributes,
+        **property_fractions,
     ):
         """
         Custom dataset for compounds.
@@ -35,9 +157,9 @@ class CompoundDataset(Dataset):
             Input features for the compounds
         property : pd.DataFrame
             Target properties for the compounds
-        known_attributes : dict
-            Dictionary specifying the percentage of known values for each property
-            e.g., {"property_name": 0.8} means 80% of values for that property are known
+        property_fractions : dict
+            Dictionary specifying what fraction of data to use for each property
+            e.g., {"property_name": 0.8} means use 80% of available data for that property
         """
         # Ensure descriptor and property have matching indices
         if not descriptor.index.equals(property.index):
@@ -57,23 +179,23 @@ class CompoundDataset(Dataset):
         # Create initial masks based on non-nan values
         self.mask = (~np.isnan(self.y)).astype(int)
 
-        # Initialize known_attributes with default values
-        self._known_attributes = {attr: 1.0 for attr in self.attributes}
+        # Initialize property fractions with default values (use all available data)
+        self._property_fractions = {attr: 1.0 for attr in self.attributes}
 
-        # Validate and update known_attributes if provided
-        if known_attributes:
+        # Validate and update property fractions if provided
+        if property_fractions:
             # Validate attributes
-            invalid_attrs = set(known_attributes.keys()) - set(self.attributes)
+            invalid_attrs = set(property_fractions.keys()) - set(self.attributes)
             if invalid_attrs:
                 raise ValueError(
-                    f"Invalid attributes in known_attributes: {invalid_attrs}. "
+                    f"Invalid attributes in property_fractions: {invalid_attrs}. "
                     f"Valid attributes are: {self.attributes}"
                 )
 
             # Validate percentages
             invalid_percents = [
                 (attr, percent)
-                for attr, percent in known_attributes.items()
+                for attr, percent in property_fractions.items()
                 if not 0 <= percent <= 1
             ]
             if invalid_percents:
@@ -83,19 +205,19 @@ class CompoundDataset(Dataset):
                 )
 
             # Update with provided values
-            self._known_attributes.update(known_attributes)
+            self._property_fractions.update(property_fractions)
 
-            # Apply percentages only to non-nan values
-            for attr_name, percent in self._known_attributes.items():
+            # Apply fractions only to non-nan values
+            for attr_name, fraction in self._property_fractions.items():
                 attr_idx = self.attributes.index(attr_name)
                 # Get indices where values are not nan
                 valid_indices = np.where(~np.isnan(self.y[:, attr_idx]))[0]
                 if len(valid_indices) > 0:  # Only proceed if there are valid values
-                    # Calculate number of known samples from valid data
-                    num_known = int(len(valid_indices) * percent)
+                    # Calculate number of samples to use based on fraction
+                    num_to_use = int(len(valid_indices) * fraction)
                     # Randomly select indices to keep
                     keep_indices = np.random.choice(
-                        valid_indices, num_known, replace=False
+                        valid_indices, num_to_use, replace=False
                     )
                     # Mask all valid indices except those we keep
                     mask_indices = np.setdiff1d(valid_indices, keep_indices)
@@ -116,16 +238,17 @@ class CompoundDataset(Dataset):
         return self.x[idx], self.y[idx], self.mask[idx]
 
     @property
-    def property(self) -> dict[str, float]:
+    def fractions(self) -> dict[str, float]:
         """
-        Get the known attributes percentages.
+        Get the fraction of data used for each property.
 
         Returns
         -------
         dict[str, float]
-            Dictionary containing all attributes and their percentages.
+            Dictionary containing the fraction of data used for each property,
+            where 1.0 means using all available data and 0.5 means using half.
         """
-        return self._known_attributes.copy()
+        return self._property_fractions.copy()
 
 
 class LinearLayer(nn.Module):
@@ -269,27 +392,39 @@ class LinearBlock(nn.Module):
         return self.layers(x)
 
 
-class CompoundPropertyPredictor(nn.Module):
+class MultiTaskPropertyPredictor(L.LightningModule):
     def __init__(
         self,
         shared_block_dims: Sequence[int],
         task_block_dims: Sequence[int],
         n_tasks: int,
         *,
+        shared_block_lr: float = 0.005,
+        task_block_lr: float = 0.005,
         norm_shared: bool = True,
         residual_shared: bool = False,
         norm_tasks: bool = True,
         residual_tasks: bool = False,
     ):
-        super(CompoundPropertyPredictor, self).__init__()
-        self.norm_shared = norm_shared
-        self.residual_shared = residual_shared
+        super(MultiTaskPropertyPredictor, self).__init__()
+        # Important: This property activates manual optimization.
+        self.automatic_optimization = False
+        self.save_hyperparameters()
+        self._model = None
+
+        self._shared_block_lr = shared_block_lr
+        self._task_block_lr = task_block_lr
+
+        self._norm_shared = norm_shared
+        self._residual_shared = residual_shared
+        self._norm_tasks = norm_tasks
+        self._residual_tasks = residual_tasks
 
         # Create shared block
         self.shard_block = LinearBlock(
             shared_block_dims,
-            normalization=norm_shared,
-            residual=residual_shared,
+            normalization=self._norm_shared,
+            residual=self._residual_shared,
         )
 
         # Create intermediate layers
@@ -304,8 +439,8 @@ class CompoundPropertyPredictor(nn.Module):
                 nn.Sequential(
                     LinearBlock(
                         task_block_dims[:-1],
-                        normalization=norm_tasks,
-                        residual=residual_tasks,
+                        normalization=self._norm_tasks,
+                        residual=self._residual_tasks,
                     ),
                     LinearLayer(
                         task_block_dims[-2],
@@ -335,96 +470,347 @@ class CompoundPropertyPredictor(nn.Module):
 
         return x
 
+    @staticmethod
+    def masked_mse_loss(preds, targets, masks):
+        loss = F.mse_loss(preds, targets, reduction="none") * masks
+        return loss.sum() / masks.sum()
+
+    def training_step(self, batch, batch_idx):
+        opt1, opt2 = self.optimizers()
+        lr1, lr2 = self.lr_schedulers()
+        opt1.zero_grad()
+        opt2.zero_grad()
+        x, y, mask = batch
+        y_pred = self(x)
+        # loss = self.masked_mse_loss(y_pred, y, mask)
+
+        # Calculate per-attribute losses
+        losses = F.mse_loss(y_pred, y, reduction="none") * mask  # [batch_size, n_tasks]
+        per_attr_losses = losses.sum(dim=0) / mask.sum(dim=0)  # [n_tasks]
+        loss = losses.sum() / mask.sum()
+
+        # Log per-attribute losses
+        self.log(
+            "train_loss",
+            loss,
+            on_step=True,
+            on_epoch=False,
+            prog_bar=True,
+            logger=True,
+            sync_dist=True,
+        )
+        self.log_dict(
+            {f"train_loss_attr_{i}": loss for i, loss in enumerate(per_attr_losses)},
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True,
+        )
+        self.manual_backward(loss)
+        opt1.step()
+        opt2.step()
+        lr1.step(loss)
+        lr2.step(loss)
+
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x, y, mask = batch
+        y_pred = self(x)
+
+        # Calculate per-attribute losses
+        losses = F.mse_loss(y_pred, y, reduction="none") * mask  # [batch_size, n_tasks]
+        per_attr_losses = losses.sum(dim=0) / mask.sum(dim=0)  # [n_tasks]
+        loss = losses.sum() / mask.sum()
+
+        # Log per-attribute losses
+        self.log(
+            "val_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True,
+        )
+        self.log_dict(
+            {f"val_loss_attr_{i}": loss for i, loss in enumerate(per_attr_losses)},
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True,
+        )
+
+    def test_step(self, batch, batch_idx):
+        x, y, mask = batch
+        y_pred = self(x)
+
+        # Calculate per-attribute losses
+        losses = F.mse_loss(y_pred, y, reduction="none") * mask  # [batch_size, n_tasks]
+        per_attr_losses = losses.sum(dim=0) / mask.sum(dim=0)  # [n_tasks]
+        loss = losses.sum() / mask.sum()
+
+        # Log per-attribute losses
+        self.log(
+            "test_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True,
+        )
+        self.log_dict(
+            {f"test_loss_attr_{i}": loss for i, loss in enumerate(per_attr_losses)},
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True,
+        )
+
+    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        x, y, mask = batch
+        y_pred = self(x)
+        return {
+            "preds": y_pred,
+            "targets": y,
+            "masks": mask,
+        }
+
+    def configure_optimizers(self):
+        # Optimizer for shared layers (shard_block and deposit_layer)
+        shared_params = list(self.shard_block.parameters()) + list(
+            self.deposit_layer.parameters()
+        )
+        shared_optimizer = optim.Adam(shared_params, lr=self._shared_block_lr)
+
+        # Optimizer for task-specific layers (task_blocks)
+        task_optimizer = optim.Adam(
+            self.task_blocks.parameters(), lr=self._task_block_lr
+        )
+
+        # Learning rate schedulers
+        shared_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            shared_optimizer,
+            mode="min",
+            factor=0.5,
+            patience=5,
+            min_lr=1e-4,
+            # verbose=True,
+        )
+        task_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            task_optimizer,
+            mode="min",
+            factor=0.5,
+            patience=5,
+            min_lr=1e-4,
+            # verbose=True,
+        )
+
+        return (
+            {
+                "optimizer": shared_optimizer,
+                "lr_scheduler": {
+                    "scheduler": shared_scheduler,
+                    "monitor": "train_loss",
+                    "interval": "epoch",
+                    "frequency": 1,
+                },
+            },
+            {
+                "optimizer": task_optimizer,
+                "lr_scheduler": {
+                    "scheduler": task_scheduler,
+                    "monitor": "train_loss",
+                    "interval": "epoch",
+                    "frequency": 1,
+                },
+            },
+        )
+
+
+class PredictionWriter(BasePredictionWriter):
+    def __init__(
+        self,
+        output_dir: str | None = None,
+        write_interval: Literal["batch", "epoch", "batch_and_epoch"] = "epoch",
+    ):
+        super().__init__(write_interval)
+        self.output_dir = Path(output_dir) if output_dir else None
+
+    def write_on_epoch_end(self, trainer, pl_module, predictions, batch_indices):
+        # this will create N (num processes) files in `output_dir` each containing
+        # the predictions of it's respective rank
+        path = self.output_dir if self.output_dir else Path(trainer.log_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            predictions,
+            path / f"rank_{trainer.global_rank}.pt",
+        )
+
 
 def train_and_evaluate(
-    model: nn.Module,
-    train_loader: DataLoader,
-    test_loader: DataLoader,
-    optimizer: optim.Optimizer,
-    device: str,
-    num_epochs: int = 100,
+    model: L.LightningModule,
+    datamodule: L.LightningDataModule,
+    max_epochs: int = 100,
+    accelerator: str = "auto",
+    devices: int | list | str = "auto",
+    profiler: str | None = None,
+    default_root_dir: str | None = None,
+    strategy: str = "auto",
+    fast_dev_run: bool = False,
+    log_name: str = "my_exp_name",
+    verbose: bool = True,
+    raw_predictions_dir: str | None = None,
 ):
-    criterion = nn.MSELoss(reduction="none")
-    print(f"Optimizer:\n{optimizer}\n")
-    print(f"Model:\n{model}\n")
-    for epoch in range(num_epochs):
-        model.train()
-        running_loss = 0.0
-        total_known = 0
-        for inputs, targets, masks in train_loader:
-            inputs, targets, masks = (
-                inputs.to(device),
-                targets.to(device),
-                masks.to(device),
-            )
+    """
+    Train and evaluate a PyTorch Lightning model using the Lightning Trainer.
 
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, targets) * masks
-            loss = loss.sum() / masks.sum()
-            loss.backward()
-            optimizer.step()
+    Parameters
+    ----------
+    model : pl.LightningModule
+        The PyTorch Lightning model to train
+    datamodule : pl.LightningDataModule
+        The data module containing train/val/test data
+    max_epochs : int, optional
+        Maximum number of epochs to train for, by default 100
+    accelerator : str, optional
+        The accelerator to use ("cpu", "gpu", "tpu", "auto"), by default "auto"
+    devices : int | list | str, optional
+        The devices to use for training, by default "auto"
+    default_root_dir : str, optional
+        Root directory for logs and checkpoints, by default None
 
-            running_loss += loss.item()
-            total_known += masks.sum().item()
+    Returns
+    -------
+    tuple
+        A tuple containing (avg_test_losses, all_preds, all_targets, all_masks)
+    """
 
-            if np.any(np.isnan(running_loss)):
-                raise ValueError("Running loss contains NaN")
+    # Set default_root_dir to "lightning_logs" if None
+    if default_root_dir is None:
+        default_root_dir = "lightning_logs"
 
-        if epoch % 10 == 0:
-            avg_train_loss = running_loss / total_known
-            print(
-                f"Epoch [{epoch + 1}/{num_epochs}], Training Loss: {avg_train_loss:.4f}"
-            )
+    # Configure callbacks
+    early_stopping = EarlyStopping(
+        monitor="val_loss",
+        patience=10,
+        mode="min",
+        min_delta=1e-4,
+        verbose=verbose,
+    )
 
-    # Evaluation
-    model.eval()
-    with torch.no_grad():
-        # Get number of attributes from the first batch
-        num_attributes = next(iter(test_loader))[1].shape[1]
-        total_losses = np.zeros(num_attributes)
-        total_known = np.zeros(num_attributes)
-        all_preds = []
-        all_targets = []
-        all_masks = []
+    checkpoint_callback = ModelCheckpoint(
+        monitor="val_loss",
+        filename="model-{epoch:02d}-{val_loss:.4f}",
+        save_top_k=1,
+        mode="min",
+        save_last=True,
+        verbose=verbose,
+    )
 
-        for inputs, targets, masks in test_loader:
-            inputs, targets, masks = (
-                inputs.to(device),
-                targets.to(device),
-                masks.to(device),
-            )
-            outputs = model(inputs)
+    # Configure loggers
+    csv_logger = CSVLogger(f"{default_root_dir}/common_logs", name=log_name)
+    tb_logger = TensorBoardLogger(f"{default_root_dir}/tb_logs", name=log_name)
 
-            # Calculate loss for each attribute
-            losses = criterion(outputs, targets)  # Shape: [batch_size, num_attributes]
-            masked_losses = losses * masks
+    # # Set default raw_predictions_dir if None
+    # if raw_predictions_dir is None:
+    #     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    #     raw_predictions_dir = str(Path("raw_predictions_dir") / timestamp)
 
-            # Sum losses and counts for each attribute
-            total_losses += masked_losses.sum(dim=0).cpu().numpy()
-            total_known += masks.sum(dim=0).cpu().numpy()
+    # pred_writer = PredictionWriter(
+    #     output_dir=raw_predictions_dir, write_interval="epoch"
+    # )
 
-            all_preds.append(outputs.cpu().numpy())
-            all_targets.append(targets.cpu().numpy())
-            all_masks.append(masks.cpu().numpy())
+    # Configure trainer
+    trainer = L.Trainer(
+        max_epochs=max_epochs,
+        accelerator=accelerator,
+        devices=devices,
+        enable_progress_bar=True,
+        enable_model_summary=True,
+        logger=[csv_logger, tb_logger],
+        callbacks=[early_stopping, checkpoint_callback],
+        default_root_dir=default_root_dir,
+        profiler=profiler,
+        strategy=strategy,
+        fast_dev_run=fast_dev_run,
+    )
 
-        # Calculate average loss for each attribute
-        avg_test_losses = total_losses / total_known
+    # Train and test the model
+    trainer.fit(model, datamodule=datamodule)
+    trainer.test(datamodule=datamodule)
+    return
 
-        # Get dataset attributes from test_loader
-        test_dataset = test_loader.dataset
+    # Get predictions for plotting
+    trainer.predict(model, datamodule=datamodule)
+
+    # Load predictions from disk if not available
+    all_preds = []
+    all_targets = []
+    all_masks = []
+
+    attributes = list(datamodule.property_data.columns)
+    for p in Path(raw_predictions_dir).glob("*.pt"):
+        prediction = torch.load(p, map_location="cpu")
+        preds = np.concatenate([batch["preds"] for batch in prediction], axis=0)
+        targets = np.concatenate([batch["targets"] for batch in prediction], axis=0)
+        masks = np.concatenate([batch["masks"] for batch in prediction], axis=0)
+
+        all_preds.append(preds)
+        all_targets.append(targets)
+        all_masks.append(masks)
+
+    if (
+        not (len(all_preds) == len(all_targets) == len(all_masks))
+        or len(all_preds) == 0
+    ):
+        raise ValueError("Predictions, targets, and masks must have the same length")
+
+    # Concatenate predictions for plotting
+    all_preds = np.concatenate(all_preds, axis=0)
+    all_targets = np.concatenate(all_targets, axis=0)
+    all_masks = np.concatenate(all_masks, axis=0)
+
+    if (
+        not (all_preds.shape == all_targets.shape == all_masks.shape)
+        or all_preds.shape[0] == 0
+    ):
+        raise ValueError("The shapes of predictions, targets, and masks do not match")
+
+    # Calculate per-attribute losses
+    avg_test_losses = []
+
+    for attr_idx in range(all_preds.shape[1]):
+        mask = all_masks[:, attr_idx] == 1
+        if mask.sum() > 0:
+            mse = (
+                (all_preds[mask, attr_idx] - all_targets[mask, attr_idx]) ** 2
+            ).mean()
+            avg_test_losses.append(mse)
+        else:
+            avg_test_losses.append(float("nan"))
+    avg_test_losses = np.array(avg_test_losses)
+
+    # Print per-attribute losses if verbose is True
+    if verbose:
         print("\nTest Losses by Attribute:")
-        for attr_idx, attr_name in enumerate(test_dataset.attributes):
-            print(f"{attr_name}: {avg_test_losses[attr_idx]:.4f}")
+        for attr_idx, attr_name in enumerate(attributes):
+            print(
+                f"{attr_name}: {avg_test_losses[attr_idx]:.4f} -- size: {int(all_masks[:, attr_idx].sum()):,}"
+            )
 
-    return avg_test_losses, all_preds, all_targets, all_masks
+    return avg_test_losses, all_preds, all_targets, all_masks, attributes
 
 
 def plot_predictions(
     all_preds,
     all_targets,
     all_masks,
-    dataset: CompoundDataset,
+    attributes: list[str],
     *,
     savefig=None,
     suffix=None,
@@ -432,51 +818,41 @@ def plot_predictions(
     return_stat=False,
 ):
     """
-    Plot prediction results for each attribute.
+    Generate scatter plots comparing predicted and target values for multiple attributes.
 
-    Parameters
-    ----------
-    all_preds : list
-        List of prediction arrays
-    all_targets : list
-        List of target arrays
-    all_masks : list
-        List of mask arrays
-    dataset : CompoundDataset
-        Dataset containing the attributes information
-    savefig : str, optional
-        Path to save the figures
-    suffix : str, optional
-        Suffix to append to saved figure names
-    no_show : bool, optional
-        If True, close figures after saving
-    return_stat : bool, optional
-        If True, return statistics DataFrame
+    This function concatenates the provided predictions, targets, and masks, and then for each attribute
+    creates a scatter plot comparing the predictions to the targets, using the provided mask to filter valid
+    entries. Optionally, the generated figures can be saved to disk, and statistics of the comparisons are
+    collected and returned as a DataFrame if requested.
 
-    Returns
-    -------
-    pd.DataFrame
-        Statistics of the predictions if return_stat is True
+    Parameters:
+        all_preds (list of numpy.array): A list of arrays containing the prediction values. These arrays are concatenated along the axis 0.
+        all_targets (list of numpy.array): A list of arrays containing the target values, concatenated similarly to all_preds.
+        all_masks (list of numpy.array): A list of arrays containing the mask indicators (1 for valid entries) for each attribute.
+        attributes (list of str): A list of attribute names corresponding to each prediction/target column.
+        savefig (str, optional): Directory path where the generated plots will be saved. If None, figures are not saved.
+        suffix (str, optional): A string suffix that will be appended to the save directory if provided.
+        no_show (bool, optional): If True, the figures are cleared (not shown) after creation.
+        return_stat (bool, optional): If True, returns a pandas DataFrame containing statistics of the scatter comparisons.
+
+    Returns:
+        pandas.DataFrame or None: A DataFrame containing statistical information for each attribute if return_stat is True; otherwise, None.
     """
-    all_preds = np.concatenate(all_preds, axis=0)
-    all_targets = np.concatenate(all_targets, axis=0)
-    all_masks = np.concatenate(all_masks, axis=0)
-
     all_stat = []
-    for m in range(min(6, len(dataset.attributes))):
+    for m in range(len(attributes)):
         mask_m = all_masks[:, m] == 1
         preds_m = all_preds[mask_m, m]
         targets_m = all_targets[mask_m, m]
 
         # Create DataFrame for plotting
-        fig, (ax,), stat = plot_scatter_comparison(
-            targets_m, preds_m, title=dataset.attributes[m], return_stat=True
+        fig, _, stat = plot_scatter_comparison(
+            targets_m, preds_m, title=attributes[m], return_stat=True
         )
         if savefig and isinstance(savefig, str):
             savefig_ = f"{savefig}/{suffix if suffix else ''}"
             _ = Path(savefig_).mkdir(parents=True, exist_ok=True)
-            fig.savefig(f"{savefig_}/{dataset.attributes[m]}.png", bbox_inches="tight")
-        stat["property"] = dataset.attributes[m]
+            fig.savefig(f"{savefig_}/{attributes[m]}.png", bbox_inches="tight")
+        stat["property"] = attributes[m]
         all_stat.append(stat)
 
         if no_show:
@@ -484,154 +860,5 @@ def plot_predictions(
             plt.clf()
             plt.close()
 
-    return pd.DataFrame(all_stat)
-
-
-def scaling_laws_test(
-    descriptor,
-    property_data,
-    target_property,
-    mode="vary_target",
-    device="cpu",
-    num_runs=5,
-):
-    """
-    Test scaling laws for multi-task learning.
-
-    Args:
-        descriptor: Input feature DataFrame
-        property_data: Property values DataFrame
-        target_property: The property to analyze scaling laws for
-        mode: Either 'vary_target' or 'vary_others'
-            - 'vary_target': Fix other properties at 100% and vary target property fraction
-            - 'vary_others': Fix target property at 100% and vary other properties fraction
-        device: Device to run the model on
-        num_runs: Number of runs for each configuration
-    """
-    # Create a temporary dataset to get the list of attributes
-    temp_dataset = CompoundDataset(descriptor, property_data)
-    if target_property not in temp_dataset.attributes:
-        raise ValueError(f"target_property must be one of {temp_dataset.attributes}")
-
-    target_idx = temp_dataset.attributes.index(target_property)
-
-    # Define fractions to test
-    fractions = [0.1, 0.2, 0.4, 0.6, 0.8, 1.0]
-    test_losses = []
-    test_losses_std = []
-
-    for fraction in fractions:
-        losses = []
-        print(f"\nTesting with fraction {fraction}:")
-
-        all_stat = []
-        # Plot and save predictions for this run
-        save_dir = Path(
-            f"images/multi_tasks/scaling_laws/{mode}_{target_property}/fraction_{fraction}"
-        )
-        for run in range(num_runs):
-            # Split data using indices to ensure alignment
-            indices = np.arange(len(descriptor))
-            train_indices, test_indices = train_test_split(
-                indices, test_size=0.2, random_state=run
-            )
-
-            train_data = descriptor.iloc[train_indices]
-            test_data = descriptor.iloc[test_indices]
-            train_prop = property_data.iloc[train_indices]
-            test_prop = property_data.iloc[test_indices]
-
-            # Set up known_attributes based on mode
-            if mode == "vary_target":
-                # Fix other properties at 100% and vary target property
-                known_attributes = {attr: 1.0 for attr in temp_dataset.attributes}
-                known_attributes[target_property] = fraction
-            else:  # vary_others
-                # Fix target property at 100% and vary other properties
-                known_attributes = {attr: fraction for attr in temp_dataset.attributes}
-                known_attributes[target_property] = 1.0
-
-            # Create datasets with specified known_attributes
-            train_dataset = CompoundDataset(train_data, train_prop, **known_attributes)
-            test_dataset = CompoundDataset(test_data, test_prop)
-
-            # Create data loaders
-            train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-            test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
-
-            # Initialize model
-            model = CompoundPropertyPredictor(
-                shared_block_dims=[train_data.shape[1], 512, 256, 128],
-                task_block_dims=[128, 64, 32, 1],
-                n_tasks=len(train_dataset.attributes),
-            ).to(device)
-            optimizer = optim.Adam(model.parameters(), lr=0.0005)
-
-            # Train and evaluate
-            try:
-                avg_test_losses, all_preds, all_targets, all_masks = train_and_evaluate(
-                    model, train_loader, test_loader, optimizer, device, num_epochs=100
-                )
-
-                # Record loss for target property
-                losses.append(avg_test_losses[target_idx])
-                stat = plot_predictions(
-                    all_preds,
-                    all_targets,
-                    all_masks,
-                    test_dataset,
-                    savefig=str(save_dir),
-                    suffix=f"run_{run}",
-                    return_stat=True,
-                    no_show=True,
-                )
-
-                stat = stat.assign(run=run)
-                all_stat.append(stat)
-            except ValueError as e:
-                print(f"{e} in {save_dir} - run {run}")
-            except Exception as e:
-                # Handle the exception
-                print(f"An unexpected error occurred: {e}")
-
-        pd.concat(all_stat).reset_index(drop=True).to_csv(save_dir / "test_stat.csv")
-        test_losses.append(np.mean(losses))
-        test_losses_std.append(np.std(losses))
-
-    # Plotting with confidence intervals
-    plt.figure(figsize=(10, 6))
-    sns.set_style("whitegrid")
-
-    # Plot mean loss
-    plt.plot(fractions, test_losses, marker="o", label="Mean Loss")
-
-    # Add confidence intervals
-    ci = 1.96 * np.array(test_losses_std) / np.sqrt(num_runs)
-    plt.fill_between(
-        fractions,
-        np.array(test_losses) - ci,
-        np.array(test_losses) + ci,
-        alpha=0.3,
-        label="95% CI",
-    )
-
-    plt.xlabel("Data Fraction")
-    plt.ylabel(f"Test Loss for {target_property}")
-    title = (
-        f"Effect of {'Target' if mode == 'vary_target' else 'Other Properties'} "
-        f"Data Size on {target_property} Prediction"
-    )
-    plt.title(title)
-    plt.legend()
-
-    # Save plot
-    save_dir = Path("images/multi_tasks/scaling_laws")
-    save_dir.mkdir(parents=True, exist_ok=True)
-    plt.savefig(
-        save_dir / f"scaling_law_{mode}_{target_property}.png",
-        bbox_inches="tight",
-        dpi=300,
-    )
-    plt.close()
-
-    return test_losses, test_losses_std, fractions
+    if return_stat:
+        return pd.DataFrame(all_stat)
