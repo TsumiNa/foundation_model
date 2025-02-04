@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Callable, Literal, Sequence
+from typing import Callable, Sequence
 
 import lightning as L
 import matplotlib.pyplot as plt
@@ -9,7 +9,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from lightning.pytorch.callbacks import (
-    BasePredictionWriter,
     EarlyStopping,
     ModelCheckpoint,
 )
@@ -472,8 +471,12 @@ class MultiTaskPropertyPredictor(L.LightningModule):
 
     @staticmethod
     def masked_mse_loss(preds, targets, masks):
-        loss = F.mse_loss(preds, targets, reduction="none") * masks
-        return loss.sum() / masks.sum()
+        losses = F.mse_loss(preds, targets, reduction="none") * masks
+        per_attr_losses = torch.nan_to_num(  # [n_tasks]
+            losses.sum(dim=0) / masks.sum(dim=0), nan=0.0, posinf=0.0, neginf=0.0
+        )
+        loss = losses.sum() / masks.sum()
+        return loss, per_attr_losses
 
     def training_step(self, batch, batch_idx):
         opt1, opt2 = self.optimizers()
@@ -482,27 +485,24 @@ class MultiTaskPropertyPredictor(L.LightningModule):
         opt2.zero_grad()
         x, y, mask = batch
         y_pred = self(x)
-        # loss = self.masked_mse_loss(y_pred, y, mask)
 
         # Calculate per-attribute losses
-        losses = F.mse_loss(y_pred, y, reduction="none") * mask  # [batch_size, n_tasks]
-        per_attr_losses = losses.sum(dim=0) / mask.sum(dim=0)  # [n_tasks]
-        loss = losses.sum() / mask.sum()
+        loss, per_attr_losses = self.masked_mse_loss(y_pred, y, mask)
 
         # Log per-attribute losses
         self.log(
             "train_loss",
             loss,
             on_step=True,
-            on_epoch=False,
+            on_epoch=True,
             prog_bar=True,
             logger=True,
             sync_dist=True,
         )
         self.log_dict(
             {f"train_loss_attr_{i}": loss for i, loss in enumerate(per_attr_losses)},
-            on_step=True,
-            on_epoch=False,
+            on_step=False,
+            on_epoch=True,
             prog_bar=False,
             logger=True,
             sync_dist=True,
@@ -520,9 +520,7 @@ class MultiTaskPropertyPredictor(L.LightningModule):
         y_pred = self(x)
 
         # Calculate per-attribute losses
-        losses = F.mse_loss(y_pred, y, reduction="none") * mask  # [batch_size, n_tasks]
-        per_attr_losses = losses.sum(dim=0) / mask.sum(dim=0)  # [n_tasks]
-        loss = losses.sum() / mask.sum()
+        loss, per_attr_losses = self.masked_mse_loss(y_pred, y, mask)
 
         # Log per-attribute losses
         self.log(
@@ -548,9 +546,7 @@ class MultiTaskPropertyPredictor(L.LightningModule):
         y_pred = self(x)
 
         # Calculate per-attribute losses
-        losses = F.mse_loss(y_pred, y, reduction="none") * mask  # [batch_size, n_tasks]
-        per_attr_losses = losses.sum(dim=0) / mask.sum(dim=0)  # [n_tasks]
-        loss = losses.sum() / mask.sum()
+        loss, per_attr_losses = self.masked_mse_loss(y_pred, y, mask)
 
         # Log per-attribute losses
         self.log(
@@ -632,26 +628,6 @@ class MultiTaskPropertyPredictor(L.LightningModule):
         )
 
 
-class PredictionWriter(BasePredictionWriter):
-    def __init__(
-        self,
-        output_dir: str | None = None,
-        write_interval: Literal["batch", "epoch", "batch_and_epoch"] = "epoch",
-    ):
-        super().__init__(write_interval)
-        self.output_dir = Path(output_dir) if output_dir else None
-
-    def write_on_epoch_end(self, trainer, pl_module, predictions, batch_indices):
-        # this will create N (num processes) files in `output_dir` each containing
-        # the predictions of it's respective rank
-        path = self.output_dir if self.output_dir else Path(trainer.log_dir)
-        path.mkdir(parents=True, exist_ok=True)
-        torch.save(
-            predictions,
-            path / f"rank_{trainer.global_rank}.pt",
-        )
-
-
 def train_and_evaluate(
     model: L.LightningModule,
     datamodule: L.LightningDataModule,
@@ -715,15 +691,6 @@ def train_and_evaluate(
     # Configure loggers
     csv_logger = CSVLogger(f"{default_root_dir}/common_logs", name=log_name)
     tb_logger = TensorBoardLogger(f"{default_root_dir}/tb_logs", name=log_name)
-
-    # # Set default raw_predictions_dir if None
-    # if raw_predictions_dir is None:
-    #     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    #     raw_predictions_dir = str(Path("raw_predictions_dir") / timestamp)
-
-    # pred_writer = PredictionWriter(
-    #     output_dir=raw_predictions_dir, write_interval="epoch"
-    # )
 
     # Configure trainer
     trainer = L.Trainer(
