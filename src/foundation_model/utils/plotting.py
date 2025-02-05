@@ -148,7 +148,7 @@ def plot_predictions(
             _ = Path(savefig_).mkdir(parents=True, exist_ok=True)
             fig.savefig(f"{savefig_}/{attributes[m]}.png", bbox_inches="tight")
 
-        stat["property"] = attributes[m]
+        stat["attribute"] = attributes[m]
         all_stats.append(stat)
 
         if no_show:

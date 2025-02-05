@@ -12,9 +12,9 @@ class CompoundDataModule(L.LightningDataModule):
     def __init__(
         self,
         descriptor: pd.DataFrame,
-        property_data: pd.DataFrame,
+        attributes: pd.DataFrame,
         splitter: Callable,
-        property_fractions: Dict[str, float],
+        attribute_rates: Dict[str, float],
         batch_size=32,
         num_workers=0,
     ):
@@ -25,13 +25,13 @@ class CompoundDataModule(L.LightningDataModule):
         ----------
         descriptor : pd.DataFrame
             Input features for the compounds
-        property_data : pd.DataFrame
-            Target properties for the compounds
+        attributes : pd.DataFrame
+            Target attributes for the compounds
         splitter : Callable
             Function to split data into train/val/test sets
-        property_fractions : Dict[str, float]
-            Dictionary specifying what fraction of data to use for each property
-            e.g., {"property_name": 0.8} means use 80% of available data for that property
+        attribute_rates : Dict[str, float]
+            Dictionary specifying what fraction of data to use for each attribute
+            e.g., {"attribute_name": 0.8} means use 80% of available data for that attribute
         batch_size : int, optional
             Batch size for dataloaders, by default 32
         num_workers : int, optional
@@ -39,8 +39,8 @@ class CompoundDataModule(L.LightningDataModule):
         """
         super().__init__()
         self.descriptor = descriptor
-        self.property_data = property_data
-        self.property_fractions = property_fractions
+        self.attributes = attributes
+        self.attribute_rates = attribute_rates
         self.batch_size = batch_size
         self.num_workers = num_workers
         if isinstance(splitter, MultiTaskSplitter):
@@ -51,7 +51,7 @@ class CompoundDataModule(L.LightningDataModule):
 
     def setup(self, stage: str = None):
         # Split indices using MultiTaskSplitter
-        indices = self.splitter.split(self.property_data)
+        indices = self.splitter.split(self.attributes)
         if len(indices) < 2:
             raise ValueError("Splitter must return at least two sets of indices")
         if len(indices) == 2:
@@ -61,26 +61,26 @@ class CompoundDataModule(L.LightningDataModule):
             train_indices, val_indices, test_indices = indices
         self.train_dataset = CompoundDataset(
             self.descriptor.iloc[train_indices],
-            self.property_data.iloc[train_indices],
-            **self.property_fractions,
+            self.attributes.iloc[train_indices],
+            **self.attribute_rates,
         )
         # Create validation dataset if validation indices are provided
         if len(val_indices) > 0:
             self.val_dataset = CompoundDataset(
                 self.descriptor.iloc[val_indices],
-                self.property_data.iloc[val_indices],
+                self.attributes.iloc[val_indices],
             )
 
         # Create test dataset if test indices are provided
         if len(test_indices) > 0:
             self.test_dataset = CompoundDataset(
                 self.descriptor.iloc[test_indices],
-                self.property_data.iloc[test_indices],
+                self.attributes.iloc[test_indices],
             )
         else:
             self.test_dataset = CompoundDataset(
                 self.descriptor.iloc[val_indices],
-                self.property_data.iloc[val_indices],
+                self.attributes.iloc[val_indices],
             )
 
     def train_dataloader(self):

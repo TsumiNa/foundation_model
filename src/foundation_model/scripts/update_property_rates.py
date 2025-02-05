@@ -1,56 +1,54 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 import argparse
 from dataclasses import field
 
-from ..configs.model_config import ExperimentConfig
+from foundation_model.configs.model_config import ExperimentConfig
 
 
-def update_property_rates(rate: float) -> None:
-    """Update property sampling rates based on predefined groups.
+def update_attribute_rates(rate: float) -> None:
+    """Update attribute sampling rates based on predefined groups.
 
-    Args:
-        rate: New rate value for mp_props group (0.0 to 1.0)
+    Parameters
+    ----------
+    rate : float
+        New sampling rate for mp_attrs group
     """
-    # Create a new property_fractions dictionary
-    new_fractions = {}
+    # Create a new attribute_rates dictionary
+    new_rates = {}
 
-    # Set ac_qc_starry_props to 1.0 (fixed)
-    for prop in ExperimentConfig.ac_qc_starry_props:
-        new_fractions[prop] = 1.0
+    # Set ac_qc_starry_attrs to fixed rate 1.0
+    for attr in ExperimentConfig.ac_qc_starry_attrs:
+        new_rates[attr] = 1.0
 
-    # Set mp_props to specified rate
-    for prop in ExperimentConfig.mp_props:
-        new_fractions[prop] = rate
+    # Set mp_attrs to specified rate
+    for attr in ExperimentConfig.mp_attrs:
+        new_rates[attr] = rate
 
-    # Update ExperimentConfig's property_fractions default factory
-    ExperimentConfig.property_fractions = field(
-        default_factory=lambda: dict(new_fractions)
-    )
-    print("Updated property rates:")
-    print("- Fixed properties (rate=1.0):")
-    for prop in ExperimentConfig.ac_qc_starry_props:
-        print(f"  - {prop}")
-    print(f"\n- Variable properties (rate={rate}):")
-    for prop in ExperimentConfig.mp_props:
-        print(f"  - {prop}")
+    # Update ExperimentConfig's attribute_rates default factory
+    ExperimentConfig.attribute_rates = field(default_factory=lambda: dict(new_rates))
+
+    print("Updated attribute rates:")
+    print("- Fixed attributes (rate=1.0):")
+    for attr in ExperimentConfig.ac_qc_starry_attrs:
+        print(f"  - {attr}")
+
+    print(f"\n- Variable attributes (rate={rate}):")
+    for attr in ExperimentConfig.mp_attrs:
+        print(f"  - {attr}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Update property sampling rates for mp_props while keeping ac_qc_starry_props fixed at 1.0"
+        description="Update attribute sampling rates for mp_attrs while keeping ac_qc_starry_attrs fixed at 1.0"
     )
     parser.add_argument(
         "--rate",
         type=float,
         required=True,
-        help="Rate value for mp_props (between 0.0 and 1.0)",
+        help="Sampling rate for mp_attrs group (between 0 and 1)",
     )
     args = parser.parse_args()
-
-    if not 0.0 <= args.rate <= 1.0:
-        raise ValueError("Rate must be between 0.0 and 1.0")
-
-    update_property_rates(args.rate)
+    update_attribute_rates(args.rate)
 
 
 if __name__ == "__main__":

@@ -8,20 +8,20 @@ from xenonpy.descriptor import Compositions
 from foundation_model.configs.model_config import ExperimentConfig, ModelConfig
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.data.splitter import MultiTaskSplitter
-from foundation_model.models.multi_task import MultiTaskPropertyPredictor
+from foundation_model.models.multi_task import MultiTaskAttributePredictor
 from foundation_model.utils.training import training
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Multi-task property prediction training script"
+        description="Multi-task attribute prediction training script"
     )
-    # Property rate configuration
+    # Attribute rate configuration
     parser.add_argument(
-        "--mp_props_rate",
+        "--mp_attrs_rate",
         type=float,
         default=1.0,
-        help="Sampling rate for Materials Project properties (default: 1.0)",
+        help="Sampling rate for Materials Project attributes (default: 1.0)",
     )
     # Training configuration
     parser.add_argument(
@@ -153,23 +153,23 @@ def main():
         f"{exp_config.data_dir}/qc_ac_te_mp_rebuild_T=290K_20250202.pd.xz"
     )
 
-    # Update property fractions based on groups and rate
-    property_fractions = {}
+    # Update attribute rates based on groups and rate
+    attribute_rates = {}
 
-    # Set ac_qc_starry_props to fixed rate 1.0
-    for prop in ExperimentConfig.ac_qc_starry_props:
-        property_fractions[prop] = 1.0
+    # Set ac_qc_starry_attrs to fixed rate 1.0
+    for attr in ExperimentConfig.ac_qc_starry_attrs:
+        attribute_rates[attr] = 1.0
 
-    # Set mp_props to specified rate
-    for prop in ExperimentConfig.mp_props:
-        property_fractions[prop] = args.mp_props_rate
+    # Set mp_attrs to specified rate
+    for attr in ExperimentConfig.mp_attrs:
+        attribute_rates[attr] = args.mp_attrs_rate
 
-    # Update ExperimentConfig's property_fractions
-    exp_config.property_fractions = property_fractions
+    # Update ExperimentConfig's attribute_rates
+    exp_config.attribute_rates = attribute_rates
 
-    # Use property lists from ExperimentConfig
-    all_props = ExperimentConfig.ac_qc_starry_props + ExperimentConfig.mp_props
-    qc_ac_te_mp_props = qc_ac_te_mp_dataset[all_props]
+    # Use attribute lists from ExperimentConfig
+    all_attrs = ExperimentConfig.ac_qc_starry_attrs + ExperimentConfig.mp_attrs
+    qc_ac_te_mp_attrs = qc_ac_te_mp_dataset[all_attrs]
 
     # Preprocess data
     from sklearn.preprocessing import QuantileTransformer
@@ -177,15 +177,15 @@ def main():
     qt = QuantileTransformer(output_distribution="normal").set_output(
         transform="pandas"
     )
-    qc_ac_te_mp_props = qt.fit_transform(qc_ac_te_mp_props)
+    qc_ac_te_mp_attrs = qt.fit_transform(qc_ac_te_mp_attrs)
 
     # Calculate descriptors
     comp_calc = Compositions(featurizers=exp_config.xenonpy_featurizers, n_jobs=20)
     all_comp_desc = comp_calc.fit_transform(qc_ac_te_mp_dataset).dropna()
-    qc_ac_te_mp_props = qc_ac_te_mp_props.loc[all_comp_desc.index]
+    qc_ac_te_mp_attrs = qc_ac_te_mp_attrs.loc[all_comp_desc.index]
 
-    used_props = qc_ac_te_mp_props[all_props].dropna(how="all")
-    used_desc = all_comp_desc.loc[used_props.index]
+    used_attrs = qc_ac_te_mp_attrs[all_attrs].dropna(how="all")
+    used_desc = all_comp_desc.loc[used_attrs.index]
 
     # Prepare data module
     splitter = MultiTaskSplitter(
@@ -197,9 +197,9 @@ def main():
 
     datamodule = CompoundDataModule(
         descriptor=used_desc,
-        property_data=used_props,
+        attributes=used_attrs,
         splitter=splitter,
-        property_fractions=exp_config.property_fractions,
+        attribute_rates=exp_config.attribute_rates,
         batch_size=exp_config.batch_size,
         num_workers=exp_config.num_workers,
     )
@@ -208,10 +208,10 @@ def main():
     model_config.shared_block_dims[0] = used_desc.shape[1]
 
     # Initialize model
-    model = MultiTaskPropertyPredictor(
+    model = MultiTaskAttributePredictor(
         shared_block_dims=model_config.shared_block_dims,
         task_block_dims=model_config.task_block_dims,
-        n_tasks=len(exp_config.property_fractions),
+        n_tasks=len(exp_config.attribute_rates),
         norm_shared=model_config.norm_shared,
         norm_tasks=model_config.norm_tasks,
         residual_shared=model_config.residual_shared,

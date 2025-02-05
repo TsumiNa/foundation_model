@@ -8,7 +8,7 @@ from torch.functional import F
 from .layers import LinearBlock, LinearLayer
 
 
-class MultiTaskPropertyPredictor(L.LightningModule):
+class MultiTaskAttributePredictor(L.LightningModule):
     def __init__(
         self,
         shared_block_dims: list[int],
@@ -22,7 +22,7 @@ class MultiTaskPropertyPredictor(L.LightningModule):
         norm_tasks: bool = True,
         residual_tasks: bool = False,
     ):
-        super(MultiTaskPropertyPredictor, self).__init__()
+        super(MultiTaskAttributePredictor, self).__init__()
         # Important: This property activates manual optimization.
         self.automatic_optimization = False
         self.save_hyperparameters()

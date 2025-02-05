@@ -3,9 +3,16 @@
 python=/data/.miniforge3/envs/xepy311/bin/python
 max_epochs=300
 
-$python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_props_rate=0.8 --exp_name mp_0.8-shared_lr=0.005_task_lr=0.01
-$python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_props_rate=0.6 --exp_name mp_0.6-shared_lr=0.005_task_lr=0.01
-$python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_props_rate=0.5 --exp_name mp_0.5-shared_lr=0.005_task_lr=0.01
-$python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_props_rate=0.3 --exp_name mp_0.3-shared_lr=0.005_task_lr=0.01
-$python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_props_rate=0.2 --exp_name mp_0.2-shared_lr=0.005_task_lr=0.01
-$python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_props_rate=0.1 --exp_name mp_0.1-shared_lr=0.005_task_lr=0.01
+# $python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_props_rate=0.8 --exp_name mp_0.8-shared_lr=0.001_task_lr=0.01
+# $python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_props_rate=0.6 --exp_name mp_0.6-shared_lr=0.001_task_lr=0.01
+# $python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_props_rate=0.5 --exp_name mp_0.5-shared_lr=0.001_task_lr=0.01
+# $python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_props_rate=0.3 --exp_name mp_0.3-shared_lr=0.001_task_lr=0.01
+# $python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_props_rate=0.2 --exp_name mp_0.2-shared_lr=0.001_task_lr=0.01
+# $python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_props_rate=0.1 --exp_name mp_0.1-shared_lr=0.001_task_lr=0.01
+$python -m foundation_model.scripts.train \
+--max_epochs=$max_epochs \
+--devices=4 \
+--mp_props_rate=0.0 \
+--shared_block_lr=0.05 \
+--log_dir="results/debug_logs" \
+--exp_name "mp_0.0-shared_lr=0.05_task_lr=0.01"

@@ -17,7 +17,7 @@ class ModelConfig:
     residual_tasks: bool = False
 
     # Optimizer configuration
-    shared_block_lr: float = 0.005
+    shared_block_lr: float = 0.001
     task_block_lr: float = 0.01
 
 
@@ -25,8 +25,8 @@ class ModelConfig:
 class ExperimentConfig:
     """Training experiment configuration"""
 
-    # Property groups for rate control
-    ac_qc_starry_props: ClassVar[List[str]] = [
+    # Attribute groups for rate control
+    ac_qc_starry_attrs: ClassVar[List[str]] = [
         "Seebeck coefficient",
         "Thermal conductivity",
         "Electrical resistivity",
@@ -43,7 +43,7 @@ class ExperimentConfig:
         "Electronic thermal conductivity",
     ]
 
-    mp_props: ClassVar[List[str]] = [
+    mp_attrs: ClassVar[List[str]] = [
         "Band gap",
         "Density",
         "Efermi",
@@ -84,8 +84,8 @@ class ExperimentConfig:
     test_ratio: float = 0.0
     random_seed: int = 42
 
-    # Property sampling ratios
-    property_fractions: Dict[str, float] = field(
+    # Attribute sampling ratios
+    attribute_rates: Dict[str, float] = field(
         default_factory=lambda: {
             "Seebeck coefficient": 1.0,
             "Thermal conductivity": 1.0,
@@ -124,7 +124,7 @@ class ExperimentConfig:
     early_stopping_config: Dict = field(
         default_factory=lambda: {
             "monitor": "val_loss",
-            "patience": 10,
+            "patience": 20,
             "mode": "min",
             "min_delta": 1e-4,
         }
