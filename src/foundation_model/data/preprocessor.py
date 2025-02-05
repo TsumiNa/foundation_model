@@ -51,9 +51,8 @@ class AttributePreprocessor:
                 f"Rates must be between 0 and 1. Invalid values: {invalid_rates}"
             )
 
-        # Drop attributes with rate=0 or not in attribute_rates
-        valid_attrs = [attr for attr, rate in self.attribute_rates.items() if rate > 0]
-        processed = attributes[valid_attrs].copy()
+        # Create a copy of the input DataFrame
+        processed = attributes.copy()
 
         # Apply rates by masking data
         for attr, rate in self.attribute_rates.items():
@@ -66,5 +65,12 @@ class AttributePreprocessor:
                         valid_indices, len(valid_indices) - num_to_use, replace=False
                     )
                     processed.loc[processed.index[mask_indices], attr] = np.nan
+
+        # Drop attributes with rate=0
+        zero_rate_attrs = [
+            attr for attr, rate in self.attribute_rates.items() if rate == 0
+        ]
+        if zero_rate_attrs:
+            processed = processed.drop(columns=zero_rate_attrs)
 
         return processed

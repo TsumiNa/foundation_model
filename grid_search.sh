@@ -14,7 +14,7 @@ task_lr=0.01
 num_ensembles=4  # Number of runs for each configuration
 
 # Define array for mp_attrs_rate
-mp_attrs_rates=(1.0 0.8 0.6 0.5 0.3 0.2 0.1 0.05 0.0)
+# mp_attrs_rates=(1.0 0.8 0.6 0.5 0.3 0.2 0.1 0.05 0.0)
 mp_attrs_rates=(0.05 0.0)
 
 # Loop through parameter combinations and ensemble runs
@@ -25,7 +25,6 @@ for mp_rate in "${mp_attrs_rates[@]}"; do
         exp_name="mp_${mp_rate}-shared_lr=${shared_lr}_task_lr=${task_lr}"
         
         cmd="$python -m foundation_model.scripts.train \
-            --filter_attributes \
             --max_epochs=$max_epochs \
             --devices=$devices \
             --num_workers=$num_workers \

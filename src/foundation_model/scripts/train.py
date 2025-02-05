@@ -7,6 +7,7 @@ from xenonpy.descriptor import Compositions
 
 from foundation_model.configs.model_config import ExperimentConfig, ModelConfig
 from foundation_model.data.datamodule import CompoundDataModule
+from foundation_model.data.preprocessor import AttributePreprocessor
 from foundation_model.data.splitter import MultiTaskSplitter
 from foundation_model.models.multi_task import MultiTaskAttributePredictor
 from foundation_model.utils.training import training
@@ -22,11 +23,6 @@ def parse_args():
         type=float,
         default=1.0,
         help="Sampling rate for Materials Project attributes (default: 1.0)",
-    )
-    parser.add_argument(
-        "--filter_attributes",
-        action="store_true",
-        help="If set, only keeps attributes specified in attribute_rates",
     )
     # Training configuration
     parser.add_argument(
@@ -192,20 +188,26 @@ def main():
     used_attrs = qc_ac_te_mp_attrs[all_attrs].dropna(how="all")
     used_desc = all_comp_desc.loc[used_attrs.index]
 
-    # Prepare data module
+    # First preprocess attributes
+    preprocessor = AttributePreprocessor(attribute_rates=exp_config.attribute_rates)
+    processed_attrs = preprocessor.process(used_attrs)
+
+    # Then split the processed data
     splitter = MultiTaskSplitter(
         train_ratio=exp_config.train_ratio,
         val_ratio=exp_config.val_ratio,
         test_ratio=exp_config.test_ratio,
         random_state=exp_config.random_seed,
     )
+    train_idx, val_idx, test_idx = splitter.split(processed_attrs)
 
+    # Create datamodule with preprocessed data
     datamodule = CompoundDataModule(
         descriptor=used_desc,
-        attributes=used_attrs,
-        splitter=splitter,
-        attribute_rates=exp_config.attribute_rates,
-        filter_attributes=args.filter_attributes,
+        attributes=processed_attrs,
+        train_idx=train_idx,
+        val_idx=val_idx,
+        test_idx=test_idx,
         batch_size=exp_config.batch_size,
         num_workers=exp_config.num_workers,
     )
@@ -214,8 +216,7 @@ def main():
     model_config.shared_block_dims[0] = used_desc.shape[1]
 
     # Setup datamodule to get actual number of tasks
-    datamodule.setup()
-    n_tasks = len(datamodule.train_dataset.attribute_names)
+    n_tasks = len(processed_attrs)
 
     # Initialize model with correct number of tasks
     model = MultiTaskAttributePredictor(
