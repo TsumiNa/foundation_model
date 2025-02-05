@@ -16,12 +16,17 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Multi-task attribute prediction training script"
     )
-    # Attribute rate configuration
+    # Attribute configuration
     parser.add_argument(
         "--mp_attrs_rate",
         type=float,
         default=1.0,
         help="Sampling rate for Materials Project attributes (default: 1.0)",
+    )
+    parser.add_argument(
+        "--filter_attributes",
+        action="store_true",
+        help="If set, only keeps attributes specified in attribute_rates",
     )
     # Training configuration
     parser.add_argument(
@@ -200,6 +205,7 @@ def main():
         attributes=used_attrs,
         splitter=splitter,
         attribute_rates=exp_config.attribute_rates,
+        filter_attributes=args.filter_attributes,
         batch_size=exp_config.batch_size,
         num_workers=exp_config.num_workers,
     )

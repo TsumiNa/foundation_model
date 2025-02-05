@@ -15,6 +15,7 @@ class CompoundDataModule(L.LightningDataModule):
         attributes: pd.DataFrame,
         splitter: Callable,
         attribute_rates: Dict[str, float],
+        filter_attributes: bool = False,
         batch_size=32,
         num_workers=0,
     ):
@@ -32,6 +33,9 @@ class CompoundDataModule(L.LightningDataModule):
         attribute_rates : Dict[str, float]
             Dictionary specifying what fraction of data to use for each attribute
             e.g., {"attribute_name": 0.8} means use 80% of available data for that attribute
+        filter_attributes : bool, optional
+            If True, only keeps attributes specified in attribute_rates.
+            If False (default), keeps all attributes and only applies masking.
         batch_size : int, optional
             Batch size for dataloaders, by default 32
         num_workers : int, optional
@@ -41,6 +45,7 @@ class CompoundDataModule(L.LightningDataModule):
         self.descriptor = descriptor
         self.attributes = attributes
         self.attribute_rates = attribute_rates
+        self.filter_attributes = filter_attributes
         self.batch_size = batch_size
         self.num_workers = num_workers
         if isinstance(splitter, MultiTaskSplitter):
@@ -62,6 +67,7 @@ class CompoundDataModule(L.LightningDataModule):
         self.train_dataset = CompoundDataset(
             self.descriptor.iloc[train_indices],
             self.attributes.iloc[train_indices],
+            filter_attributes=self.filter_attributes,
             **self.attribute_rates,
         )
         # Create validation dataset if validation indices are provided
