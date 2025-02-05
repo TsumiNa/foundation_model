@@ -16,6 +16,13 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Multi-task property prediction training script"
     )
+    # Property rate configuration
+    parser.add_argument(
+        "--mp_props_rate",
+        type=float,
+        default=1.0,
+        help="Sampling rate for Materials Project properties (default: 1.0)",
+    )
     # Training configuration
     parser.add_argument(
         "--max_epochs",
@@ -146,36 +153,22 @@ def main():
         f"{exp_config.data_dir}/qc_ac_te_mp_rebuild_T=290K_20250202.pd.xz"
     )
 
-    # Define properties
-    ac_qc_starry_props = [
-        "Seebeck coefficient",
-        "Thermal conductivity",
-        "Electrical resistivity",
-        "Magnetic susceptibility",
-        # "Specific heat capacity", # Not available in dataset
-        "Hall coefficient",
-        "ZT",
-        "Power factor",
-        "Carrier concentration",
-        "Electrical conductivity",
-        "Thermopower",
-        "Lattice thermal conductivity",
-        "Hall mobility",
-        "Electronic contribution",
-        "Electronic thermal conductivity",
-    ]
+    # Update property fractions based on groups and rate
+    property_fractions = {}
 
-    mp_props = [
-        "Band gap",
-        "Density",
-        "Efermi",
-        "Final energy per atom",
-        "Formation energy per atom",
-        "Total magnetization",
-        "Volume",
-    ]
+    # Set ac_qc_starry_props to fixed rate 1.0
+    for prop in ExperimentConfig.ac_qc_starry_props:
+        property_fractions[prop] = 1.0
 
-    all_props = ac_qc_starry_props + mp_props
+    # Set mp_props to specified rate
+    for prop in ExperimentConfig.mp_props:
+        property_fractions[prop] = args.mp_props_rate
+
+    # Update ExperimentConfig's property_fractions
+    exp_config.property_fractions = property_fractions
+
+    # Use property lists from ExperimentConfig
+    all_props = ExperimentConfig.ac_qc_starry_props + ExperimentConfig.mp_props
     qc_ac_te_mp_props = qc_ac_te_mp_dataset[all_props]
 
     # Preprocess data

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import ClassVar, Dict, List
 
 
 @dataclass
@@ -17,13 +17,41 @@ class ModelConfig:
     residual_tasks: bool = False
 
     # Optimizer configuration
-    shared_block_lr: float = 0.01
-    task_block_lr: float = 0.05
+    shared_block_lr: float = 0.005
+    task_block_lr: float = 0.01
 
 
 @dataclass
 class ExperimentConfig:
     """Training experiment configuration"""
+
+    # Property groups for rate control
+    ac_qc_starry_props: ClassVar[List[str]] = [
+        "Seebeck coefficient",
+        "Thermal conductivity",
+        "Electrical resistivity",
+        "Magnetic susceptibility",
+        "Hall coefficient",
+        "ZT",
+        "Power factor",
+        "Carrier concentration",
+        "Electrical conductivity",
+        "Thermopower",
+        "Lattice thermal conductivity",
+        "Hall mobility",
+        "Electronic contribution",
+        "Electronic thermal conductivity",
+    ]
+
+    mp_props: ClassVar[List[str]] = [
+        "Band gap",
+        "Density",
+        "Efermi",
+        "Final energy per atom",
+        "Formation energy per atom",
+        "Total magnetization",
+        "Volume",
+    ]
 
     # Experiment configuration
     exp_name: str = "default_experiment"
@@ -63,7 +91,6 @@ class ExperimentConfig:
             "Thermal conductivity": 1.0,
             "Electrical resistivity": 1.0,
             "Magnetic susceptibility": 1.0,
-            # "Specific heat capacity": 1.0, # Not available in dataset
             "Electrical conductivity": 1.0,
             "ZT": 1.0,
             "Hall coefficient": 1.0,
