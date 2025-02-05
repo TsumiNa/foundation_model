@@ -207,7 +207,7 @@ def main():
         attributes=processed_attrs,
         train_idx=train_idx,
         val_idx=val_idx,
-        test_idx=test_idx,
+        # test_idx=test_idx,
         batch_size=exp_config.batch_size,
         num_workers=exp_config.num_workers,
     )
@@ -216,7 +216,7 @@ def main():
     model_config.shared_block_dims[0] = used_desc.shape[1]
 
     # Setup datamodule to get actual number of tasks
-    n_tasks = len(processed_attrs)
+    n_tasks = len(processed_attrs.columns)
 
     # Initialize model with correct number of tasks
     model = MultiTaskAttributePredictor(

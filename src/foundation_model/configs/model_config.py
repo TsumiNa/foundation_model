@@ -8,9 +8,9 @@ class ModelConfig:
 
     # Model architecture configuration
     shared_block_dims: List[int] = field(
-        default_factory=lambda: [None, 128, 64, 32]
+        default_factory=lambda: [None, 128, 64]
     )  # None will be replaced with input_dim at runtime
-    task_block_dims: List[int] = field(default_factory=lambda: [32, 16, 1])
+    task_block_dims: List[int] = field(default_factory=lambda: [64, 32, 16, 1])
     norm_shared: bool = True
     norm_tasks: bool = True
     residual_shared: bool = False

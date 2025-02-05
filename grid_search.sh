@@ -30,7 +30,6 @@ for mp_rate in "${mp_attrs_rates[@]}"; do
             --num_workers=$num_workers \
             --mp_attrs_rate=$mp_rate \
             --log_dir=\"$log_dir\" \
-            --random_seed=$current_seed \
             --exp_name \"$exp_name\""
         
         echo "Running experiment: $exp_name"
