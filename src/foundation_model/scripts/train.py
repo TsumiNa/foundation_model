@@ -229,6 +229,8 @@ def main():
         shared_block_lr=model_config.shared_block_lr,
         task_block_lr=model_config.task_block_lr,
     )
+    # # Compile the model
+    # model = torch.compile(model)
 
     # Train model
     training(

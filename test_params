@@ -9,5 +9,5 @@ max_epochs=300
 # $python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_attrs_rate=0.3 --filter_attributes --exp_name mp_0.3-shared_lr=0.001_task_lr=0.01
 # $python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_attrs_rate=0.2 --filter_attributes --exp_name mp_0.2-shared_lr=0.001_task_lr=0.01
 # $python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_attrs_rate=0.1 --filter_attributes --exp_name mp_0.1-shared_lr=0.001_task_lr=0.01
-$python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_attrs_rate=0.05 --log_dir="results/20250206_logs" --filter_attributes --exp_name "mp_0.0-shared_lr=0.05_task_lr=0.01"
-$python -m foundation_model.scripts.train --max_epochs=$max_epochs --devices=4 --mp_attrs_rate=0.0 --log_dir="results/20250206_logs" --filter_attributes --exp_name "mp_0.0-shared_lr=0.05_task_lr=0.01"
+$python -m foundation_model.scripts.train --filter_attributes --max_epochs=$max_epochs --devices=4 --mp_attrs_rate=0.05 --log_dir="results/20250206_logs" --random_seed=1234 --exp_name "mp_0.0-shared_lr=0.05_task_lr=0.01"
+$python -m foundation_model.scripts.train --filter_attributes --max_epochs=$max_epochs --devices=4 --mp_attrs_rate=0.0 --log_dir="results/20250206_logs" --random_seed=1234 --exp_name "mp_0.0-shared_lr=0.05_task_lr=0.01"

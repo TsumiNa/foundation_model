@@ -1,11 +1,9 @@
-from typing import Callable, Dict
-
 import lightning as L
+import numpy as np
 import pandas as pd
 from torch.utils.data import DataLoader
 
 from .dataset import CompoundDataset
-from .splitter import MultiTaskSplitter
 
 
 class CompoundDataModule(L.LightningDataModule):
@@ -13,9 +11,10 @@ class CompoundDataModule(L.LightningDataModule):
         self,
         descriptor: pd.DataFrame,
         attributes: pd.DataFrame,
-        splitter: Callable,
-        attribute_rates: Dict[str, float],
-        filter_attributes: bool = True,
+        train_idx: np.ndarray,
+        val_idx: np.ndarray,
+        test_idx: np.ndarray = None,
+        predict_idx: np.ndarray = None,
         batch_size=32,
         num_workers=0,
     ):
@@ -27,15 +26,15 @@ class CompoundDataModule(L.LightningDataModule):
         descriptor : pd.DataFrame
             Input features for the compounds
         attributes : pd.DataFrame
-            Target attributes for the compounds
-        splitter : Callable
-            Function to split data into train/val/test sets
-        attribute_rates : Dict[str, float]
-            Dictionary specifying what fraction of data to use for each attribute
-            e.g., {"attribute_name": 0.8} means use 80% of available data for that attribute
-        filter_attributes : bool, optional
-            If True (default), only keeps attributes specified in attribute_rates.
-            If False, keeps all attributes and only applies masking.
+            Target attributes for the compounds (already preprocessed)
+        train_idx : np.ndarray
+            Indices for training data
+        val_idx : np.ndarray
+            Indices for validation data
+        test_idx : np.ndarray, optional
+            Indices for test data. If None, will use validation dataset for testing
+        predict_idx : np.ndarray, optional
+            Indices for prediction data. If None, will use test dataset for prediction
         batch_size : int, optional
             Batch size for dataloaders, by default 32
         num_workers : int, optional
@@ -44,67 +43,39 @@ class CompoundDataModule(L.LightningDataModule):
         super().__init__()
         self.descriptor = descriptor
         self.attributes = attributes
-        self.attribute_rates = attribute_rates
-        self.filter_attributes = filter_attributes
+        self.train_idx = train_idx
+        self.val_idx = val_idx
+        self.test_idx = test_idx
+        self.predict_idx = predict_idx
         self.batch_size = batch_size
         self.num_workers = num_workers
-        if isinstance(splitter, MultiTaskSplitter):
-            self.splitter = splitter
-        else:
-            # Default to MultiTaskSplitter if a custom splitter is not provided
-            self.splitter = MultiTaskSplitter(train_ratio=0.9, val_ratio=0.1)
 
     def setup(self, stage: str = None):
-        # Split indices using MultiTaskSplitter
-        indices = self.splitter.split(self.attributes)
-        if len(indices) < 2:
-            raise ValueError("Splitter must return at least two sets of indices")
-        if len(indices) == 2:
-            train_indices, test_indices = indices
-            val_indices = []
-        else:
-            train_indices, val_indices, test_indices = indices
+        # Create train dataset
         self.train_dataset = CompoundDataset(
-            self.descriptor.iloc[train_indices],
-            self.attributes.iloc[train_indices],
-            filter_attributes=self.filter_attributes,
-            **self.attribute_rates,
+            self.descriptor.iloc[self.train_idx],
+            self.attributes.iloc[self.train_idx],
         )
+
         # Create validation dataset if validation indices are provided
-        if len(val_indices) > 0:
-            # For validation, only filter attributes but don't apply rates
-            val_rates = {
-                attr: 1.0 for attr, rate in self.attribute_rates.items() if rate > 0
-            }
+        if len(self.val_idx) > 0:
             self.val_dataset = CompoundDataset(
-                self.descriptor.iloc[val_indices],
-                self.attributes.iloc[val_indices],
-                filter_attributes=self.filter_attributes,
-                **val_rates,
+                self.descriptor.iloc[self.val_idx],
+                self.attributes.iloc[self.val_idx],
             )
 
-        # Create test dataset if test indices are provided
-        if len(test_indices) > 0:
-            # For testing, only filter attributes but don't apply rates
-            test_rates = {
-                attr: 1.0 for attr, rate in self.attribute_rates.items() if rate > 0
-            }
+        # Create test dataset only if test indices are provided
+        if self.test_idx is not None:
             self.test_dataset = CompoundDataset(
-                self.descriptor.iloc[test_indices],
-                self.attributes.iloc[test_indices],
-                filter_attributes=self.filter_attributes,
-                **test_rates,
+                self.descriptor.iloc[self.test_idx],
+                self.attributes.iloc[self.test_idx],
             )
-        else:
-            # When using validation set as test set, only filter attributes but don't apply rates
-            test_rates = {
-                attr: 1.0 for attr, rate in self.attribute_rates.items() if rate > 0
-            }
-            self.test_dataset = CompoundDataset(
-                self.descriptor.iloc[val_indices],
-                self.attributes.iloc[val_indices],
-                filter_attributes=self.filter_attributes,
-                **test_rates,
+
+        # Create prediction dataset only if prediction indices are provided
+        if self.predict_idx is not None:
+            self.predict_dataset = CompoundDataset(
+                self.descriptor.iloc[self.predict_idx],
+                self.attributes.iloc[self.predict_idx],
             )
 
     def train_dataloader(self):
@@ -133,12 +104,33 @@ class CompoundDataModule(L.LightningDataModule):
                 shuffle=False,
                 num_workers=self.num_workers,
             )
+        elif hasattr(self, "val_dataset"):
+            return DataLoader(
+                self.val_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+            )
         return None
 
     def predict_dataloader(self):
-        if hasattr(self, "test_dataset"):
+        if hasattr(self, "predict_dataset"):
+            return DataLoader(
+                self.predict_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+            )
+        elif hasattr(self, "test_dataset"):
             return DataLoader(
                 self.test_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+            )
+        elif hasattr(self, "val_dataset"):
+            return DataLoader(
+                self.val_dataset,
                 batch_size=self.batch_size,
                 shuffle=False,
                 num_workers=self.num_workers,
