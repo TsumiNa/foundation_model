@@ -213,11 +213,15 @@ def main():
     # Update input dimension in model config
     model_config.shared_block_dims[0] = used_desc.shape[1]
 
-    # Initialize model
+    # Setup datamodule to get actual number of tasks
+    datamodule.setup()
+    n_tasks = len(datamodule.train_dataset.attribute_names)
+
+    # Initialize model with correct number of tasks
     model = MultiTaskAttributePredictor(
         shared_block_dims=model_config.shared_block_dims,
         task_block_dims=model_config.task_block_dims,
-        n_tasks=len(exp_config.attribute_rates),
+        n_tasks=n_tasks,  # Use actual number of tasks after filtering
         norm_shared=model_config.norm_shared,
         norm_tasks=model_config.norm_tasks,
         residual_shared=model_config.residual_shared,

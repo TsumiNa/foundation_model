@@ -21,8 +21,8 @@ def test_zero_rate_removes_attribute():
     )
 
     # Check that attr2 was removed
-    assert len(dataset.attributes) == 2
-    assert "attr2" not in dataset.attributes
+    assert len(dataset._attribute_names) == 2
+    assert "attr2" not in dataset._attribute_names
     assert dataset.y.shape[1] == 2
     assert dataset.mask.shape[1] == 2
 
@@ -44,8 +44,8 @@ def test_filter_attributes_true():
     )
 
     # Check that only specified attributes are kept
-    assert len(dataset.attributes) == 2
-    assert set(dataset.attributes) == {"attr1", "attr3"}
+    assert len(dataset._attribute_names) == 2
+    assert set(dataset._attribute_names) == {"attr1", "attr3"}
     assert dataset.y.shape[1] == 2
     assert dataset.mask.shape[1] == 2
 
@@ -67,8 +67,8 @@ def test_filter_attributes_false():
     )
 
     # Check that all attributes are kept
-    assert len(dataset.attributes) == 3
-    assert set(dataset.attributes) == {"attr1", "attr2", "attr3"}
+    assert len(dataset._attribute_names) == 3
+    assert set(dataset._attribute_names) == {"attr1", "attr2", "attr3"}
     assert dataset.y.shape[1] == 3
     assert dataset.mask.shape[1] == 3
 
@@ -132,7 +132,7 @@ def test_all_combinations():
             **case["rates"],
         )
 
-        actual_attrs = set(dataset.attributes)
+        actual_attrs = set(dataset._attribute_names)
         expected_attrs = case["expected_attrs"]
         print(f"\nTest case: {case}")
         print(f"Actual attributes: {actual_attrs}")

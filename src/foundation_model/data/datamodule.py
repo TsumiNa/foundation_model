@@ -15,7 +15,7 @@ class CompoundDataModule(L.LightningDataModule):
         attributes: pd.DataFrame,
         splitter: Callable,
         attribute_rates: Dict[str, float],
-        filter_attributes: bool = False,
+        filter_attributes: bool = True,
         batch_size=32,
         num_workers=0,
     ):
@@ -34,8 +34,8 @@ class CompoundDataModule(L.LightningDataModule):
             Dictionary specifying what fraction of data to use for each attribute
             e.g., {"attribute_name": 0.8} means use 80% of available data for that attribute
         filter_attributes : bool, optional
-            If True, only keeps attributes specified in attribute_rates.
-            If False (default), keeps all attributes and only applies masking.
+            If True (default), only keeps attributes specified in attribute_rates.
+            If False, keeps all attributes and only applies masking.
         batch_size : int, optional
             Batch size for dataloaders, by default 32
         num_workers : int, optional
@@ -72,21 +72,39 @@ class CompoundDataModule(L.LightningDataModule):
         )
         # Create validation dataset if validation indices are provided
         if len(val_indices) > 0:
+            # For validation, only filter attributes but don't apply rates
+            val_rates = {
+                attr: 1.0 for attr, rate in self.attribute_rates.items() if rate > 0
+            }
             self.val_dataset = CompoundDataset(
                 self.descriptor.iloc[val_indices],
                 self.attributes.iloc[val_indices],
+                filter_attributes=self.filter_attributes,
+                **val_rates,
             )
 
         # Create test dataset if test indices are provided
         if len(test_indices) > 0:
+            # For testing, only filter attributes but don't apply rates
+            test_rates = {
+                attr: 1.0 for attr, rate in self.attribute_rates.items() if rate > 0
+            }
             self.test_dataset = CompoundDataset(
                 self.descriptor.iloc[test_indices],
                 self.attributes.iloc[test_indices],
+                filter_attributes=self.filter_attributes,
+                **test_rates,
             )
         else:
+            # When using validation set as test set, only filter attributes but don't apply rates
+            test_rates = {
+                attr: 1.0 for attr, rate in self.attribute_rates.items() if rate > 0
+            }
             self.test_dataset = CompoundDataset(
                 self.descriptor.iloc[val_indices],
                 self.attributes.iloc[val_indices],
+                filter_attributes=self.filter_attributes,
+                **test_rates,
             )
 
     def train_dataloader(self):

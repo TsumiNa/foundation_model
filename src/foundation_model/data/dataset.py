@@ -11,7 +11,7 @@ class CompoundDataset(Dataset):
         self,
         descriptor: pd.DataFrame,
         attributes: pd.DataFrame,
-        filter_attributes: bool = False,
+        filter_attributes: bool = True,
         **attribute_rates,
     ):
         """
@@ -24,8 +24,8 @@ class CompoundDataset(Dataset):
         attributes : pd.DataFrame
             Target attributes for the compounds
         filter_attributes : bool, optional
-            If True, only keeps attributes specified in attribute_rates.
-            If False (default), keeps all attributes and only applies masking.
+            If True (default), only keeps attributes specified in attribute_rates.
+            If False, keeps all attributes and only applies masking.
         attribute_rates : dict
             Dictionary specifying what fraction of data to use for each attribute
             e.g., {"attribute_name": 0.8} means use 80% of available data for that attribute
@@ -61,14 +61,14 @@ class CompoundDataset(Dataset):
 
             if filter_attributes:
                 # Only keep attributes specified in attribute_rates
-                self.attributes = list(attribute_rates.keys())
-                attributes = attributes[self.attributes]
+                self._attribute_names = list(attribute_rates.keys())
+                attributes = attributes[self._attribute_names]
             else:
                 # Keep all attributes but apply masking
-                self.attributes = initial_attributes
+                self._attribute_names = initial_attributes
 
             # Initialize rates with defaults (1.0) for attributes not in attribute_rates
-            self._attribute_rates = {attr: 1.0 for attr in self.attributes}
+            self._attribute_rates = {attr: 1.0 for attr in self._attribute_names}
             # Update with provided rates
             self._attribute_rates.update(attribute_rates)
 
@@ -78,18 +78,20 @@ class CompoundDataset(Dataset):
             ]
             if zero_rate_attrs:
                 keep_attrs = [
-                    attr for attr in self.attributes if attr not in zero_rate_attrs
+                    attr
+                    for attr in self._attribute_names
+                    if attr not in zero_rate_attrs
                 ]
                 attributes = attributes[keep_attrs]
-                self.attributes = keep_attrs
+                self._attribute_names = keep_attrs
                 self._attribute_rates = {
                     attr: rate
                     for attr, rate in self._attribute_rates.items()
                     if rate > 0
                 }
         else:
-            self.attributes = initial_attributes
-            self._attribute_rates = {attr: 1.0 for attr in self.attributes}
+            self._attribute_names = initial_attributes
+            self._attribute_rates = {attr: 1.0 for attr in self._attribute_names}
 
         # Convert data and create masks
         self.x = descriptor.values
@@ -99,7 +101,7 @@ class CompoundDataset(Dataset):
         # Apply rates to mask
         for attr_name, rate in self._attribute_rates.items():
             if rate < 1.0:  # Only process attributes that need data reduction
-                attr_idx = self.attributes.index(attr_name)
+                attr_idx = self._attribute_names.index(attr_name)
                 valid_indices = np.where(self.mask[:, attr_idx])[0]
                 if len(valid_indices) > 0:
                     num_to_use = int(len(valid_indices) * rate)
@@ -114,13 +116,13 @@ class CompoundDataset(Dataset):
         if not np.all(valid_columns):
             self.y = self.y[:, valid_columns]
             self.mask = self.mask[:, valid_columns]
-            self.attributes = [
-                attr for i, attr in enumerate(self.attributes) if valid_columns[i]
+            self._attribute_names = [
+                attr for i, attr in enumerate(self._attribute_names) if valid_columns[i]
             ]
             self._attribute_rates = {
                 attr: rate
                 for attr, rate in self._attribute_rates.items()
-                if attr in self.attributes
+                if attr in self._attribute_names
             }
 
         # Clean up invalid rows (samples with all zeros in mask)
@@ -140,7 +142,7 @@ class CompoundDataset(Dataset):
         return len(self.x)
 
     def __getitem__(self, idx):
-        return self.x[idx], self.y[idx], self.mask[idx], self.attributes
+        return self.x[idx], self.y[idx], self.mask[idx], self._attribute_names
 
     @property
     def rates(self) -> Dict[str, float]:
@@ -154,3 +156,15 @@ class CompoundDataset(Dataset):
             where 1.0 means using all available data and 0.5 means using half.
         """
         return self._attribute_rates.copy()
+
+    @property
+    def attribute_names(self) -> list:
+        """
+        Get the list of attribute names.
+
+        Returns
+        -------
+        list
+            List of attribute names in the dataset.
+        """
+        return self._attribute_names.copy()
