@@ -30,10 +30,10 @@ lightning_logs/
 
 # Project specific
 results/
-data/raw/
 images/
 matched_structures/
 tamura/
+data/
 
 # IDE
 .idea/
