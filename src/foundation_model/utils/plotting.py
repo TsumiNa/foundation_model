@@ -225,10 +225,13 @@ def plot_predictions(
         preds_m = all_preds[mask_m, m]
         targets_m = all_targets[mask_m, m]
 
-        # Create scatter plot
-        fig, _, stat = plot_scatter_comparison(
-            targets_m, preds_m, title=attributes[m], return_stat=True
-        )
+        try:
+            # Create scatter plot
+            fig, _, stat = plot_scatter_comparison(
+                targets_m, preds_m, title=attributes[m], return_stat=True
+            )
+        except ValueError:
+            continue
 
         # Save figure if path provided
         if savefig and isinstance(savefig, str):
