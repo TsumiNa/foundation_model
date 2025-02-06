@@ -1,15 +1,102 @@
+import os
 from typing import Dict, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 from scipy import stats
+
+
+def plot_test_loss(df, save_dir=None, dpi=150):
+    """
+    绘制并保存所有 (test_loss) 相关的图表。
+
+    参数：
+    df : DataFrame
+        包含 `mp_rate` 和 `xxx (test_loss)` 数据的 DataFrame。
+    save_dir : str, 可选
+        如果提供目录路径，则会保存图像到该目录，否则仅显示图像。
+    dpi : int, 默认 150
+        图片分辨率，适用于 PPT。
+    """
+    # **去除 mp_rate=0.8 的数据**
+    df_filtered = df[df["mp_rate"] != 0.8]
+
+    # **获取所有 `(test_loss)` 相关的列**
+    test_loss_columns = [col for col in df_filtered.columns if "(test_loss)" in col]
+
+    # **创建存储目录（如果需要）**
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+
+    # **遍历所有 `(test_loss)` 相关的列**
+    for loss_col in test_loss_columns:
+        # **移除该列的 NaN**
+        df_cleaned = df_filtered.dropna(subset=[loss_col])
+
+        # 按 mp_rate 分组
+        grouped = df_cleaned.groupby("mp_rate")[loss_col]
+
+        # 计算均值、标准差和样本数
+        means = grouped.mean()
+        stds = grouped.std()
+        counts = grouped.count()
+
+        # **移除 std 计算中产生的 NaN**
+        stds = stds.fillna(0)
+
+        # 计算 95% 置信区间
+        ci95 = 1.96 * stds / np.sqrt(counts)
+
+        # **移除 NaN 值的 mp_rate**
+        valid_mask = means.notna() & ci95.notna()
+        means = means[valid_mask]
+        ci95 = ci95[valid_mask]
+
+        # **确保所有数据都是浮点数**
+        means_np = means.to_numpy()
+        ci95_np = ci95.to_numpy()
+        mp_rate_np = means.index.to_numpy()
+
+        # **绘制 PPT 友好的图表**
+        plt.figure(figsize=(8, 6), dpi=dpi)
+        sns.lineplot(x=mp_rate_np, y=means_np, marker="o", label="Mean", linewidth=2.5)
+        plt.fill_between(
+            mp_rate_np,
+            means_np - ci95_np,
+            means_np + ci95_np,
+            alpha=0.2,
+            label="95% CI",
+        )
+
+        # **设置坐标轴标签**
+        plt.xlabel("# of Material Project (%)", fontsize=16)
+        plt.ylabel(f"{loss_col.replace('(test_loss)', '(MSE)')}", fontsize=16)
+
+        # **移除标题**
+        plt.legend(fontsize=14)
+        plt.grid(True, linestyle="--", linewidth=1.2)
+        plt.gca().spines["top"].set_linewidth(1.5)
+        plt.gca().spines["right"].set_linewidth(1.5)
+
+        # **保存或显示**
+        if save_dir:
+            img_path = os.path.join(
+                save_dir,
+                f"{loss_col.replace(' ', '_').replace('(test_loss)', '').strip()}.png",
+            )
+            plt.savefig(img_path, bbox_inches="tight", dpi=dpi)
+            plt.close()
+        else:
+            plt.show()
 
 
 def plot_scatter_comparison(
     y_true: np.ndarray,
     y_pred: np.ndarray,
-    title: Optional[str] = None,
+    title: str | None = None,
     return_stat: bool = False,
+    ax: plt.Axes | None = None,
 ) -> Tuple[plt.Figure, plt.Axes] | Tuple[plt.Figure, plt.Axes, Dict]:
     """
     Create a scatter plot comparing predicted vs true values.
@@ -35,8 +122,11 @@ def plot_scatter_comparison(
     mse = np.mean((y_true - y_pred) ** 2)
     mae = np.mean(np.abs(y_true - y_pred))
 
-    # Create figure
-    fig, ax = plt.subplots(figsize=(8, 8))
+    if not ax:
+        # Create figure
+        fig, ax = plt.subplots(figsize=(8, 8), dpi=150)
+    else:
+        fig = ax.get_figure()
 
     # Plot scatter points
     ax.scatter(y_true, y_pred, alpha=0.5)
@@ -69,8 +159,8 @@ def plot_scatter_comparison(
     )
 
     # Set labels and title
-    ax.set_xlabel("True Values")
-    ax.set_ylabel("Predicted Values")
+    ax.set_xlabel("Observation")
+    ax.set_ylabel("Prediction")
     if title:
         ax.set_title(title)
 

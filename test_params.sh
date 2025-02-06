@@ -13,7 +13,7 @@ task_lr=0.01
 num_ensembles=5  # Number of runs for each configuration
 
 # Define array for mp_attrs_rate
-mp_attrs_rates=(1.0)
+mp_attrs_rates=(0.7)
 
 # Loop through parameter combinations and ensemble runs
 for mp_rate in "${mp_attrs_rates[@]}"; do

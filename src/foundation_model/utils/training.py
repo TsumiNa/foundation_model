@@ -58,7 +58,7 @@ def training(
     early_stopping = (
         EarlyStopping(
             monitor=early_stopping_config.get("monitor", "val_loss"),
-            patience=early_stopping_config.get("patience", 10),
+            patience=early_stopping_config.get("patience", 20),
             mode=early_stopping_config.get("mode", "min"),
             min_delta=early_stopping_config.get("min_delta", 1e-4),
             verbose=verbose,
@@ -123,3 +123,5 @@ def training(
     # Train and test the model
     trainer.fit(model, datamodule=datamodule)
     trainer.test(datamodule=datamodule)
+
+    return trainer
