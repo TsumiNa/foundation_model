@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 
-# Define base parameters
 python=/data/.miniforge3/envs/xepy311/bin/python
 max_epochs=300
-log_dir="results/20250206_logs"
 random_seed=1234
+log_dir="results/20250206_1_logs"
 num_workers=0
 devices=4
 
@@ -14,7 +13,7 @@ task_lr=0.01
 num_ensembles=5  # Number of runs for each configuration
 
 # Define array for mp_attrs_rate
-mp_attrs_rates=(0.6 0.4 0.2 0.05 0.0)
+mp_attrs_rates=(1.0)
 
 # Loop through parameter combinations and ensemble runs
 for mp_rate in "${mp_attrs_rates[@]}"; do

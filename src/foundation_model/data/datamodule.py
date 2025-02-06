@@ -51,32 +51,37 @@ class CompoundDataModule(L.LightningDataModule):
         self.num_workers = num_workers
 
     def setup(self, stage: str = None):
-        # Create train dataset
-        self.train_dataset = CompoundDataset(
-            self.descriptor.iloc[self.train_idx],
-            self.attributes.iloc[self.train_idx],
-        )
-
-        # Create validation dataset if validation indices are provided
-        if len(self.val_idx) > 0:
-            self.val_dataset = CompoundDataset(
-                self.descriptor.iloc[self.val_idx],
-                self.attributes.iloc[self.val_idx],
+        if stage == "fit" or stage is None:
+            # Create train dataset
+            self.train_dataset = CompoundDataset(
+                self.descriptor.iloc[self.train_idx],
+                self.attributes.iloc[self.train_idx],
             )
 
-        # Create test dataset only if test indices are provided
-        if self.test_idx is not None:
-            self.test_dataset = CompoundDataset(
-                self.descriptor.iloc[self.test_idx],
-                self.attributes.iloc[self.test_idx],
-            )
+            # Create validation dataset if validation indices are provided
+            if len(self.val_idx) > 0:
+                self.val_dataset = CompoundDataset(
+                    self.descriptor.iloc[self.val_idx],
+                    self.attributes.iloc[self.val_idx],
+                )
+            else:
+                self.train_dataset = CompoundDataset(
+                    self.descriptor.iloc[self.train_idx],
+                    self.attributes.iloc[self.train_idx],
+                )
 
-        # Create prediction dataset only if prediction indices are provided
-        if self.predict_idx is not None:
-            self.predict_dataset = CompoundDataset(
-                self.descriptor.iloc[self.predict_idx],
-                self.attributes.iloc[self.predict_idx],
-            )
+        if stage == "test" or stage is None:
+            # Create test dataset only if test indices are provided
+            if self.test_idx is not None:
+                self.test_dataset = CompoundDataset(
+                    self.descriptor.iloc[self.test_idx],
+                    self.attributes.iloc[self.test_idx],
+                )
+            else:
+                self.test_dataset = CompoundDataset(
+                    self.descriptor.iloc[self.val_idx],
+                    self.attributes.iloc[self.val_idx],
+                )
 
     def train_dataloader(self):
         return DataLoader(
@@ -100,37 +105,6 @@ class CompoundDataModule(L.LightningDataModule):
         if hasattr(self, "test_dataset"):
             return DataLoader(
                 self.test_dataset,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.num_workers,
-            )
-        elif hasattr(self, "val_dataset"):
-            return DataLoader(
-                self.val_dataset,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.num_workers,
-            )
-        return None
-
-    def predict_dataloader(self):
-        if hasattr(self, "predict_dataset"):
-            return DataLoader(
-                self.predict_dataset,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.num_workers,
-            )
-        elif hasattr(self, "test_dataset"):
-            return DataLoader(
-                self.test_dataset,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.num_workers,
-            )
-        elif hasattr(self, "val_dataset"):
-            return DataLoader(
-                self.val_dataset,
                 batch_size=self.batch_size,
                 shuffle=False,
                 num_workers=self.num_workers,

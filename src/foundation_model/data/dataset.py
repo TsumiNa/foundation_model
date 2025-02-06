@@ -27,6 +27,11 @@ class CompoundDataset(Dataset):
         if not list(attributes.columns):
             raise ValueError("attributes DataFrame must have at least one column")
 
+        # Drop rows where all attributes are NaN
+        valid_rows = ~attributes.isna().all(axis=1)
+        descriptor = descriptor[valid_rows]
+        attributes = attributes[valid_rows]
+
         # Convert data and create masks
         self.x = torch.tensor(descriptor.values, dtype=torch.float32)
         self.y = attributes.values.astype(np.float32)
