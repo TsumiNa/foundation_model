@@ -5,7 +5,8 @@ max_epochs=300
 random_seed=1234
 log_dir="results/20250206_1_logs"
 num_workers=0
-devices=4
+accelerator="auto"
+devices=1
 
 # Fixed parameters
 shared_lr=0.001
@@ -13,7 +14,7 @@ task_lr=0.01
 num_ensembles=5  # Number of runs for each configuration
 
 # Define array for mp_attrs_rate
-mp_attrs_rates=(0.7)
+mp_attrs_rates=(0.3)
 
 # Loop through parameter combinations and ensemble runs
 for mp_rate in "${mp_attrs_rates[@]}"; do
@@ -27,6 +28,7 @@ for mp_rate in "${mp_attrs_rates[@]}"; do
             --devices=$devices \
             --num_workers=$num_workers \
             --mp_attrs_rate=$mp_rate \
+            --accelerator=$accelerator \
             --log_dir=\"$log_dir\" \
             --exp_name \"$exp_name\""
         
