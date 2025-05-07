@@ -73,13 +73,39 @@ python -m foundation_model.scripts.train
 
 Available command line arguments:
 
-- `--max_epochs`: Maximum number of training epochs (default: 100)
-- `--accelerator`: Hardware accelerator to use (default: "auto")
-- `--devices`: Number of devices to use (default: 4)
-- `--strategy`: Training strategy (default: "auto")
-- `--default_root_dir`: Directory for logs and checkpoints
-- `--batch_size`: Training batch size (default: 128)
-- `--num_workers`: Number of data loading workers (default: 0)
+- `--pretrain` (bool): enable contrastive / cross / mask losses  
+- `--with_structure` (bool): expect structure descriptors in the batch  
+- `--freeze_encoder` (bool): stop gradient for shared (and structure) encoders  
+- `--lora_rank` (int): LoRA adapter rank (0 = off)  
+- `--sequence_mode` [str]: `rnn|vec|transformer|tcn|hybrid` (default: transformer)  
+- `--loss_weights` JSON string: e.g. `'{"con":1,"cross":1,"mask":1,"attr":0}'`  
+- `--max_epochs`, `--accelerator`, `--devices`, `--strategy`, `--default_root_dir`  
+- `--batch_size`, `--num_workers`
+
+#### Pre‑training vs. Fine‑tuning
+
+| Mode | Arguments | What trains |
+|------|-----------|-------------|
+| **Encoder frozen** | `--freeze_encoder --lora_rank 0` | Only task heads (linear probe) |
+| **LoRA micro‑tune** | `--freeze_encoder --lora_rank 8` | Heads + small LoRA adapters |
+| **Full fine‑tune** | *(default)* | Encoder + heads |
+| **Pre‑train** | `--pretrain --with_structure` | Encoder with dual‑modality losses |
+
+> Tip: combine `--pretrain` with `--loss_weights '{"attr":0,"seq":0}'` if you
+> don't want downstream heads to affect pre‑training.
+
+
+## Recent Updates
+
+### 2025‑05‑08
+- **Dual‑modality encoder** (formula + structure) with gated fusion.
+- New `--pretrain` flag enables contrastive, cross‑reconstruction, masked‑feature, and optional property‑supervision losses.
+- **Encoder control flags**  
+  - `--freeze_encoder` freezes shared / structure encoders  
+  - `--lora_rank` adds LoRA adapters for lightweight fine‑tuning
+- Added five selectable sequence heads: `rnn`, `vec`, `transformer` (Flash‑Attention), `tcn`, `hybrid`.
+- CLI accepts `--sequence_mode`, `--loss_weights` for custom recipes.
+
 
 ### Model Configuration
 
@@ -90,11 +116,16 @@ Model and training configurations can be modified in `configs/model_config.py`:
 
 ## Features
 
-- Multi-task learning for material property prediction
-- Flexible architecture with shared and task-specific layers
-- Support for handling missing values in the dataset
-- Comprehensive logging and visualization tools
-- Configurable data splitting strategies
+- Multi‑task learning for material property prediction  
+- **Dual‑modality support**: formula descriptors **+** optional structure descriptors with gated fusion  
+- **Pre‑training & downstream in one model**  
+  - Pre‑train losses: contrastive, cross‑reconstruction, masked‑feature, property supervision  
+  - `--pretrain` flag toggles extra losses; same architecture used for fine‑tune  
+- **Flexible sequence heads**: `rnn`, `vec`, `transformer`, `tcn`, `hybrid` (Flash‑Attention inside)  
+- **Encoder control**: `--freeze_encoder` to lock shared layers; add *LoRA* adapters with `--lora_rank`  
+- Handles missing values via masking & modality dropout  
+- Comprehensive logging and visualization tools  
+- Configurable data splitting strategies  
 - Early stopping and model checkpointing
 
 ## Model Architecture
@@ -110,3 +141,37 @@ The model consists of:
 - Handles missing values through masking
 - Configurable data splitting ratios
 - Property-specific sampling fractions
+
+### Quick Examples
+
+##### Example 1 – Pre‑train with formula+structure
+
+```bash
+python -m foundation_model.scripts.train \
+  --pretrain --with_structure \
+  --loss_weights '{"attr":0,"seq":0}' \
+  --max_epochs 60
+```
+
+##### Example 2 – Fine‑tune only heads with LoRA (encoder frozen)
+
+```bash
+python -m foundation_model.scripts.train \
+  --freeze_encoder --lora_rank 8 \
+  --sequence_mode rnn
+```
+
+##### Example 3 – Full fine‑tune, Flash‑Attention transformer head
+
+```bash
+python -m foundation_model.scripts.train \
+  --sequence_mode transformer --d_model 256 --nhead 4
+```
+
+##### Example 4 – Partial fine‑tune (encoder unlocked, LoRA off)
+
+```bash
+python -m foundation_model.scripts.train \
+  --freeze_encoder False --lora_rank 0 \
+  --sequence_mode vec --seq_len 256
+```
