@@ -1,11 +1,16 @@
 [project]
 name = "foundation-model"
 version = "0.2.0"
-description = "Add your description here"
+description = "A multi-task learning model for predicting material properties"
 readme = "README.md"
 authors = [{ name = "TsumiNa", email = "liu.chang.1865@gmail.com" }]
 requires-python = ">=3.11, <3.14"
-dependencies = ["lightning>=2.5.1.post0", "numpy<2", "pandas>=2.2.3"]
+dependencies = [
+    "lightning>=2.5.1.post0",
+    "numpy<2",
+    "pandas>=2.2.3",
+    "shotgun-csp",
+]
 license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["foundation-model", "pytorch", "transformers"]
@@ -16,12 +21,15 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.11",
-    "Framework :: PyTorch",
-    "Framework :: Transformers",
 ]
+
+
 [project.scripts]
 foundation-model = "foundation_model:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+shotgun-csp = { git = "https://github.com/TsumiNa/shotgun_csp_next", tag = "v0.5.3" }

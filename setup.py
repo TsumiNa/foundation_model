@@ -12,7 +12,7 @@ setup(
         "numpy",
         "matplotlib",
         "scipy",
-        "xenonpy",
+        "shotgun_csp",
         "scikit-learn",
     ],
     python_requires=">=3.10",
