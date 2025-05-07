@@ -181,7 +181,9 @@ def main():
     qc_ac_te_mp_attrs = qt.fit_transform(qc_ac_te_mp_attrs)
 
     # Calculate descriptors
-    comp_calc = Compositions(featurizers=exp_config.shotgun_csp_featurizers, n_jobs=20)
+    comp_calc = Compositions(
+        featurizers=exp_config.compositional_featurizers, n_jobs=20
+    )
     all_comp_desc = comp_calc.fit_transform(qc_ac_te_mp_dataset).dropna()
     qc_ac_te_mp_attrs = qc_ac_te_mp_attrs.loc[all_comp_desc.index]
 

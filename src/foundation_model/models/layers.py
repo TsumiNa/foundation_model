@@ -72,6 +72,14 @@ class ResidualBlock(nn.Module):
 
 
 class LinearBlock(nn.Module):
+    """
+    Block of multiple LinearLayers with optional normalization and residual connections.
+
+    dim_output_layer : int | None, optional
+        If given, an extra ``LinearLayer(shared_layer_dims[-1], dim_output_layer)`` is
+        appended automatically, mirroring the pattern used at call‑sites.
+    """
+
     def __init__(
         self,
         shared_layer_dims: list[int],
@@ -79,6 +87,8 @@ class LinearBlock(nn.Module):
         residual=False,
         layer_activation: None | nn.Module = nn.LeakyReLU(0.1),
         output_active: None | nn.Module = nn.LeakyReLU(0.1),
+        *,
+        dim_output_layer: int | None = None,
     ):
         super().__init__()
         counter = len(shared_layer_dims) - 1
@@ -139,6 +149,18 @@ class LinearBlock(nn.Module):
                     )
                     for i in range(counter)
                 ]
+            )
+
+        # Optionally add a final output LinearLayer for convenience
+        if dim_output_layer is not None:
+            self.layers = nn.Sequential(
+                self.layers,
+                LinearLayer(
+                    shared_layer_dims[-1],
+                    dim_output_layer,
+                    normalization=False,
+                    activation=None,
+                ),
             )
 
     def forward(self, x):

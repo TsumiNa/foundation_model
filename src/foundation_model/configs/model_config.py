@@ -64,7 +64,7 @@ class ExperimentConfig:
     figures_dir: str = "results/figures"
 
     # Feature extraction configuration
-    xenonpy_featurizers: List[str] = field(
+    compositional_featurizers: List[str] = field(
         default_factory=lambda: [
             "WeightedAverage",
             "WeightedVariance",
