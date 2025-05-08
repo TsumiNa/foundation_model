@@ -6,10 +6,11 @@ readme = "README.md"
 authors = [{ name = "TsumiNa", email = "liu.chang.1865@gmail.com" }]
 requires-python = ">=3.11, <3.14"
 dependencies = [
-    "lightning>=2.5.1.post0",
+    "lightning[pytorch-extra]>=2.5.1.post0",
     "numpy<2",
     "pandas>=2.2.3",
     "shotgun-csp",
+    "tensorboard>=2.19.0",
     "torch>=2.1",
 ]
 license = "MIT"
@@ -33,4 +34,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.uv.sources]
-shotgun-csp = { git = "https://github.com/TsumiNa/shotgun_csp_next", tag = "v0.5.3" }
+shotgun-csp = { git = "https://github.com/TsumiNa/shotgun_csp_next", branch = "main" }
