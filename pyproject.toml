@@ -12,6 +12,7 @@ dependencies = [
     "shotgun-csp",
     "tensorboard>=2.19.0",
     "torch>=2.1",
+    "torch-tb-profiler>=0.4.3",
 ]
 license = "MIT"
 license-files = ["LICENSE"]

@@ -168,7 +168,7 @@ class SequenceHeadFixedVec(nn.Module):
         self.seq_len = seq_len
         self.net = nn.Sequential(
             nn.Linear(d_in, d_in),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(d_in, seq_len),
         )
 
@@ -379,7 +379,7 @@ class _DilatedTCN(nn.Module):
                 for d, p in zip(dilations, pads)
             ]
         )
-        self.act = nn.ReLU()
+        self.act = nn.LeakyReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B,C,L)

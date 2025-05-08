@@ -1,0 +1,64 @@
+# Base model configuration for FlexibleMultiTaskModel
+model:
+  shared_block_dims: [256, 512, 512]
+  task_configs:
+    # Example regression task for material formation energy
+    - name: formation_energy
+      type: regression
+      dims: [256, 128, 1]
+      norm: true
+      residual: false
+      weight: 1.0
+      enabled: true
+
+    # Example regression task for band gap
+    - name: band_gap
+      type: regression
+      dims: [256, 128, 1]
+      norm: true
+      residual: false
+      weight: 1.0
+      enabled: true
+
+    # Example sequence task for temperature curve prediction
+    - name: temp_curve
+      type: sequence
+      subtype: rnn
+      hidden: 128
+      cell: gru
+      weight: 1.0
+      enabled: true
+
+  # Structure fusion options
+  with_structure: false
+  struct_block_dims: [128, 256, 512]
+  modality_dropout_p: 0.3
+
+  # Optimization options
+  shared_block_lr: 5.0e-3
+  task_block_lr: 5.0e-3
+  seq_head_lr: 5.0e-3
+
+  # Normalization options
+  norm_shared: true
+  residual_shared: false
+
+  # Pre-training options
+  pretrain: false
+  mask_ratio: 0.15
+  temperature: 0.07
+
+  # LoRA options
+  freeze_encoder: false
+  lora_rank: 0
+  lora_alpha: 1.0
+
+# Trainer configuration
+trainer:
+  max_epochs: 100
+  accelerator: gpu
+  devices: 1
+  precision: 16-mixed
+  accumulate_grad_batches: 1
+  gradient_clip_val: 1.0
+  log_every_n_steps: 10
