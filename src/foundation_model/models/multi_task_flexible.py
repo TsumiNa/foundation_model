@@ -22,7 +22,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-from .layers import LinearBlock  # same helper used by the old model
+from .fc_layers import LinearBlock  # same helper used by the old model
 
 
 # --------------------------------------------------------------------------- #
