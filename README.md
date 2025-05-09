@@ -137,27 +137,9 @@ You can also use YAML configuration files for more complex setups. See `configs/
 > don't want downstream heads to affect pre‑training.
 
 
-## Recent Updates
+## Update History
 
-### 2025‑05‑09
-- **Major Code Refactoring**:
-  - Implemented a more modular architecture with separate components
-  - Created a task head abstraction hierarchy for different task types
-  - Moved components to dedicated modules (StructureEncoder, LoRAAdapter, GatedFusion)
-  - Added configuration system using Pydantic models
-  - Added YAML-based configuration support
-- **Package Management**:
-  - Switched from pip to uv for package management
-  - Added proper dependency specifications in pyproject.toml
-
-### 2025‑05‑08
-- **Dual‑modality encoder** (formula + structure) with gated fusion.
-- New `--pretrain` flag enables contrastive, cross‑reconstruction, masked‑feature, and optional property‑supervision losses.
-- **Encoder control flags**  
-  - `--freeze_encoder` freezes shared / structure encoders  
-  - `--lora_rank` adds LoRA adapters for lightweight fine‑tuning
-- Added five selectable sequence heads: `rnn`, `vec`, `transformer` (Flash‑Attention), `tcn`, `hybrid`.
-- CLI accepts `--sequence_mode`, `--loss_weights` for custom recipes.
+Update history has been moved to [changes.md](changes.md).
 
 
 ## Features
