@@ -421,6 +421,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 and torch.rand(1).item() < self.mod_dropout_p
             ):
                 h_structure, x_struct = None, None
+                # Update input x to reflect modality dropout
+                if isinstance(x, (list, tuple)):
+                    x = (x_formula, None)
         else:
             # For single modality
             h_latent, h_task = self.encoder(x_formula)
@@ -470,7 +473,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # Self-supervised losses
         if self.enable_self_supervised_training:
-            self._add_self_supervised_losses(total_loss, logs, h_formula, h_structure, x_formula, x_struct)
+            total_loss = self._add_self_supervised_losses(total_loss, logs, h_formula, h_structure, x_formula, x_struct)
 
         # Log metrics
         self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
