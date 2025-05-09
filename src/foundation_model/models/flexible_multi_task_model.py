@@ -341,14 +341,59 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     # ----------- Pre-training helpers ----------- #
     def _mask_feat(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Create masked version of features for masked feature modeling."""
+        """
+        Implement Masked Feature Modeling (MFM).
+
+        Randomly masks a portion of the input features (determined by self.mask_ratio),
+        sets the masked positions to 0, and returns both the masked features and the mask
+        positions. During pre-training, the model attempts to reconstruct these masked
+        feature values, similar to the Masked Language Modeling technique in BERT.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input feature tensor
+
+        Returns
+        -------
+        x_masked : torch.Tensor
+            Masked feature tensor with the same shape as x
+        mask : torch.Tensor
+            Binary mask tensor indicating which positions were masked (1=masked)
+        """
         mask = torch.rand_like(x) < self.mask_ratio
         x_masked = x.clone()
         x_masked[mask] = 0.0
         return x_masked, mask
 
     def _contrastive(self, h_f: torch.Tensor, h_s: torch.Tensor) -> torch.Tensor:
-        """Compute contrastive loss between formula and structure representations."""
+        """
+        Calculate contrastive loss between formula and structure representations.
+
+        The goal of contrastive learning is to bring different modal representations
+        (formula and structure) of the same sample closer in the feature space,
+        while pushing representations of different samples apart. Process steps:
+
+        1. Apply L2 normalization to representations, placing them on a unit hypersphere
+        2. Calculate cosine similarity matrix of normalized representations, divided by temperature tau
+        3. Compute bidirectional cross-entropy loss (formula→structure and structure→formula), with diagonal target
+        4. Return the average of both directional losses
+
+        This contrastive learning method encourages the model to learn aligned
+        representations across modalities, improving the quality of multi-modal data representation.
+
+        Parameters
+        ----------
+        h_f : torch.Tensor
+            Formula representation, shape (B,D)
+        h_s : torch.Tensor
+            Structure representation, shape (B,D)
+
+        Returns
+        -------
+        torch.Tensor
+            Scalar contrastive loss
+        """
         h_f = F.normalize(h_f, dim=-1)
         h_s = F.normalize(h_s, dim=-1)
         logits = (h_f @ h_s.T) / self.tau
