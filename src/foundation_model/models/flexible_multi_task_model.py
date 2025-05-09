@@ -10,24 +10,27 @@ Tensor shape legend (used across all docstrings):
 * **D** – latent / embedding feature dimension
 """
 
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import lightning as L
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.optim.lr_scheduler import _LRScheduler
 
 from .components.gated_fusion import GatedFusion
 from .components.structure_encoder import StructureEncoder
 from .fc_layers import LinearBlock
-from .task_config import (
+from .model_config import (
     ClassificationTaskConfig,
+    OptimizerConfig,
     RegressionTaskConfig,
     SequenceTaskConfig,
     TaskType,
 )
-from .task_head import SequenceBaseHead, create_task_heads
+from .task_head import create_task_heads
+from .task_head.sequence.base import SequenceBaseHead
 
 
 class FlexibleMultiTaskModel(L.LightningModule):
@@ -40,29 +43,25 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     Parameters
     ----------
-    shared_block_dims : List[int]
+    shared_block_dims : list[int]
         Widths of shared MLP layers (foundation encoder output → deposit).
-    task_configs : List[Union[RegressionTaskConfig, ClassificationTaskConfig, SequenceTaskConfig]]
+    task_configs : list[RegressionTaskConfig | ClassificationTaskConfig | SequenceTaskConfig]
         List of task configurations.
     norm_shared : bool
         Whether to apply normalization in shared layers.
     residual_shared : bool
         Whether to use residual connections in shared layers.
-    shared_block_lr : float
-        Learning rate for shared foundation encoder.
-    task_block_lr : float
-        Learning rate for task-specific heads.
-    seq_head_lr : float
-        Learning rate for sequence heads.
+    shared_block_optimizer : OptimizerConfig | None
+        Optimizer configuration for shared foundation encoder and deposit layer.
     with_structure : bool
         Whether to enable structure fusion.
-    struct_block_dims : Optional[List[int]]
+    struct_block_dims : list[int] | None
         Dimensions for structure encoder, if with_structure is True.
     modality_dropout_p : float
         Dropout probability for modality fusion.
     pretrain : bool
         Whether to use pre-training objectives.
-    loss_weights : Optional[Dict[str, float]]
+    loss_weights : dict[str, float] | None
         Weights for different loss components.
     mask_ratio : float
         Mask ratio for masked feature modeling.
@@ -78,25 +77,21 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     def __init__(
         self,
-        shared_block_dims: List[int],
-        task_configs: List[
-            Union[RegressionTaskConfig, ClassificationTaskConfig, SequenceTaskConfig]
-        ],
+        shared_block_dims: list[int],
+        task_configs: list[RegressionTaskConfig | ClassificationTaskConfig | SequenceTaskConfig],
         *,
         # Normalization/residual options
         norm_shared: bool = True,
         residual_shared: bool = False,
         # Optimization parameters
-        shared_block_lr: float = 5e-3,
-        task_block_lr: float = 5e-3,
-        seq_head_lr: float = 5e-3,
+        shared_block_optimizer: OptimizerConfig | None = None,
         # Structure fusion options
         with_structure: bool = False,
-        struct_block_dims: Optional[List[int]] = None,
+        struct_block_dims: list[int] | None = None,
         modality_dropout_p: float = 0.3,
         # Pre-training options
         pretrain: bool = False,
-        loss_weights: Optional[Dict[str, float]] = None,
+        loss_weights: dict[str, float] | None = None,
         mask_ratio: float = 0.15,
         temperature: float = 0.07,
         # LoRA options
@@ -137,10 +132,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.lora_rank = lora_rank
         self.lora_alpha = lora_alpha
 
-        # Learning rates
-        self._lr_shared = shared_block_lr
-        self._lr_tasks = task_block_lr
-        self._lr_seq = seq_head_lr
+        # Optimizer configurations
+        self.shared_block_optimizer = shared_block_optimizer or OptimizerConfig(weight_decay=1e-2)
+
+        # Store task configurations by name for easy reference
+        self.task_configs_map = {cfg.name: cfg for cfg in self.task_configs}
 
         # Loss weights (keys: con, cross, mask, attr, seq)
         self.w = {"con": 1, "cross": 1, "mask": 1, "attr": 1, "seq": 1}
@@ -152,15 +148,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self._init_task_heads()
 
         # Task type tracking
-        self.has_regression = any(
-            tc.type == TaskType.REGRESSION for tc in task_configs if tc.enabled
-        )
-        self.has_classification = any(
-            tc.type == TaskType.CLASSIFICATION for tc in task_configs if tc.enabled
-        )
-        self.has_sequence = any(
-            tc.type == TaskType.SEQUENCE for tc in task_configs if tc.enabled
-        )
+        self.has_regression = any(tc.type == TaskType.REGRESSION for tc in task_configs if tc.enabled)
+        self.has_classification = any(tc.type == TaskType.CLASSIFICATION for tc in task_configs if tc.enabled)
+        self.has_sequence = any(tc.type == TaskType.SEQUENCE for tc in task_configs if tc.enabled)
 
         # Manual optimization
         self.automatic_optimization = False
@@ -208,13 +198,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # Structure encoder and fusion
         if self.with_structure:
-            if (
-                not self.struct_block_dims
-                or self.struct_block_dims[-1] != self.shared_block_dims[-1]
-            ):
-                raise ValueError(
-                    "struct_block_dims must be provided and last dim equal to formula latent dim"
-                )
+            if not self.struct_block_dims or self.struct_block_dims[-1] != self.shared_block_dims[-1]:
+                raise ValueError("struct_block_dims must be provided and last dim equal to formula latent dim")
             self.struct_enc = StructureEncoder(
                 self.struct_block_dims[0],
                 self.struct_block_dims[1:],
@@ -226,13 +211,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Pre-training decoders
         if self.pretrain:
             latent_dim = self.shared_block_dims[-1]
-            self.dec_formula = nn.Linear(
-                latent_dim, self.shared_block_dims[0], bias=False
-            )
+            self.dec_formula = nn.Linear(latent_dim, self.shared_block_dims[0], bias=False)
             if self.with_structure:
-                self.dec_struct = nn.Linear(
-                    latent_dim, self.struct_block_dims[0], bias=False
-                )
+                self.dec_struct = nn.Linear(latent_dim, self.struct_block_dims[0], bias=False)
 
     def _init_task_heads(self):
         """Initialize task heads based on configuration."""
@@ -251,8 +232,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
         )
 
     def _encode(
-        self, x_formula: torch.Tensor, x_struct: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        self, x_formula: torch.Tensor, x_struct: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Encode inputs through shared layers and structure fusion if enabled.
 
@@ -260,7 +241,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         ----------
         x_formula : torch.Tensor
             Formula input tensor.
-        x_struct : torch.Tensor, optional
+        x_struct : torch.Tensor | None
             Structure input tensor, if using structure fusion.
 
         Returns
@@ -292,9 +273,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return h_latent, h_task
 
     @staticmethod
-    def _masked_mse(
-        pred: torch.Tensor, tgt: torch.Tensor, mask: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _masked_mse(pred: torch.Tensor, tgt: torch.Tensor, mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute masked MSE loss.
 
@@ -315,30 +294,28 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Per-attribute losses.
         """
         losses = F.mse_loss(pred, tgt, reduction="none") * mask
-        per_attr = torch.nan_to_num(
-            losses.sum(0) / mask.sum(0), nan=0.0, posinf=0.0, neginf=0.0
-        )
+        per_attr = torch.nan_to_num(losses.sum(0) / mask.sum(0), nan=0.0, posinf=0.0, neginf=0.0)
         return losses.sum() / mask.sum(), per_attr
 
     def forward(
         self,
-        x: Union[torch.Tensor, Tuple[torch.Tensor, Optional[torch.Tensor]]],
-        temps: Optional[torch.Tensor] = None,
-    ) -> Dict[str, torch.Tensor]:
+        x: torch.Tensor | tuple[torch.Tensor, torch.Tensor | None],
+        temps: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
         """
         Forward pass through the model.
 
         Parameters
         ----------
-        x : torch.Tensor or Tuple[torch.Tensor, Optional[torch.Tensor]]
+        x : torch.Tensor | tuple[torch.Tensor, torch.Tensor | None]
             Input tensor(s). If structure fusion is enabled, this should be a tuple
             of (formula_tensor, structure_tensor).
-        temps : torch.Tensor, optional
+        temps : torch.Tensor | None
             Temperature or sequence points, required for sequence tasks.
 
         Returns
         -------
-        Dict[str, torch.Tensor]
+        dict[str, torch.Tensor]
             Dictionary of task outputs, keyed by task name.
         """
         # Unpack inputs
@@ -362,7 +339,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return outputs
 
     # ----------- Pre-training helpers ----------- #
-    def _mask_feat(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _mask_feat(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Create masked version of features for masked feature modeling."""
         mask = torch.rand_like(x) < self.mask_ratio
         x_masked = x.clone()
@@ -402,18 +379,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # Get raw embeddings for pre-training tasks
         h_f = self.shared(x_formula)
-        h_s = (
-            self.struct_enc(x_struct)
-            if (self.with_structure and x_struct is not None)
-            else None
-        )
+        h_s = self.struct_enc(x_struct) if (self.with_structure and x_struct is not None) else None
 
         # Modality dropout during pre-training
-        if (
-            self.pretrain
-            and h_s is not None
-            and torch.rand(1).item() < self.mod_dropout_p
-        ):
+        if self.pretrain and h_s is not None and torch.rand(1).item() < self.mod_dropout_p:
             h_s, x_struct = None, None
 
         # Forward pass
@@ -462,8 +431,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # 2) Cross-reconstruction loss
             if h_s is not None and self.w["cross"] > 0:
                 l_cross = 0.5 * (
-                    F.mse_loss(self.dec_struct(h_f), x_struct)
-                    + F.mse_loss(self.dec_formula(h_s), x_formula)
+                    F.mse_loss(self.dec_struct(h_f), x_struct) + F.mse_loss(self.dec_formula(h_s), x_formula)
                 )
                 total_loss += self.w["cross"] * l_cross
                 logs["train_cross"] = l_cross
@@ -471,14 +439,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # 3) Masked feature modeling
             if self.w["mask"] > 0:
                 xf_mask, mf = self._mask_feat(x_formula)
-                l_mask = F.mse_loss(
-                    self.dec_formula(self.shared(xf_mask))[mf], x_formula[mf]
-                )
+                l_mask = F.mse_loss(self.dec_formula(self.shared(xf_mask))[mf], x_formula[mf])
                 if x_struct is not None:
                     xs_mask, ms = self._mask_feat(x_struct)
-                    l_mask_s = F.mse_loss(
-                        self.dec_struct(self.struct_enc(xs_mask))[ms], x_struct[ms]
-                    )
+                    l_mask_s = F.mse_loss(self.dec_struct(self.struct_enc(xs_mask))[ms], x_struct[ms])
                     l_mask = 0.5 * (l_mask + l_mask_s)
                 total_loss += self.w["mask"] * l_mask
                 logs["train_mask"] = l_mask
@@ -545,39 +509,155 @@ class FlexibleMultiTaskModel(L.LightningModule):
         x, _, _, temps, _, _ = batch
         return self(x, temps)
 
-    def configure_optimizers(self):
-        """Configure optimizers for all parameter groups."""
+    def _create_optimizer(self, params: list[torch.nn.Parameter], config: OptimizerConfig) -> torch.optim.Optimizer:
+        """
+        Create an optimizer based on the configuration.
 
-        def _trainable(p):
-            return p.requires_grad
+        Parameters
+        ----------
+        params : list[torch.nn.Parameter]
+            Parameters to optimize
+        config : OptimizerConfig
+            Optimizer configuration
 
-        # Shared parameters
-        shared_params = list(self.shared.parameters()) + list(self.deposit.parameters())
-        opt_shared = optim.Adam(filter(_trainable, shared_params), lr=self._lr_shared)
+        Returns
+        -------
+        torch.optim.Optimizer
+            Configured optimizer instance
+        """
+        params = list(filter(lambda p: p.requires_grad, params))
 
-        # Task head parameters
-        task_params = []
-        seq_params = []
-
-        for name, head in self.task_heads.items():
-            if isinstance(head, SequenceBaseHead):
-                seq_params.extend(filter(_trainable, head.parameters()))
-            else:
-                task_params.extend(filter(_trainable, head.parameters()))
-
-        opt_task = optim.Adam(filter(_trainable, task_params), lr=self._lr_tasks)
-
-        # Structure encoder parameters if present
-        opts = [opt_shared, opt_task]
-        if self.with_structure:
-            opt_struct = optim.Adam(
-                filter(_trainable, self.struct_enc.parameters()), lr=self._lr_shared
+        if config.optimizer_type == "AdamW":
+            return optim.AdamW(
+                params, lr=config.lr, betas=config.betas, eps=config.eps, weight_decay=config.weight_decay
             )
-            opts.append(opt_struct)
+        elif config.optimizer_type == "Adam":
+            return optim.Adam(
+                params, lr=config.lr, betas=config.betas, eps=config.eps, weight_decay=config.weight_decay
+            )
+        elif config.optimizer_type == "SGD":
+            return optim.SGD(params, lr=config.lr, momentum=0.9, weight_decay=config.weight_decay)
+        else:
+            raise ValueError(f"Unsupported optimizer type: {config.optimizer_type}")
 
-        # Sequence head parameters if present
-        if seq_params:
-            opt_seq = optim.Adam(filter(_trainable, seq_params), lr=self._lr_seq)
-            opts.append(opt_seq)
+    def _create_scheduler(self, optimizer: torch.optim.Optimizer, config: OptimizerConfig) -> _LRScheduler | None:
+        """
+        Create a learning rate scheduler based on the configuration.
 
-        return opts
+        Parameters
+        ----------
+        optimizer : torch.optim.Optimizer
+            Optimizer to schedule
+        config : OptimizerConfig
+            Scheduler configuration
+
+        Returns
+        -------
+        _LRScheduler | None
+            Configured scheduler instance or None if scheduler_type is "None"
+        """
+        if config.scheduler_type == "ReduceLROnPlateau":
+            return optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode=config.mode,
+                factor=config.factor,
+                patience=config.patience,
+                min_lr=config.min_lr,
+            )
+        elif config.scheduler_type == "StepLR":
+            return optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=config.factor)
+        elif config.scheduler_type == "None":
+            return None
+        else:
+            raise ValueError(f"Unsupported scheduler type: {config.scheduler_type}")
+
+    def configure_optimizers(self) -> list[dict[str, Any] | torch.optim.Optimizer]:
+        """Configure optimizers for all parameter groups."""
+        optimizers_and_schedulers = []
+
+        # 1. Shared parameters (shared encoder + deposit)
+        shared_params = list(self.shared.parameters()) + list(self.deposit.parameters())
+        shared_opt = self._create_optimizer(shared_params, self.shared_block_optimizer)
+        shared_sched = self._create_scheduler(shared_opt, self.shared_block_optimizer)
+
+        if shared_sched:
+            optimizers_and_schedulers.append(
+                {
+                    "optimizer": shared_opt,
+                    "lr_scheduler": {
+                        "scheduler": shared_sched,
+                        "monitor": self.shared_block_optimizer.monitor,
+                        "interval": self.shared_block_optimizer.interval,
+                        "frequency": self.shared_block_optimizer.frequency,
+                    },
+                }
+            )
+        else:
+            optimizers_and_schedulers.append(shared_opt)
+
+        # 2. Structure encoder parameters if present
+        if self.with_structure:
+            # Use shared optimizer config for structure encoder
+            struct_opt = self._create_optimizer(self.struct_enc.parameters(), self.shared_block_optimizer)
+            struct_sched = self._create_scheduler(struct_opt, self.shared_block_optimizer)
+
+            if struct_sched:
+                optimizers_and_schedulers.append(
+                    {
+                        "optimizer": struct_opt,
+                        "lr_scheduler": {
+                            "scheduler": struct_sched,
+                            "monitor": self.shared_block_optimizer.monitor,
+                            "interval": self.shared_block_optimizer.interval,
+                            "frequency": self.shared_block_optimizer.frequency,
+                        },
+                    }
+                )
+            else:
+                optimizers_and_schedulers.append(struct_opt)
+
+        # 3. Task head parameters
+        for name, head in self.task_heads.items():
+            config = self.task_configs_map[name]
+
+            # If the task has a specific optimizer config, use it
+            if config.optimizer:
+                task_opt = self._create_optimizer(head.parameters(), config.optimizer)
+                task_sched = self._create_scheduler(task_opt, config.optimizer)
+
+                if task_sched:
+                    optimizers_and_schedulers.append(
+                        {
+                            "optimizer": task_opt,
+                            "lr_scheduler": {
+                                "scheduler": task_sched,
+                                "monitor": config.optimizer.monitor,
+                                "interval": config.optimizer.interval,
+                                "frequency": config.optimizer.frequency,
+                            },
+                        }
+                    )
+                else:
+                    optimizers_and_schedulers.append(task_opt)
+            else:
+                # Use default optimizer with task-specific settings
+                default_config = OptimizerConfig()  # Use default settings
+                task_opt = self._create_optimizer(head.parameters(), default_config)
+                task_sched = self._create_scheduler(task_opt, default_config)
+
+                if task_sched:
+                    optimizers_and_schedulers.append(
+                        {
+                            "optimizer": task_opt,
+                            "lr_scheduler": {
+                                "scheduler": task_sched,
+                                "monitor": default_config.monitor,
+                                "interval": default_config.interval,
+                                "frequency": default_config.frequency,
+                            },
+                        }
+                    )
+                else:
+                    optimizers_and_schedulers.append(task_opt)
+
+        return optimizers_and_schedulers

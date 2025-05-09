@@ -2,30 +2,24 @@
 Task heads for the FlexibleMultiTaskModel.
 """
 
-from typing import Dict, List, Optional, Type, Union
-
 import torch.nn as nn
 
-from ..task_config import (
-    BaseTaskConfig,
+from ..model_config import (
     ClassificationTaskConfig,
     RegressionTaskConfig,
     SequenceTaskConfig,
     TaskType,
 )
-from .base import BaseTaskHead
 from .classification import ClassificationHead
 from .regression import RegressionHead
-from .sequence import SequenceBaseHead, create_sequence_head
+from .sequence import create_sequence_head
 
 
 def create_task_heads(
-    task_configs: List[
-        Union[RegressionTaskConfig, ClassificationTaskConfig, SequenceTaskConfig]
-    ],
+    task_configs: list[RegressionTaskConfig | ClassificationTaskConfig | SequenceTaskConfig],
     deposit_dim: int,
     latent_dim: int,
-    lora_rank: Optional[int] = None,
+    lora_rank: int | None = None,
     lora_alpha: float = 1.0,
 ) -> nn.ModuleDict:
     """
@@ -33,13 +27,13 @@ def create_task_heads(
 
     Parameters
     ----------
-    task_configs : List[Union[RegressionTaskConfig, ClassificationTaskConfig, SequenceTaskConfig]]
+    task_configs : list[RegressionTaskConfig | ClassificationTaskConfig | SequenceTaskConfig]
         List of task configurations.
     deposit_dim : int
         Dimension of the deposit layer output (input to regression/classification heads).
     latent_dim : int
         Dimension of the latent representation (input to sequence heads).
-    lora_rank : Optional[int]
+    lora_rank : int | None
         If not None, apply LoRA adaptation with the specified rank.
     lora_alpha : float
         Scaling factor for LoRA adaptation.

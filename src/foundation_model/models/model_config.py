@@ -1,9 +1,9 @@
 """
-Configuration classes for tasks in FlexibleMultiTaskModel.
+Configuration classes for the foundation model.
 """
 
 from enum import Enum, auto
-from typing import List, Literal, Optional, Tuple
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -24,7 +24,7 @@ class OptimizerConfig(BaseModel):
     lr: float = Field(5e-3, description="Learning rate")
     weight_decay: float = Field(1e-3, description="Weight decay (L2 penalty)")
     eps: float = Field(1e-6, description="Term added to denominator for numerical stability")
-    betas: Tuple[float, float] = Field(
+    betas: tuple[float, float] = Field(
         (0.9, 0.999), description="Coefficients for computing running averages of gradient"
     )
 
@@ -52,14 +52,14 @@ class BaseTaskConfig(BaseModel):
     weight: float = Field(1.0, description="Weight of the task in the loss function")
 
     # Optimizer configuration
-    optimizer: Optional[OptimizerConfig] = Field(None, description="Optimizer configuration for this task")
+    optimizer: OptimizerConfig | None = Field(None, description="Optimizer configuration for this task")
 
 
 class RegressionTaskConfig(BaseTaskConfig):
     """Configuration for regression tasks."""
 
     type: Literal[TaskType.REGRESSION] = TaskType.REGRESSION
-    dims: List[int] = Field(..., description="Dimensions of the regression head")
+    dims: list[int] = Field(..., description="Dimensions of the regression head")
     norm: bool = Field(True, description="Whether to use normalization layers")
     residual: bool = Field(False, description="Whether to use residual connections")
 
@@ -68,7 +68,7 @@ class ClassificationTaskConfig(BaseTaskConfig):
     """Configuration for classification tasks."""
 
     type: Literal[TaskType.CLASSIFICATION] = TaskType.CLASSIFICATION
-    dims: List[int] = Field(..., description="Dimensions of the classification head")
+    dims: list[int] = Field(..., description="Dimensions of the classification head")
     num_classes: int = Field(..., description="Number of classes")
     norm: bool = Field(True, description="Whether to use normalization layers")
     residual: bool = Field(False, description="Whether to use residual connections")
@@ -87,7 +87,7 @@ class SequenceTaskConfig(BaseTaskConfig):
     cell: str = Field("gru", description="Cell type for RNN (gru or lstm)")
 
     # Fixed vector-specific parameters
-    seq_len: Optional[int] = Field(None, description="Sequence length for fixed vector output")
+    seq_len: int | None = Field(None, description="Sequence length for fixed vector output")
 
     # TCN-specific parameters
     n_tcn_layers: int = Field(4, description="Number of TCN layers")

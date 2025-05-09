@@ -2,18 +2,14 @@
 Sequence task heads for the FlexibleMultiTaskModel.
 """
 
-from typing import Optional
-
-from ...task_config import SequenceTaskConfig
+from ...model_config import SequenceTaskConfig
 from .base import SequenceBaseHead
 from .fixed_vec import SequenceHeadFixedVec
 from .rnn import SequenceHeadRNN
 from .tcn_film import SequenceHeadTCNFiLM
 
 
-def create_sequence_head(
-    d_in: int, name: str, config: SequenceTaskConfig
-) -> SequenceBaseHead:
+def create_sequence_head(d_in: int, name: str, config: SequenceTaskConfig) -> SequenceBaseHead:
     """
     Factory function to create a sequence head based on configuration.
 

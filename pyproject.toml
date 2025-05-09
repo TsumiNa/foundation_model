@@ -36,3 +36,35 @@ build-backend = "hatchling.build"
 
 [tool.uv.sources]
 shotgun-csp = { git = "https://github.com/TsumiNa/shotgun_csp_next", branch = "main" }
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "--maxfail=2 --benchmark-skip --benchmark-autosave"
+
+[tool.ruff]
+exclude = [".venv", "venv", "__pycache__", ".git"]
+line-length = 120
+indent-width = 4
+
+[tool.ruff.lint]
+# PEP8
+select = [
+    "F", # Pyflakes
+    "E", # pycodestyle
+    "W", # pycodestyle
+]
+ignore = [
+    "F841", # unused-variable
+    "E741", # ambiguous-variable-name
+    "W505", # doc-line-too-long
+]
+fixable = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+skip-magic-trailing-comma = false
+
+
+[tool.ruff.lint.mccabe]
+# C901
+max-complexity = 10

@@ -3,7 +3,6 @@ Base task head interface for the FlexibleMultiTaskModel.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -50,8 +49,8 @@ class BaseTaskHead(nn.Module, ABC):
         self,
         pred: torch.Tensor,
         target: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute task-specific loss.
 
@@ -111,8 +110,8 @@ class SequenceBaseHead(BaseTaskHead, ABC):
         self,
         pred: torch.Tensor,
         target: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute sequence-specific loss.
 
@@ -138,9 +137,7 @@ class SequenceBaseHead(BaseTaskHead, ABC):
         losses = torch.nn.functional.mse_loss(pred, target, reduction="none") * mask
 
         # Compute per-step losses (average over batch)
-        per_step_loss = torch.nan_to_num(
-            losses.sum(0) / mask.sum(0), nan=0.0, posinf=0.0, neginf=0.0
-        )
+        per_step_loss = torch.nan_to_num(losses.sum(0) / mask.sum(0), nan=0.0, posinf=0.0, neginf=0.0)
 
         # Compute total loss (sum over all steps, average over valid points)
         total_loss = losses.sum() / mask.sum().clamp_min(1.0)
