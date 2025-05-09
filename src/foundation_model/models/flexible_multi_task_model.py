@@ -179,9 +179,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if len(self.task_configs) > 0 and hasattr(self.task_configs[0], "dims"):
             deposit_dim = self.task_configs[0].dims[0]
         else:
-            deposit_dim = self.shared_block_dims[-1] // 2  # fallback
+            deposit_dim = self.shared_block_dims[-1]  # Same dimension as latent by default
 
-        # Deposit layer maps from shared latent space to task-specific space
+        # Deposit layer serves two purposes:
+        # 1. Acts as a buffer between shared encoder and task heads
+        # 2. Provides an extension point for future continue learning capabilities
+        #    where shared layers can be frozen while deposit layers are extended/trained
         self.deposit = nn.Sequential(
             nn.Linear(self.shared_block_dims[-1], deposit_dim),
             nn.Tanh(),
@@ -210,7 +213,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """Initialize task heads based on configuration."""
         deposit_dim = next(
             (c.dims[0] for c in self.task_configs if hasattr(c, "dims")),
-            self.shared_block_dims[-1] // 2,
+            self.shared_block_dims[-1],  # Same as latent_dim by default
         )
         latent_dim = self.shared_block_dims[-1]
 
@@ -244,8 +247,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         -------
         h_latent : torch.Tensor
             Latent representation (B, D_latent).
+            Currently retained for potential future extensions, but not used directly.
         h_task : torch.Tensor
-            Task input representation (B, deposit_dim).
+            Task input representation (B, deposit_dim) after deposit layer.
+            Used as input for all task heads.
         """
         # Encode formula input
         h_f = self.shared(x_formula)
@@ -323,12 +328,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Get latent and task-specific representations
         h_latent, h_task = self._encode(x_formula, x_struct)
 
-        # Apply task heads
+        # Apply task heads - all task heads use h_task (deposit layer output)
         outputs = {}
         for name, head in self.task_heads.items():
             if isinstance(head, SequenceBaseHead):
                 if temps is not None:
-                    outputs[name] = head(h_latent, temps)
+                    outputs[name] = head(h_task, temps)
             else:
                 outputs[name] = head(h_task)
 
@@ -572,6 +577,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         optimizers_and_schedulers = []
 
         # 1. Shared parameters (shared encoder + deposit)
+        # Note: In future iterations, deposit layer might have its own optimizer
+        # to facilitate continue learning scenarios where shared encoder is frozen
+        # while deposit layers can be expanded and fine-tuned
         shared_params = list(self.shared.parameters()) + list(self.deposit.parameters())
         shared_opt = self._create_optimizer(shared_params, self.shared_block_optimizer)
         shared_sched = self._create_scheduler(shared_opt, self.shared_block_optimizer)

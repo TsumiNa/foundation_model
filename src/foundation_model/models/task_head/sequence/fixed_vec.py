@@ -37,14 +37,12 @@ class SequenceHeadFixedVec(SequenceBaseHead):
             nn.Linear(d_in, seq_len),
         )
 
-    def forward(
-        self, h: torch.Tensor, temps: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, temps: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Parameters
         ----------
         h : torch.Tensor
-            Latent tensor (B, D).
+            Task-specific representation tensor from the deposit layer, shape (B, D).
         temps : torch.Tensor | None
             Ignored; kept for interface compatibility.
 

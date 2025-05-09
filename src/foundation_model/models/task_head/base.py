@@ -95,7 +95,7 @@ class SequenceBaseHead(BaseTaskHead, ABC):
         Parameters
         ----------
         h : torch.Tensor
-            Latent representation tensor.
+            Task-specific representation tensor from the deposit layer.
         temps : torch.Tensor
             Temperature or sequence points tensor.
 

@@ -55,7 +55,7 @@ class SequenceHeadTCNFiLM(SequenceBaseHead):
     Dilated-TCN + FiLM modulation sequence head.
 
     This head processes sequence points using a dilated temporal convolutional network
-    and modulates the features using FiLM conditioning from the latent representation.
+    and modulates the features using FiLM conditioning from the deposit layer representation.
 
     The processing flow is:
     * temps → linear → (B,hidden,L) → Dilated-TCN
@@ -86,7 +86,7 @@ class SequenceHeadTCNFiLM(SequenceBaseHead):
         Parameters
         ----------
         h : torch.Tensor
-            Latent tensor of shape (B, D).
+            Task-specific representation tensor from the deposit layer, shape (B, D).
         temps : torch.Tensor
             Temperature points, shape (B, L, 1).
 

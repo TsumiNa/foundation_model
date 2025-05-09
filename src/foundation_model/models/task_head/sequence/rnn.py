@@ -28,9 +28,7 @@ class SequenceHeadRNN(SequenceBaseHead):
         super().__init__(d_in, name)
 
         rnn_cls = nn.GRU if cell.lower() == "gru" else nn.LSTM
-        self.rnn = rnn_cls(
-            input_size=1, hidden_size=hidden, num_layers=2, batch_first=True
-        )
+        self.rnn = rnn_cls(input_size=1, hidden_size=hidden, num_layers=2, batch_first=True)
         self.film = nn.Linear(d_in, 2 * hidden)  # γ & β
         self.out = nn.Linear(hidden, 1)
 
@@ -39,7 +37,7 @@ class SequenceHeadRNN(SequenceBaseHead):
         Parameters
         ----------
         h : torch.Tensor
-            Latent tensor of shape (B, D).
+            Task-specific representation tensor from the deposit layer, shape (B, D).
         temps : torch.Tensor
             Temperature points, shape (B, L, 1).
 
