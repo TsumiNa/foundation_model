@@ -9,8 +9,23 @@ foundation_model/
 ├── src/
 │   └── foundation_model/    # Main package
 │       ├── models/          # Neural network models
-│       │   ├── layers.py    # Basic neural network layers
-│       │   └── multi_task.py # Multi-task property predictor
+│       │   ├── fc_layers.py # Basic neural network layers
+│       │   ├── flexible_multi_task_model.py # Refactored multi-task model
+│       │   ├── multi_task_flexible.py # Legacy multi-task property predictor
+│       │   ├── task_config.py # Task configuration classes
+│       │   ├── components/   # Model components
+│       │   │   ├── structure_encoder.py # Structure encoding module
+│       │   │   ├── lora_adapter.py # Low-Rank Adaptation module
+│       │   │   └── gated_fusion.py # Gated fusion module
+│       │   └── task_head/    # Task-specific heads
+│       │       ├── base.py   # Base task head interfaces
+│       │       ├── regression.py # Regression task head
+│       │       ├── classification.py # Classification task head
+│       │       └── sequence/ # Sequence prediction heads
+│       │           ├── rnn.py # RNN-based sequence head
+│       │           ├── fixed_vec.py # Fixed vector sequence head
+│       │           ├── tcn_film.py # TCN with FiLM modulation
+│       │           └── transformer.py # Transformer-based sequence head
 │       │
 │       ├── data/            # Data handling
 │       │   ├── dataset.py   # Dataset implementation
@@ -26,6 +41,10 @@ foundation_model/
 │       │
 │       └── scripts/         # Execution scripts
 │           └── train.py     # Main training script
+│
+├── configs/                 # YAML configuration files
+│   └── model_configs/       # Model configuration files
+│       └── base_model.yaml  # Base model configuration
 │
 ├── data/                    # Data directory
 │   └── raw/                 # Raw data files
@@ -47,12 +66,25 @@ git clone https://github.com/yourusername/foundation_model.git
 cd foundation_model
 ```
 
-2. Install the package in development mode:
+2. Install the package using uv:
 ```bash
-pip install -e .
+uv sync --frozen --all-groups
 ```
 
-This will automatically install all required dependencies.
+This will install all dependencies as defined in the pyproject.toml and uv.lock files, including both production and development dependencies, and ensure exact version matching. This method is preferred for reproducible installations.
+
+
+If you need to add additional dependencies, use:
+```bash
+uv add <package_name>
+# or for development dependencies
+uv add --dev <package_name>
+```
+
+After adding new dependencies, update the lock file:
+```bash
+uv pip freeze > uv.lock
+```
 
 ## Usage
 
@@ -71,16 +103,26 @@ The training script is installed as part of the package, so you can also run it 
 python -m foundation_model.scripts.train
 ```
 
+### Configuration
+
+There are two ways to configure the model:
+
+1. **Command-line arguments**:
+
 Available command line arguments:
 
-- `--pretrain` (bool): enable contrastive / cross / mask losses  
-- `--with_structure` (bool): expect structure descriptors in the batch  
-- `--freeze_encoder` (bool): stop gradient for shared (and structure) encoders  
-- `--lora_rank` (int): LoRA adapter rank (0 = off)  
-- `--sequence_mode` [str]: `rnn|vec|transformer|tcn|hybrid` (default: transformer)  
-- `--loss_weights` JSON string: e.g. `'{"con":1,"cross":1,"mask":1,"attr":0}'`  
+- `--pretrain` (bool): enable contrastive / cross / mask losses  
+- `--with_structure` (bool): expect structure descriptors in the batch  
+- `--freeze_encoder` (bool): stop gradient for shared (and structure) encoders  
+- `--lora_rank` (int): LoRA adapter rank (0 = off)  
+- `--sequence_mode` [str]: `rnn|vec|transformer|tcn|hybrid` (default: transformer)  
+- `--loss_weights` JSON string: e.g. `'{"con":1,"cross":1,"mask":1,"attr":0}'`  
 - `--max_epochs`, `--accelerator`, `--devices`, `--strategy`, `--default_root_dir`  
 - `--batch_size`, `--num_workers`
+
+2. **YAML configuration**:
+
+You can also use YAML configuration files for more complex setups. See `configs/model_configs/base_model.yaml` for an example.
 
 #### Pre‑training vs. Fine‑tuning
 
@@ -97,22 +139,26 @@ Available command line arguments:
 
 ## Recent Updates
 
+### 2025‑05‑09
+- **Major Code Refactoring**:
+  - Implemented a more modular architecture with separate components
+  - Created a task head abstraction hierarchy for different task types
+  - Moved components to dedicated modules (StructureEncoder, LoRAAdapter, GatedFusion)
+  - Added configuration system using Pydantic models
+  - Added YAML-based configuration support
+- **Package Management**:
+  - Switched from pip to uv for package management
+  - Added proper dependency specifications in pyproject.toml
+
 ### 2025‑05‑08
-- **Dual‑modality encoder** (formula + structure) with gated fusion.
+- **Dual‑modality encoder** (formula + structure) with gated fusion.
 - New `--pretrain` flag enables contrastive, cross‑reconstruction, masked‑feature, and optional property‑supervision losses.
 - **Encoder control flags**  
-  - `--freeze_encoder` freezes shared / structure encoders  
-  - `--lora_rank` adds LoRA adapters for lightweight fine‑tuning
+  - `--freeze_encoder` freezes shared / structure encoders  
+  - `--lora_rank` adds LoRA adapters for lightweight fine‑tuning
 - Added five selectable sequence heads: `rnn`, `vec`, `transformer` (Flash‑Attention), `tcn`, `hybrid`.
 - CLI accepts `--sequence_mode`, `--loss_weights` for custom recipes.
 
-
-### Model Configuration
-
-Model and training configurations can be modified in `configs/model_config.py`:
-
-- `ModelConfig`: Neural network architecture and training parameters
-- `ExperimentConfig`: Experiment settings and paths
 
 ## Features
 
@@ -131,9 +177,12 @@ Model and training configurations can be modified in `configs/model_config.py`:
 ## Model Architecture
 
 The model consists of:
-1. A shared block for learning common features
+1. A shared foundation encoder for learning common features
 2. An intermediate deposit layer
-3. Task-specific blocks for each property prediction
+3. Task-specific heads for different prediction tasks:
+   - Regression heads for continuous properties
+   - Classification heads for categorical properties
+   - Sequence heads for time series or sequential data
 
 ## Data Handling
 
@@ -144,7 +193,7 @@ The model consists of:
 
 ### Quick Examples
 
-##### Example 1 – Pre‑train with formula+structure
+##### Example 1 – Pre‑train with formula+structure
 
 ```bash
 python -m foundation_model.scripts.train \
@@ -153,7 +202,7 @@ python -m foundation_model.scripts.train \
   --max_epochs 60
 ```
 
-##### Example 2 – Fine‑tune only heads with LoRA (encoder frozen)
+##### Example 2 – Fine‑tune only heads with LoRA (encoder frozen)
 
 ```bash
 python -m foundation_model.scripts.train \
@@ -161,14 +210,14 @@ python -m foundation_model.scripts.train \
   --sequence_mode rnn
 ```
 
-##### Example 3 – Full fine‑tune, Flash‑Attention transformer head
+##### Example 3 – Full fine‑tune, Flash‑Attention transformer head
 
 ```bash
 python -m foundation_model.scripts.train \
   --sequence_mode transformer --d_model 256 --nhead 4
 ```
 
-##### Example 4 – Partial fine‑tune (encoder unlocked, LoRA off)
+##### Example 4 – Partial fine‑tune (encoder unlocked, LoRA off)
 
 ```bash
 python -m foundation_model.scripts.train \
