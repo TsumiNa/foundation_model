@@ -18,13 +18,11 @@ from typing import Any
 import lightning as L
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim.lr_scheduler import _LRScheduler
 
-from .components.gated_fusion import GatedFusion
-from .components.structure_encoder import StructureEncoder
-from .fc_layers import LinearBlock
+from .components.foundation_encoder import FoundationEncoder, MultiModalFoundationEncoder
+from .components.self_supervised import SelfSupervisedModule
 from .model_config import (
     ClassificationTaskConfig,
     OptimizerConfig,
@@ -58,15 +56,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
     4. Structure Fusion (optional):
        When with_structure=True, can fuse information from different modalities (e.g., formula and structure).
 
-    5. Pre-training Mechanisms (optional):
-       When pretrain=True, enables self-supervised learning objectives:
+    5. Self-supervised Training (optional):
+       When enable_self_supervised_training=True, enables self-supervised learning objectives:
        - Masked Feature Modeling (MFM): Similar to BERT's masked language modeling
        - Contrastive Learning: Aligns representations from different modalities
        - Cross-reconstruction: Reconstructs one modality from another
 
     Training Process:
-    - Each batch's loss includes task-specific losses and optional pre-training losses
-    - Uses manual optimization to support complex optimizer configurations
+    - Each batch's loss includes task-specific losses and optional self-supervised learning losses
     - Different components (shared encoder, task heads, etc.) can use different optimizer configurations
 
     Usage Scenarios:
@@ -99,28 +96,28 @@ class FlexibleMultiTaskModel(L.LightningModule):
         of the structure features, and the last element must match shared_block_dims[-1] to ensure
         both modalities have the same dimension before fusion. Only used when with_structure=True.
     modality_dropout_p : float
-        Probability of modality dropout. During pre-training, there's this probability of
+        Probability of modality dropout. During self-supervised training, there's this probability of
         randomly dropping the structure modality, forcing the model to learn to handle
-        single-modality cases. Only relevant when with_structure=True and pretrain=True.
-    pretrain : bool
-        Whether to use pre-training objectives (masked feature modeling, contrastive learning,
-        and cross-reconstruction). When True, these additional losses are added to task-specific losses.
+        single-modality cases. Only relevant when with_structure=True and enable_self_supervised_training=True.
+    enable_self_supervised_training : bool
+        Whether to enable additional self-supervised training objectives (masked feature modeling,
+        contrastive learning, and cross-reconstruction). When True, these additional losses are
+        added to task-specific losses to improve feature representations.
     loss_weights : dict[str, float] | None
         Weight coefficients dictionary for balancing different loss components in the total loss.
         Includes the following keys:
-        - "attr": Weight for attribute tasks (regression/classification) loss, default 1.0
-        - "seq": Weight for sequence prediction task loss, default 1.0
-        - "con": Weight for contrastive learning loss (only used when pretrain=True and with_structure=True), default 1.0
-        - "cross": Weight for cross-reconstruction loss (only used when pretrain=True and with_structure=True), default 1.0
-        - "mask": Weight for masked feature reconstruction loss (only used when pretrain=True), default 1.0
-        Example: {"attr": 1.0, "seq": 0.5, "con": 0.1, "cross": 0.1, "mask": 0.2}
+        - Task names: Weight for each task's loss, default 1.0
+        - "mfm": Weight for masked feature modeling loss, default 1.0
+        - "contrastive": Weight for contrastive learning loss, default 1.0
+        - "cross_recon": Weight for cross-reconstruction loss, default 1.0
+        Example: {"band_gap": 1.0, "formation_energy": 0.5, "mfm": 0.2, "contrastive": 0.1, "cross_recon": 0.1}
     mask_ratio : float
         Ratio of features to be randomly masked in masked feature modeling.
-        Typical value is 0.15. Only used when pretrain=True.
+        Typical value is 0.15. Only used when enable_self_supervised_training=True.
     temperature : float
         Temperature coefficient in contrastive learning. Controls the smoothness of
         the similarity distribution, with smaller values increasing contrast.
-        Typical value is 0.07. Only used when pretrain=True and with_structure=True.
+        Typical value is 0.07. Only used when enable_self_supervised_training=True and with_structure=True.
     """
 
     def __init__(
@@ -137,8 +134,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
         with_structure: bool = False,
         struct_block_dims: list[int] | None = None,
         modality_dropout_p: float = 0.3,
-        # Pre-training options
-        pretrain: bool = False,
+        # Self-supervised training options
+        enable_self_supervised_training: bool = False,
         loss_weights: dict[str, float] | None = None,
         mask_ratio: float = 0.15,
         temperature: float = 0.07,
@@ -153,9 +150,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if not task_configs:
             raise ValueError("At least one task configuration must be provided")
 
-        # Store all parameters as instance variables
+        # Store configuration parameters
         self.shared_block_dims = shared_block_dims
         self.task_configs = task_configs
+        self.task_configs_map = {cfg.name: cfg for cfg in self.task_configs}
 
         # Normalization/residual options
         self.norm_shared = norm_shared
@@ -166,40 +164,129 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.struct_block_dims = struct_block_dims
         self.mod_dropout_p = modality_dropout_p
 
-        # Pre-training parameters
-        self.pretrain = pretrain
+        # Self-supervised training parameters
+        self.enable_self_supervised_training = enable_self_supervised_training
         self.mask_ratio = mask_ratio
-        self.tau = temperature
+        self.temperature = temperature
 
         # Optimizer configurations
         self.shared_block_optimizer = shared_block_optimizer or OptimizerConfig(weight_decay=1e-2)
 
-        # Store task configurations by name for easy reference
-        self.task_configs_map = {cfg.name: cfg for cfg in self.task_configs}
-
-        # Initialize task loss weights
-        # 1. First set default weight 1.0 for each enabled task
-        self.w = {cfg.name: 1.0 for cfg in self.task_configs if cfg.enabled}
-        # 2. Add default weights for pre-training losses
-        self.w.update({"con": 1.0, "cross": 1.0, "mask": 1.0})
-        # 3. Apply user-provided weights to override defaults
-        if loss_weights:
-            self.w.update(loss_weights)
+        # Initialize loss weights
+        self._init_loss_weights(loss_weights)
 
         # Initialize model components
-        self._init_shared_layers()
+        self._init_foundation_encoder()
         self._init_task_heads()
+        if enable_self_supervised_training:
+            self._init_self_supervised_module()
 
-        # Task type tracking
-        self.has_regression = any(tc.type == TaskType.REGRESSION for tc in task_configs if tc.enabled)
-        self.has_classification = any(tc.type == TaskType.CLASSIFICATION for tc in task_configs if tc.enabled)
-        self.has_sequence = any(tc.type == TaskType.SEQUENCE for tc in task_configs if tc.enabled)
-
-        # Enable automatic optimization
-        self.automatic_optimization = True
+        # Track task types
+        self._track_task_types()
 
         # Initialize weights
         self._init_weights()
+
+    def _init_loss_weights(self, loss_weights: dict[str, float] | None = None):
+        """Initialize loss weights for different components."""
+        # Start with default weights for all enabled tasks
+        self.w = {cfg.name: 1.0 for cfg in self.task_configs if cfg.enabled}
+
+        # Add weights for self-supervised objectives if enabled
+        if self.enable_self_supervised_training:
+            self.w.update(
+                {
+                    "mfm": 1.0,  # Masked Feature Modeling
+                    "contrastive": 1.0,  # Contrastive Learning
+                    "cross_recon": 1.0,  # Cross-Reconstruction
+                }
+            )
+
+        # Apply user-provided weights
+        if loss_weights:
+            self.w.update(loss_weights)
+
+    def _init_foundation_encoder(self):
+        """Initialize the foundation encoder."""
+        # Get deposit dimension from first task config
+        deposit_dim = next(
+            (c.dims[0] for c in self.task_configs if hasattr(c, "dims")),
+            self.shared_block_dims[-1],  # Default to latent dimension
+        )
+
+        # Initialize appropriate encoder based on structure usage
+        if self.with_structure:
+            self.encoder = MultiModalFoundationEncoder(
+                formula_input_dim=self.shared_block_dims[0],
+                formula_hidden_dims=self.shared_block_dims[1:],
+                structure_input_dim=self.struct_block_dims[0],
+                structure_hidden_dims=self.struct_block_dims[1:],
+                deposit_dim=deposit_dim,
+                norm=self.norm_shared,
+                residual=self.residual_shared,
+            )
+
+            # Keep references to original components for backward compatibility
+            self.shared = self.encoder.formula_encoder
+            self.deposit = self.encoder.deposit
+            self.struct_enc = self.encoder.structure_encoder
+            self.fusion = self.encoder.fusion
+        else:
+            self.encoder = FoundationEncoder(
+                input_dim=self.shared_block_dims[0],
+                hidden_dims=self.shared_block_dims[1:],
+                deposit_dim=deposit_dim,
+                norm=self.norm_shared,
+                residual=self.residual_shared,
+            )
+
+            # Keep references to original components for backward compatibility
+            self.shared = self.encoder.shared
+            self.deposit = self.encoder.deposit
+
+    def _init_task_heads(self):
+        """Initialize task heads based on configurations."""
+        deposit_dim = next(
+            (c.dims[0] for c in self.task_configs if hasattr(c, "dims")),
+            self.shared_block_dims[-1],  # Default to latent dimension
+        )
+        latent_dim = self.shared_block_dims[-1]
+
+        self.task_heads = create_task_heads(
+            task_configs=self.task_configs,
+            deposit_dim=deposit_dim,
+            latent_dim=latent_dim,
+        )
+
+        # Apply optimizer freeze_parameters to task heads
+        for name, head in self.task_heads.items():
+            config = self.task_configs_map[name]
+            if config.optimizer and config.optimizer.freeze_parameters:
+                for p in head.parameters():
+                    p.requires_grad_(False)
+
+    def _init_self_supervised_module(self):
+        """Initialize self-supervised training module if enabled."""
+        structure_dim = self.struct_block_dims[0] if self.with_structure else None
+
+        self.ssl_module = SelfSupervisedModule(
+            latent_dim=self.shared_block_dims[-1],
+            formula_dim=self.shared_block_dims[0],
+            structure_dim=structure_dim,
+            mask_ratio=self.mask_ratio,
+            temperature=self.temperature,
+        )
+
+        # Keep references to original components for backward compatibility
+        self.dec_formula = self.ssl_module.formula_decoder
+        if self.with_structure:
+            self.dec_struct = self.ssl_module.structure_decoder
+
+    def _track_task_types(self):
+        """Track which types of tasks are enabled."""
+        self.has_regression = any(tc.type == TaskType.REGRESSION for tc in self.task_configs if tc.enabled)
+        self.has_classification = any(tc.type == TaskType.CLASSIFICATION for tc in self.task_configs if tc.enabled)
+        self.has_sequence = any(tc.type == TaskType.SEQUENCE for tc in self.task_configs if tc.enabled)
 
     def _init_weights(self):
         """Initialize model weights and apply freezing based on optimizer configs."""
@@ -224,75 +311,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-    def _init_shared_layers(self):
-        """Initialize shared foundation encoder layers."""
-        # Shared encoder (foundation model component)
-        self.shared = LinearBlock(
-            self.shared_block_dims,
-            normalization=self.norm_shared,
-            residual=self.residual_shared,
-        )
-
-        # Use task_configs[0].dims[0] as the deposit dimension
-        if len(self.task_configs) > 0 and hasattr(self.task_configs[0], "dims"):
-            deposit_dim = self.task_configs[0].dims[0]
-        else:
-            deposit_dim = self.shared_block_dims[-1]  # Same dimension as latent by default
-
-        # Deposit layer serves two purposes:
-        # 1. Acts as a buffer between shared encoder and task heads
-        # 2. Provides an extension point for future continue learning capabilities
-        #    where shared layers can be frozen while deposit layers are extended/trained
-        self.deposit = nn.Sequential(
-            nn.Linear(self.shared_block_dims[-1], deposit_dim),
-            nn.Tanh(),
-        )
-
-        # Structure encoder and fusion
-        if self.with_structure:
-            if not self.struct_block_dims or self.struct_block_dims[-1] != self.shared_block_dims[-1]:
-                raise ValueError("struct_block_dims must be provided and last dim equal to formula latent dim")
-            self.struct_enc = StructureEncoder(
-                self.struct_block_dims[0],
-                self.struct_block_dims[1:],
-                norm=self.norm_shared,
-                residual=self.residual_shared,
-            )
-            self.fusion = GatedFusion(self.shared_block_dims[-1])
-
-        # Pre-training decoders
-        if self.pretrain:
-            latent_dim = self.shared_block_dims[-1]
-            self.dec_formula = nn.Linear(latent_dim, self.shared_block_dims[0], bias=False)
-            if self.with_structure:
-                self.dec_struct = nn.Linear(latent_dim, self.struct_block_dims[0], bias=False)
-
-    def _init_task_heads(self):
-        """Initialize task heads based on configuration."""
-        deposit_dim = next(
-            (c.dims[0] for c in self.task_configs if hasattr(c, "dims")),
-            self.shared_block_dims[-1],  # Same as latent_dim by default
-        )
-        latent_dim = self.shared_block_dims[-1]
-
-        self.task_heads = create_task_heads(
-            task_configs=self.task_configs,
-            deposit_dim=deposit_dim,
-            latent_dim=latent_dim,
-        )
-
-        # Apply optimizer freeze_parameters to task heads
-        for name, head in self.task_heads.items():
-            config = self.task_configs_map[name]
-            if config.optimizer and config.optimizer.freeze_parameters:
-                for p in head.parameters():
-                    p.requires_grad_(False)
-
     def _encode(
         self, x_formula: torch.Tensor, x_struct: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Encode inputs through shared layers and structure fusion if enabled.
+        Encode inputs through the foundation encoder.
+
+        This method is kept for backward compatibility.
 
         Parameters
         ----------
@@ -305,56 +330,15 @@ class FlexibleMultiTaskModel(L.LightningModule):
         -------
         h_latent : torch.Tensor
             Latent representation (B, D_latent).
-            Currently retained for potential future extensions, but not used directly.
         h_task : torch.Tensor
             Task input representation (B, deposit_dim) after deposit layer.
-            Used as input for all task heads.
         """
-        # Encode formula input
-        h_f = self.shared(x_formula)
-
-        # Apply structure fusion if enabled
         if self.with_structure:
-            if x_struct is None:
-                h_s = torch.zeros_like(h_f)
-                has_s = torch.zeros(h_f.size(0), 1, device=h_f.device)
-            else:
-                h_s = self.struct_enc(x_struct)
-                has_s = torch.ones(h_f.size(0), 1, device=h_f.device)
-            # Gated fusion
-            h_latent = self.fusion(h_f, h_s, has_s)
+            h_formula, h_structure, h_fused, h_task = self.encoder(x_formula, x_struct)
+            return h_fused, h_task
         else:
-            h_latent = h_f
-
-        # Apply deposit layer
-        h_task = self.deposit(h_latent)
-
-        return h_latent, h_task
-
-    @staticmethod
-    def _masked_mse(pred: torch.Tensor, tgt: torch.Tensor, mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Compute masked MSE loss.
-
-        Parameters
-        ----------
-        pred : torch.Tensor
-            Predicted values.
-        tgt : torch.Tensor
-            Target values.
-        mask : torch.Tensor
-            Binary mask for valid values.
-
-        Returns
-        -------
-        total_loss : torch.Tensor
-            Total MSE loss (scalar).
-        per_attr : torch.Tensor
-            Per-attribute losses.
-        """
-        losses = F.mse_loss(pred, tgt, reduction="none") * mask
-        per_attr = torch.nan_to_num(losses.sum(0) / mask.sum(0), nan=0.0, posinf=0.0, neginf=0.0)
-        return losses.sum() / mask.sum(), per_attr
+            h_latent, h_task = self.encoder(x_formula)
+            return h_latent, h_task
 
     def forward(
         self,
@@ -384,7 +368,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
             x_formula, x_struct = x, None
 
         # Get latent and task-specific representations
-        h_latent, h_task = self._encode(x_formula, x_struct)
+        if self.with_structure:
+            _, _, _, h_task = self.encoder(x_formula, x_struct)
+        else:
+            _, h_task = self.encoder(x_formula)
 
         # Apply task heads - all task heads use h_task (deposit layer output)
         outputs = {}
@@ -397,129 +384,56 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         return outputs
 
-    # ----------- Pre-training helpers ----------- #
-    def _mask_feat(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Implement Masked Feature Modeling (MFM).
-
-        Randomly masks a portion of the input features (determined by self.mask_ratio),
-        sets the masked positions to 0, and returns both the masked features and the mask
-        positions. During pre-training, the model attempts to reconstruct these masked
-        feature values, similar to the Masked Language Modeling technique in BERT.
-
-        Parameters
-        ----------
-        x : torch.Tensor
-            Input feature tensor
-
-        Returns
-        -------
-        x_masked : torch.Tensor
-            Masked feature tensor with the same shape as x
-        mask : torch.Tensor
-            Binary mask tensor indicating which positions were masked (1=masked)
-        """
-        mask = torch.rand_like(x) < self.mask_ratio
-        x_masked = x.clone()
-        x_masked[mask] = 0.0
-        return x_masked, mask
-
-    def _contrastive(self, h_f: torch.Tensor, h_s: torch.Tensor) -> torch.Tensor:
-        """
-        Calculate contrastive loss between formula and structure representations.
-
-        The goal of contrastive learning is to bring different modal representations
-        (formula and structure) of the same sample closer in the feature space,
-        while pushing representations of different samples apart. Process steps:
-
-        1. Apply L2 normalization to representations, placing them on a unit hypersphere
-        2. Calculate cosine similarity matrix of normalized representations, divided by temperature tau
-        3. Compute bidirectional cross-entropy loss (formula→structure and structure→formula), with diagonal target
-        4. Return the average of both directional losses
-
-        This contrastive learning method encourages the model to learn aligned
-        representations across modalities, improving the quality of multi-modal data representation.
-
-        Parameters
-        ----------
-        h_f : torch.Tensor
-            Formula representation, shape (B,D)
-        h_s : torch.Tensor
-            Structure representation, shape (B,D)
-
-        Returns
-        -------
-        torch.Tensor
-            Scalar contrastive loss
-        """
-        h_f = F.normalize(h_f, dim=-1)
-        h_s = F.normalize(h_s, dim=-1)
-        logits = (h_f @ h_s.T) / self.tau
-        tgt = torch.arange(h_f.size(0), device=h_f.device)
-        return 0.5 * (F.cross_entropy(logits, tgt) + F.cross_entropy(logits.T, tgt))
-
-    # ----------- Lightning methods ----------- #
     def training_step(self, batch, batch_idx):
         """
         Training step implementation with multi-component loss calculation.
-
-        This method implements the full training step, including:
-        1. Multi-task loss calculation (regression, classification, sequence)
-        2. Pre-training losses when pretrain=True (contrastive, cross-reconstruction, MFM)
-
-        The total loss is a weighted sum of all enabled loss components, with weights
-        specified by the loss_weights parameter during initialization. The following
-        weights are applied to different loss components:
-        - Task-specific weights: Each task uses its name as the key (e.g., self.w["band_gap"])
-        - Pre-training loss weights:
-          - self.w["con"]: Weight for contrastive learning loss
-          - self.w["cross"]: Weight for cross-reconstruction loss
-          - self.w["mask"]: Weight for masked feature modeling loss
 
         Parameters
         ----------
         batch : tuple
             A tuple containing (x, y_dict, task_masks, temps)
-            - x: Input features or tuple of (formula, structure) features
-            - y_dict: Dictionary mapping task names to target values
-            - task_masks: Binary mask indicating valid tasks for each sample
-            - temps: Temperature/sequence points for sequence tasks
         batch_idx : int
             Index of the current batch
 
         Returns
         -------
         torch.Tensor
-            Total weighted loss value
+            Total weighted loss
         """
         # Unpack batch
         x, y_dict, task_masks, temps = batch
 
-        # Unpack inputs for structure fusion
+        # Unpack inputs
         if self.with_structure and isinstance(x, (list, tuple)):
             x_formula, x_struct = x
         else:
             x_formula, x_struct = x, None
 
-        # Get raw embeddings for pre-training tasks
-        if self.pretrain:
-            h_f = self.shared(x_formula)
-            h_s = self.struct_enc(x_struct) if (self.with_structure and x_struct is not None) else None
+        # Get encodings for supervised and self-supervised learning
+        if self.with_structure:
+            # For multi-modal, we need all intermediate representations for self-supervised learning
+            h_formula, h_structure, h_fused, h_task = self.encoder(x_formula, x_struct)
 
-            # Modality dropout during pre-training
-            if h_s is not None and torch.rand(1).item() < self.mod_dropout_p:
-                h_s, x_struct = None, None
+            # Apply modality dropout during self-supervised training
+            if (
+                self.enable_self_supervised_training
+                and h_structure is not None
+                and torch.rand(1).item() < self.mod_dropout_p
+            ):
+                h_structure, x_struct = None, None
         else:
-            h_f, h_s = None, None
+            # For single modality
+            h_latent, h_task = self.encoder(x_formula)
+            h_formula, h_structure = h_latent, None
 
-        # Forward pass
+        # Forward pass for task predictions
         preds = self(x, temps)
 
         # Calculate task losses
         total_loss = 0.0
         logs = {}
 
-        # Get task mask indices mapping (map from task name to index in task_masks)
+        # Get task mask indices mapping
         task_mask_indices = {name: i for i, name in enumerate(self.task_heads.keys())}
 
         # Process each prediction
@@ -536,9 +450,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 # Create sample mask tensor matching target shape
                 sample_mask = task_masks[:, mask_idx].view(-1, 1)
 
-                # Handle sequence task masks (expand mask for sequence dimensions)
+                # Handle sequence task masks
                 if isinstance(head, SequenceBaseHead) and len(target.shape) > 2:
-                    # Expand mask to match sequence dimensions (B, L, D) -> sample_mask is (B, 1)
                     sample_mask = sample_mask.unsqueeze(1).expand(-1, target.shape[1], -1)
             else:
                 # Default: all samples valid
@@ -552,38 +465,62 @@ class FlexibleMultiTaskModel(L.LightningModule):
             weighted_loss = task_weight * loss
             total_loss += weighted_loss
 
-            # Log each task's loss
+            # Log task losses
             logs[f"train_{name}_loss"] = loss.detach()
 
-        # Pre-training losses
-        if self.pretrain and h_f is not None:
-            # 1) Contrastive loss
-            if h_s is not None and self.w.get("con", 0) > 0:
-                l_con = self._contrastive(h_f, h_s)
-                total_loss += self.w["con"] * l_con
-                logs["train_con"] = l_con.detach()
-
-            # 2) Cross-reconstruction loss
-            if h_s is not None and self.w.get("cross", 0) > 0:
-                l_cross = 0.5 * (
-                    F.mse_loss(self.dec_struct(h_f), x_struct) + F.mse_loss(self.dec_formula(h_s), x_formula)
-                )
-                total_loss += self.w["cross"] * l_cross
-                logs["train_cross"] = l_cross.detach()
-
-            # 3) Masked feature modeling
-            if self.w.get("mask", 0) > 0:
-                xf_mask, mf = self._mask_feat(x_formula)
-                l_mask = F.mse_loss(self.dec_formula(self.shared(xf_mask))[mf], x_formula[mf])
-                if x_struct is not None:
-                    xs_mask, ms = self._mask_feat(x_struct)
-                    l_mask_s = F.mse_loss(self.dec_struct(self.struct_enc(xs_mask))[ms], x_struct[ms])
-                    l_mask = 0.5 * (l_mask + l_mask_s)
-                total_loss += self.w["mask"] * l_mask
-                logs["train_mask"] = l_mask.detach()
+        # Self-supervised losses
+        if self.enable_self_supervised_training:
+            self._add_self_supervised_losses(total_loss, logs, h_formula, h_structure, x_formula, x_struct)
 
         # Log metrics
         self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
+
+        return total_loss
+
+    def _add_self_supervised_losses(
+        self,
+        total_loss: torch.Tensor,
+        logs: dict,
+        h_formula: torch.Tensor,
+        h_structure: torch.Tensor | None,
+        x_formula: torch.Tensor,
+        x_structure: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Add self-supervised losses to the total loss."""
+        # Only continue if self-supervised training is enabled and modules are initialized
+        if not self.enable_self_supervised_training or not hasattr(self, "ssl_module"):
+            return total_loss
+
+        # 1. Masked Feature Modeling loss
+        if self.w.get("mfm", 0) > 0 and x_formula is not None:
+            # Create encoder function for masked feature modeling
+            encoder_fn = self.encoder.encode_masked
+
+            # Compute MFM loss using the self-supervised module
+            mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(encoder_fn, x_formula, x_structure)
+
+            # Add weighted loss
+            total_loss += self.w["mfm"] * mfm_loss
+            logs.update({f"train_{k}": v for k, v in mfm_logs.items()})
+
+        # 2. Contrastive loss (only for multi-modal)
+        if self.with_structure and h_structure is not None and self.w.get("contrastive", 0) > 0:
+            contrastive_loss = self.ssl_module.compute_contrastive_loss(h_formula, h_structure)
+            total_loss += self.w["contrastive"] * contrastive_loss
+            logs["train_contrastive"] = contrastive_loss.detach()
+
+        # 3. Cross-reconstruction loss (only for multi-modal)
+        if (
+            self.with_structure
+            and h_structure is not None
+            and x_structure is not None
+            and self.w.get("cross_recon", 0) > 0
+        ):
+            cross_recon_loss = self.ssl_module.compute_cross_reconstruction_loss(
+                h_formula, h_structure, x_formula, x_structure
+            )
+            total_loss += self.w["cross_recon"] * cross_recon_loss
+            logs["train_cross_recon"] = cross_recon_loss.detach()
 
         return total_loss
 
@@ -591,24 +528,17 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """
         Validation step implementation.
 
-        This method evaluates the model's performance on validation data, calculating
-        losses for all enabled task heads without applying optimization or pre-training losses.
-
         Parameters
         ----------
         batch : tuple
             A tuple containing (x, y_dict, task_masks, temps)
-            - x: Input features or tuple of (formula, structure) features
-            - y_dict: Dictionary mapping task names to target values
-            - task_masks: Binary mask indicating valid tasks for each sample
-            - temps: Temperature/sequence points for sequence tasks
         batch_idx : int
             Index of the current batch
 
         Returns
         -------
         torch.Tensor
-            Total validation loss value (unweighted sum of all task losses)
+            Total validation loss
         """
         # Unpack batch
         x, y_dict, task_masks, temps = batch
@@ -650,7 +580,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # Accumulate loss (unweighted for validation)
             total_loss += loss
 
-            # Log each task's loss
+            # Log task losses
             logs[f"val_{name}_loss"] = loss.detach()
 
         # Log metrics
@@ -659,42 +589,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return total_loss
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
-        """
-        Prediction step.
-
-        Parameters
-        ----------
-        batch : tuple
-            A tuple containing (x, y_dict, task_masks, temps)
-        batch_idx : int
-            Index of the current batch
-        dataloader_idx : int
-            Index of the dataloader
-
-        Returns
-        -------
-        dict[str, torch.Tensor]
-            Dictionary of task predictions
-        """
+        """Prediction step."""
         x, _, _, temps = batch
         return self(x, temps)
 
     def _create_optimizer(self, params: list[torch.nn.Parameter], config: OptimizerConfig) -> torch.optim.Optimizer:
-        """
-        Create an optimizer based on the configuration.
-
-        Parameters
-        ----------
-        params : list[torch.nn.Parameter]
-            Parameters to optimize
-        config : OptimizerConfig
-            Optimizer configuration
-
-        Returns
-        -------
-        torch.optim.Optimizer
-            Configured optimizer instance
-        """
+        """Create an optimizer based on the configuration."""
         params = list(filter(lambda p: p.requires_grad, params))
 
         if config.optimizer_type == "AdamW":
@@ -711,21 +611,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             raise ValueError(f"Unsupported optimizer type: {config.optimizer_type}")
 
     def _create_scheduler(self, optimizer: torch.optim.Optimizer, config: OptimizerConfig) -> _LRScheduler | None:
-        """
-        Create a learning rate scheduler based on the configuration.
-
-        Parameters
-        ----------
-        optimizer : torch.optim.Optimizer
-            Optimizer to schedule
-        config : OptimizerConfig
-            Scheduler configuration
-
-        Returns
-        -------
-        _LRScheduler | None
-            Configured scheduler instance or None if scheduler_type is "None"
-        """
+        """Create a learning rate scheduler based on the configuration."""
         if config.scheduler_type == "ReduceLROnPlateau":
             return optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
@@ -745,20 +631,21 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """Configure optimizers for all parameter groups."""
         optimizers_and_schedulers = []
 
-        # 1. Shared parameters (shared encoder + deposit)
-        # Note: In future iterations, deposit layer might have its own optimizer
-        # to facilitate continue learning scenarios where shared encoder is frozen
-        # while deposit layers can be expanded and fine-tuned
-        shared_params = list(self.shared.parameters()) + list(self.deposit.parameters())
-        shared_opt = self._create_optimizer(shared_params, self.shared_block_optimizer)
-        shared_sched = self._create_scheduler(shared_opt, self.shared_block_optimizer)
+        # 1. Encoder parameters
+        if self.with_structure:
+            encoder_params = list(self.encoder.parameters())
+        else:
+            encoder_params = list(self.encoder.parameters())
 
-        if shared_sched:
+        encoder_opt = self._create_optimizer(encoder_params, self.shared_block_optimizer)
+        encoder_sched = self._create_scheduler(encoder_opt, self.shared_block_optimizer)
+
+        if encoder_sched:
             optimizers_and_schedulers.append(
                 {
-                    "optimizer": shared_opt,
+                    "optimizer": encoder_opt,
                     "lr_scheduler": {
-                        "scheduler": shared_sched,
+                        "scheduler": encoder_sched,
                         "monitor": self.shared_block_optimizer.monitor,
                         "interval": self.shared_block_optimizer.interval,
                         "frequency": self.shared_block_optimizer.frequency,
@@ -766,30 +653,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 }
             )
         else:
-            optimizers_and_schedulers.append(shared_opt)
+            optimizers_and_schedulers.append(encoder_opt)
 
-        # 2. Structure encoder parameters if present
-        if self.with_structure:
-            # Use shared optimizer config for structure encoder
-            struct_opt = self._create_optimizer(self.struct_enc.parameters(), self.shared_block_optimizer)
-            struct_sched = self._create_scheduler(struct_opt, self.shared_block_optimizer)
-
-            if struct_sched:
-                optimizers_and_schedulers.append(
-                    {
-                        "optimizer": struct_opt,
-                        "lr_scheduler": {
-                            "scheduler": struct_sched,
-                            "monitor": self.shared_block_optimizer.monitor,
-                            "interval": self.shared_block_optimizer.interval,
-                            "frequency": self.shared_block_optimizer.frequency,
-                        },
-                    }
-                )
-            else:
-                optimizers_and_schedulers.append(struct_opt)
-
-        # 3. Task head parameters
+        # 2. Task head parameters
         for name, head in self.task_heads.items():
             config = self.task_configs_map[name]
 
@@ -832,5 +698,25 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     )
                 else:
                     optimizers_and_schedulers.append(task_opt)
+
+        # 3. Self-supervised module parameters (if enabled)
+        if self.enable_self_supervised_training and hasattr(self, "ssl_module"):
+            ssl_opt = self._create_optimizer(self.ssl_module.parameters(), self.shared_block_optimizer)
+            ssl_sched = self._create_scheduler(ssl_opt, self.shared_block_optimizer)
+
+            if ssl_sched:
+                optimizers_and_schedulers.append(
+                    {
+                        "optimizer": ssl_opt,
+                        "lr_scheduler": {
+                            "scheduler": ssl_sched,
+                            "monitor": self.shared_block_optimizer.monitor,
+                            "interval": self.shared_block_optimizer.interval,
+                            "frequency": self.shared_block_optimizer.frequency,
+                        },
+                    }
+                )
+            else:
+                optimizers_and_schedulers.append(ssl_opt)
 
         return optimizers_and_schedulers
