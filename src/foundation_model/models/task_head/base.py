@@ -1,3 +1,6 @@
+# Copyright 2025 TsumiNa.
+# SPDX-License-Identifier: Apache-2.0
+
 """
 Base task head interface for the FlexibleMultiTaskModel.
 """

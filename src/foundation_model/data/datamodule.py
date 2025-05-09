@@ -1,3 +1,6 @@
+# Copyright 2025 TsumiNa.
+# SPDX-License-Identifier: Apache-2.0
+
 import lightning as L
 import numpy as np
 import pandas as pd

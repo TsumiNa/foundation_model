@@ -1,3 +1,6 @@
+# Copyright 2025 TsumiNa.
+# SPDX-License-Identifier: Apache-2.0
+
 """
 Module: flexible_multi_task_model
 ---------------------------------
@@ -37,36 +40,87 @@ class FlexibleMultiTaskModel(L.LightningModule):
     """
     Foundation model with flexible task heads.
 
-    This model provides a shared representation layer (foundation encoder) and
-    supports multiple task heads for different prediction tasks, including
-    regression, classification, and sequence prediction.
+    This model implements a flexible multi-task learning framework with foundation model capabilities.
+    The core architecture includes:
+
+    1. Shared Encoder Layer (Foundation Encoder):
+       Extracts general representations from input features, serving as a shared foundation for all tasks.
+
+    2. Deposit Layer:
+       Acts as a buffer between the shared encoder and task heads, providing an extensible design for continual learning.
+
+    3. Multi-task Heads:
+       Supports various types of prediction tasks:
+       - Regression tasks: Predict continuous value attributes
+       - Classification tasks: Predict discrete categories
+       - Sequence tasks: Predict time-series data (e.g., temperature curves)
+
+    4. Structure Fusion (optional):
+       When with_structure=True, can fuse information from different modalities (e.g., formula and structure).
+
+    5. Pre-training Mechanisms (optional):
+       When pretrain=True, enables self-supervised learning objectives:
+       - Masked Feature Modeling (MFM): Similar to BERT's masked language modeling
+       - Contrastive Learning: Aligns representations from different modalities
+       - Cross-reconstruction: Reconstructs one modality from another
+
+    Training Process:
+    - Each batch's loss includes task-specific losses and optional pre-training losses
+    - Uses manual optimization to support complex optimizer configurations
+    - Different components (shared encoder, task heads, etc.) can use different optimizer configurations
+
+    Usage Scenarios:
+    1. Multi-task Learning: Predict multiple related tasks simultaneously
+    2. Transfer Learning: Pre-train shared encoder, then fine-tune specific tasks
+    3. Multi-modal Fusion: Combine data from different sources
+    4. Continual Learning: Support model updates via deposit layer design
 
     Parameters
     ----------
     shared_block_dims : list[int]
-        Widths of shared MLP layers (foundation encoder output → deposit).
+        Widths of shared MLP layers (foundation encoder). The first element is the input dimension,
+        and the last element is the latent representation dimension.
+        Example: [128, 256, 512, 256] represents a 3-layer MLP with input dimension 128 and latent dimension 256.
     task_configs : list[RegressionTaskConfig | ClassificationTaskConfig | SequenceTaskConfig]
-        List of task configurations.
+        List of task configurations, each defining a prediction task. Each configuration must specify
+        task type, name, dimensions, etc. Regression and classification task heads receive the deposit
+        layer output, while sequence task heads receive both deposit layer output and sequence points.
     norm_shared : bool
-        Whether to apply normalization in shared layers.
+        Whether to apply layer normalization in shared layers.
     residual_shared : bool
         Whether to use residual connections in shared layers.
     shared_block_optimizer : OptimizerConfig | None
         Optimizer configuration for shared foundation encoder and deposit layer.
     with_structure : bool
-        Whether to enable structure fusion.
+        Whether to enable structure encoding and modality fusion. When set to True,
+        the model expects inputs from two modalities.
     struct_block_dims : list[int] | None
-        Dimensions for structure encoder, if with_structure is True.
+        Dimensions for structure encoder MLP layers. The first element is the input dimension
+        of the structure features, and the last element must match shared_block_dims[-1] to ensure
+        both modalities have the same dimension before fusion. Only used when with_structure=True.
     modality_dropout_p : float
-        Dropout probability for modality fusion.
+        Probability of modality dropout. During pre-training, there's this probability of
+        randomly dropping the structure modality, forcing the model to learn to handle
+        single-modality cases. Only relevant when with_structure=True and pretrain=True.
     pretrain : bool
-        Whether to use pre-training objectives.
+        Whether to use pre-training objectives (masked feature modeling, contrastive learning,
+        and cross-reconstruction). When True, these additional losses are added to task-specific losses.
     loss_weights : dict[str, float] | None
-        Weights for different loss components.
+        Weight coefficients dictionary for balancing different loss components in the total loss.
+        Includes the following keys:
+        - "attr": Weight for attribute tasks (regression/classification) loss, default 1.0
+        - "seq": Weight for sequence prediction task loss, default 1.0
+        - "con": Weight for contrastive learning loss (only used when pretrain=True and with_structure=True), default 1.0
+        - "cross": Weight for cross-reconstruction loss (only used when pretrain=True and with_structure=True), default 1.0
+        - "mask": Weight for masked feature reconstruction loss (only used when pretrain=True), default 1.0
+        Example: {"attr": 1.0, "seq": 0.5, "con": 0.1, "cross": 0.1, "mask": 0.2}
     mask_ratio : float
-        Mask ratio for masked feature modeling.
+        Ratio of features to be randomly masked in masked feature modeling.
+        Typical value is 0.15. Only used when pretrain=True.
     temperature : float
-        Temperature for contrastive learning.
+        Temperature coefficient in contrastive learning. Controls the smoothness of
+        the similarity distribution, with smaller values increasing contrast.
+        Typical value is 0.07. Only used when pretrain=True and with_structure=True.
     """
 
     def __init__(
@@ -402,7 +456,41 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     # ----------- Lightning methods ----------- #
     def training_step(self, batch, batch_idx):
-        """Training step."""
+        """
+        Training step implementation with multi-component loss calculation.
+
+        This method implements the full training step, including:
+        1. Multi-task loss calculation (regression, classification, sequence)
+        2. Pre-training losses when pretrain=True (contrastive, cross-reconstruction, MFM)
+        3. Manual optimization with separate optimizers for different components
+
+        The total loss is a weighted sum of all enabled loss components, with weights
+        specified by the loss_weights parameter during initialization. The following
+        weights are applied to different loss components:
+        - self.w["attr"]: Weight for attribute prediction (regression/classification) loss
+        - self.w["seq"]: Weight for sequence prediction loss
+        - self.w["con"]: Weight for contrastive learning loss
+        - self.w["cross"]: Weight for cross-reconstruction loss
+        - self.w["mask"]: Weight for masked feature modeling loss
+
+        Parameters
+        ----------
+        batch : tuple
+            A tuple containing (x, y_attr, mask_attr, temps, y_seq, mask_seq)
+            - x: Input features or tuple of (formula, structure) features
+            - y_attr: Target attributes for regression/classification
+            - mask_attr: Mask for valid attribute values
+            - temps: Temperature/sequence points
+            - y_seq: Target sequence values
+            - mask_seq: Mask for valid sequence points
+        batch_idx : int
+            Index of the current batch
+
+        Returns
+        -------
+        torch.Tensor
+            Total weighted loss value
+        """
         # Unpack batch
         x, y_attr, mask_attr, temps, y_seq, mask_seq = batch
 
@@ -506,7 +594,34 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return total_loss
 
     def validation_step(self, batch, batch_idx):
-        """Validation step."""
+        """
+        Validation step implementation.
+
+        This method evaluates the model's performance on validation data, calculating
+        losses for all enabled task heads. Unlike the training step, no optimization
+        or pre-training losses are applied during validation.
+
+        The validation metrics are logged both per-task and in aggregated form,
+        providing insights into model performance across different tasks.
+
+        Parameters
+        ----------
+        batch : tuple
+            A tuple containing (x, y_attr, mask_attr, temps, y_seq, mask_seq)
+            - x: Input features or tuple of (formula, structure) features
+            - y_attr: Target attributes for regression/classification
+            - mask_attr: Mask for valid attribute values
+            - temps: Temperature/sequence points
+            - y_seq: Target sequence values
+            - mask_seq: Mask for valid sequence points
+        batch_idx : int
+            Index of the current batch
+
+        Returns
+        -------
+        torch.Tensor
+            Total validation loss value (unweighted sum of all task losses)
+        """
         # Unpack batch
         x, y_attr, mask_attr, temps, y_seq, mask_seq = batch
 
