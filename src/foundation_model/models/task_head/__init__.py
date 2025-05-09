@@ -19,8 +19,6 @@ def create_task_heads(
     task_configs: list[RegressionTaskConfig | ClassificationTaskConfig | SequenceTaskConfig],
     deposit_dim: int,
     latent_dim: int,
-    lora_rank: int | None = None,
-    lora_alpha: float = 1.0,
 ) -> nn.ModuleDict:
     """
     Create task heads based on configurations.
@@ -33,10 +31,6 @@ def create_task_heads(
         Dimension of the deposit layer output (input to regression/classification heads).
     latent_dim : int
         Dimension of the latent representation (input to sequence heads).
-    lora_rank : int | None
-        If not None, apply LoRA adaptation with the specified rank.
-    lora_alpha : float
-        Scaling factor for LoRA adaptation.
 
     Returns
     -------
@@ -49,6 +43,15 @@ def create_task_heads(
         if not config.enabled:
             continue
 
+        # Determine LoRA parameters if applicable
+        lora_params = {}
+        if hasattr(config, "lora_enabled") and config.lora_enabled:
+            lora_params = {
+                "lora_rank": config.lora_rank,
+                "lora_alpha": config.lora_alpha,
+                "freeze_base": config.lora_freeze_base,
+            }
+
         if config.type == TaskType.REGRESSION:
             assert isinstance(config, RegressionTaskConfig)
             task_heads[config.name] = RegressionHead(
@@ -57,8 +60,7 @@ def create_task_heads(
                 dims=config.dims,
                 norm=config.norm,
                 residual=config.residual,
-                lora_rank=lora_rank,
-                lora_alpha=lora_alpha,
+                **lora_params,
             )
         elif config.type == TaskType.CLASSIFICATION:
             assert isinstance(config, ClassificationTaskConfig)
@@ -69,8 +71,7 @@ def create_task_heads(
                 num_classes=config.num_classes,
                 norm=config.norm,
                 residual=config.residual,
-                lora_rank=lora_rank,
-                lora_alpha=lora_alpha,
+                **lora_params,
             )
         elif config.type == TaskType.SEQUENCE:
             assert isinstance(config, SequenceTaskConfig)

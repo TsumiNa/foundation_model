@@ -27,6 +27,9 @@ class OptimizerConfig(BaseModel):
     betas: tuple[float, float] = Field(
         (0.9, 0.999), description="Coefficients for computing running averages of gradient"
     )
+    freeze_parameters: bool = Field(
+        False, description="If True, parameters associated with this optimizer will be frozen (requires_grad=False)"
+    )
 
     # Scheduler settings
     scheduler_type: Literal["ReduceLROnPlateau", "StepLR", "None"] = Field(
@@ -50,6 +53,12 @@ class BaseTaskConfig(BaseModel):
     type: TaskType = Field(..., description="Type of the task")
     enabled: bool = Field(True, description="Whether the task is enabled")
     weight: float = Field(1.0, description="Weight of the task in the loss function")
+
+    # LoRA configuration
+    lora_enabled: bool = Field(False, description="Whether to enable LoRA adaptation")
+    lora_rank: int = Field(0, description="Rank for LoRA adaptation, 0 means disabled")
+    lora_alpha: float = Field(1.0, description="Scaling factor for LoRA adaptation")
+    lora_freeze_base: bool = Field(True, description="Whether to freeze the base weights when using LoRA")
 
     # Optimizer configuration
     optimizer: OptimizerConfig | None = Field(None, description="Optimizer configuration for this task")

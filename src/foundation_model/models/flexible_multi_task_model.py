@@ -67,12 +67,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         Mask ratio for masked feature modeling.
     temperature : float
         Temperature for contrastive learning.
-    freeze_encoder : bool
-        Whether to freeze the encoder during fine-tuning.
-    lora_rank : int
-        Rank for LoRA adaptation (0 = off).
-    lora_alpha : float
-        Alpha scaling factor for LoRA.
     """
 
     def __init__(
@@ -94,10 +88,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         loss_weights: dict[str, float] | None = None,
         mask_ratio: float = 0.15,
         temperature: float = 0.07,
-        # LoRA options
-        freeze_encoder: bool = False,
-        lora_rank: int = 0,
-        lora_alpha: float = 1.0,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -127,11 +117,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.mask_ratio = mask_ratio
         self.tau = temperature
 
-        # LoRA parameters
-        self.freeze_encoder = freeze_encoder
-        self.lora_rank = lora_rank
-        self.lora_alpha = lora_alpha
-
         # Optimizer configurations
         self.shared_block_optimizer = shared_block_optimizer or OptimizerConfig(weight_decay=1e-2)
 
@@ -159,13 +144,19 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self._init_weights()
 
     def _init_weights(self):
-        """Initialize model weights."""
-        # Freeze encoder if requested
-        if self.freeze_encoder:
+        """Initialize model weights and apply freezing based on optimizer configs."""
+        # Apply parameter freezing based on optimizer config
+        if self.shared_block_optimizer and self.shared_block_optimizer.freeze_parameters:
             for p in self.shared.parameters():
                 p.requires_grad_(False)
+            for p in self.deposit.parameters():
+                p.requires_grad_(False)
+
+            # If structure fusion is enabled, freeze those parameters too
             if self.with_structure:
                 for p in self.struct_enc.parameters():
+                    p.requires_grad_(False)
+                for p in self.fusion.parameters():
                     p.requires_grad_(False)
 
         # Initialize weights
@@ -227,9 +218,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
             task_configs=self.task_configs,
             deposit_dim=deposit_dim,
             latent_dim=latent_dim,
-            lora_rank=self.lora_rank if self.lora_rank > 0 else None,
-            lora_alpha=self.lora_alpha,
         )
+
+        # Apply optimizer freeze_parameters to task heads
+        for name, head in self.task_heads.items():
+            config = self.task_configs_map[name]
+            if config.optimizer and config.optimizer.freeze_parameters:
+                for p in head.parameters():
+                    p.requires_grad_(False)
 
     def _encode(
         self, x_formula: torch.Tensor, x_struct: torch.Tensor | None = None
