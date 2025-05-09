@@ -177,8 +177,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Store task configurations by name for easy reference
         self.task_configs_map = {cfg.name: cfg for cfg in self.task_configs}
 
-        # Loss weights (keys: con, cross, mask, attr, seq)
-        self.w = {"con": 1, "cross": 1, "mask": 1, "attr": 1, "seq": 1}
+        # Initialize task loss weights
+        # 1. First set default weight 1.0 for each enabled task
+        self.w = {cfg.name: 1.0 for cfg in self.task_configs if cfg.enabled}
+        # 2. Add default weights for pre-training losses
+        self.w.update({"con": 1.0, "cross": 1.0, "mask": 1.0})
+        # 3. Apply user-provided weights to override defaults
         if loss_weights:
             self.w.update(loss_weights)
 
@@ -191,8 +195,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.has_classification = any(tc.type == TaskType.CLASSIFICATION for tc in task_configs if tc.enabled)
         self.has_sequence = any(tc.type == TaskType.SEQUENCE for tc in task_configs if tc.enabled)
 
-        # Manual optimization
-        self.automatic_optimization = False
+        # Enable automatic optimization
+        self.automatic_optimization = True
 
         # Initialize weights
         self._init_weights()
@@ -462,27 +466,24 @@ class FlexibleMultiTaskModel(L.LightningModule):
         This method implements the full training step, including:
         1. Multi-task loss calculation (regression, classification, sequence)
         2. Pre-training losses when pretrain=True (contrastive, cross-reconstruction, MFM)
-        3. Manual optimization with separate optimizers for different components
 
         The total loss is a weighted sum of all enabled loss components, with weights
         specified by the loss_weights parameter during initialization. The following
         weights are applied to different loss components:
-        - self.w["attr"]: Weight for attribute prediction (regression/classification) loss
-        - self.w["seq"]: Weight for sequence prediction loss
-        - self.w["con"]: Weight for contrastive learning loss
-        - self.w["cross"]: Weight for cross-reconstruction loss
-        - self.w["mask"]: Weight for masked feature modeling loss
+        - Task-specific weights: Each task uses its name as the key (e.g., self.w["band_gap"])
+        - Pre-training loss weights:
+          - self.w["con"]: Weight for contrastive learning loss
+          - self.w["cross"]: Weight for cross-reconstruction loss
+          - self.w["mask"]: Weight for masked feature modeling loss
 
         Parameters
         ----------
         batch : tuple
-            A tuple containing (x, y_attr, mask_attr, temps, y_seq, mask_seq)
+            A tuple containing (x, y_dict, task_masks, temps)
             - x: Input features or tuple of (formula, structure) features
-            - y_attr: Target attributes for regression/classification
-            - mask_attr: Mask for valid attribute values
-            - temps: Temperature/sequence points
-            - y_seq: Target sequence values
-            - mask_seq: Mask for valid sequence points
+            - y_dict: Dictionary mapping task names to target values
+            - task_masks: Binary mask indicating valid tasks for each sample
+            - temps: Temperature/sequence points for sequence tasks
         batch_idx : int
             Index of the current batch
 
@@ -492,18 +493,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Total weighted loss value
         """
         # Unpack batch
-        x, y_attr, mask_attr, temps, y_seq, mask_seq = batch
-
-        # Get optimizers
-        optimizers = self.optimizers()
-        opt_shared, opt_task = optimizers[0], optimizers[1]
-        opt_seq = optimizers[2] if len(optimizers) > 2 else None
-
-        # Zero gradients
-        opt_shared.zero_grad()
-        opt_task.zero_grad()
-        if opt_seq is not None:
-            opt_seq.zero_grad()
+        x, y_dict, task_masks, temps = batch
 
         # Unpack inputs for structure fusion
         if self.with_structure and isinstance(x, (list, tuple)):
@@ -512,12 +502,15 @@ class FlexibleMultiTaskModel(L.LightningModule):
             x_formula, x_struct = x, None
 
         # Get raw embeddings for pre-training tasks
-        h_f = self.shared(x_formula)
-        h_s = self.struct_enc(x_struct) if (self.with_structure and x_struct is not None) else None
+        if self.pretrain:
+            h_f = self.shared(x_formula)
+            h_s = self.struct_enc(x_struct) if (self.with_structure and x_struct is not None) else None
 
-        # Modality dropout during pre-training
-        if self.pretrain and h_s is not None and torch.rand(1).item() < self.mod_dropout_p:
-            h_s, x_struct = None, None
+            # Modality dropout during pre-training
+            if h_s is not None and torch.rand(1).item() < self.mod_dropout_p:
+                h_s, x_struct = None, None
+        else:
+            h_f, h_s = None, None
 
         # Forward pass
         preds = self(x, temps)
@@ -526,52 +519,60 @@ class FlexibleMultiTaskModel(L.LightningModule):
         total_loss = 0.0
         logs = {}
 
-        # Regression/classification losses
-        attr_losses = []
+        # Get task mask indices mapping (map from task name to index in task_masks)
+        task_mask_indices = {name: i for i, name in enumerate(self.task_heads.keys())}
+
+        # Process each prediction
         for name, pred in preds.items():
+            if name not in y_dict:
+                continue  # Skip tasks without targets
+
             head = self.task_heads[name]
-            if not isinstance(head, SequenceBaseHead):
-                attr_loss, _ = head.compute_loss(pred, y_attr, mask_attr)
-                attr_losses.append(attr_loss)
-                logs[f"train_{name}_loss"] = attr_loss
+            target = y_dict[name]
 
-        if attr_losses:
-            attr_loss = torch.stack(attr_losses).mean()
-            total_loss = self.w["attr"] * attr_loss
-            logs["train_attr_loss"] = attr_loss
+            # Get mask for this task
+            mask_idx = task_mask_indices.get(name)
+            if mask_idx is not None and mask_idx < task_masks.shape[1]:
+                # Create sample mask tensor matching target shape
+                sample_mask = task_masks[:, mask_idx].view(-1, 1)
 
-        # Sequence losses
-        seq_losses = []
-        for name, pred in preds.items():
-            head = self.task_heads[name]
-            if isinstance(head, SequenceBaseHead) and y_seq is not None:
-                seq_loss, _ = head.compute_loss(pred, y_seq, mask_seq)
-                seq_losses.append(seq_loss)
-                logs[f"train_{name}_loss"] = seq_loss
+                # Handle sequence task masks (expand mask for sequence dimensions)
+                if isinstance(head, SequenceBaseHead) and len(target.shape) > 2:
+                    # Expand mask to match sequence dimensions (B, L, D) -> sample_mask is (B, 1)
+                    sample_mask = sample_mask.unsqueeze(1).expand(-1, target.shape[1], -1)
+            else:
+                # Default: all samples valid
+                sample_mask = torch.ones_like(target)
 
-        if seq_losses:
-            seq_loss = torch.stack(seq_losses).mean()
-            total_loss = total_loss + self.w["seq"] * seq_loss
-            logs["train_seq_loss"] = seq_loss
+            # Compute loss
+            loss, per_dim_loss = head.compute_loss(pred, target, sample_mask)
+
+            # Apply task-specific weight and accumulate
+            task_weight = self.w.get(name, 1.0)
+            weighted_loss = task_weight * loss
+            total_loss += weighted_loss
+
+            # Log each task's loss
+            logs[f"train_{name}_loss"] = loss.detach()
 
         # Pre-training losses
-        if self.pretrain:
+        if self.pretrain and h_f is not None:
             # 1) Contrastive loss
-            if h_s is not None and self.w["con"] > 0:
+            if h_s is not None and self.w.get("con", 0) > 0:
                 l_con = self._contrastive(h_f, h_s)
                 total_loss += self.w["con"] * l_con
-                logs["train_con"] = l_con
+                logs["train_con"] = l_con.detach()
 
             # 2) Cross-reconstruction loss
-            if h_s is not None and self.w["cross"] > 0:
+            if h_s is not None and self.w.get("cross", 0) > 0:
                 l_cross = 0.5 * (
                     F.mse_loss(self.dec_struct(h_f), x_struct) + F.mse_loss(self.dec_formula(h_s), x_formula)
                 )
                 total_loss += self.w["cross"] * l_cross
-                logs["train_cross"] = l_cross
+                logs["train_cross"] = l_cross.detach()
 
             # 3) Masked feature modeling
-            if self.w["mask"] > 0:
+            if self.w.get("mask", 0) > 0:
                 xf_mask, mf = self._mask_feat(x_formula)
                 l_mask = F.mse_loss(self.dec_formula(self.shared(xf_mask))[mf], x_formula[mf])
                 if x_struct is not None:
@@ -579,17 +580,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     l_mask_s = F.mse_loss(self.dec_struct(self.struct_enc(xs_mask))[ms], x_struct[ms])
                     l_mask = 0.5 * (l_mask + l_mask_s)
                 total_loss += self.w["mask"] * l_mask
-                logs["train_mask"] = l_mask
-
-        # Backward pass and optimization
-        self.manual_backward(total_loss)
-        opt_shared.step()
-        opt_task.step()
-        if opt_seq is not None:
-            opt_seq.step()
+                logs["train_mask"] = l_mask.detach()
 
         # Log metrics
-        self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=False)
+        self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
 
         return total_loss
 
@@ -598,22 +592,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
         Validation step implementation.
 
         This method evaluates the model's performance on validation data, calculating
-        losses for all enabled task heads. Unlike the training step, no optimization
-        or pre-training losses are applied during validation.
-
-        The validation metrics are logged both per-task and in aggregated form,
-        providing insights into model performance across different tasks.
+        losses for all enabled task heads without applying optimization or pre-training losses.
 
         Parameters
         ----------
         batch : tuple
-            A tuple containing (x, y_attr, mask_attr, temps, y_seq, mask_seq)
+            A tuple containing (x, y_dict, task_masks, temps)
             - x: Input features or tuple of (formula, structure) features
-            - y_attr: Target attributes for regression/classification
-            - mask_attr: Mask for valid attribute values
-            - temps: Temperature/sequence points
-            - y_seq: Target sequence values
-            - mask_seq: Mask for valid sequence points
+            - y_dict: Dictionary mapping task names to target values
+            - task_masks: Binary mask indicating valid tasks for each sample
+            - temps: Temperature/sequence points for sequence tasks
         batch_idx : int
             Index of the current batch
 
@@ -623,7 +611,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Total validation loss value (unweighted sum of all task losses)
         """
         # Unpack batch
-        x, y_attr, mask_attr, temps, y_seq, mask_seq = batch
+        x, y_dict, task_masks, temps = batch
 
         # Forward pass
         preds = self(x, temps)
@@ -632,33 +620,38 @@ class FlexibleMultiTaskModel(L.LightningModule):
         total_loss = 0.0
         logs = {}
 
-        # Regression/classification losses
-        attr_losses = []
+        # Get task mask indices mapping
+        task_mask_indices = {name: i for i, name in enumerate(self.task_heads.keys())}
+
+        # Process each prediction
         for name, pred in preds.items():
+            if name not in y_dict:
+                continue  # Skip tasks without targets
+
             head = self.task_heads[name]
-            if not isinstance(head, SequenceBaseHead):
-                attr_loss, _ = head.compute_loss(pred, y_attr, mask_attr)
-                attr_losses.append(attr_loss)
-                logs[f"val_{name}_loss"] = attr_loss
+            target = y_dict[name]
 
-        if attr_losses:
-            attr_loss = torch.stack(attr_losses).mean()
-            total_loss = attr_loss
-            logs["val_attr_loss"] = attr_loss
+            # Get mask for this task
+            mask_idx = task_mask_indices.get(name)
+            if mask_idx is not None and mask_idx < task_masks.shape[1]:
+                # Create sample mask tensor matching target shape
+                sample_mask = task_masks[:, mask_idx].view(-1, 1)
 
-        # Sequence losses
-        seq_losses = []
-        for name, pred in preds.items():
-            head = self.task_heads[name]
-            if isinstance(head, SequenceBaseHead) and y_seq is not None:
-                seq_loss, _ = head.compute_loss(pred, y_seq, mask_seq)
-                seq_losses.append(seq_loss)
-                logs[f"val_{name}_loss"] = seq_loss
+                # Handle sequence task masks
+                if isinstance(head, SequenceBaseHead) and len(target.shape) > 2:
+                    sample_mask = sample_mask.unsqueeze(1).expand(-1, target.shape[1], -1)
+            else:
+                # Default: all samples valid
+                sample_mask = torch.ones_like(target)
 
-        if seq_losses:
-            seq_loss = torch.stack(seq_losses).mean()
-            total_loss = total_loss + seq_loss
-            logs["val_seq_loss"] = seq_loss
+            # Compute loss
+            loss, per_dim_loss = head.compute_loss(pred, target, sample_mask)
+
+            # Accumulate loss (unweighted for validation)
+            total_loss += loss
+
+            # Log each task's loss
+            logs[f"val_{name}_loss"] = loss.detach()
 
         # Log metrics
         self.log_dict(logs, prog_bar=True, on_epoch=True)
@@ -666,8 +659,24 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return total_loss
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
-        """Prediction step."""
-        x, _, _, temps, _, _ = batch
+        """
+        Prediction step.
+
+        Parameters
+        ----------
+        batch : tuple
+            A tuple containing (x, y_dict, task_masks, temps)
+        batch_idx : int
+            Index of the current batch
+        dataloader_idx : int
+            Index of the dataloader
+
+        Returns
+        -------
+        dict[str, torch.Tensor]
+            Dictionary of task predictions
+        """
+        x, _, _, temps = batch
         return self(x, temps)
 
     def _create_optimizer(self, params: list[torch.nn.Parameter], config: OptimizerConfig) -> torch.optim.Optimizer:

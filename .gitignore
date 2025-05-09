@@ -29,11 +29,11 @@ lightning_logs/
 *.ckpt
 
 # Project specific
-results/
-images/
-matched_structures/
-tamura/
-data/
+/results
+**/images
+/matched_structures
+/tamura
+/data
 
 # IDE
 .idea/
