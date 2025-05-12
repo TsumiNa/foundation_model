@@ -36,9 +36,34 @@ class BaseTaskHead(nn.Module, ABC):
     def __init__(self, config: object):  # TODO: Replace object with a more specific TaskConfig base type if available
         super().__init__()
         self.config = config
+
+        # --- DEBUGGING ---
+        print(f"DEBUG: In BaseTaskHead.__init__ for config.name = {getattr(config, 'name', 'NAME_NOT_FOUND')}")
+        print(f"DEBUG: type(config) = {type(config)}")
+        print(f"DEBUG: hasattr(config, 'd_in') = {hasattr(config, 'd_in')}")
+        if hasattr(config, "d_in"):
+            print(f"DEBUG: config.d_in = {config.d_in}")
+        print(f"DEBUG: hasattr(config, 'name') = {hasattr(config, 'name')}")
+        if hasattr(config, "name"):
+            print(f"DEBUG: config.name = {config.name}")
+        # --- END DEBUGGING ---
+
         # Ensure d_in and name are accessible, assuming they are attributes of config
         if not hasattr(config, "d_in") or not hasattr(config, "name"):
             raise ValueError("Task head config must have 'd_in' and 'name' attributes.")
+
+        # Additional check: if d_in exists but is None, this could also be an issue for heads expecting an int
+        if config.d_in is None and not isinstance(
+            self, SequenceBaseHead
+        ):  # Sequence heads might handle d_in differently if it comes from latent_dim
+            # For Regression/Classification, d_in should be an integer (deposit_dim)
+            print(
+                f"WARNING: config.d_in is None for non-sequence task head {getattr(config, 'name', 'Unknown')}. This might cause issues."
+            )
+            # We might still proceed and let the specific head fail if it can't handle None d_in.
+            # Or raise an error here:
+            # raise ValueError(f"config.d_in cannot be None for task head {getattr(config, 'name', 'Unknown')}")
+
         self.d_in = config.d_in
         self.name = config.name
 

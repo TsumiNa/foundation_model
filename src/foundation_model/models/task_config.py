@@ -51,6 +51,7 @@ class BaseTaskConfig(BaseModel):
 
     name: str = Field(..., description="Name of the task")
     type: TaskType = Field(..., description="Type of the task")
+    d_in: Optional[int] = Field(None, description="Input dimension for the task head, typically set dynamically.")
     enabled: bool = Field(True, description="Whether the task is enabled")
     weight: float = Field(1.0, description="Weight of the task in the loss function")
 

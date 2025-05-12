@@ -256,9 +256,17 @@ class FlexibleMultiTaskModel(L.LightningModule):
         )
         latent_dim = self.shared_block_dims[-1]
 
+        # Ensure d_in is set for regression and classification task configs
+        # This attribute is expected by BaseTaskHead and used by the heads themselves.
+        for tc_instance in self.task_configs:
+            if tc_instance.type in [TaskType.REGRESSION, TaskType.CLASSIFICATION]:
+                # The `d_in` attribute should exist on the Pydantic model (BaseTaskConfig)
+                # and is initialized to None. Here we set its actual value.
+                tc_instance.d_in = deposit_dim
+
         self.task_heads = create_task_heads(
-            task_configs=self.task_configs,
-            deposit_dim=deposit_dim,
+            task_configs=self.task_configs,  # These configs now have d_in correctly set
+            deposit_dim=deposit_dim,  # Passed for create_task_heads' own reference if needed
             latent_dim=latent_dim,
         )
 

@@ -57,23 +57,14 @@ def create_task_heads(
 
         if config.type == TaskType.REGRESSION:
             assert isinstance(config, RegressionTaskConfig)
-            task_heads[config.name] = RegressionHead(
-                name=config.name,  # d_in removed
-                dims=config.dims,  # dims[0] should be deposit_dim
-                norm=config.norm,
-                residual=config.residual,
-                **lora_params,
-            )
+            # RegressionHead expects the full config object
+            # lora_params are accessed from config.lora_rank, config.lora_alpha within the head
+            task_heads[config.name] = RegressionHead(config=config)
         elif config.type == TaskType.CLASSIFICATION:
             assert isinstance(config, ClassificationTaskConfig)
-            task_heads[config.name] = ClassificationHead(
-                name=config.name,  # d_in removed
-                dims=config.dims,  # dims[0] should be deposit_dim
-                num_classes=config.num_classes,
-                norm=config.norm,
-                residual=config.residual,
-                **lora_params,
-            )
+            # ClassificationHead expects the full config object
+            # lora_params are accessed from config.lora_rank, config.lora_alpha within the head
+            task_heads[config.name] = ClassificationHead(config=config)
         elif config.type == TaskType.SEQUENCE:
             assert isinstance(config, SequenceTaskConfig)
             task_heads[config.name] = create_sequence_head(
