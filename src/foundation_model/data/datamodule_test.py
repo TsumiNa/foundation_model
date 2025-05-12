@@ -1,3 +1,4 @@
+import logging  # Import logging
 import os
 import tempfile
 from types import SimpleNamespace
@@ -253,39 +254,121 @@ def test_datamodule_structure_usage_in_dataset(
     assert dm_no_struct_flag.train_dataset.x_struct is None
 
 
-def test_datamodule_empty_dataset_returns_none_dataloader(sample_task_configs_dm):
-    """Test that an empty dataset results in a None dataloader and logs a warning."""
+def test_datamodule_init_with_empty_sources_raises_value_error(sample_task_configs_dm):
+    """Test CompoundDataModule raises ValueError if initialized with empty DataFrames."""
     empty_df = pd.DataFrame()
+    non_empty_df = pd.DataFrame({"col1": [1]})  # Needs to be non-empty to pass first check
+
+    with pytest.raises(ValueError, match="Formula and attributes DataFrames cannot be empty after loading."):
+        CompoundDataModule(
+            formula_desc_source=empty_df,  # This one is empty
+            attributes_source=non_empty_df,  # This one is not
+            task_configs=sample_task_configs_dm,
+            batch_size=4,
+        )
+
+    with pytest.raises(ValueError, match="Formula and attributes DataFrames cannot be empty after loading."):
+        CompoundDataModule(
+            formula_desc_source=non_empty_df,  # This one is not
+            attributes_source=empty_df,  # This one is empty
+            task_configs=sample_task_configs_dm,
+            batch_size=4,
+        )
+
+    with pytest.raises(ValueError, match="Formula and attributes DataFrames cannot be empty after loading."):
+        CompoundDataModule(
+            formula_desc_source=empty_df,  # Both empty
+            attributes_source=empty_df,
+            task_configs=sample_task_configs_dm,
+            batch_size=4,
+        )
+
+    # Also test the None case (file not found)
+    with pytest.raises(ValueError, match="formula_desc_source and attributes_source must be successfully loaded"):
+        CompoundDataModule(
+            formula_desc_source="non_existent_file.pkl",  # This will return None from _load_data
+            attributes_source=non_empty_df,
+            task_configs=sample_task_configs_dm,
+            batch_size=4,
+        )
+
+
+def test_datamodule_empty_dataset_returns_none_dataloader(sample_task_configs_dm, caplog):
+    """Test that an empty dataset results in a None dataloader and logs a warning/info."""
+    # Create a DM instance more carefully for testing dataloader logic
+    # We need non-empty formula_df and attributes_df to pass __init__
+    # then we'll manually set indices and datasets to test the dataloader part.
+    dummy_formula = pd.DataFrame({"f1": [1, 2]}, index=["s0", "s1"])
+    dummy_attrs = pd.DataFrame({"task1_regression_value": [1, 2]}, index=["s0", "s1"])
+
     dm = CompoundDataModule(
-        formula_desc_source=empty_df,
-        attributes_source=empty_df,  # This will likely fail earlier due to alignment/key errors
-        # but the goal is to test dataloader with empty dataset
-        task_configs=sample_task_configs_dm,
+        formula_desc_source=dummy_formula,
+        attributes_source=dummy_attrs,
+        task_configs=sample_task_configs_dm,  # Use the provided fixture
         batch_size=4,
     )
-    # To directly test the dataloader part, we might need to mock setup or force an empty dataset
-    # For now, let's assume setup might lead to an empty train_idx
-    dm.train_idx = pd.Index([])  # Force empty train set
+
+    # Force empty datasets for testing dataloader methods
+    dm.train_idx = pd.Index([])
     dm.val_idx = pd.Index([])
     dm.test_idx = pd.Index([])
+    dm.predict_idx = pd.Index([])  # predict_idx is also set in setup
 
-    # Manually set datasets to None or empty CompoundDataset instances
-    # This is a bit of a hack to test the dataloader logic directly
-    # In a real scenario, setup would create these based on indices
+    # Manually set datasets to None to trigger the specific log messages
     dm.train_dataset = None
     dm.val_dataset = None
     dm.test_dataset = None
-    dm.predict_dataset = None
+    dm.predict_dataset = None  # This is set in setup(stage='predict')
 
-    with pytest.warns(
-        UserWarning, match="train_dataloader: Train dataset is empty or not initialized. Returning None."
-    ):
-        assert dm.train_dataloader() is None
-    # For val, test, predict, the logger.info is used, not warning for empty.
-    # We can check if it's None without expecting a UserWarning for those.
-    assert dm.val_dataloader() is None
-    assert dm.test_dataloader() is None
-    assert dm.predict_dataloader() is None
+    # Test train_dataloader
+    caplog.clear()  # Clear previous logs
+    assert dm.train_dataloader() is None
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelname == "WARNING"
+    assert "train_dataloader: Train dataset is empty or not initialized. Returning None." in caplog.records[0].message
+
+    # Test val_dataloader
+    caplog.clear()
+    dm_logger = logging.getLogger("foundation_model.data.datamodule")
+    original_level = dm_logger.getEffectiveLevel()
+    dm_logger.setLevel(logging.INFO)
+    try:
+        assert dm.val_dataloader() is None
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "INFO"
+        assert (
+            "Validation dataset is empty or not initialized. Returning None for val_dataloader."
+            in caplog.records[0].message
+        )
+    finally:
+        dm_logger.setLevel(original_level)
+
+    # Test test_dataloader
+    caplog.clear()
+    dm_logger.setLevel(logging.INFO)
+    try:
+        assert dm.test_dataloader() is None
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "INFO"
+        assert (
+            "Test dataset is empty or not initialized. Returning None for test_dataloader." in caplog.records[0].message
+        )
+    finally:
+        dm_logger.setLevel(original_level)
+
+    # Test predict_dataloader
+    caplog.clear()
+    dm_logger.setLevel(logging.INFO)
+    try:
+        assert dm.predict_dataloader() is None
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "INFO"
+        assert (
+            "Predict dataset is empty or not initialized. Returning None for predict_dataloader."
+            in caplog.records[0].message
+        )
+    finally:
+        dm_logger.setLevel(original_level)
 
 
 # TODO:

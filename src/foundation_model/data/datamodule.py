@@ -75,8 +75,16 @@ class CompoundDataModule(L.LightningDataModule):
         logger.info("--- Loading Data ---")
         self.formula_df = self._load_data(formula_desc_source, "formula_desc")
         self.attributes_df = self._load_data(attributes_source, "attributes")
+
         if self.formula_df is None or self.attributes_df is None:
-            raise ValueError("formula_desc_source and attributes_source must be successfully loaded.")
+            # This check is if _load_data returned None (e.g. file not found)
+            raise ValueError(
+                "formula_desc_source and attributes_source must be successfully loaded (e.g., file not found or unreadable)."
+            )
+
+        if self.formula_df.empty or self.attributes_df.empty:
+            # This check is if the loaded DataFrames are empty
+            raise ValueError("Formula and attributes DataFrames cannot be empty after loading.")
 
         self.structure_df = None
         self.actual_with_structure = False  # Tracks if structure data is actually used
