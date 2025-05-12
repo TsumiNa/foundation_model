@@ -1,9 +1,6 @@
 # Copyright 2025 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-import logging  # Added
-
-logger = logging.getLogger(__name__)  # Added
 
 """
 Module: flexible_multi_task_model
@@ -17,6 +14,7 @@ Tensor shape legend (used across all docstrings):
 * **D** – latent / embedding feature dimension
 """
 
+import logging  # Added
 from typing import Any
 
 import lightning as L
@@ -36,6 +34,8 @@ from .model_config import (
 )
 from .task_head import create_task_heads
 from .task_head.sequence.base import SequenceBaseHead
+
+logger = logging.getLogger(__name__)  # Added
 
 
 class FlexibleMultiTaskModel(L.LightningModule):
