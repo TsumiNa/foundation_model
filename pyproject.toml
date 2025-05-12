@@ -70,6 +70,7 @@ dev = [
     "ipykernel>=6.29.5",
     "pytest>=8.3.5",
     "pytest-benchmark>=5.1.0",
+    "pytest-mock>=3.14.0",
 ]
 
 
