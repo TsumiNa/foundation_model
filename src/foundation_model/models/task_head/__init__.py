@@ -58,9 +58,8 @@ def create_task_heads(
         if config.type == TaskType.REGRESSION:
             assert isinstance(config, RegressionTaskConfig)
             task_heads[config.name] = RegressionHead(
-                d_in=deposit_dim,
-                name=config.name,
-                dims=config.dims,
+                name=config.name,  # d_in removed
+                dims=config.dims,  # dims[0] should be deposit_dim
                 norm=config.norm,
                 residual=config.residual,
                 **lora_params,
@@ -68,9 +67,8 @@ def create_task_heads(
         elif config.type == TaskType.CLASSIFICATION:
             assert isinstance(config, ClassificationTaskConfig)
             task_heads[config.name] = ClassificationHead(
-                d_in=deposit_dim,
-                name=config.name,
-                dims=config.dims,
+                name=config.name,  # d_in removed
+                dims=config.dims,  # dims[0] should be deposit_dim
                 num_classes=config.num_classes,
                 norm=config.norm,
                 residual=config.residual,

@@ -4,6 +4,7 @@ import pytest
 import torch
 
 from .flexible_multi_task_model import FlexibleMultiTaskModel
+from .model_config import OptimizerConfig, RegressionTaskConfig, TaskType  # Added imports
 
 # --- Fixtures ---
 
@@ -17,31 +18,40 @@ def model_config_simple_attr_only():
     - No pretraining options enabled
     - No LoRA
     """
+    shared_dims = [64, 128, 256]  # Input -> hidden -> latent
+    deposit_dim = shared_dims[-1]  # Deposit layer input is latent dim
+
+    # Define task configurations for 3 attribute regression tasks
+    task_configs_list = []
+    n_attr_tasks = 3  # Define n_attr_tasks here for clarity
+    for i in range(n_attr_tasks):
+        task_configs_list.append(
+            RegressionTaskConfig(
+                name=f"attr_task_{i}",
+                type=TaskType.REGRESSION,
+                dims=[deposit_dim, 128, 1],  # deposit_dim -> hidden -> output (1 for regression)
+                optimizer=OptimizerConfig(lr=1e-4, optimizer_type="Adam", scheduler_type="None"),  # Basic optimizer
+            )
+        )
+
     config = {
-        "shared_block_dims": [64, 128, 256],  # Input dim (e.g., from formula_desc) -> hidden -> latent
-        "task_block_dims": [256, 128, 1],  # Latent dim from deposit -> hidden -> output (1 for regression)
-        "n_attr_tasks": 3,
+        "shared_block_dims": shared_dims,
+        "task_configs": task_configs_list,
         "norm_shared": True,
         "residual_shared": False,
-        "norm_tasks": True,
-        "residual_tasks": False,
-        "shared_block_lr": 1e-3,
-        "task_block_lr": 1e-3,
-        "seq_head_lr": 1e-3,  # Will be ignored as seq_head is None
-        "sequence_mode": "none",
-        "seq_len": None,  # Not used
+        # norm_tasks and residual_tasks are part of individual TaskConfigs if needed.
+        # For LinearBlock used in RegressionTaskConfig, these are defaulted.
+        "shared_block_optimizer": OptimizerConfig(lr=1e-3, optimizer_type="Adam", scheduler_type="None"),
+        # sequence_mode is not a direct param for __init__ if no SequenceTaskConfig
         "with_structure": False,
-        "struct_block_dims": None,  # Not used
-        "modality_dropout_p": 0.0,  # Not used
-        "pretrain": False,
+        "struct_block_dims": None,
+        "modality_dropout_p": 0.0,
+        "enable_self_supervised_training": False,
         "loss_weights": None,
-        "mask_ratio": 0.0,  # Not used
-        "temperature": 0.07,  # Not used
-        "freeze_encoder": False,
-        "lora_rank": 0,  # LoRA off
-        "lora_alpha": 1.0,
+        "mask_ratio": 0.0,
+        "temperature": 0.07,
     }
-    return SimpleNamespace(**config)
+    return SimpleNamespace(**config)  # Convert dict to SimpleNamespace
 
 
 @pytest.fixture
@@ -49,26 +59,36 @@ def sample_batch_attr_only(model_config_simple_attr_only):
     """
     Generates a sample batch for attribute-only tasks.
     x_formula: (B, D_formula_in)
-    y_attr: (B, n_attr_tasks)
-    mask_attr: (B, n_attr_tasks)
-    temps, y_seq, mask_seq are None.
+    y_dict_batch: dict of {task_name: (B, task_output_dim)}
+    task_masks_batch: dict of {task_name: (B, 1)}
+    temps_batch is an empty dict.
     """
     batch_size = 4
-    formula_input_dim = model_config_simple_attr_only.shared_block_dims[0]
-    n_attr_tasks = model_config_simple_attr_only.n_attr_tasks
+    config = model_config_simple_attr_only
+    formula_input_dim = config.shared_block_dims[0]
 
     x_formula = torch.randn(batch_size, formula_input_dim)
-    y_attr = torch.randn(batch_size, n_attr_tasks)
-    # Mask some attributes (e.g., last task for first sample, first task for second sample)
-    mask_attr = torch.ones_like(y_attr)
-    if batch_size > 1 and n_attr_tasks > 0:
-        mask_attr[0, -1] = 0
-        if batch_size > 1 and n_attr_tasks > 0:  # ensure n_attr_tasks > 0
-            mask_attr[1, 0] = 0
 
-    # For attribute-only, x_struct, temps, y_seq, mask_seq are effectively None or not used
-    # The model's training_step expects a tuple of 6 items.
-    return (x_formula, y_attr, mask_attr, None, None, None)
+    y_dict_batch = {}
+    task_masks_batch = {}
+
+    for i, task_cfg in enumerate(config.task_configs):
+        # Assuming all are regression tasks with output_dim 1 as per fixture
+        task_output_dim = task_cfg.dims[-1]
+        y_task = torch.randn(batch_size, task_output_dim)
+        # Create a [B, 1] boolean mask for each task
+        mask_task = torch.ones(batch_size, 1, dtype=torch.bool)
+        if batch_size > 0:  # Mask one sample for each task for variability
+            mask_idx = i % batch_size  # Cycle through samples to mask for different tasks
+            mask_task[mask_idx, 0] = False
+
+        y_dict_batch[task_cfg.name] = y_task
+        task_masks_batch[task_cfg.name] = mask_task
+
+    # For attribute-only, x_struct is None. temps_batch is an empty dict.
+    # The model's training_step expects: (x, y_dict_batch, task_masks_batch, temps_batch)
+    # x can be x_formula or (x_formula, x_struct)
+    return (x_formula, y_dict_batch, task_masks_batch, {})  # Empty dict for temps_batch
 
 
 # --- Test Cases ---
@@ -79,40 +99,56 @@ def test_model_initialization_attr_only(model_config_simple_attr_only):
     config = model_config_simple_attr_only
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
-        task_block_dims=config.task_block_dims,
-        n_attr_tasks=config.n_attr_tasks,
+        task_configs=config.task_configs,  # Use task_configs
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
-        norm_tasks=config.norm_tasks,
-        residual_tasks=config.residual_tasks,
-        shared_block_lr=config.shared_block_lr,
-        task_block_lr=config.task_block_lr,
-        seq_head_lr=config.seq_head_lr,
-        sequence_mode=config.sequence_mode,
+        shared_block_optimizer=config.shared_block_optimizer,
         with_structure=config.with_structure,
-        pretrain=config.pretrain,
-        freeze_encoder=config.freeze_encoder,
-        lora_rank=config.lora_rank,
+        struct_block_dims=config.struct_block_dims,
+        modality_dropout_p=config.modality_dropout_p,
+        enable_self_supervised_training=config.enable_self_supervised_training,
+        loss_weights=config.loss_weights,
+        mask_ratio=config.mask_ratio,
+        temperature=config.temperature,
     )
 
-    assert model.shared is not None, "Shared block should be initialized"
-    assert model.deposit is not None, "Deposit layer should be initialized"
-    assert model.attr_heads is not None and len(model.attr_heads) == config.n_attr_tasks, (
-        f"Expected {config.n_attr_tasks} attribute heads"
-    )
+    assert model.shared is not None, "Shared block (via encoder.shared) should be initialized"
+    assert model.deposit is not None, "Deposit layer (via encoder.deposit) should be initialized"
 
-    assert model.seq_head is None, "Sequence head should be None for sequence_mode='none'"
-    assert not hasattr(model, "struct_enc") or model.struct_enc is None, (
-        "Structure encoder should not be initialized if with_structure=False"
-    )
-    assert not hasattr(model, "fusion") or model.fusion is None, (
-        "Fusion layer should not be initialized if with_structure=False"
-    )
-    assert not model.pretrain, "Pretrain flag should be False"
-    assert model.lora_rank == 0, "LoRA rank should be 0 (off)"
+    # Task heads are now in model.task_heads (a ModuleDict)
+    assert model.task_heads is not None
+    assert len(model.task_heads) == len(config.task_configs), f"Expected {len(config.task_configs)} task heads"
 
-    # Check automatic_optimization is False as per model's __init__
-    assert not model.automatic_optimization, "automatic_optimization should be False"
+    # Check if specific task heads from config are present
+    for task_cfg in config.task_configs:
+        assert task_cfg.name in model.task_heads, f"Task head {task_cfg.name} not found in model.task_heads"
+
+    # No direct seq_head attribute anymore if not created by create_task_heads
+    # We check by ensuring no SequenceTaskConfig was passed and thus no sequence head in model.task_heads
+    assert not any(
+        isinstance(head, torch.nn.Module) and "sequence" in head.__class__.__name__.lower()
+        for head in model.task_heads.values()
+    ), "No sequence head should be present in task_heads for this config"
+
+    assert not model.with_structure, "with_structure should be False"
+    if hasattr(model, "struct_enc"):  # struct_enc might not exist if with_structure is False from the start
+        assert model.struct_enc is None, "Structure encoder should be None if with_structure=False"
+    if hasattr(model, "fusion"):
+        assert model.fusion is None, "Fusion layer should be None if with_structure=False"
+
+    assert not model.enable_self_supervised_training, "enable_self_supervised_training should be False"
+
+    # LoRA is not part of __init__, it's applied if lora_rank > 0 in the old model.
+    # The new model doesn't seem to have direct LoRA params in __init__.
+    # We'll assume no LoRA for this simple test based on config.
+
+    # automatic_optimization is not explicitly set in the new model's __init__
+    # It defaults to True in L.LightningModule. If it's meant to be False, it needs to be set.
+    # For now, let's remove this check or adapt if the model explicitly sets it.
+    # assert not model.automatic_optimization, "automatic_optimization should be False"
+    # Based on the provided model code, automatic_optimization is not set, so it defaults to True.
+    # If the old model had it False, this is a change. For now, we test the current state.
+    assert model.automatic_optimization, "automatic_optimization should be True by default in L.LightningModule"
 
 
 def test_model_forward_pass_attr_only(model_config_simple_attr_only, sample_batch_attr_only):
@@ -120,32 +156,44 @@ def test_model_forward_pass_attr_only(model_config_simple_attr_only, sample_batc
     config = model_config_simple_attr_only
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
-        task_block_dims=config.task_block_dims,
-        n_attr_tasks=config.n_attr_tasks,
-        # Pass other necessary params from config, simplified for brevity if not directly affecting forward structure
-        sequence_mode=config.sequence_mode,
+        task_configs=config.task_configs,
+        norm_shared=config.norm_shared,
+        residual_shared=config.residual_shared,
+        shared_block_optimizer=config.shared_block_optimizer,
         with_structure=config.with_structure,
+        struct_block_dims=config.struct_block_dims,
+        modality_dropout_p=config.modality_dropout_p,
+        enable_self_supervised_training=config.enable_self_supervised_training,
+        loss_weights=config.loss_weights,
+        mask_ratio=config.mask_ratio,
+        temperature=config.temperature,
     )
-    model.eval()  # Set to evaluation mode
+    model.eval()
 
-    x_formula, _, _, _, _, _ = sample_batch_attr_only  # We only need x_formula for this forward pass type
+    x_formula, _, _, temps_batch = sample_batch_attr_only  # Unpack, temps_batch is {}
 
-    # When with_structure is False, model expects x_formula directly
-    output = model(x_formula)
+    # When with_structure is False, model's forward expects x_formula and temps_batch
+    output = model(x_formula, temps_batch=temps_batch)
 
     assert isinstance(output, dict), "Output should be a dictionary"
-    assert "attr" in output, "Output dictionary should contain 'attr' key"
 
-    attr_preds = output["attr"]
-    assert isinstance(attr_preds, torch.Tensor), "Attribute predictions should be a Tensor"
-
-    expected_shape = (x_formula.shape[0], config.n_attr_tasks)  # (batch_size, n_attr_tasks)
-    assert attr_preds.shape == expected_shape, (
-        f"Attribute predictions shape mismatch. Expected {expected_shape}, got {attr_preds.shape}"
+    # Check outputs for each configured task
+    assert len(output.keys()) == len(config.task_configs), (
+        f"Expected {len(config.task_configs)} keys in output, got {len(output.keys())}"
     )
 
-    # Since sequence_mode is 'none', 'seq' key should not be in output
-    assert "seq" not in output, "Output should not contain 'seq' key when sequence_mode is 'none'"
+    for task_cfg in config.task_configs:
+        assert task_cfg.name in output, f"Output dictionary should contain '{task_cfg.name}' key"
+        task_pred = output[task_cfg.name]
+        assert isinstance(task_pred, torch.Tensor), f"{task_cfg.name} predictions should be a Tensor"
+
+        # Assuming regression tasks with output dim 1 as per fixture
+        # task_cfg.dims is like [deposit_dim, hidden_dim, output_dim_for_task_head]
+        expected_task_output_dim = task_cfg.dims[-1]
+        expected_task_shape = (x_formula.shape[0], expected_task_output_dim)
+        assert task_pred.shape == expected_task_shape, (
+            f"{task_cfg.name} predictions shape mismatch. Expected {expected_task_shape}, got {task_pred.shape}"
+        )
 
 
 def test_model_training_step_attr_only(model_config_simple_attr_only, sample_batch_attr_only, mocker):
@@ -153,36 +201,25 @@ def test_model_training_step_attr_only(model_config_simple_attr_only, sample_bat
     config = model_config_simple_attr_only
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
-        task_block_dims=config.task_block_dims,
-        n_attr_tasks=config.n_attr_tasks,
-        sequence_mode=config.sequence_mode,
-        with_structure=config.with_structure,
-        pretrain=config.pretrain,  # Ensure pretrain is False for this test
-        # Other necessary params
+        task_configs=config.task_configs,
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
-        norm_tasks=config.norm_tasks,
-        residual_tasks=config.residual_tasks,
-        shared_block_lr=config.shared_block_lr,
-        task_block_lr=config.task_block_lr,
-        seq_head_lr=config.seq_head_lr,
-        freeze_encoder=config.freeze_encoder,
-        lora_rank=config.lora_rank,
+        shared_block_optimizer=config.shared_block_optimizer,
+        with_structure=config.with_structure,
+        struct_block_dims=config.struct_block_dims,
+        modality_dropout_p=config.modality_dropout_p,
+        enable_self_supervised_training=config.enable_self_supervised_training,  # False for this config
+        loss_weights=config.loss_weights,
+        mask_ratio=config.mask_ratio,
+        temperature=config.temperature,
     )
-    model.train()  # Set to training mode
+    model.train()
 
-    # Mock log_dict to check logged values
     mock_log_dict = mocker.patch.object(model, "log_dict")
 
-    # Mock optimizers and their methods (step, zero_grad) as manual_optimization is True
-    # The model's training_step calls zero_grad, manual_backward, and step on optimizers
-    mock_opt_shared = mockerMock = mocker.MagicMock()
-    mock_opt_attr = mocker.MagicMock()
-
-    # The model's configure_optimizers returns a list.
-    # For attr-only and no structure, it's [opt_shared, opt_attr]
-    mocker.patch.object(model, "optimizers", return_value=[mock_opt_shared, mock_opt_attr])
-    mocker.patch.object(model, "manual_backward")
+    # The model uses automatic_optimization=True by default.
+    # training_step itself doesn't call optimizer steps or manual_backward.
+    # PyTorch Lightning handles that.
 
     loss = model.training_step(sample_batch_attr_only, batch_idx=0)
 
@@ -190,30 +227,26 @@ def test_model_training_step_attr_only(model_config_simple_attr_only, sample_bat
     assert loss.requires_grad, "Loss should require gradients for backpropagation"
     assert loss.ndim == 0, "Loss should be a scalar"
 
-    # Check that log_dict was called
     mock_log_dict.assert_called()
-
-    # Get the arguments log_dict was called with
-    # log_dict(logs, prog_bar=True, on_step=True, on_epoch=False)
     logged_metrics = mock_log_dict.call_args[0][0]
 
-    assert "train_attr_loss" in logged_metrics, "train_attr_loss should be logged"
-    assert isinstance(logged_metrics["train_attr_loss"], torch.Tensor), "train_attr_loss should be a Tensor"
+    # Check that losses for each attribute task are logged
+    for task_cfg in config.task_configs:
+        assert f"train_{task_cfg.name}_loss" in logged_metrics, f"train_{task_cfg.name}_loss should be logged"
+        assert isinstance(logged_metrics[f"train_{task_cfg.name}_loss"], torch.Tensor), (
+            f"train_{task_cfg.name}_loss should be a Tensor"
+        )
+        assert f"train_{task_cfg.name}_loss_weighted" in logged_metrics, (
+            f"train_{task_cfg.name}_loss_weighted should be logged"
+        )
 
-    # Ensure pretrain-specific losses are not logged as pretrain=False
-    assert "train_con" not in logged_metrics, "Contrastive loss should not be logged"
-    assert "train_cross" not in logged_metrics, "Cross-reconstruction loss should not be logged"
-    assert "train_mask" not in logged_metrics, "Masked-feature loss should not be logged"
+    assert "train_total_loss" in logged_metrics, "train_total_loss should be logged"
 
-    # Ensure sequence loss is not logged
-    assert "train_seq_loss" not in logged_metrics, "Sequence loss should not be logged"
-
-    # Check optimizer steps
-    model.manual_backward.assert_called_once_with(loss)
-    mock_opt_shared.step.assert_called_once()
-    mock_opt_attr.step.assert_called_once()
-    mock_opt_shared.zero_grad.assert_called_once()
-    mock_opt_attr.zero_grad.assert_called_once()
+    # Ensure SSL losses are not logged as enable_self_supervised_training=False
+    assert "train_mfm_loss" not in logged_metrics
+    assert "train_contrastive_loss" not in logged_metrics
+    assert "train_cross_recon_loss" not in logged_metrics
+    assert "train_modality_dropout_applied" not in logged_metrics  # Only logged if SSL and with_structure
 
 
 def test_model_validation_step_attr_only(model_config_simple_attr_only, sample_batch_attr_only, mocker):
@@ -221,44 +254,42 @@ def test_model_validation_step_attr_only(model_config_simple_attr_only, sample_b
     config = model_config_simple_attr_only
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
-        task_block_dims=config.task_block_dims,
-        n_attr_tasks=config.n_attr_tasks,
-        sequence_mode=config.sequence_mode,
-        with_structure=config.with_structure,
-        pretrain=config.pretrain,  # Ensure pretrain is False
-        # Other necessary params
+        task_configs=config.task_configs,
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
-        norm_tasks=config.norm_tasks,
-        residual_tasks=config.residual_tasks,
-        shared_block_lr=config.shared_block_lr,
-        task_block_lr=config.task_block_lr,
-        seq_head_lr=config.seq_head_lr,
-        freeze_encoder=config.freeze_encoder,
-        lora_rank=config.lora_rank,
+        shared_block_optimizer=config.shared_block_optimizer,
+        with_structure=config.with_structure,
+        struct_block_dims=config.struct_block_dims,
+        modality_dropout_p=config.modality_dropout_p,
+        enable_self_supervised_training=config.enable_self_supervised_training,  # False
+        loss_weights=config.loss_weights,
+        mask_ratio=config.mask_ratio,
+        temperature=config.temperature,
     )
-    model.eval()  # Set to evaluation mode for validation_step
+    model.eval()
 
-    # Mock log_dict to check logged values
     mock_log_dict = mocker.patch.object(model, "log_dict")
 
-    loss = model.validation_step(sample_batch_attr_only, batch_idx=0)
+    # validation_step now returns None and logs metrics
+    result = model.validation_step(sample_batch_attr_only, batch_idx=0)
+    assert result is None, "validation_step should return None"
 
-    assert isinstance(loss, torch.Tensor), "Validation loss should be a Tensor"
-    assert loss.ndim == 0, "Validation loss should be a scalar"
-
-    # Check that log_dict was called
     mock_log_dict.assert_called()
     logged_metrics = mock_log_dict.call_args[0][0]
 
-    assert "val_attr_loss" in logged_metrics, "val_attr_loss should be logged"
-    assert isinstance(logged_metrics["val_attr_loss"], torch.Tensor), "val_attr_loss should be a Tensor"
+    # Check that losses for each attribute task are logged
+    for task_cfg in config.task_configs:
+        assert f"val_{task_cfg.name}_loss" in logged_metrics, f"val_{task_cfg.name}_loss should be logged"
+        assert isinstance(logged_metrics[f"val_{task_cfg.name}_loss"], torch.Tensor), (
+            f"val_{task_cfg.name}_loss should be a Tensor"
+        )
 
-    # Ensure pretrain-specific and sequence losses are not logged
-    assert "val_con" not in logged_metrics
-    assert "val_cross" not in logged_metrics
-    assert "val_mask" not in logged_metrics
-    assert "val_seq_loss" not in logged_metrics
+    assert "val_total_loss" in logged_metrics, "val_total_loss should be logged"
+
+    # Ensure SSL losses are not logged
+    assert "val_mfm_loss" not in logged_metrics
+    assert "val_contrastive_loss" not in logged_metrics
+    assert "val_cross_recon_loss" not in logged_metrics
 
 
 def test_model_predict_step_attr_only(model_config_simple_attr_only, sample_batch_attr_only):
@@ -266,52 +297,64 @@ def test_model_predict_step_attr_only(model_config_simple_attr_only, sample_batc
     config = model_config_simple_attr_only
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
-        task_block_dims=config.task_block_dims,
-        n_attr_tasks=config.n_attr_tasks,
-        sequence_mode=config.sequence_mode,
-        with_structure=config.with_structure,
-        # Other necessary params
+        task_configs=config.task_configs,
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
-        norm_tasks=config.norm_tasks,
-        residual_tasks=config.residual_tasks,
-        shared_block_lr=config.shared_block_lr,
-        task_block_lr=config.task_block_lr,
-        seq_head_lr=config.seq_head_lr,
-        pretrain=config.pretrain,
-        freeze_encoder=config.freeze_encoder,
-        lora_rank=config.lora_rank,
+        shared_block_optimizer=config.shared_block_optimizer,
+        with_structure=config.with_structure,
+        struct_block_dims=config.struct_block_dims,
+        modality_dropout_p=config.modality_dropout_p,
+        enable_self_supervised_training=config.enable_self_supervised_training,
+        loss_weights=config.loss_weights,
+        mask_ratio=config.mask_ratio,
+        temperature=config.temperature,
     )
-    model.eval()  # Set to evaluation mode
+    model.eval()
 
-    # predict_step takes (self, batch, batch_idx, dataloader_idx=0)
-    # For attr-only, batch is (x_formula, y_attr, mask_attr, None, None, None)
-    # We only need x_formula from the batch for prediction in this mode.
-    x_formula, _, _, _, _, _ = sample_batch_attr_only
+    # sample_batch_attr_only returns (x_formula, y_dict_batch, task_masks_batch, temps_batch)
+    # predict_step expects batch[0] to be x_formula and batch[3] to be temps_batch
+    x_formula, _, _, temps_batch = sample_batch_attr_only
 
-    # The model's predict_step internally calls self.forward((x_formula, x_struct)...)
-    # or self.forward(x_formula...)
-    # In attr-only mode (with_structure=False), it expects just x_formula in the batch for forward.
-    # The batch for predict_step is the full 6-tuple.
+    # Construct the batch as expected by predict_step: (x_input, y_dict, masks_dict, temps_dict)
+    # For predict_step, y_dict and masks_dict can be None. x_input is x_formula.
+    predict_batch_tuple = (x_formula, None, None, temps_batch)
 
-    # Create a batch suitable for predict_step: (x, y_attr, mask_attr, temps, y_seq, mask_seq)
-    # where x is x_formula for attr-only mode.
-    predict_batch = (x_formula, None, None, None, None, None)  # y_attr etc. are not used by predict_step
-
-    output = model.predict_step(predict_batch, batch_idx=0)
+    output = model.predict_step(predict_batch_tuple, batch_idx=0)
 
     assert isinstance(output, dict), "Predict output should be a dictionary"
-    assert "attr" in output, "Predict output dictionary should contain 'attr' key"
 
-    attr_preds = output["attr"]
-    assert isinstance(attr_preds, torch.Tensor), "Attribute predictions should be a Tensor"
+    # The output keys are now like "attr_task_0_value" (from head.predict())
+    # instead of just "attr_task_0".
+    # We need to check for the presence of keys corresponding to each task.
+    # Each regression task (as per fixture) should produce one output key (e.g., task_name_value).
 
-    expected_shape = (x_formula.shape[0], config.n_attr_tasks)  # (batch_size, n_attr_tasks)
-    assert attr_preds.shape == expected_shape, (
-        f"Attribute predictions shape mismatch. Expected {expected_shape}, got {attr_preds.shape}"
+    num_expected_output_keys = 0
+    for task_cfg in config.task_configs:
+        # RegressionTaskHead.predict by default returns {f"{self.snake_case_name}_value": y_pred_processed}
+        # So we expect one key per task.
+        num_expected_output_keys += 1
+        # More specific check:
+        # from foundation_model.models.task_head.base import _to_snake_case
+        # expected_key = f"{_to_snake_case(task_cfg.name)}_value"
+        # assert expected_key in output, f"Predict output should contain key '{expected_key}'"
+        # For simplicity, just check one of them if names are "attr_task_0", "attr_task_1", etc.
+        if task_cfg.name == "attr_task_0":  # Check for one specific task's output format
+            assert "attr_task_0_value" in output, "Predict output should contain 'attr_task_0_value'"
+
+    assert len(output.keys()) == num_expected_output_keys, (
+        f"Expected {num_expected_output_keys} keys in predict output, got {len(output.keys())}"
     )
 
-    assert "seq" not in output, "Predict output should not contain 'seq' key when sequence_mode is 'none'"
+    # Example check for one task's output tensor properties
+    if "attr_task_0_value" in output:
+        pred_tensor = output["attr_task_0_value"]
+        assert isinstance(pred_tensor, torch.Tensor)
+        # Assuming output dim is 1 for regression tasks in fixture
+        task_0_config = next(tc for tc in config.task_configs if tc.name == "attr_task_0")
+        expected_shape = (x_formula.shape[0], task_0_config.dims[-1])
+        assert pred_tensor.shape == expected_shape, (
+            f"Shape mismatch for attr_task_0_value. Expected {expected_shape}, got {pred_tensor.shape}"
+        )
 
 
 def test_model_configure_optimizers_attr_only(model_config_simple_attr_only):
@@ -319,44 +362,89 @@ def test_model_configure_optimizers_attr_only(model_config_simple_attr_only):
     config = model_config_simple_attr_only
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
-        task_block_dims=config.task_block_dims,
-        n_attr_tasks=config.n_attr_tasks,
-        sequence_mode=config.sequence_mode,  # "none"
-        with_structure=config.with_structure,  # False
-        # Other necessary params
+        task_configs=config.task_configs,
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
-        norm_tasks=config.norm_tasks,
-        residual_tasks=config.residual_tasks,
-        shared_block_lr=config.shared_block_lr,
-        task_block_lr=config.task_block_lr,
-        seq_head_lr=config.seq_head_lr,
-        pretrain=config.pretrain,
-        freeze_encoder=config.freeze_encoder,
-        lora_rank=config.lora_rank,
+        shared_block_optimizer=config.shared_block_optimizer,
+        with_structure=config.with_structure,
+        struct_block_dims=config.struct_block_dims,
+        modality_dropout_p=config.modality_dropout_p,
+        enable_self_supervised_training=config.enable_self_supervised_training,
+        loss_weights=config.loss_weights,
+        mask_ratio=config.mask_ratio,
+        temperature=config.temperature,
     )
 
-    optimizers = model.configure_optimizers()
+    optimizers_and_schedulers = model.configure_optimizers()
 
-    # For attr-only, no structure, no seq_head: expects 2 optimizers
-    # 1 for shared block, 1 for attribute heads
-    assert isinstance(optimizers, list), "configure_optimizers should return a list"
-    assert len(optimizers) == 2, f"Expected 2 optimizers, got {len(optimizers)}"
+    # Expected: 1 optimizer for the encoder, and 1 for each task head (3 tasks in fixture)
+    # Total = 1 (encoder) + 3 (task heads) = 4 optimizers
+    # Each can optionally have a scheduler, so items in the list can be an optimizer or a dict.
 
-    # Check types (optional, but good for sanity)
-    assert isinstance(optimizers[0], torch.optim.Adam), "First optimizer should be Adam for shared block"
-    assert isinstance(optimizers[1], torch.optim.Adam), "Second optimizer should be Adam for attribute heads"
+    assert isinstance(optimizers_and_schedulers, list), "configure_optimizers should return a list"
 
-    # Check parameters managed by each optimizer
-    # Optimizer 0: shared parameters
-    shared_params_ids = {id(p) for p in model.shared.parameters() if p.requires_grad}
-    opt0_params_ids = {id(p) for group in optimizers[0].param_groups for p in group["params"]}
-    assert shared_params_ids == opt0_params_ids, "Optimizer 0 does not manage all shared parameters"
+    num_optimizers = 0
+    encoder_opt_found = False
+    task_head_opts_found_count = 0
 
-    # Optimizer 1: attribute heads parameters
-    attr_heads_params_ids = {id(p) for p in model.attr_heads.parameters() if p.requires_grad}
-    opt1_params_ids = {id(p) for group in optimizers[1].param_groups for p in group["params"]}
-    assert attr_heads_params_ids == opt1_params_ids, "Optimizer 1 does not manage all attribute head parameters"
+    # Collect all parameters managed by the optimizers
+    all_optimized_param_ids = set()
 
-    # Ensure no overlap between optimizer parameters
-    assert opt0_params_ids.isdisjoint(opt1_params_ids), "Optimizers should manage disjoint sets of parameters"
+    for item in optimizers_and_schedulers:
+        num_optimizers += 1
+        optimizer = item["optimizer"] if isinstance(item, dict) else item
+        assert isinstance(optimizer, torch.optim.Optimizer), "Optimizer item is not a torch.optim.Optimizer"
+
+        current_opt_param_ids = set()
+        for group in optimizer.param_groups:
+            for p in group["params"]:
+                assert p.requires_grad, "Optimizer should only manage parameters that require gradients"
+                current_opt_param_ids.add(id(p))
+
+        # Check for disjointness with already processed parameters
+        assert all_optimized_param_ids.isdisjoint(current_opt_param_ids), (
+            "Optimizers should manage disjoint sets of parameters"
+        )
+        all_optimized_param_ids.update(current_opt_param_ids)
+
+        # Check if this optimizer handles encoder parameters
+        encoder_params_ids = {id(p) for p in model.encoder.parameters() if p.requires_grad}
+        if not encoder_params_ids.isdisjoint(current_opt_param_ids):
+            assert current_opt_param_ids == encoder_params_ids, (
+                "An optimizer should manage all and only encoder parameters"
+            )
+            encoder_opt_found = True
+            continue  # Move to next optimizer
+
+        # Check if this optimizer handles one of the task heads
+        found_task_head_for_this_opt = False
+        for task_name, head in model.task_heads.items():
+            head_params_ids = {id(p) for p in head.parameters() if p.requires_grad}
+            if not head_params_ids.isdisjoint(current_opt_param_ids):
+                assert current_opt_param_ids == head_params_ids, (
+                    f"Optimizer does not manage all and only parameters for task head {task_name}"
+                )
+                task_head_opts_found_count += 1
+                found_task_head_for_this_opt = True
+                break
+        assert found_task_head_for_this_opt, "Optimizer does not seem to correspond to encoder or any task head"
+
+    expected_num_optimizers = 1 + len(config.task_configs)  # 1 for encoder + N for task heads
+    assert num_optimizers == expected_num_optimizers, (
+        f"Expected {expected_num_optimizers} optimizers, got {num_optimizers}"
+    )
+    assert encoder_opt_found, "No optimizer found for the encoder"
+    assert task_head_opts_found_count == len(config.task_configs), (
+        f"Expected {len(config.task_configs)} optimizers for task heads, found {task_head_opts_found_count}"
+    )
+
+    # Verify all trainable parameters are covered
+    all_model_trainable_params_ids = {id(p) for p in model.parameters() if p.requires_grad}
+    if model.enable_self_supervised_training and hasattr(model, "ssl_module"):  # ssl_module might not exist
+        # SSL module params are optimized by a separate optimizer in the list
+        # This check might need adjustment if ssl_module params are part of encoder_params
+        pass  # Covered by the loop checking disjoint sets and counts
+    else:
+        assert all_optimized_param_ids == all_model_trainable_params_ids, (
+            "Not all trainable model parameters are covered by the optimizers"
+        )
