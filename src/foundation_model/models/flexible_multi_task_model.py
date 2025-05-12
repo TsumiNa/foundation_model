@@ -1,6 +1,10 @@
 # Copyright 2025 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
+import logging  # Added
+
+logger = logging.getLogger(__name__)  # Added
+
 """
 Module: flexible_multi_task_model
 ---------------------------------
@@ -343,7 +347,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
     def forward(
         self,
         x: torch.Tensor | tuple[torch.Tensor, torch.Tensor | None],
-        temps: torch.Tensor | None = None,
+        temps_batch: dict[str, torch.Tensor] | None = None,  # Changed from temps to temps_batch (dict)
     ) -> dict[str, torch.Tensor]:
         """
         Forward pass through the model.
@@ -353,8 +357,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         x : torch.Tensor | tuple[torch.Tensor, torch.Tensor | None]
             Input tensor(s). If structure fusion is enabled, this should be a tuple
             of (formula_tensor, structure_tensor).
-        temps : torch.Tensor | None
-            Temperature or sequence points, required for sequence tasks.
+        temps_batch : dict[str, torch.Tensor] | None, optional
+            A dictionary where keys are sequence task names and values are the
+            corresponding temperature/sequence point tensors for the batch.
+            Required if sequence tasks are present. Defaults to None.
 
         Returns
         -------
@@ -377,8 +383,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
         outputs = {}
         for name, head in self.task_heads.items():
             if isinstance(head, SequenceBaseHead):
-                if temps is not None:
-                    outputs[name] = head(h_task, temps)
+                # Get specific temps for this sequence head
+                task_temps = temps_batch.get(name) if temps_batch else None
+                if task_temps is not None:
+                    outputs[name] = head(h_task, task_temps)
+                # else: # Decide how to handle if a sequence task head doesn't get its temps
+                # Could raise error, or head itself might have default behavior
+                # For now, assume temps are provided if head is sequence type
             else:
                 outputs[name] = head(h_task)
 
@@ -402,7 +413,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Total weighted loss for optimization.
         """
         # 1. Unpack batch data
-        x, y_dict, task_masks, temps = batch
+        # y_dict, task_masks, temps are now dictionaries keyed by task_name
+        x, y_dict_batch, task_masks_batch, temps_batch = batch
         total_loss = 0.0
         logs = {}
 
@@ -508,37 +520,30 @@ class FlexibleMultiTaskModel(L.LightningModule):
             forward_input = x_formula
 
         # 6. Get predictions from the forward method
-        preds = self(forward_input, temps)
+        preds = self(forward_input, temps_batch)  # Pass temps_batch dictionary
 
         # 7. Calculate supervised task losses
-        task_mask_indices = {name: i for i, name in enumerate(self.task_heads.keys())}
-        for name, pred in preds.items():
-            if name not in y_dict or not self.task_configs_map[name].enabled:
+        # task_mask_indices = {name: i for i, name in enumerate(self.task_heads.keys())} # Not needed anymore
+        for name, pred_tensor in preds.items():
+            if name not in y_dict_batch or not self.task_configs_map[name].enabled:
                 continue  # Skip tasks without targets or disabled tasks
 
             head = self.task_heads[name]
-            target = y_dict[name]
+            target = y_dict_batch[name]
 
-            # Determine mask for the current task
-            mask_idx = task_mask_indices.get(name)
-            if mask_idx is not None and mask_idx < task_masks.shape[1]:
-                sample_mask = task_masks[:, mask_idx].view(-1, 1)
-                # Expand mask for sequence tasks if necessary
-                if isinstance(head, SequenceBaseHead) and len(target.shape) > 1 and target.shape[1] > 1:
-                    # Ensure mask matches sequence length dimension (dim=1)
-                    if len(sample_mask.shape) == 2:  # (B, 1) -> (B, L, 1) or (B, L)
-                        sample_mask = sample_mask.unsqueeze(1).expand(
-                            -1, target.shape[1], -1 if len(target.shape) == 3 else target.shape[1]
-                        )
-                    elif len(sample_mask.shape) == 1:  # (B,) -> (B, L)
-                        sample_mask = sample_mask.unsqueeze(1).expand(-1, target.shape[1])
-
-            else:
+            # Get mask for the current task from the task_masks_batch dictionary
+            sample_mask = task_masks_batch.get(name)
+            if sample_mask is None:  # Should not happen if dataset prepares it
                 # Default: all samples are valid if no specific mask provided
-                sample_mask = torch.ones_like(target)
+                logger.warning(f"Mask not found for task {name} in training_step. Assuming all valid.")
+                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+
+            # Ensure mask has a compatible shape for broadcasting, e.g. [B, 1] or [B, L] or [B, L, 1]
+            # The mask from dataset is already [B,1] (bool)
+            # For sequence tasks, compute_loss in SequenceBaseHead handles mask expansion if needed.
 
             # Compute loss using the head's method
-            loss, _ = head.compute_loss(pred, target, sample_mask)  # Ignore per_dim_loss for now
+            loss, _ = head.compute_loss(pred_tensor, target, sample_mask)  # Changed pred to pred_tensor
 
             # Apply task-specific weight and accumulate
             task_weight = self.w.get(name, 1.0)
@@ -574,7 +579,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             This method logs metrics using self.log_dict() and does not return a value.
         """
         # 1. Unpack batch data
-        x, y_dict, task_masks, temps = batch
+        x, y_dict_batch, task_masks_batch, temps_batch = batch
         total_val_loss = 0.0  # Accumulates unweighted losses
         logs = {}
 
@@ -647,33 +652,25 @@ class FlexibleMultiTaskModel(L.LightningModule):
             forward_input = x_formula
 
         # 5. Get predictions from the forward method
-        preds = self(forward_input, temps)
+        preds = self(forward_input, temps_batch)  # Pass temps_batch dictionary
 
         # 6. Calculate supervised task losses (unweighted for validation)
-        task_mask_indices = {name: i for i, name in enumerate(self.task_heads.keys())}
-        for name, pred in preds.items():
-            if name not in y_dict or not self.task_configs_map[name].enabled:
+        # task_mask_indices = {name: i for i, name in enumerate(self.task_heads.keys())} # Not needed
+        for name, pred_tensor in preds.items():
+            if name not in y_dict_batch or not self.task_configs_map[name].enabled:
                 continue
 
             head = self.task_heads[name]
-            target = y_dict[name]
+            target = y_dict_batch[name]
 
-            # Determine mask
-            mask_idx = task_mask_indices.get(name)
-            if mask_idx is not None and mask_idx < task_masks.shape[1]:
-                sample_mask = task_masks[:, mask_idx].view(-1, 1)
-                if isinstance(head, SequenceBaseHead) and len(target.shape) > 1 and target.shape[1] > 1:
-                    if len(sample_mask.shape) == 2:
-                        sample_mask = sample_mask.unsqueeze(1).expand(
-                            -1, target.shape[1], -1 if len(target.shape) == 3 else target.shape[1]
-                        )
-                    elif len(sample_mask.shape) == 1:
-                        sample_mask = sample_mask.unsqueeze(1).expand(-1, target.shape[1])
-            else:
-                sample_mask = torch.ones_like(target)
+            # Get mask for the current task
+            sample_mask = task_masks_batch.get(name)
+            if sample_mask is None:
+                logger.warning(f"Mask not found for task {name} in validation_step. Assuming all valid.")
+                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
             # Compute unweighted loss
-            loss, _ = head.compute_loss(pred, target, sample_mask)
+            loss, _ = head.compute_loss(pred_tensor, target, sample_mask)  # Changed pred to pred_tensor
             total_val_loss += loss.detach()  # Accumulate unweighted task loss
 
             # Log individual task validation losses (unweighted)
@@ -721,14 +718,21 @@ class FlexibleMultiTaskModel(L.LightningModule):
             the corresponding predictions.
         """
         # 1. Unpack batch - Assume batch[0] is always x_formula for prediction
+        # Batch structure from predict_dataloader: model_input_x, sample_y_dict, sample_task_masks_dict, sample_temps_dict
+        # model_input_x is x_formula for predict_set=True in dataset
         x_formula = batch[0]
-        if not isinstance(x_formula, torch.Tensor):
-            raise TypeError(f"Expected batch[0] to be a Tensor (x_formula), but got {type(x_formula)}")
+        if not isinstance(x_formula, torch.Tensor):  # x_formula should not be a tuple here
+            # If model is with_structure, x_formula might be (formula_tensor, None) from dataset
+            # but predict_step expects just formula_tensor from batch[0]
+            if isinstance(x_formula, tuple) and x_formula[1] is None:
+                x_formula = x_formula[0]
+            else:
+                raise TypeError(f"Expected batch[0] to be a Tensor (x_formula), but got {type(x_formula)}")
 
-        # Temps might be optional depending on the tasks
-        temps = batch[3] if len(batch) > 3 else None
+        # Temps is now a dictionary
+        temps_batch = batch[3] if len(batch) > 3 else {}  # Default to empty dict if not provided
 
-        # 2. Prepare input for the raw forward pass, always treating structure as None
+        # 2. Prepare input for the raw forward pass, always treating structure as None for predict_step
         if self.with_structure:
             # If model uses structure, pass None explicitly during prediction
             raw_forward_input = (x_formula, None)
@@ -737,7 +741,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             raw_forward_input = x_formula
 
         # 3. Get raw predictions from the model's forward method
-        raw_preds = self(raw_forward_input, temps)  # This is a dict: {task_name: raw_output_tensor}
+        raw_preds = self(raw_forward_input, temps_batch)  # Pass temps_batch dictionary
 
         # 4. Process raw predictions using each task head's `predict` method
         final_predictions = {}
