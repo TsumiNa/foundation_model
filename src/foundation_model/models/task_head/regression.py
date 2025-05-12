@@ -144,6 +144,6 @@ class RegressionHead(BaseTaskHead):
         Returns
         -------
         dict[str, torch.Tensor]
-            A dictionary containing the prediction: {"prediction": x}.
+            A dictionary containing the prediction: {"value": x}.
         """
-        return {"prediction": x}
+        return {"value": x}

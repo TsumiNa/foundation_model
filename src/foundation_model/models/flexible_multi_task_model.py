@@ -193,6 +193,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Initialize weights
         self._init_weights()
 
+        # Set to manual optimization as we handle multiple optimizers
+        self.automatic_optimization = False
+
     def _init_loss_weights(self, loss_weights: dict[str, float] | None = None):
         """Initialize loss weights for different components."""
         # Start with default weights for all enabled tasks
@@ -569,6 +572,17 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # 8. Log total loss and other aggregated metrics
         logs["train_total_loss"] = total_loss.detach()
         self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
+
+        # Manual optimization
+        self.manual_backward(total_loss)
+        optimizers = self.optimizers()
+        if isinstance(optimizers, list):
+            for opt in optimizers:
+                opt.step()
+                opt.zero_grad()
+        else:  # Single optimizer case
+            optimizers.step()
+            optimizers.zero_grad()
 
         return total_loss
 

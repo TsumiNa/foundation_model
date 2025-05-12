@@ -119,36 +119,46 @@ class ClassificationHead(BaseTaskHead):
             and per_class_loss contains loss per class.
         """
         if mask is None:
-            # Ensure mask has the same shape as target for broadcasting with losses
-            mask = torch.ones_like(target, device=pred.device, dtype=torch.float)
+            # If no mask provided, all samples are valid. Create a 1D mask.
+            mask_1d = torch.ones_like(target, device=pred.device, dtype=torch.float)
+        else:
+            # Ensure mask is 1D for consistent operations
+            mask_1d = mask.squeeze(-1).float()  # Squeeze and convert to float for multiplication
 
-        # Ensure target is long type for cross_entropy
-        target = target.long()
+        # Ensure target is long type and squeezed for cross_entropy (shape B,)
+        # Target from dataloader is (B, 1)
+        squeezed_target = target.squeeze(-1).long()
 
-        # Individual sample losses - apply mask after loss calculation
-        losses = F.cross_entropy(pred, target, reduction="none")
-        masked_losses = losses * mask  # Apply mask here
+        # Individual sample losses - apply 1D mask after loss calculation
+        losses = F.cross_entropy(pred, squeezed_target, reduction="none")  # losses is (B,)
+        masked_losses = losses * mask_1d  # Apply 1D mask here, result is (B,)
 
         # Compute per-class losses (average loss for samples belonging to each class)
         per_class_loss = torch.zeros(self.num_classes, device=pred.device)
-        # Use scatter_add_ for efficient aggregation if possible, otherwise loop
-        # Note: scatter_add_ requires target to be long and indices within range
-        # Ensure target indices are valid before using scatter_add_
-        valid_mask = mask > 0
-        if valid_mask.any():
+
+        # valid_mask should also be 1D
+        valid_mask_1d = mask_1d > 0  # boolean, shape (B,)
+
+        if valid_mask_1d.any():
+            # Ensure tensors used for indexing are 1D
+            # Use squeezed_target for indexing
+            target_valid = squeezed_target[valid_mask_1d]  # (N_valid,)
+            masked_losses_valid = masked_losses[valid_mask_1d]  # (N_valid,)
+
             # Calculate sum of losses per class for valid samples
             class_loss_sum = torch.zeros(self.num_classes, device=pred.device).scatter_add_(
-                0, target[valid_mask], masked_losses[valid_mask]
+                0, target_valid, masked_losses_valid
             )
             # Calculate count per class for valid samples
             class_count = torch.zeros(self.num_classes, device=pred.device).scatter_add_(
-                0, target[valid_mask], torch.ones_like(target[valid_mask], dtype=torch.float)
+                0, target_valid, torch.ones_like(target_valid, dtype=torch.float)
             )
             # Calculate average loss per class, handle division by zero
             per_class_loss = torch.nan_to_num(class_loss_sum / class_count.clamp_min(1.0))
 
         # Total loss (average over valid samples)
-        total_loss = masked_losses.sum() / mask.sum().clamp_min(1.0)
+        # Use mask_1d.sum() for the denominator
+        total_loss = masked_losses.sum() / mask_1d.sum().clamp_min(1.0)
 
         return total_loss, per_class_loss
 
@@ -168,13 +178,13 @@ class ClassificationHead(BaseTaskHead):
         -------
         dict[str, torch.Tensor]
             A dictionary containing prediction results:
-            - {"labels": labels} if additional is False.
-            - {"labels": labels, "probabilities": probabilities} if additional is True.
+            - {"label": label} if additional is False.
+            - {"label": label, "proba": proba} if additional is True.
         """
-        probabilities = F.softmax(x, dim=-1)
-        labels = torch.argmax(probabilities, dim=-1)
+        proba = F.softmax(x, dim=-1)
+        label = torch.argmax(proba, dim=-1)
 
         if additional:
-            return {"labels": labels, "probabilities": probabilities}
+            return {"label": label, "proba": proba}
         else:
-            return {"labels": labels}
+            return {"label": label}

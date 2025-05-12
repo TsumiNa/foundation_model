@@ -374,25 +374,25 @@ def test_model_predict_step(model_config_mixed_tasks, sample_batch_mixed_tasks):
 
         elif task_cfg.type == TaskType.CLASSIFICATION:
             assert isinstance(task_cfg, ClassificationTaskConfig)
-            expected_key_logits = f"{task_name_snake}_logits"
-            expected_key_labels = f"{task_name_snake}_labels"
+            expected_key_proba = f"{task_name_snake}_proba"  # Changed from _logits
+            expected_key_label = f"{task_name_snake}_label"  # Changed from _labels
 
-            assert expected_key_logits in output, f"Predict output should contain key '{expected_key_logits}'"
-            logits_tensor = output[expected_key_logits]
-            assert isinstance(logits_tensor, torch.Tensor)
-            expected_logits_shape = (x_formula.shape[0], task_cfg.num_classes)
-            assert logits_tensor.shape == expected_logits_shape, (
-                f"Shape mismatch for {expected_key_logits}. Expected {expected_logits_shape}, got {logits_tensor.shape}"
+            assert expected_key_proba in output, f"Predict output should contain key '{expected_key_proba}'"
+            proba_tensor = output[expected_key_proba]
+            assert isinstance(proba_tensor, torch.Tensor)
+            expected_proba_shape = (x_formula.shape[0], task_cfg.num_classes)
+            assert proba_tensor.shape == expected_proba_shape, (
+                f"Shape mismatch for {expected_key_proba}. Expected {expected_proba_shape}, got {proba_tensor.shape}"
             )
 
-            assert expected_key_labels in output, f"Predict output should contain key '{expected_key_labels}'"
-            labels_tensor = output[expected_key_labels]
-            assert isinstance(labels_tensor, torch.Tensor)
-            expected_labels_shape = (x_formula.shape[0],)  # Predicted labels are (B,)
-            assert labels_tensor.shape == expected_labels_shape, (
-                f"Shape mismatch for {expected_key_labels}. Expected {expected_labels_shape}, got {labels_tensor.shape}"
+            assert expected_key_label in output, f"Predict output should contain key '{expected_key_label}'"
+            label_tensor = output[expected_key_label]
+            assert isinstance(label_tensor, torch.Tensor)
+            expected_label_shape = (x_formula.shape[0],)  # Predicted labels are (B,)
+            assert label_tensor.shape == expected_label_shape, (
+                f"Shape mismatch for {expected_key_label}. Expected {expected_label_shape}, got {label_tensor.shape}"
             )
-            assert labels_tensor.dtype == torch.long, f"{expected_key_labels} should be of type torch.long"
+            assert label_tensor.dtype == torch.long, f"{expected_key_label} should be of type torch.long"
 
 
 def test_model_configure_optimizers(model_config_mixed_tasks):
@@ -516,11 +516,12 @@ def dummy_compound_datamodule(model_config_mixed_tasks, tmp_path):
             assert isinstance(task_cfg, RegressionTaskConfig)
             # Regression target(s)
             num_outputs = task_cfg.dims[-1]
-            attributes_data[task_cfg.name] = (
-                np.random.rand(num_samples, num_outputs).squeeze()
-                if num_outputs == 1
-                else np.random.rand(num_samples, num_outputs)
-            )
+            if num_outputs == 1:
+                attributes_data[task_cfg.name] = np.random.rand(num_samples, num_outputs).squeeze()
+            else:
+                # For multi-output regression, store as list of lists for pandas DataFrame
+                multi_output_data = np.random.rand(num_samples, num_outputs)
+                attributes_data[task_cfg.name] = [list(row) for row in multi_output_data]
         elif task_cfg.type == TaskType.CLASSIFICATION:
             assert isinstance(task_cfg, ClassificationTaskConfig)
             # Classification target (indices)
