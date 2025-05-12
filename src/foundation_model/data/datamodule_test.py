@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from .datamodule import CompoundDataModule
+from foundation_model.data.datamodule import CompoundDataModule
 
 
 # --- Mock Objects (can be shared or re-defined if specific variations needed) ---

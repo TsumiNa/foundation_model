@@ -91,6 +91,7 @@ class SequenceTaskConfig(BaseTaskConfig):
 
     type: Literal[TaskType.SEQUENCE] = TaskType.SEQUENCE
     subtype: str = Field(..., description="Subtype of sequence head (rnn, vec, tcn)")
+    d_in: int = Field(..., description="Input dimension for the sequence head")
 
     # Common parameters
     hidden: int = Field(128, description="Hidden dimension size")

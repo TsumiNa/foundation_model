@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 import torch
 
-from .dataset import CompoundDataset
+from foundation_model.data.dataset import CompoundDataset
 
 
 # --- Mock Objects ---

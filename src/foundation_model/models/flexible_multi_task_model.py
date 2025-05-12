@@ -32,7 +32,9 @@ from .model_config import (
     SequenceTaskConfig,
     TaskType,
 )
-from .task_head import create_task_heads
+from .task_head.classification import ClassificationHead
+from .task_head.regression import RegressionHead
+from .task_head.sequence import create_sequence_head
 from .task_head.sequence.base import SequenceBaseHead
 
 logger = logging.getLogger(__name__)  # Added
@@ -248,27 +250,31 @@ class FlexibleMultiTaskModel(L.LightningModule):
             self.shared = self.encoder.shared
             self.deposit = self.encoder.deposit
 
+    def _build_task_heads(self) -> nn.ModuleDict:
+        """
+        Create task heads based on configurations.
+        This method is called during model initialization.
+        """
+        task_heads_dict = nn.ModuleDict()
+
+        for config_item in self.task_configs:
+            if not config_item.enabled:
+                continue
+
+            if config_item.type == TaskType.REGRESSION:
+                assert isinstance(config_item, RegressionTaskConfig)
+                task_heads_dict[config_item.name] = RegressionHead(config=config_item)
+            elif config_item.type == TaskType.CLASSIFICATION:
+                assert isinstance(config_item, ClassificationTaskConfig)
+                task_heads_dict[config_item.name] = ClassificationHead(config=config_item)
+            elif config_item.type == TaskType.SEQUENCE:
+                assert isinstance(config_item, SequenceTaskConfig)
+                task_heads_dict[config_item.name] = create_sequence_head(config=config_item)
+        return task_heads_dict
+
     def _init_task_heads(self):
         """Initialize task heads based on configurations."""
-        deposit_dim = next(
-            (c.dims[0] for c in self.task_configs if hasattr(c, "dims")),
-            self.shared_block_dims[-1],  # Default to latent dimension
-        )
-        latent_dim = self.shared_block_dims[-1]
-
-        # Ensure d_in is set for regression and classification task configs
-        # This attribute is expected by BaseTaskHead and used by the heads themselves.
-        for tc_instance in self.task_configs:
-            if tc_instance.type in [TaskType.REGRESSION, TaskType.CLASSIFICATION]:
-                # The `d_in` attribute should exist on the Pydantic model (BaseTaskConfig)
-                # and is initialized to None. Here we set its actual value.
-                tc_instance.d_in = deposit_dim
-
-        self.task_heads = create_task_heads(
-            task_configs=self.task_configs,  # These configs now have d_in correctly set
-            deposit_dim=deposit_dim,  # Passed for create_task_heads' own reference if needed
-            latent_dim=latent_dim,
-        )
+        self.task_heads = self._build_task_heads()
 
         # Apply optimizer freeze_parameters to task heads
         for name, head in self.task_heads.items():
@@ -448,7 +454,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # 3. Handle Modality Dropout (only during SSL training)
         x_struct_for_processing = original_x_struct  # Start with the original structure input
-        was_structure_dropped = False
         if (
             self.enable_self_supervised_training
             and self.with_structure
@@ -457,10 +462,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         ):
             # Apply dropout: use None for structure in subsequent processing
             x_struct_for_processing = None
-            was_structure_dropped = True
-            logs["train_modality_dropout_applied"] = 1.0  # Log when dropout happens
+            logs["train_modality_dropout_applied"] = True  # CHANGED
         elif self.enable_self_supervised_training and self.with_structure:
-            logs["train_modality_dropout_applied"] = 0.0  # Log when dropout doesn't happen
+            logs["train_modality_dropout_applied"] = False  # CHANGED
 
         # --- Self-Supervised Learning (SSL) Calculations ---
         if self.enable_self_supervised_training:

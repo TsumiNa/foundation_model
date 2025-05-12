@@ -8,6 +8,8 @@ RNN-based sequence head for the FlexibleMultiTaskModel.
 import torch
 import torch.nn as nn
 
+from foundation_model.models.model_config import SequenceTaskConfig
+
 from ..sequence.base import SequenceBaseHead
 
 
@@ -22,20 +24,20 @@ class SequenceHeadRNN(SequenceBaseHead):
         task name (`name`), hidden size (`hidden`), and cell type (`cell`).
     """
 
-    def __init__(self, config: object):  # TODO: Use specific SequenceTaskConfig type hint
+    def __init__(self, config: SequenceTaskConfig):  # TODO: Use specific SequenceTaskConfig type hint
         super().__init__(config)
 
         # Extract parameters from config
         d_in = config.d_in
-        hidden = getattr(config, "hidden", 128)  # Default hidden size
-        cell = getattr(config, "cell", "gru").lower()  # Default cell type
+        hidden = config.hidden  # Default hidden size
+        cell = config.cell.lower()  # Default cell type
 
         if cell not in ["gru", "lstm"]:
             raise ValueError(f"Unsupported RNN cell type: {cell}. Choose 'gru' or 'lstm'.")
 
         rnn_cls = nn.GRU if cell == "gru" else nn.LSTM
         # TODO: Consider making num_layers configurable via config
-        num_layers = getattr(config, "num_layers", 2)
+        num_layers = config.num_layers if hasattr(config, "num_layers") else 2
         self.rnn = rnn_cls(input_size=1, hidden_size=hidden, num_layers=num_layers, batch_first=True)
         self.film = nn.Linear(d_in, 2 * hidden)  # γ & β for FiLM conditioning
         self.out = nn.Linear(hidden, 1)  # Output layer

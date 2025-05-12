@@ -10,6 +10,7 @@ import torch.nn.functional as F
 
 from ..components.lora_adapter import LoRAAdapter
 from ..fc_layers import LinearBlock
+from ..model_config import RegressionTaskConfig  # Changed import
 from .base import BaseTaskHead
 
 
@@ -26,37 +27,50 @@ class RegressionHead(BaseTaskHead):
         LoRA alpha (`lora_alpha`).
     """
 
-    def __init__(self, config: object):  # TODO: Use specific RegressionTaskConfig type hint
+    def __init__(self, config: RegressionTaskConfig):  # Changed signature
         super().__init__(config)
 
-        # Extract parameters from config, providing defaults if necessary
-        d_in = config.d_in
-        dims = getattr(config, "dims", [1])  # Default to single output if dims missing
-        norm = getattr(config, "norm", True)
-        residual = getattr(config, "residual", False)
-        lora_rank = getattr(config, "lora_rank", None)
-        lora_alpha = getattr(config, "lora_alpha", 1.0)
+        if not hasattr(config, "dims") or not config.dims:
+            raise ValueError("RegressionHead config must have 'dims' attribute, and it cannot be empty.")
+        d_in = config.dims[0]  # d_in sourced from config
+        # head_internal_dims are dimensions after d_in, including the final output dimension
+        head_internal_dims = config.dims[1:]
+        if not head_internal_dims:
+            raise ValueError(
+                "RegressionHead config 'dims' must include at least an output dimension after the input dimension."
+            )
 
-        # Construct the network using LinearBlock for internal layers
-        # Ensure dims has at least one element for output layer size
-        if not dims:
-            raise ValueError("RegressionHead config 'dims' cannot be empty.")
+        norm = config.norm
+        residual = config.residual
+
+        # LoRA specific attributes from config
+        lora_enabled = getattr(config, "lora_enabled", False)
+        lora_rank = getattr(config, "lora_rank", 0)
+        lora_alpha = getattr(config, "lora_alpha", 1.0)
+        lora_freeze_base = getattr(config, "lora_freeze_base", True)
 
         self.net = LinearBlock(
-            [d_in] + dims[:-1],
+            [d_in] + head_internal_dims[:-1],  # Input to LinearBlock is d_in, hidden are head_internal_dims[:-1]
             normalization=norm,
             residual=residual,
-            dim_output_layer=dims[-1],  # Adds final layer automatically
+            dim_output_layer=head_internal_dims[-1],  # Output layer size is the last element of head_internal_dims
         )
 
         # Apply LoRA to the final layer if requested
-        if lora_rank is not None and lora_rank > 0:
-            # The last layer in LinearBlock is the output layer
-            last_layer = self.net[-1].layer if hasattr(self.net[-1], "layer") else self.net[-1]
-
-            if isinstance(last_layer, nn.Linear):
-                # Replace with LoRA adapter
-                self.net[-1] = LoRAAdapter(last_layer, r=lora_rank, alpha=lora_alpha, freeze_base=True)
+        if lora_enabled and lora_rank > 0:  # Check enabled flag and rank
+            # Assuming self.net is a Sequential module and self.net[-1] is the output Linear layer
+            # or a module directly containing it.
+            if isinstance(self.net[-1], nn.Linear):
+                self.net[-1] = LoRAAdapter(self.net[-1], r=lora_rank, alpha=lora_alpha, freeze_base=lora_freeze_base)
+            elif hasattr(self.net[-1], "layer") and isinstance(
+                self.net[-1].layer, nn.Linear
+            ):  # If it's a sub-block with a 'layer'
+                self.net[-1].layer = LoRAAdapter(
+                    self.net[-1].layer, r=lora_rank, alpha=lora_alpha, freeze_base=lora_freeze_base
+                )
+            # else:
+            # Consider logging a warning if LoRA couldn't be applied as expected
+            # print(f"Warning: Could not apply LoRA to RegressionHead {config.name} as expected.")
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         """

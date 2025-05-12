@@ -10,6 +10,7 @@ import torch.nn.functional as F
 
 from ..components.lora_adapter import LoRAAdapter
 from ..fc_layers import LinearBlock
+from ..model_config import ClassificationTaskConfig  # Changed import
 from .base import BaseTaskHead
 
 
@@ -26,44 +27,49 @@ class ClassificationHead(BaseTaskHead):
         and LoRA alpha (`lora_alpha`).
     """
 
-    def __init__(self, config: object):  # TODO: Use specific ClassificationTaskConfig type hint
+    def __init__(self, config: ClassificationTaskConfig):  # Changed signature
         super().__init__(config)
 
-        # Extract parameters from config, providing defaults if necessary
-        d_in = config.d_in
-        dims = getattr(config, "dims", [])  # Default to no hidden layers if dims missing
-        num_classes = getattr(config, "num_classes", None)
-        if num_classes is None:
-            raise ValueError("ClassificationHead config must specify 'num_classes'.")
-        norm = getattr(config, "norm", True)
-        residual = getattr(config, "residual", False)
-        lora_rank = getattr(config, "lora_rank", None)
+        if not hasattr(config, "dims") or not config.dims:
+            raise ValueError("ClassificationHead config must have 'dims' attribute, and it cannot be empty.")
+        d_in = config.dims[0]  # d_in sourced from config
+        hidden_dims = config.dims[1:]  # hidden_dims are the rest
+
+        num_classes = config.num_classes
+        norm = config.norm
+        residual = config.residual
+
+        # LoRA specific attributes from config
+        lora_enabled = getattr(config, "lora_enabled", False)
+        lora_rank = getattr(config, "lora_rank", 0)
         lora_alpha = getattr(config, "lora_alpha", 1.0)
+        lora_freeze_base = getattr(config, "lora_freeze_base", True)
 
         # Ensure at least 2 classes for classification
         if num_classes < 2:
             raise ValueError("Number of classes must be at least 2 for classification.")
 
         # Determine input dimension for the output layer
-        last_hidden_dim = dims[-1] if dims else d_in
+        last_hidden_dim = hidden_dims[-1] if hidden_dims else d_in
 
-        # Construct the network using LinearBlock for hidden layers if dims are provided
-        if dims:
+        # Construct the network using LinearBlock for hidden layers if hidden_dims are provided
+        if hidden_dims:
             self.hidden_layers = LinearBlock(
-                [d_in] + dims,
+                [d_in] + hidden_dims,  # Use d_in and hidden_dims
                 normalization=norm,
                 residual=residual,
             )
         else:
-            # If no hidden dims, create an identity layer or handle appropriately
-            self.hidden_layers = nn.Identity()  # Or potentially remove if not needed
+            self.hidden_layers = nn.Identity()
 
         # Separate output layer for classification
         self.output_layer = nn.Linear(last_hidden_dim, num_classes)
 
         # Apply LoRA to the output layer if requested
-        if lora_rank is not None and lora_rank > 0:
-            self.output_layer = LoRAAdapter(self.output_layer, r=lora_rank, alpha=lora_alpha, freeze_base=True)
+        if lora_enabled and lora_rank > 0:  # Check enabled flag and rank
+            self.output_layer = LoRAAdapter(
+                self.output_layer, r=lora_rank, alpha=lora_alpha, freeze_base=lora_freeze_base
+            )
 
         self.num_classes = num_classes
 

@@ -5,72 +5,20 @@
 Task heads for the FlexibleMultiTaskModel.
 """
 
-import torch.nn as nn
+# create_task_heads function removed as its logic is now in FlexibleMultiTaskModel._build_task_heads
 
-from ..model_config import (
-    ClassificationTaskConfig,
-    RegressionTaskConfig,
-    SequenceTaskConfig,
-    TaskType,
-)
+# Optionally, define __all__ if this module is intended for wildcard imports,
+# or just let imports be direct from submodules.
+# For example:
+from .base import BaseTaskHead
 from .classification import ClassificationHead
 from .regression import RegressionHead
-from .sequence import create_sequence_head
+from .sequence import SequenceBaseHead, create_sequence_head  # and specific sequence head types if needed
 
-
-def create_task_heads(
-    task_configs: list[RegressionTaskConfig | ClassificationTaskConfig | SequenceTaskConfig],
-    deposit_dim: int,
-    latent_dim: int,
-) -> nn.ModuleDict:
-    """
-    Create task heads based on configurations.
-
-    Parameters
-    ----------
-    task_configs : list[RegressionTaskConfig | ClassificationTaskConfig | SequenceTaskConfig]
-        List of task configurations.
-    deposit_dim : int
-        Dimension of the deposit layer output (input to regression/classification heads).
-    latent_dim : int
-        Dimension of the latent representation (input to sequence heads).
-
-    Returns
-    -------
-    nn.ModuleDict
-        Dictionary of task heads, keyed by task name.
-    """
-    task_heads = nn.ModuleDict()
-
-    for config in task_configs:
-        if not config.enabled:
-            continue
-
-        # Determine LoRA parameters if applicable
-        lora_params = {}
-        if hasattr(config, "lora_enabled") and config.lora_enabled:
-            lora_params = {
-                "lora_rank": config.lora_rank,
-                "lora_alpha": config.lora_alpha,
-                "freeze_base": config.lora_freeze_base,
-            }
-
-        if config.type == TaskType.REGRESSION:
-            assert isinstance(config, RegressionTaskConfig)
-            # RegressionHead expects the full config object
-            # lora_params are accessed from config.lora_rank, config.lora_alpha within the head
-            task_heads[config.name] = RegressionHead(config=config)
-        elif config.type == TaskType.CLASSIFICATION:
-            assert isinstance(config, ClassificationTaskConfig)
-            # ClassificationHead expects the full config object
-            # lora_params are accessed from config.lora_rank, config.lora_alpha within the head
-            task_heads[config.name] = ClassificationHead(config=config)
-        elif config.type == TaskType.SEQUENCE:
-            assert isinstance(config, SequenceTaskConfig)
-            task_heads[config.name] = create_sequence_head(
-                d_in=latent_dim,
-                name=config.name,
-                config=config,
-            )
-
-    return task_heads
+__all__ = [
+    "BaseTaskHead",
+    "ClassificationHead",
+    "RegressionHead",
+    "SequenceBaseHead",
+    "create_sequence_head",
+]
