@@ -158,13 +158,37 @@ Update history has been moved to [changes.md](changes.md).
 
 ## Model Architecture
 
-The model consists of:
-1. A shared foundation encoder for learning common features
-2. An intermediate deposit layer
-3. Task-specific heads for different prediction tasks:
-   - Regression heads for continuous properties
-   - Classification heads for categorical properties
-   - Sequence heads for time series or sequential data
+The `FlexibleMultiTaskModel` is designed with a modular and extensible architecture. At its core, it features:
+
+1.  A **Foundation Encoder** that processes input features (formula-based, and optionally structure-based) to generate shared representations. This encoder includes mechanisms for multi-modal fusion if structural data is provided.
+2.  An intermediate **Deposit Layer** that acts as a bridge between the shared encoder and task-specific components.
+3.  A collection of **Task-specific Heads** that take representations from the foundation encoder (either directly from the latent space or via the deposit layer) to make predictions for various tasks, such as:
+    *   Regression (e.g., predicting band gap)
+    *   Classification (e.g., predicting material stability)
+    *   Sequence Prediction (e.g., predicting density of states curves)
+
+Below is a high-level overview of the architecture:
+
+```mermaid
+graph TD
+    Inputs["Inputs<br/>(x_formula, x_structure*, temps_batch*)<br/>*optional"] --> FE["Foundation Encoder<br/>(Shared MLP, Fusion*, Deposit)<br/>*optional"]
+    FE --"h_task (for Attr/Class)"--> NonSeqHeads["Attribute/Classification Heads"]
+    FE --"h_latent/h_fused (for Seq)"--> SeqHeads["Sequence Heads"]
+    NonSeqHeads --> Outputs["Outputs (Dictionary)"]
+    SeqHeads --> Outputs
+
+    %% Styling for White Background Clarity
+    classDef io fill:#E0EFFF,stroke:#5C9DFF,stroke-width:2px,color:#000000;
+    classDef main fill:#DFF0D8,stroke:#77B55A,stroke-width:2px,color:#000000;
+    classDef heads fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000000; /* Combined color for heads in overview */
+
+    class Inputs io;
+    class FE main;
+    class NonSeqHeads,SeqHeads heads; /* Apply combined 'heads' style */
+    class Outputs io;
+```
+
+For a more detailed diagram and in-depth explanation of each component, data flow, and dimensionality, please refer to the [**Model Architecture Documentation (ARCHITECTURE.md)**](ARCHITECTURE.md).
 
 ## Data Handling
 
