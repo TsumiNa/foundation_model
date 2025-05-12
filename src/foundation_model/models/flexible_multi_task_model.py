@@ -386,7 +386,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
         """
-        Training step implementation with multi-component loss calculation.
+        Training step implementation with multi-component loss calculation,
+        handling self-supervised learning and modality dropout.
 
         Parameters
         ----------
@@ -398,138 +399,166 @@ class FlexibleMultiTaskModel(L.LightningModule):
         Returns
         -------
         torch.Tensor
-            Total weighted loss
+            Total weighted loss for optimization.
         """
-        # Unpack batch
+        # 1. Unpack batch data
         x, y_dict, task_masks, temps = batch
-
-        # Unpack inputs
-        if self.with_structure and isinstance(x, (list, tuple)):
-            x_formula, x_struct = x
-        else:
-            x_formula, x_struct = x, None
-
-        # Get encodings for supervised and self-supervised learning
-        if self.with_structure:
-            # For multi-modal, we need all intermediate representations for self-supervised learning
-            h_formula, h_structure, h_fused, h_task = self.encoder(x_formula, x_struct)
-
-            # Apply modality dropout during self-supervised training
-            if (
-                self.enable_self_supervised_training
-                and h_structure is not None
-                and torch.rand(1).item() < self.mod_dropout_p
-            ):
-                h_structure, x_struct = None, None
-                # Update input x to reflect modality dropout
-                if isinstance(x, (list, tuple)):
-                    x = (x_formula, None)
-        else:
-            # For single modality
-            h_latent, h_task = self.encoder(x_formula)
-            h_formula, h_structure = h_latent, None
-
-        # Forward pass for task predictions
-        preds = self(x, temps)
-
-        # Calculate task losses
         total_loss = 0.0
         logs = {}
 
-        # Get task mask indices mapping
-        task_mask_indices = {name: i for i, name in enumerate(self.task_heads.keys())}
+        # 2. Determine input modalities based on configuration and batch data
+        x_formula = None
+        original_x_struct = None  # Keep original structure input for potential cross-recon target
+        if self.with_structure and isinstance(x, (list, tuple)):
+            # Multi-modal input expected and received
+            x_formula, original_x_struct = x
+            if x_formula is None:
+                raise ValueError("Formula input (x_formula) cannot be None in multi-modal mode.")
+        elif not self.with_structure and isinstance(x, torch.Tensor):
+            # Single-modal input expected and received
+            x_formula = x
+        elif self.with_structure and isinstance(x, torch.Tensor):
+            # Multi-modal expected, but only single-modal received (treat as formula only)
+            x_formula = x
+            # original_x_struct remains None
+        else:
+            raise TypeError(
+                f"Unexpected input type/combination. with_structure={self.with_structure}, type(x)={type(x)}"
+            )
 
-        # Process each prediction
+        # 3. Handle Modality Dropout (only during SSL training)
+        x_struct_for_processing = original_x_struct  # Start with the original structure input
+        was_structure_dropped = False
+        if (
+            self.enable_self_supervised_training
+            and self.with_structure
+            and original_x_struct is not None
+            and torch.rand(1).item() < self.mod_dropout_p
+        ):
+            # Apply dropout: use None for structure in subsequent processing
+            x_struct_for_processing = None
+            was_structure_dropped = True
+            logs["train_modality_dropout_applied"] = 1.0  # Log when dropout happens
+        elif self.enable_self_supervised_training and self.with_structure:
+            logs["train_modality_dropout_applied"] = 0.0  # Log when dropout doesn't happen
+
+        # --- Self-Supervised Learning (SSL) Calculations ---
+        if self.enable_self_supervised_training:
+            # We need non-masked embeddings for contrastive/cross-recon later
+            # Get these based on potentially dropped structure input
+            h_formula_ssl, h_structure_ssl, _, _ = self.encoder(x_formula, x_struct_for_processing)
+
+            # 4a. Masked Feature Modeling (MFM)
+            if self.w.get("mfm", 0) > 0:
+                # Pass the encoder function that handles masking internally
+                encoder_fn = self.encoder.encode_masked
+                # Compute MFM loss using the potentially dropped structure input
+                mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
+                    encoder_fn, x_formula, x_struct_for_processing
+                )
+                weighted_mfm_loss = self.w["mfm"] * mfm_loss
+                total_loss += weighted_mfm_loss
+                # Log MFM specific losses (e.g., formula_mfm, struct_mfm if applicable)
+                logs.update({f"train_{k}": v.detach() for k, v in mfm_logs.items()})
+                logs["train_mfm_loss_weighted"] = weighted_mfm_loss.detach()
+
+            # 4b. Contrastive Loss
+            if (
+                self.with_structure
+                and h_structure_ssl is not None  # Only if structure wasn't dropped/missing
+                and self.w.get("contrastive", 0) > 0
+            ):
+                contrastive_loss = self.ssl_module.compute_contrastive_loss(h_formula_ssl, h_structure_ssl)
+                weighted_contrastive_loss = self.w["contrastive"] * contrastive_loss
+                total_loss += weighted_contrastive_loss
+                logs["train_contrastive_loss"] = contrastive_loss.detach()
+                logs["train_contrastive_loss_weighted"] = weighted_contrastive_loss.detach()
+            elif self.with_structure and self.w.get("contrastive", 0) > 0:
+                # Log zero if structure was dropped or missing
+                logs["train_contrastive_loss"] = 0.0
+                logs["train_contrastive_loss_weighted"] = 0.0
+
+            # 4c. Cross-Reconstruction Loss
+            if (
+                self.with_structure
+                and h_structure_ssl is not None  # Only if structure wasn't dropped/missing for encoding
+                and original_x_struct is not None  # Only if original structure existed for target
+                and self.w.get("cross_recon", 0) > 0
+            ):
+                # Use non-masked embeddings derived from potentially dropped input,
+                # but reconstruct the *original* structure input.
+                cross_recon_loss = self.ssl_module.compute_cross_reconstruction_loss(
+                    h_formula_ssl, h_structure_ssl, x_formula, original_x_struct
+                )
+                weighted_cross_recon_loss = self.w["cross_recon"] * cross_recon_loss
+                total_loss += weighted_cross_recon_loss
+                logs["train_cross_recon_loss"] = cross_recon_loss.detach()
+                logs["train_cross_recon_loss_weighted"] = weighted_cross_recon_loss.detach()
+            elif self.with_structure and self.w.get("cross_recon", 0) > 0:
+                # Log zero if structure was dropped or missing
+                logs["train_cross_recon_loss"] = 0.0
+                logs["train_cross_recon_loss_weighted"] = 0.0
+
+        # --- Supervised Task Calculations ---
+        # 5. Prepare input for the standard forward pass
+        # Use the structure input *after* potential modality dropout for consistent forward pass
+        if self.with_structure:
+            forward_input = (x_formula, x_struct_for_processing)
+        else:
+            forward_input = x_formula
+
+        # 6. Get predictions from the forward method
+        preds = self(forward_input, temps)
+
+        # 7. Calculate supervised task losses
+        task_mask_indices = {name: i for i, name in enumerate(self.task_heads.keys())}
         for name, pred in preds.items():
-            if name not in y_dict:
-                continue  # Skip tasks without targets
+            if name not in y_dict or not self.task_configs_map[name].enabled:
+                continue  # Skip tasks without targets or disabled tasks
 
             head = self.task_heads[name]
             target = y_dict[name]
 
-            # Get mask for this task
+            # Determine mask for the current task
             mask_idx = task_mask_indices.get(name)
             if mask_idx is not None and mask_idx < task_masks.shape[1]:
-                # Create sample mask tensor matching target shape
                 sample_mask = task_masks[:, mask_idx].view(-1, 1)
+                # Expand mask for sequence tasks if necessary
+                if isinstance(head, SequenceBaseHead) and len(target.shape) > 1 and target.shape[1] > 1:
+                    # Ensure mask matches sequence length dimension (dim=1)
+                    if len(sample_mask.shape) == 2:  # (B, 1) -> (B, L, 1) or (B, L)
+                        sample_mask = sample_mask.unsqueeze(1).expand(
+                            -1, target.shape[1], -1 if len(target.shape) == 3 else target.shape[1]
+                        )
+                    elif len(sample_mask.shape) == 1:  # (B,) -> (B, L)
+                        sample_mask = sample_mask.unsqueeze(1).expand(-1, target.shape[1])
 
-                # Handle sequence task masks
-                if isinstance(head, SequenceBaseHead) and len(target.shape) > 2:
-                    sample_mask = sample_mask.unsqueeze(1).expand(-1, target.shape[1], -1)
             else:
-                # Default: all samples valid
+                # Default: all samples are valid if no specific mask provided
                 sample_mask = torch.ones_like(target)
 
-            # Compute loss
-            loss, per_dim_loss = head.compute_loss(pred, target, sample_mask)
+            # Compute loss using the head's method
+            loss, _ = head.compute_loss(pred, target, sample_mask)  # Ignore per_dim_loss for now
 
             # Apply task-specific weight and accumulate
             task_weight = self.w.get(name, 1.0)
             weighted_loss = task_weight * loss
             total_loss += weighted_loss
 
-            # Log task losses
+            # Log individual task losses (unweighted and weighted)
             logs[f"train_{name}_loss"] = loss.detach()
+            logs[f"train_{name}_loss_weighted"] = weighted_loss.detach()
 
-        # Self-supervised losses
-        if self.enable_self_supervised_training:
-            total_loss = self._add_self_supervised_losses(total_loss, logs, h_formula, h_structure, x_formula, x_struct)
-
-        # Log metrics
-        self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
-
-        return total_loss
-
-    def _add_self_supervised_losses(
-        self,
-        total_loss: torch.Tensor,
-        logs: dict,
-        h_formula: torch.Tensor,
-        h_structure: torch.Tensor | None,
-        x_formula: torch.Tensor,
-        x_structure: torch.Tensor | None,
-    ) -> torch.Tensor:
-        """Add self-supervised losses to the total loss."""
-        # Only continue if self-supervised training is enabled and modules are initialized
-        if not self.enable_self_supervised_training or not hasattr(self, "ssl_module"):
-            return total_loss
-
-        # 1. Masked Feature Modeling loss
-        if self.w.get("mfm", 0) > 0 and x_formula is not None:
-            # Create encoder function for masked feature modeling
-            encoder_fn = self.encoder.encode_masked
-
-            # Compute MFM loss using the self-supervised module
-            mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(encoder_fn, x_formula, x_structure)
-
-            # Add weighted loss
-            total_loss += self.w["mfm"] * mfm_loss
-            logs.update({f"train_{k}": v for k, v in mfm_logs.items()})
-
-        # 2. Contrastive loss (only for multi-modal)
-        if self.with_structure and h_structure is not None and self.w.get("contrastive", 0) > 0:
-            contrastive_loss = self.ssl_module.compute_contrastive_loss(h_formula, h_structure)
-            total_loss += self.w["contrastive"] * contrastive_loss
-            logs["train_contrastive"] = contrastive_loss.detach()
-
-        # 3. Cross-reconstruction loss (only for multi-modal)
-        if (
-            self.with_structure
-            and h_structure is not None
-            and x_structure is not None
-            and self.w.get("cross_recon", 0) > 0
-        ):
-            cross_recon_loss = self.ssl_module.compute_cross_reconstruction_loss(
-                h_formula, h_structure, x_formula, x_structure
-            )
-            total_loss += self.w["cross_recon"] * cross_recon_loss
-            logs["train_cross_recon"] = cross_recon_loss.detach()
+        # 8. Log total loss and other aggregated metrics
+        logs["train_total_loss"] = total_loss.detach()
+        self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
 
         return total_loss
 
     def validation_step(self, batch, batch_idx):
         """
-        Validation step implementation.
+        Validation step implementation. Performs standard forward pass without
+        SSL losses or modality dropout.
 
         Parameters
         ----------
@@ -541,60 +570,119 @@ class FlexibleMultiTaskModel(L.LightningModule):
         Returns
         -------
         torch.Tensor
-            Total validation loss
+            Total *unweighted* validation loss across all tasks.
         """
-        # Unpack batch
+        # 1. Unpack batch data
         x, y_dict, task_masks, temps = batch
-
-        # Forward pass
-        preds = self(x, temps)
-
-        # Calculate task losses
-        total_loss = 0.0
+        total_val_loss = 0.0
         logs = {}
 
-        # Get task mask indices mapping
-        task_mask_indices = {name: i for i, name in enumerate(self.task_heads.keys())}
+        # 2. Determine input modalities (no dropout applied in validation)
+        x_formula = None
+        x_struct = None  # Use original structure input if available
+        if self.with_structure and isinstance(x, (list, tuple)):
+            x_formula, x_struct = x
+            if x_formula is None:
+                raise ValueError("Formula input (x_formula) cannot be None in multi-modal mode during validation.")
+            # Note: We use the provided x_struct directly, no dropout.
+            forward_input = (x_formula, x_struct)
+        elif not self.with_structure and isinstance(x, torch.Tensor):
+            x_formula = x
+            forward_input = x_formula
+        elif self.with_structure and isinstance(x, torch.Tensor):
+            # Handle case where multi-modal expected but only single received
+            x_formula = x
+            forward_input = (x_formula, None)  # Pass None for structure
+        else:
+            raise TypeError(
+                f"Unexpected input type/combination during validation. with_structure={self.with_structure}, type(x)={type(x)}"
+            )
 
-        # Process each prediction
+        # 3. Forward pass using the determined input
+        preds = self(forward_input, temps)
+
+        # 4. Calculate supervised task losses (unweighted for validation)
+        task_mask_indices = {name: i for i, name in enumerate(self.task_heads.keys())}
         for name, pred in preds.items():
-            if name not in y_dict:
-                continue  # Skip tasks without targets
+            if name not in y_dict or not self.task_configs_map[name].enabled:
+                continue
 
             head = self.task_heads[name]
             target = y_dict[name]
 
-            # Get mask for this task
+            # Determine mask
             mask_idx = task_mask_indices.get(name)
             if mask_idx is not None and mask_idx < task_masks.shape[1]:
-                # Create sample mask tensor matching target shape
                 sample_mask = task_masks[:, mask_idx].view(-1, 1)
-
-                # Handle sequence task masks
-                if isinstance(head, SequenceBaseHead) and len(target.shape) > 2:
-                    sample_mask = sample_mask.unsqueeze(1).expand(-1, target.shape[1], -1)
+                if isinstance(head, SequenceBaseHead) and len(target.shape) > 1 and target.shape[1] > 1:
+                    if len(sample_mask.shape) == 2:
+                        sample_mask = sample_mask.unsqueeze(1).expand(
+                            -1, target.shape[1], -1 if len(target.shape) == 3 else target.shape[1]
+                        )
+                    elif len(sample_mask.shape) == 1:
+                        sample_mask = sample_mask.unsqueeze(1).expand(-1, target.shape[1])
             else:
-                # Default: all samples valid
                 sample_mask = torch.ones_like(target)
 
-            # Compute loss
-            loss, per_dim_loss = head.compute_loss(pred, target, sample_mask)
+            # Compute loss (unweighted)
+            loss, _ = head.compute_loss(pred, target, sample_mask)
+            total_val_loss += loss
 
-            # Accumulate loss (unweighted for validation)
-            total_loss += loss
-
-            # Log task losses
+            # Log individual task validation losses
             logs[f"val_{name}_loss"] = loss.detach()
 
-        # Log metrics
-        self.log_dict(logs, prog_bar=True, on_epoch=True)
+        # 5. Log total validation loss
+        logs["val_total_loss"] = total_val_loss.detach()
+        # Log on epoch end, disable progress bar for validation
+        self.log_dict(logs, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
 
-        return total_loss
+        return total_val_loss
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
-        """Prediction step."""
-        x, _, _, temps = batch
-        return self(x, temps)
+        """
+        Prediction step. Performs standard forward pass.
+
+        Parameters
+        ----------
+        batch : tuple
+            Typically contains (x, [ignored targets], [ignored masks], temps)
+        batch_idx : int
+            Index of the current batch
+        dataloader_idx : int, optional
+            Index of the dataloader (if multiple).
+
+        Returns
+        -------
+        dict[str, torch.Tensor]
+            Dictionary of task predictions.
+        """
+        # 1. Unpack batch - only need x and temps for prediction
+        # Assuming batch structure might vary, robustly get x and temps
+        x = batch[0]
+        temps = batch[3] if len(batch) > 3 else None  # Handle cases where temps might be missing
+
+        # 2. Determine input modalities for forward pass
+        x_formula = None
+        x_struct = None
+        if self.with_structure and isinstance(x, (list, tuple)):
+            x_formula, x_struct = x
+            if x_formula is None:
+                raise ValueError("Formula input (x_formula) cannot be None in multi-modal mode during prediction.")
+            forward_input = (x_formula, x_struct)  # Use provided structure
+        elif not self.with_structure and isinstance(x, torch.Tensor):
+            x_formula = x
+            forward_input = x_formula
+        elif self.with_structure and isinstance(x, torch.Tensor):
+            # Handle case where multi-modal expected but only single received
+            x_formula = x
+            forward_input = (x_formula, None)  # Pass None for structure
+        else:
+            raise TypeError(
+                f"Unexpected input type/combination during prediction. with_structure={self.with_structure}, type(x)={type(x)}"
+            )
+
+        # 3. Return predictions from the forward method
+        return self(forward_input, temps)
 
     def _create_optimizer(self, params: list[torch.nn.Parameter], config: OptimizerConfig) -> torch.optim.Optimizer:
         """Create an optimizer based on the configuration."""
