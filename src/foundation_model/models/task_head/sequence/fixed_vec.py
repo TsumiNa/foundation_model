@@ -19,26 +19,34 @@ class SequenceHeadFixedVec(SequenceBaseHead):
 
     Parameters
     ----------
-    d_in : int
-        Latent dimension.
-    name : str
-        Name of the sequence task.
-    seq_len : int
-        Length of the output sequence (each element is a scalar).
+    config : SequenceTaskConfig (or similar)
+        Configuration object containing parameters like input dimension (`d_in`),
+        task name (`name`), and sequence length (`seq_len`).
     """
 
-    def __init__(self, d_in: int, name: str, seq_len: int):
-        super().__init__(d_in, name)
+    def __init__(self, config: object):  # TODO: Use specific SequenceTaskConfig type hint
+        super().__init__(config)
 
-        if seq_len <= 0:
-            raise ValueError("seq_len must be positive")
+        # Extract parameters from config
+        d_in = config.d_in
+        seq_len = getattr(config, "seq_len", None)
+        if seq_len is None or seq_len <= 0:
+            raise ValueError("SequenceHeadFixedVec config must specify a positive 'seq_len'.")
 
         self.seq_len = seq_len
-        self.net = nn.Sequential(
-            nn.Linear(d_in, d_in),
-            nn.ReLU(),
-            nn.Linear(d_in, seq_len),
-        )
+        # Define the network structure based on config if needed, or keep it simple
+        # Example: Use hidden dims from config if provided
+        hidden_dims = getattr(config, "hidden_dims", [d_in])  # Default to one layer if not specified
+
+        layers = []
+        current_dim = d_in
+        for h_dim in hidden_dims:
+            layers.append(nn.Linear(current_dim, h_dim))
+            layers.append(nn.ReLU())
+            current_dim = h_dim
+        layers.append(nn.Linear(current_dim, seq_len))  # Final output layer
+
+        self.net = nn.Sequential(*layers)
 
     def forward(self, h: torch.Tensor, temps: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
@@ -55,3 +63,23 @@ class SequenceHeadFixedVec(SequenceBaseHead):
             Fixed-length output (B, seq_len).
         """
         return self.net(h)  # (B, seq_len)
+
+    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, torch.Tensor]:
+        """
+        Core prediction logic for fixed vector sequence head.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Raw output from the forward pass (predicted sequence).
+        additional : bool, optional
+            If True, return additional prediction information. Currently unused,
+            but kept for interface consistency. Defaults to False.
+
+        Returns
+        -------
+        dict[str, torch.Tensor]
+            A dictionary containing the prediction: {"prediction": x}.
+        """
+        # For fixed vector, the raw output is the prediction
+        return {"prediction": x}

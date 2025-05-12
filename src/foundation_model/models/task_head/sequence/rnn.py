@@ -17,23 +17,28 @@ class SequenceHeadRNN(SequenceBaseHead):
 
     Parameters
     ----------
-    d_in : int
-        Dimension of the latent vector from the encoder.
-    name : str
-        Name of the sequence task.
-    hidden : int, optional
-        Hidden size of the recurrent layer (default: 128).
-    cell : {"gru","lstm"}, optional
-        Select GRU or LSTM cell (default: "gru").
+    config : SequenceTaskConfig (or similar)
+        Configuration object containing parameters like input dimension (`d_in`),
+        task name (`name`), hidden size (`hidden`), and cell type (`cell`).
     """
 
-    def __init__(self, d_in: int, name: str, hidden: int = 128, cell: str = "gru"):
-        super().__init__(d_in, name)
+    def __init__(self, config: object):  # TODO: Use specific SequenceTaskConfig type hint
+        super().__init__(config)
 
-        rnn_cls = nn.GRU if cell.lower() == "gru" else nn.LSTM
-        self.rnn = rnn_cls(input_size=1, hidden_size=hidden, num_layers=2, batch_first=True)
-        self.film = nn.Linear(d_in, 2 * hidden)  # γ & β
-        self.out = nn.Linear(hidden, 1)
+        # Extract parameters from config
+        d_in = config.d_in
+        hidden = getattr(config, "hidden", 128)  # Default hidden size
+        cell = getattr(config, "cell", "gru").lower()  # Default cell type
+
+        if cell not in ["gru", "lstm"]:
+            raise ValueError(f"Unsupported RNN cell type: {cell}. Choose 'gru' or 'lstm'.")
+
+        rnn_cls = nn.GRU if cell == "gru" else nn.LSTM
+        # TODO: Consider making num_layers configurable via config
+        num_layers = getattr(config, "num_layers", 2)
+        self.rnn = rnn_cls(input_size=1, hidden_size=hidden, num_layers=num_layers, batch_first=True)
+        self.film = nn.Linear(d_in, 2 * hidden)  # γ & β for FiLM conditioning
+        self.out = nn.Linear(hidden, 1)  # Output layer
 
     def forward(self, h: torch.Tensor, temps: torch.Tensor) -> torch.Tensor:
         """
@@ -49,9 +54,37 @@ class SequenceHeadRNN(SequenceBaseHead):
         torch.Tensor
             Predicted sequence, shape (B, L).
         """
-        # h: (B,D) / temps: (B,L,1)  -> y:(B,L)
-        gamma_beta = self.film(h).unsqueeze(1)  # (B,1,2H)
-        gamma, beta = gamma_beta.chunk(2, dim=-1)
-        rnn_out, _ = self.rnn(temps)  # (B,L,H)
-        fused = gamma * rnn_out + beta
-        return self.out(fused).squeeze(-1)
+        # h: (B, D_in) / temps: (B, L, 1) -> y: (B, L)
+        # 1. Generate FiLM parameters (gamma, beta) from task representation h
+        gamma_beta = self.film(h).unsqueeze(1)  # Shape: (B, 1, 2 * hidden)
+        gamma, beta = gamma_beta.chunk(2, dim=-1)  # Shapes: (B, 1, hidden) each
+
+        # 2. Process sequence points through RNN
+        rnn_out, _ = self.rnn(temps)  # Shape: (B, L, hidden)
+
+        # 3. Apply FiLM modulation
+        fused = gamma * rnn_out + beta  # Broadcasting applies gamma/beta to each time step
+
+        # 4. Project to output dimension
+        output_sequence = self.out(fused).squeeze(-1)  # Shape: (B, L)
+        return output_sequence
+
+    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, torch.Tensor]:
+        """
+        Core prediction logic for RNN sequence head.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Raw output from the forward pass (predicted sequence).
+        additional : bool, optional
+            If True, return additional prediction information. Currently unused,
+            but kept for interface consistency. Defaults to False.
+
+        Returns
+        -------
+        dict[str, torch.Tensor]
+            A dictionary containing the prediction: {"prediction": x}.
+        """
+        # For RNN sequence head, the raw output is the prediction
+        return {"prediction": x}

@@ -557,8 +557,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         """
-        Validation step implementation. Performs standard forward pass without
-        SSL losses or modality dropout.
+        Validation step implementation. Performs computations similar to training_step
+        (including SSL if enabled) but without modality dropout or gradient updates.
+        Logs all relevant unweighted losses.
 
         Parameters
         ----------
@@ -569,39 +570,86 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         Returns
         -------
-        torch.Tensor
-            Total *unweighted* validation loss across all tasks.
+        None
+            This method logs metrics using self.log_dict() and does not return a value.
         """
         # 1. Unpack batch data
         x, y_dict, task_masks, temps = batch
-        total_val_loss = 0.0
+        total_val_loss = 0.0  # Accumulates unweighted losses
         logs = {}
 
-        # 2. Determine input modalities (no dropout applied in validation)
+        # 2. Determine input modalities based on configuration and batch data
         x_formula = None
-        x_struct = None  # Use original structure input if available
+        original_x_struct = None  # Structure input from the batch
         if self.with_structure and isinstance(x, (list, tuple)):
-            x_formula, x_struct = x
+            x_formula, original_x_struct = x
             if x_formula is None:
                 raise ValueError("Formula input (x_formula) cannot be None in multi-modal mode during validation.")
-            # Note: We use the provided x_struct directly, no dropout.
-            forward_input = (x_formula, x_struct)
         elif not self.with_structure and isinstance(x, torch.Tensor):
             x_formula = x
-            forward_input = x_formula
         elif self.with_structure and isinstance(x, torch.Tensor):
-            # Handle case where multi-modal expected but only single received
             x_formula = x
-            forward_input = (x_formula, None)  # Pass None for structure
         else:
             raise TypeError(
                 f"Unexpected input type/combination during validation. with_structure={self.with_structure}, type(x)={type(x)}"
             )
 
-        # 3. Forward pass using the determined input
+        # For validation, x_struct_for_processing is always the original_x_struct (no dropout)
+        x_struct_for_processing = original_x_struct
+
+        # --- Self-Supervised Learning (SSL) Calculations (if enabled) ---
+        if self.enable_self_supervised_training:
+            # Get SSL-specific embeddings using the (non-dropped) structure input
+            h_formula_ssl, h_structure_ssl, _, _ = self.encoder(x_formula, x_struct_for_processing)
+
+            # 3a. Masked Feature Modeling (MFM)
+            if self.w.get("mfm", 0) > 0:  # Check if MFM is weighted, implying it's active
+                encoder_fn = self.encoder.encode_masked
+                mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
+                    encoder_fn, x_formula, x_struct_for_processing
+                )
+                total_val_loss += mfm_loss.detach()  # Add unweighted MFM loss
+                logs["val_mfm_loss"] = mfm_loss.detach()
+                logs.update({f"val_{k}": v.detach() for k, v in mfm_logs.items()})
+
+            # 3b. Contrastive Loss
+            if (
+                self.with_structure
+                and h_structure_ssl is not None
+                and self.w.get("contrastive", 0) > 0  # Check if contrastive is weighted
+            ):
+                contrastive_loss = self.ssl_module.compute_contrastive_loss(h_formula_ssl, h_structure_ssl)
+                total_val_loss += contrastive_loss.detach()  # Add unweighted contrastive loss
+                logs["val_contrastive_loss"] = contrastive_loss.detach()
+            elif self.with_structure and self.w.get("contrastive", 0) > 0:
+                logs["val_contrastive_loss"] = 0.0  # Log zero if not applicable
+
+            # 3c. Cross-Reconstruction Loss
+            if (
+                self.with_structure
+                and h_structure_ssl is not None
+                and original_x_struct is not None  # Target for reconstruction must exist
+                and self.w.get("cross_recon", 0) > 0  # Check if cross-recon is weighted
+            ):
+                cross_recon_loss = self.ssl_module.compute_cross_reconstruction_loss(
+                    h_formula_ssl, h_structure_ssl, x_formula, original_x_struct
+                )
+                total_val_loss += cross_recon_loss.detach()  # Add unweighted cross-recon loss
+                logs["val_cross_recon_loss"] = cross_recon_loss.detach()
+            elif self.with_structure and self.w.get("cross_recon", 0) > 0:
+                logs["val_cross_recon_loss"] = 0.0  # Log zero if not applicable
+
+        # --- Supervised Task Calculations ---
+        # 4. Prepare input for the standard forward pass
+        if self.with_structure:
+            forward_input = (x_formula, x_struct_for_processing)
+        else:
+            forward_input = x_formula
+
+        # 5. Get predictions from the forward method
         preds = self(forward_input, temps)
 
-        # 4. Calculate supervised task losses (unweighted for validation)
+        # 6. Calculate supervised task losses (unweighted for validation)
         task_mask_indices = {name: i for i, name in enumerate(self.task_heads.keys())}
         for name, pred in preds.items():
             if name not in y_dict or not self.task_configs_map[name].enabled:
@@ -624,65 +672,92 @@ class FlexibleMultiTaskModel(L.LightningModule):
             else:
                 sample_mask = torch.ones_like(target)
 
-            # Compute loss (unweighted)
+            # Compute unweighted loss
             loss, _ = head.compute_loss(pred, target, sample_mask)
-            total_val_loss += loss
+            total_val_loss += loss.detach()  # Accumulate unweighted task loss
 
-            # Log individual task validation losses
+            # Log individual task validation losses (unweighted)
             logs[f"val_{name}_loss"] = loss.detach()
 
-        # 5. Log total validation loss
-        logs["val_total_loss"] = total_val_loss.detach()
+        # 7. Log total validation loss and other metrics
+        logs["val_total_loss"] = total_val_loss  # total_val_loss is already detached
         # Log on epoch end, disable progress bar for validation
         self.log_dict(logs, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
 
-        return total_val_loss
+        # As per Lightning best practices when using self.log_dict, return None
+        return None
 
-    def predict_step(self, batch, batch_idx, dataloader_idx=0):
+    def predict_step(
+        self, batch, batch_idx, dataloader_idx=0, additional_output: bool = False
+    ) -> dict[str, torch.Tensor]:
         """
-        Prediction step. Performs standard forward pass.
+        Prediction step. Performs standard forward pass assuming only formula input
+        and then processes raw outputs using each task head's `predict` method.
+
+        Even if the model is configured with `with_structure=True`, this step
+        simulates the deployment scenario where only formula information (`x_formula`)
+        is available. It explicitly passes `None` for the structure input to the
+        forward method.
 
         Parameters
         ----------
         batch : tuple
-            Typically contains (x, [ignored targets], [ignored masks], temps)
+            Typically contains (x_formula, [ignored targets], [ignored masks], temps)
+            or just (x_formula, temps) or similar variations. `batch[0]` is always
+            assumed to be `x_formula`.
         batch_idx : int
-            Index of the current batch
+            Index of the current batch.
         dataloader_idx : int, optional
             Index of the dataloader (if multiple).
+        additional_output : bool, optional
+            If True, task heads will return additional prediction information
+            (e.g., probabilities for classification). Defaults to False.
 
         Returns
         -------
         dict[str, torch.Tensor]
-            Dictionary of task predictions.
+            A flat dictionary where keys are prefixed with the snake_case task name
+            (e.g., "task_name_labels", "task_name_probabilities") and values are
+            the corresponding predictions.
         """
-        # 1. Unpack batch - only need x and temps for prediction
-        # Assuming batch structure might vary, robustly get x and temps
-        x = batch[0]
-        temps = batch[3] if len(batch) > 3 else None  # Handle cases where temps might be missing
+        # 1. Unpack batch - Assume batch[0] is always x_formula for prediction
+        x_formula = batch[0]
+        if not isinstance(x_formula, torch.Tensor):
+            raise TypeError(f"Expected batch[0] to be a Tensor (x_formula), but got {type(x_formula)}")
 
-        # 2. Determine input modalities for forward pass
-        x_formula = None
-        x_struct = None
-        if self.with_structure and isinstance(x, (list, tuple)):
-            x_formula, x_struct = x
-            if x_formula is None:
-                raise ValueError("Formula input (x_formula) cannot be None in multi-modal mode during prediction.")
-            forward_input = (x_formula, x_struct)  # Use provided structure
-        elif not self.with_structure and isinstance(x, torch.Tensor):
-            x_formula = x
-            forward_input = x_formula
-        elif self.with_structure and isinstance(x, torch.Tensor):
-            # Handle case where multi-modal expected but only single received
-            x_formula = x
-            forward_input = (x_formula, None)  # Pass None for structure
+        # Temps might be optional depending on the tasks
+        temps = batch[3] if len(batch) > 3 else None
+
+        # 2. Prepare input for the raw forward pass, always treating structure as None
+        if self.with_structure:
+            # If model uses structure, pass None explicitly during prediction
+            raw_forward_input = (x_formula, None)
         else:
-            raise TypeError(
-                f"Unexpected input type/combination during prediction. with_structure={self.with_structure}, type(x)={type(x)}"
-            )
+            # If model doesn't use structure, just pass formula
+            raw_forward_input = x_formula
 
-        # 3. Return predictions from the forward method
-        return self(forward_input, temps)
+        # 3. Get raw predictions from the model's forward method
+        raw_preds = self(raw_forward_input, temps)  # This is a dict: {task_name: raw_output_tensor}
+
+        # 4. Process raw predictions using each task head's `predict` method
+        final_predictions = {}
+        for task_name, raw_pred_tensor in raw_preds.items():
+            if task_name in self.task_heads:
+                head = self.task_heads[task_name]
+                # The head.predict() method now handles snake_case prefixing
+                processed_pred_dict = head.predict(raw_pred_tensor, additional=additional_output)
+                final_predictions.update(processed_pred_dict)
+            else:
+                # Should not happen if task_heads and forward output are consistent
+                # but as a fallback, include raw prediction with a generic key
+                # (or raise an error, or log a warning)
+                # For now, let's assume consistency and this branch is not hit.
+                # If it were, we might do:
+                # from .task_head.base import _to_snake_case
+                # final_predictions[f"{_to_snake_case(task_name)}_raw_prediction"] = raw_pred_tensor
+                pass
+
+        return final_predictions
 
     def _create_optimizer(self, params: list[torch.nn.Parameter], config: OptimizerConfig) -> torch.optim.Optimizer:
         """Create an optimizer based on the configuration."""

@@ -19,56 +19,51 @@ class ClassificationHead(BaseTaskHead):
 
     Parameters
     ----------
-    d_in : int
-        Input dimension to the task head.
-    name : str
-        Name of the classification task.
-    dims : list[int]
-        Hidden dimensions of the classification network.
-    num_classes : int
-        Number of classes to predict.
-    norm : bool
-        Whether to apply layer normalization.
-    residual : bool
-        Whether to use residual connections.
-    lora_rank : Optional[int]
-        If not None, apply LoRA adaptation with the specified rank.
-    lora_alpha : float
-        Scaling factor for LoRA adaptation.
+    config : ClassificationTaskConfig
+        Configuration object containing parameters like input dimension (`d_in`),
+        task name (`name`), hidden dimensions (`dims`), number of classes (`num_classes`),
+        normalization (`norm`), residual connections (`residual`), LoRA rank (`lora_rank`),
+        and LoRA alpha (`lora_alpha`).
     """
 
-    def __init__(
-        self,
-        d_in: int,
-        name: str,
-        dims: list[int],
-        num_classes: int,
-        norm: bool = True,
-        residual: bool = False,
-        lora_rank: Optional[int] = None,
-        lora_alpha: float = 1.0,
-    ):
-        super().__init__(d_in, name)
+    def __init__(self, config: object):  # TODO: Use specific ClassificationTaskConfig type hint
+        super().__init__(config)
+
+        # Extract parameters from config, providing defaults if necessary
+        d_in = config.d_in
+        dims = getattr(config, "dims", [])  # Default to no hidden layers if dims missing
+        num_classes = getattr(config, "num_classes", None)
+        if num_classes is None:
+            raise ValueError("ClassificationHead config must specify 'num_classes'.")
+        norm = getattr(config, "norm", True)
+        residual = getattr(config, "residual", False)
+        lora_rank = getattr(config, "lora_rank", None)
+        lora_alpha = getattr(config, "lora_alpha", 1.0)
 
         # Ensure at least 2 classes for classification
         if num_classes < 2:
-            raise ValueError("Number of classes must be at least 2")
+            raise ValueError("Number of classes must be at least 2 for classification.")
 
-        # Construct the network using LinearBlock for hidden layers
-        self.hidden_layers = LinearBlock(
-            [d_in] + dims,
-            normalization=norm,
-            residual=residual,
-        )
+        # Determine input dimension for the output layer
+        last_hidden_dim = dims[-1] if dims else d_in
+
+        # Construct the network using LinearBlock for hidden layers if dims are provided
+        if dims:
+            self.hidden_layers = LinearBlock(
+                [d_in] + dims,
+                normalization=norm,
+                residual=residual,
+            )
+        else:
+            # If no hidden dims, create an identity layer or handle appropriately
+            self.hidden_layers = nn.Identity()  # Or potentially remove if not needed
 
         # Separate output layer for classification
-        self.output_layer = nn.Linear(dims[-1], num_classes)
+        self.output_layer = nn.Linear(last_hidden_dim, num_classes)
 
         # Apply LoRA to the output layer if requested
         if lora_rank is not None and lora_rank > 0:
-            self.output_layer = LoRAAdapter(
-                self.output_layer, r=lora_rank, alpha=lora_alpha, freeze_base=True
-            )
+            self.output_layer = LoRAAdapter(self.output_layer, r=lora_rank, alpha=lora_alpha, freeze_base=True)
 
         self.num_classes = num_classes
 
@@ -91,40 +86,6 @@ class ClassificationHead(BaseTaskHead):
         features = self.hidden_layers(x)
         logits = self.output_layer(features)
         return logits
-
-    def predict_proba(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Get predicted probabilities.
-
-        Parameters
-        ----------
-        x : torch.Tensor
-            Input tensor, shape (B, d_in).
-
-        Returns
-        -------
-        torch.Tensor
-            Predicted probabilities, shape (B, num_classes).
-        """
-        logits = self.forward(x)
-        return F.softmax(logits, dim=-1)
-
-    def predict_class(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Get predicted class indices.
-
-        Parameters
-        ----------
-        x : torch.Tensor
-            Input tensor, shape (B, d_in).
-
-        Returns
-        -------
-        torch.Tensor
-            Predicted class indices, shape (B,).
-        """
-        logits = self.forward(x)
-        return torch.argmax(logits, dim=-1)
 
     def compute_loss(
         self,
@@ -152,19 +113,62 @@ class ClassificationHead(BaseTaskHead):
             and per_class_loss contains loss per class.
         """
         if mask is None:
-            mask = torch.ones(pred.size(0), device=pred.device)
+            # Ensure mask has the same shape as target for broadcasting with losses
+            mask = torch.ones_like(target, device=pred.device, dtype=torch.float)
 
-        # Individual sample losses
-        losses = F.cross_entropy(pred, target, reduction="none") * mask
+        # Ensure target is long type for cross_entropy
+        target = target.long()
 
-        # Compute per-class losses
+        # Individual sample losses - apply mask after loss calculation
+        losses = F.cross_entropy(pred, target, reduction="none")
+        masked_losses = losses * mask  # Apply mask here
+
+        # Compute per-class losses (average loss for samples belonging to each class)
         per_class_loss = torch.zeros(self.num_classes, device=pred.device)
-        for c in range(self.num_classes):
-            class_mask = (target == c) & (mask.bool())
-            if class_mask.sum() > 0:
-                per_class_loss[c] = losses[class_mask].mean()
+        # Use scatter_add_ for efficient aggregation if possible, otherwise loop
+        # Note: scatter_add_ requires target to be long and indices within range
+        # Ensure target indices are valid before using scatter_add_
+        valid_mask = mask > 0
+        if valid_mask.any():
+            # Calculate sum of losses per class for valid samples
+            class_loss_sum = torch.zeros(self.num_classes, device=pred.device).scatter_add_(
+                0, target[valid_mask], masked_losses[valid_mask]
+            )
+            # Calculate count per class for valid samples
+            class_count = torch.zeros(self.num_classes, device=pred.device).scatter_add_(
+                0, target[valid_mask], torch.ones_like(target[valid_mask], dtype=torch.float)
+            )
+            # Calculate average loss per class, handle division by zero
+            per_class_loss = torch.nan_to_num(class_loss_sum / class_count.clamp_min(1.0))
 
         # Total loss (average over valid samples)
-        total_loss = losses.sum() / mask.sum().clamp_min(1.0)
+        total_loss = masked_losses.sum() / mask.sum().clamp_min(1.0)
 
         return total_loss, per_class_loss
+
+    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, torch.Tensor]:
+        """
+        Core prediction logic for classification.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Raw logits from the forward pass.
+        additional : bool, optional
+            If True, return both labels and probabilities.
+            If False, return only labels. Defaults to False.
+
+        Returns
+        -------
+        dict[str, torch.Tensor]
+            A dictionary containing prediction results:
+            - {"labels": labels} if additional is False.
+            - {"labels": labels, "probabilities": probabilities} if additional is True.
+        """
+        probabilities = F.softmax(x, dim=-1)
+        labels = torch.argmax(probabilities, dim=-1)
+
+        if additional:
+            return {"labels": labels, "probabilities": probabilities}
+        else:
+            return {"labels": labels}

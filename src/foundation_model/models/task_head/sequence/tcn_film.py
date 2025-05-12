@@ -64,22 +64,25 @@ class SequenceHeadTCNFiLM(SequenceBaseHead):
 
     Parameters
     ----------
-    d_in : int
-        Dimension of the latent input.
-    name : str
-        Name of the task.
-    hidden : int
-        Hidden dimension for the TCN.
-    n_layers : int
-        Number of dilated convolutional layers.
+    config : SequenceTaskConfig (or similar)
+        Configuration object containing parameters like input dimension (`d_in`),
+        task name (`name`), hidden dimension (`hidden`), and number of TCN layers (`n_layers`).
     """
 
-    def __init__(self, d_in: int, name: str, hidden: int = 128, n_layers: int = 4):
-        super().__init__(d_in, name)
-        self.temp_proj = nn.Linear(1, hidden)
-        self.tcn = _DilatedTCN(hidden, n_layers=n_layers)
-        self.film = nn.Linear(d_in, 2 * hidden)
-        self.out = nn.Linear(hidden, 1)
+    def __init__(self, config: object):  # TODO: Use specific SequenceTaskConfig type hint
+        super().__init__(config)
+
+        # Extract parameters from config
+        d_in = config.d_in
+        hidden = getattr(config, "hidden", 128)  # Default hidden size
+        n_layers = getattr(config, "n_layers", 4)  # Default number of layers
+        # kernel_size could also be configurable
+        kernel_size = getattr(config, "kernel_size", 3)
+
+        self.temp_proj = nn.Linear(1, hidden)  # Project input sequence points
+        self.tcn = _DilatedTCN(hidden, n_layers=n_layers, kernel_size=kernel_size)
+        self.film = nn.Linear(d_in, 2 * hidden)  # FiLM generator
+        self.out = nn.Linear(hidden, 1)  # Output layer
 
     def forward(self, h: torch.Tensor, temps: torch.Tensor) -> torch.Tensor:
         """
@@ -95,11 +98,43 @@ class SequenceHeadTCNFiLM(SequenceBaseHead):
         torch.Tensor
             Predicted sequence, shape (B, L).
         """
-        # temps:(B,L,1)
-        B, L, _ = temps.shape
-        x = self.temp_proj(temps).permute(0, 2, 1)  # (B,hidden,L)
-        x = self.tcn(x).permute(0, 2, 1)  # (B,L,hidden)
-        gamma, beta = self.film(h).unsqueeze(1).chunk(2, dim=-1)  # (B,1,H)
-        fused = gamma * x + beta
-        y = self.out(fused).squeeze(-1)  # (B,L)
+        # temps: (B, L, 1) -> x: (B, hidden, L)
+        # 1. Project temperature points to hidden dimension
+        x = self.temp_proj(temps).permute(0, 2, 1)  # Shape: (B, hidden, L)
+
+        # 2. Process projected points through TCN
+        x = self.tcn(x)  # Shape remains (B, hidden, L)
+
+        # 3. Transpose back for FiLM modulation: (B, L, hidden)
+        x = x.permute(0, 2, 1)
+
+        # 4. Generate FiLM parameters from task representation h
+        gamma_beta = self.film(h).unsqueeze(1).chunk(2, dim=-1)  # Shapes: (B, 1, hidden) each
+        gamma, beta = gamma_beta
+
+        # 5. Apply FiLM modulation
+        fused = gamma * x + beta  # Broadcasting applies gamma/beta to each time step
+
+        # 6. Project to output dimension
+        y = self.out(fused).squeeze(-1)  # Shape: (B, L)
         return y
+
+    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, torch.Tensor]:
+        """
+        Core prediction logic for TCN-FiLM sequence head.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Raw output from the forward pass (predicted sequence).
+        additional : bool, optional
+            If True, return additional prediction information. Currently unused,
+            but kept for interface consistency. Defaults to False.
+
+        Returns
+        -------
+        dict[str, torch.Tensor]
+            A dictionary containing the prediction: {"prediction": x}.
+        """
+        # For TCN-FiLM sequence head, the raw output is the prediction
+        return {"prediction": x}
