@@ -76,13 +76,30 @@ class CompoundDataset(Dataset):
             logger.error(f"[{self.dataset_name}] attributes type error: {type(attributes)}")
             raise TypeError("attributes must be pd.DataFrame")
 
-        # Allow attributes DataFrame with a valid index but no columns (e.g. from DataModule when attributes_source is None)
-        # Raise error only if it has columns defined but no rows (empty index).
-        if attributes.index.empty and len(attributes.columns) > 0:
-            logger.error(f"[{self.dataset_name}] attributes DataFrame has columns but an empty index.")
+        # After formula_desc validation, formula_desc is guaranteed to have > 0 samples
+        # unless formula_desc itself was empty (which is checked before this point).
+
+        # Scenario 1: attributes is pd.DataFrame() -> 0 rows, 0 columns.
+        # This is an error if formula_desc has samples (which it should at this stage of init).
+        if len(attributes.index) == 0 and len(attributes.columns) == 0:
+            logger.error(f"[{self.dataset_name}] attributes is a 0x0 DataFrame, but formula_desc has samples.")
+            # This error message matches the expectation of test_empty_inputs_raise_error
+            raise ValueError("attributes DataFrame cannot be empty.")
+
+        # Scenario 2: attributes has columns, but 0 rows.
+        # len(attributes.index) == 0 and len(attributes.columns) > 0.
+        if (
+            len(attributes.index) == 0 and len(attributes.columns) > 0
+        ):  # This condition implies the previous one was false
+            logger.error(f"[{self.dataset_name}] attributes has columns but 0 rows (empty index).")
             raise ValueError("attributes DataFrame has columns but an empty index (no samples).")
-        # An attributes DataFrame with an empty index AND no columns (pd.DataFrame().empty is True)
-        # would also pass this new check. This is acceptable as formula_desc validation should catch no-sample cases.
+
+        # Scenario 3 (Allowed): attributes has rows, but 0 columns.
+        # (e.g., from DataModule when attributes_source is None, attributes = pd.DataFrame(index=formula_desc.index))
+        # len(attributes.index) > 0 and len(attributes.columns) == 0. This path does not raise an error.
+
+        # Scenario 4 (Allowed): attributes has rows and columns (normal valid case).
+        # len(attributes.index) > 0 and len(attributes.columns) > 0. This path does not raise an error.
 
         if not task_configs:  # Check if list is empty
             raise ValueError("task_configs list cannot be empty.")
