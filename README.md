@@ -204,11 +204,11 @@ graph TD
     %% Styling for White Background Clarity
     classDef io fill:#E0EFFF,stroke:#5C9DFF,stroke-width:2px,color:#000000;
     classDef main fill:#DFF0D8,stroke:#77B55A,stroke-width:2px,color:#000000;
-    classDef heads fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000000; %% Combined color for heads in overview
+    classDef heads fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000000;
 
     class Inputs io;
     class FE main;
-    class NonSeqHeads,SeqHeads heads; %% Apply combined 'heads' style
+    class NonSeqHeads,SeqHeads heads;
     class Outputs io;
 ```
 
