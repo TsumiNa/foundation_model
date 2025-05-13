@@ -195,9 +195,9 @@ Below is a high-level overview of the architecture:
 
 ```mermaid
 graph TD
-    Inputs["Inputs<br/>(x_formula, x_structure*, temps_batch*)<br/>*optional"] --> FE["Foundation Encoder<br/>(Shared MLP, Fusion*, Deposit)<br/>*optional"]
+    Inputs["Inputs<br/>(x_formula, x_structure*, task_sequence_data_batch*)<br/>*optional"] --> FE["Foundation Encoder<br/>(Shared MLP, Fusion*, Deposit)<br/>*optional"]
     FE --"h_task (for Attr/Class)"--> NonSeqHeads["Attribute/Classification Heads"]
-    FE --"h_latent/h_fused (for Seq)"--> SeqHeads["Sequence Heads"]
+    FE --"h_task (for Seq)"--> SeqHeads["Sequence Heads"]
     NonSeqHeads --> Outputs["Outputs (Dictionary)"]
     SeqHeads --> Outputs
 

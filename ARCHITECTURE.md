@@ -11,7 +11,7 @@ graph TD
     subgraph InputLayer["Input Layer"]
         X_formula["x_formula (B, D_in_formula)"]
         X_structure["x_structure (B, D_in_structure)"]
-        Temps_batch["temps_batch (Dict[task_name, Tensor(B,L,1)])"]
+        Task_Sequence_Data_Batch["task_sequence_data_batch (Dict[task_name, Tensor(B,L,1)])"]
     end
 
     subgraph FoundationEncoderModule["FoundationEncoder (self.encoder)"]
@@ -32,13 +32,15 @@ graph TD
         X_structure --> S_Encoder
         F_Encoder --"h_formula (B, D_latent)"--> Fusion
         S_Encoder --"h_structure (B, D_latent)"--> Fusion
-        F_Encoder -.-> H_Latent_Output_Point("h_latent / h_fused")
-        Fusion      --"h_fused (B, D_latent)"--> H_Latent_Output_Point
-        H_Latent_Output_Point --> DepositBlock
+        F_Encoder -.-> H_Latent_Output_Point("h_latent / h_fused") # This represents potential latent output, not direct input to heads
+        Fusion      --"h_fused (B, D_latent)"--> H_Latent_Output_Point # Same as above
+        H_Latent_Output_Point --> DepositBlock # Deposit block processes the latent/fused representation
     end
 
-    H_Latent_Output_Point --"h_latent / h_fused (B, D_latent)"--> SeqTaskHeadsJunction{"To Sequence Heads"}
+    # DepositBlock is the source for ALL heads
     DepositBlock --"h_task (B, D_deposit)"--> AttrTaskHeadsJunction{"To Attribute/Classification Heads"}
+    DepositBlock --"h_task (B, D_deposit)"--> SeqTaskHeadsJunction{"To Sequence Heads"}
+
 
     subgraph TaskHeadsModule["Task Heads (self.task_heads)"]
         direction TB
@@ -49,8 +51,8 @@ graph TD
         end
         subgraph SeqHeads["Sequence Heads"]
             direction LR
-            SeqHeadRNN["SequenceRNNHead: task_C<br/>(Uses h_latent/h_fused + temps_C)"]
-            SeqHeadTransformer["SequenceTransformerHead: task_D<br/>(Uses h_latent/h_fused + temps_D)"]
+            SeqHeadRNN["SequenceRNNHead: task_C<br/>(Uses h_task + task_sequence_data_C)"]
+            SeqHeadTransformer["SequenceTransformerHead: task_D<br/>(Uses h_task + task_sequence_data_D)"]
         end
     end
     
@@ -58,9 +60,9 @@ graph TD
     AttrTaskHeadsJunction --> ClassHead
     
     SeqTaskHeadsJunction --> SeqHeadRNN
-    Temps_batch --"temps_C"--> SeqHeadRNN
+    Task_Sequence_Data_Batch --"task_sequence_data_C"--> SeqHeadRNN
     SeqTaskHeadsJunction --> SeqHeadTransformer
-    Temps_batch --"temps_D"--> SeqHeadTransformer
+    Task_Sequence_Data_Batch --"task_sequence_data_D"--> SeqHeadTransformer
 
     RegHead --"pred_A (B, D_out_A)"--> OutputLayer["Model Outputs (Dictionary)"]
     ClassHead --"pred_B (B, D_out_B)"--> OutputLayer
@@ -93,7 +95,7 @@ graph TD
 The model can accept several types of inputs:
 -   **`x_formula`**: Tensor representing formula-based features (e.g., chemical composition, elemental descriptors). Shape: `(BatchSize, D_in_formula)`. This is the primary input.
 -   **`x_structure`** (Optional): Tensor representing structural features (e.g., crystal structure descriptors, graph-based features). Shape: `(BatchSize, D_in_structure)`. Used when `with_structure=True`.
--   **`temps_batch`** (Optional): A dictionary where keys are sequence task names and values are tensors representing sequence points (e.g., temperatures, time steps) for those tasks. Shape of each tensor: `(BatchSize, SequenceLength, NumFeaturesPerPoint)` (typically `(B,L,1)`).
+-   **`task_sequence_data_batch`** (Optional): A dictionary where keys are sequence task names and values are tensors representing sequence input data (e.g., temperatures, time steps) for those tasks. Shape of each tensor: `(BatchSize, SequenceLength, NumFeaturesPerPoint)` (typically `(B,L,1)`).
 
 ### 2. Foundation Encoder (`self.encoder`)
 This is the core shared part of the model. Its internal structure depends on whether `with_structure` is enabled.
@@ -120,14 +122,14 @@ This is the core shared part of the model. Its internal structure depends on whe
         -   Input: `h_fused` (Dimension `shared_block_dims[-1]`).
         -   Output: `h_task` (Task-specific input representation, dimension `D_deposit`).
 
-The output `h_latent` (from single modality) or `h_fused` (from multi-modality after fusion) serves as the primary contextual input for sequence-based task heads. The `deposit` layer's output, `h_task`, is used by attribute regression and classification task heads.
+The output `h_task` (from the `deposit` layer) serves as the primary contextual input for ALL task heads (Attribute, Classification, and Sequence). The `h_latent` or `h_fused` representations are intermediate outputs within the `FoundationEncoder` before the `deposit` layer.
 
 ### 3. Task Heads (`self.task_heads`)
 This is an `nn.ModuleDict` containing individual prediction heads for each configured task.
 
 -   **General Input**:
-    -   Attribute Regression (`RegressionHead`) and Classification (`ClassificationHead`) heads receive `h_task` (output of the `deposit` block) as their primary input.
-    -   Sequence Prediction heads (e.g., `SequenceRNNHead`, `SequenceTransformerHead`) receive `h_latent` (or `h_fused`) as a conditioning context vector and the specific sequence data (e.g., temperature points) from `temps_batch['task_name']`.
+    -   All task heads (Attribute Regression, Classification, and Sequence Prediction) receive `h_task` (output of the `deposit` block) as their primary input.
+    -   Sequence Prediction heads additionally receive their specific sequence data (e.g., temperature points, time steps) from `task_sequence_data_batch['task_name']`.
 
 -   **`RegressionHead`**:
     -   Typically an MLP defined by `config.dims` (e.g., `[D_deposit, hidden_dim, 1]`).
@@ -139,7 +141,7 @@ This is an `nn.ModuleDict` containing individual prediction heads for each confi
 
 -   **Sequence Heads (e.g., `SequenceRNNHead`, `SequenceTransformerHead`, `SequenceTCNFiLMHead`)**:
     -   These heads have more complex internal architectures (RNNs, Transformers, TCNs).
-    -   They combine the contextual vector (`h_latent` or `h_fused`) with the input sequence points (`temps_batch['task_name']`).
+    -   They combine the contextual vector (`h_task`) with the input sequence points (`task_sequence_data_batch['task_name']`).
     -   Output a sequence of predictions. Shape: `(BatchSize, SequenceLength, D_out_sequence_point)`.
 
 ### 4. Model Outputs
