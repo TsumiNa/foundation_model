@@ -5,18 +5,18 @@
 Configuration classes for the foundation model.
 """
 
-from enum import Enum, auto
+from enum import Enum  # auto removed, str added
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
-class TaskType(Enum):
+class TaskType(str, Enum):  # Inherit from str
     """Types of tasks supported by the model."""
 
-    REGRESSION = auto()
-    CLASSIFICATION = auto()
-    SEQUENCE = auto()
+    REGRESSION = "REGRESSION"
+    CLASSIFICATION = "CLASSIFICATION"
+    SEQUENCE = "SEQUENCE"
 
 
 class OptimizerConfig(BaseModel):
@@ -70,7 +70,7 @@ class BaseTaskConfig(BaseModel):
 class RegressionTaskConfig(BaseTaskConfig):
     """Configuration for regression tasks."""
 
-    type: Literal[TaskType.REGRESSION] = TaskType.REGRESSION
+    type: TaskType = TaskType.REGRESSION  # Changed from Literal
     dims: list[int] = Field(..., description="Dimensions of the regression head")
     norm: bool = Field(True, description="Whether to use normalization layers")
     residual: bool = Field(False, description="Whether to use residual connections")
@@ -79,7 +79,7 @@ class RegressionTaskConfig(BaseTaskConfig):
 class ClassificationTaskConfig(BaseTaskConfig):
     """Configuration for classification tasks."""
 
-    type: Literal[TaskType.CLASSIFICATION] = TaskType.CLASSIFICATION
+    type: TaskType = TaskType.CLASSIFICATION  # Changed from Literal
     dims: list[int] = Field(..., description="Dimensions of the classification head")
     num_classes: int = Field(..., description="Number of classes")
     norm: bool = Field(True, description="Whether to use normalization layers")
@@ -89,7 +89,7 @@ class ClassificationTaskConfig(BaseTaskConfig):
 class SequenceTaskConfig(BaseTaskConfig):
     """Configuration for sequence prediction tasks."""
 
-    type: Literal[TaskType.SEQUENCE] = TaskType.SEQUENCE
+    type: TaskType = TaskType.SEQUENCE  # Changed from Literal
     subtype: str = Field(..., description="Subtype of sequence head (rnn, vec, tcn)")
     d_in: int = Field(..., description="Input dimension for the sequence head")
 

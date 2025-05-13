@@ -9,6 +9,7 @@ dependencies = [
     "lightning[pytorch-extra]>=2.5.1.post0",
     "matplotlib>=3.10.1",
     "numpy<2",
+    "omegaconf>=2.3.0",
     "pandas>=2.2.3",
     "scipy>=1.15.2",
     "shotgun-csp",

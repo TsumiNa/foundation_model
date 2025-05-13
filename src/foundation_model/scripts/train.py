@@ -3,8 +3,8 @@ from lightning.pytorch import LightningModule, Trainer
 from lightning.pytorch.cli import LightningCLI, SaveConfigCallback
 from lightning.pytorch.loggers import Logger
 
-from foundation_model.data.datamodule import CompoundDataModule
-from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
+from foundation_model.data.datamodule import CompoundDataModule  # noqa: F401
+from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel  # noqa: F401
 
 
 class LoggerSaveConfigCallback(SaveConfigCallback):
@@ -22,10 +22,11 @@ def cli_main():
     the appropriate trainer actions (fit, validate, test, predict).
     """
     cli = LightningCLI(
-        FlexibleMultiTaskModel,
-        CompoundDataModule,
+        # FlexibleMultiTaskModel,
+        # CompoundDataModule,
         auto_configure_optimizers=False,
         save_config_callback=LoggerSaveConfigCallback,
+        parser_kwargs={"parser_mode": "omegaconf"},
         # subclass_mode_model=True, # Uncomment if multiple model classes are possible
         # subclass_mode_data=True,  # Uncomment if multiple data module classes are possible
     )
