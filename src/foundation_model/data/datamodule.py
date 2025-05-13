@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Union
 import lightning as L
 import numpy as np
 import pandas as pd
+from jsonargparse.typing import Path_fr  # ADDED IMPORT
 
 # import torch # Not directly used in this file anymore for temps
 from sklearn.model_selection import train_test_split  # For data splitting
@@ -20,10 +21,10 @@ logger = logging.getLogger(__name__)
 class CompoundDataModule(L.LightningDataModule):
     def __init__(
         self,
-        formula_desc_source: Union[pd.DataFrame, np.ndarray, str],
+        formula_desc_source: Path_fr,  # CHANGED
         task_configs: List,
-        attributes_source: Optional[Union[pd.DataFrame, str]] = None,  # Now optional
-        structure_desc_source: Optional[Union[pd.DataFrame, np.ndarray, str]] = None,
+        attributes_source: Optional[Path_fr] = None,  # CHANGED
+        structure_desc_source: Optional[Path_fr] = None,  # CHANGED
         with_structure: bool = False,
         task_masking_ratios: Optional[Dict[str, float]] = None,
         val_split: float = 0.1,
@@ -99,12 +100,18 @@ class CompoundDataModule(L.LightningDataModule):
         self.num_workers = num_workers
 
         self.save_hyperparameters(
-            ignore=["formula_desc_source", "attributes_source", "structure_desc_source", "predict_idx"]
+            ignore=[
+                "formula_desc_source",
+                "attributes_source",
+                "structure_desc_source",
+                "predict_idx",
+                "task_configs",
+            ]  # ADDED "task_configs"
         )
 
         # --- Load Data ---
         logger.info("--- Loading Data ---")
-        self.formula_df = self._load_data(formula_desc_source, "formula_desc")
+        self.formula_df = self._load_data(str(formula_desc_source), "formula_desc")  # ADDED str()
         if self.formula_df is None or self.formula_df.empty:
             raise ValueError("formula_desc_source must be successfully loaded and cannot be empty.")
         logger.info(f"Initial loaded formula_df length: {len(self.formula_df)}")
@@ -121,7 +128,7 @@ class CompoundDataModule(L.LightningDataModule):
         # Handle optional attributes_source
         self.attributes_df = None
         if attributes_source is not None:
-            self.attributes_df = self._load_data(attributes_source, "attributes")
+            self.attributes_df = self._load_data(str(attributes_source), "attributes")  # ADDED str()
             if self.attributes_df is None or self.attributes_df.empty:
                 # If source was provided but failed to load or was empty, it's an error.
                 raise ValueError("attributes_source was provided but could not be loaded or is empty.")
@@ -187,7 +194,7 @@ class CompoundDataModule(L.LightningDataModule):
         if self.with_structure:
             logger.info("Attempting to load and align structure_desc as with_structure is True.")
             if structure_desc_source is not None:
-                loaded_structure_df = self._load_data(structure_desc_source, "structure_desc")
+                loaded_structure_df = self._load_data(str(structure_desc_source), "structure_desc")  # ADDED str()
                 if loaded_structure_df is not None and not loaded_structure_df.empty:
                     logger.info(f"Initial loaded structure_df length: {len(loaded_structure_df)}")
 

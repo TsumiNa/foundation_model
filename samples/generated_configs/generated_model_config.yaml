@@ -122,11 +122,11 @@ model:
 data:
   class_path: foundation_model.data.CompoundDataModule
   init_args:
-    formula_desc_source: /data/foundation_model/samples/fake_data/formula_features.csv
-    attributes_source: /data/foundation_model/samples/fake_data/attributes.csv
+    formula_desc_source: "/data/foundation_model/samples/fake_data/formula_features.csv"
+    attributes_source: "/data/foundation_model/samples/fake_data/attributes.csv"
     task_configs: ${model.init_args.task_configs}
     batch_size: 64
-    num_workers: 4
+    num_workers: 0
     val_split: 0.1
     test_split: 0.1
     train_random_seed: 42
@@ -136,10 +136,12 @@ trainer:
   default_root_dir: results/logs/default_experiment
   max_epochs: 100
   accelerator: auto
-  devices: auto
-  precision: 16-mixed
-  accumulate_grad_batches: 1
-  gradient_clip_val: 1.0
+  # devices: auto
+  devices: 1
+  enable_progress_bar: true
+  fast_dev_run: True
+  # precision: 16-mixed
+  # accumulate_grad_batches: 1
   log_every_n_steps: 50
   logger:
     - class_path: lightning.pytorch.loggers.CSVLogger
