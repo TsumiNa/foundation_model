@@ -1,0 +1,105 @@
+# Legacy task configurations extracted from model_config.py.bak
+# These correspond to the 'mp_attrs' group.
+
+# Define a common optimizer configuration
+default_optimizer_config: &default_optimizer
+  optimizer_type: "AdamW"
+  lr: 0.01
+  weight_decay: 0.001
+  eps: 0.000001
+  betas: [0.9, 0.999]
+  freeze_parameters: False
+  scheduler_type: "ReduceLROnPlateau"
+  mode: "min"
+  factor: 0.5
+  patience: 5
+  min_lr: 0.0001
+  monitor: "train_loss"
+  interval: "epoch"
+  frequency: 1
+
+tasks:
+  - name: "Band gap"
+    type: REGRESSION
+    enabled: True
+    weight: 1.0
+    dims: [64, 32, 16, 1]
+    norm: True
+    residual: False
+    lora_enabled: False
+    lora_rank: 0
+    lora_alpha: 1.0
+    lora_freeze_base: True
+    optimizer: *default_optimizer
+  - name: "Density"
+    type: REGRESSION
+    enabled: True
+    weight: 1.0
+    dims: [64, 32, 16, 1]
+    norm: True
+    residual: False
+    lora_enabled: False
+    lora_rank: 0
+    lora_alpha: 1.0
+    lora_freeze_base: True
+    optimizer: *default_optimizer
+  - name: "Efermi"
+    type: REGRESSION
+    enabled: True
+    weight: 1.0
+    dims: [64, 32, 16, 1]
+    norm: True
+    residual: False
+    lora_enabled: False
+    lora_rank: 0
+    lora_alpha: 1.0
+    lora_freeze_base: True
+    optimizer: *default_optimizer
+  - name: "Final energy per atom"
+    type: REGRESSION
+    enabled: True
+    weight: 1.0
+    dims: [64, 32, 16, 1]
+    norm: True
+    residual: False
+    lora_enabled: False
+    lora_rank: 0
+    lora_alpha: 1.0
+    lora_freeze_base: True
+    optimizer: *default_optimizer
+  - name: "Formation energy per atom"
+    type: REGRESSION
+    enabled: True
+    weight: 1.0
+    dims: [64, 32, 16, 1]
+    norm: True
+    residual: False
+    lora_enabled: False
+    lora_rank: 0
+    lora_alpha: 1.0
+    lora_freeze_base: True
+    optimizer: *default_optimizer
+  - name: "Total magnetization"
+    type: REGRESSION
+    enabled: True
+    weight: 1.0
+    dims: [64, 32, 16, 1]
+    norm: True
+    residual: False
+    lora_enabled: False
+    lora_rank: 0
+    lora_alpha: 1.0
+    lora_freeze_base: True
+    optimizer: *default_optimizer
+  - name: "Volume"
+    type: REGRESSION
+    enabled: True
+    weight: 1.0
+    dims: [64, 32, 16, 1]
+    norm: True
+    residual: False
+    lora_enabled: False
+    lora_rank: 0
+    lora_alpha: 1.0
+    lora_freeze_base: True
+    optimizer: *default_optimizer

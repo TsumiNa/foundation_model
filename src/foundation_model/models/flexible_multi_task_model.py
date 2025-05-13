@@ -9,9 +9,9 @@ Module: flexible_multi_task_model
 A flexible multi-task model with foundation model capabilities.
 
 Tensor shape legend (used across all docstrings):
-* **B** – batch size
-* **L** – sequence length (e.g. number of temperature points)
-* **D** – latent / embedding feature dimension
+* **B** - batch size
+* **L** - sequence length (e.g. number of temperature points)
+* **D** - latent / embedding feature dimension
 """
 
 import logging  # Added

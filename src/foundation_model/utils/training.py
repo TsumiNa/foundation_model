@@ -1,6 +1,13 @@
+from typing import Union  # For Python < 3.10 compatibility with |
+
 import lightning as L
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
+
+from foundation_model.configs.callback_config import (
+    EarlyStoppingConfig,
+    ModelCheckpointConfig,
+)
 
 
 def training(
@@ -8,15 +15,17 @@ def training(
     datamodule: L.LightningDataModule,
     max_epochs: int = 100,
     accelerator: str = "auto",
-    devices: int | list | str = "auto",
-    profiler: str | None = None,
-    default_root_dir: str | None = None,
+    devices: Union[int, list, str] = "auto",  # Using Union for older Python
+    profiler: Union[str, None] = None,
+    default_root_dir: Union[str, None] = None,
     strategy: str = "auto",
     fast_dev_run: bool = False,
-    log_name: str = "my_exp_name",
-    verbose: bool = True,
-    early_stopping_config: dict | None = None,
-    checkpoint_config: dict | None = None,
+    log_name: str = "my_exp_name",  # Used for default logger/checkpoint paths
+    verbose: bool = True,  # General verbosity for callbacks
+    early_stopping_config: Union[EarlyStoppingConfig, bool, None] = None,
+    checkpoint_config: Union[ModelCheckpointConfig, bool, None] = None,
+    csv_logger_config: Union[dict, bool, None] = None,
+    tb_logger_config: Union[dict, bool, None] = None,
 ):
     """
     Train and evaluate a PyTorch Lightning model using the Lightning Trainer.
@@ -45,65 +54,99 @@ def training(
         Name for the experiment logs, by default "my_exp_name"
     verbose : bool, optional
         Whether to print verbose output, by default True
-    early_stopping_config : dict | None, optional
-        Configuration for early stopping callback
-    checkpoint_config : dict | None, optional
-        Configuration for model checkpoint callback
+    early_stopping_config : Union[EarlyStoppingConfig, bool, None], optional
+        Configuration for early stopping. Can be an EarlyStoppingConfig instance,
+        True to use defaults, False to disable, or None to use defaults.
+    checkpoint_config : Union[ModelCheckpointConfig, bool, None], optional
+        Configuration for model checkpointing. Can be a ModelCheckpointConfig instance,
+        True to use defaults, False to disable, or None to use defaults.
+    csv_logger_config : Union[dict, bool, None], optional
+        Configuration for CSV logger. Can be a dict of parameters,
+        True to use defaults, False to disable, or None to use defaults.
+    tb_logger_config : Union[dict, bool, None], optional
+        Configuration for TensorBoard logger. Can be a dict of parameters,
+        True to use defaults, False to disable, or None to use defaults.
     """
     # Set default_root_dir to "lightning_logs" if None
     if default_root_dir is None:
         default_root_dir = "lightning_logs"
 
-    # Configure callbacks
-    early_stopping = (
-        EarlyStopping(
-            monitor=early_stopping_config.get("monitor", "val_loss"),
-            patience=early_stopping_config.get("patience", 20),
-            mode=early_stopping_config.get("mode", "min"),
-            min_delta=early_stopping_config.get("min_delta", 1e-4),
-            verbose=verbose,
-        )
-        if early_stopping_config is not None
-        else EarlyStopping(
-            monitor="val_loss",
-            patience=10,
-            mode="min",
-            min_delta=1e-4,
-            verbose=verbose,
-        )
-    )
+    callbacks = []
+    loggers = []
 
-    checkpoint_callback = (
-        ModelCheckpoint(
-            monitor=checkpoint_config.get("monitor", "val_loss"),
-            filename="model-{epoch:02d}-{val_loss:.4f}",
-            save_top_k=checkpoint_config.get("save_top_k", 1),
-            mode=checkpoint_config.get("mode", "min"),
-            save_last=checkpoint_config.get("save_last", True),
-            verbose=verbose,
-        )
-        if checkpoint_config is not None
-        else ModelCheckpoint(
-            monitor="val_loss",
-            filename="model-{epoch:02d}-{val_loss:.4f}",
-            save_top_k=1,
-            mode="min",
-            save_last=True,
-            verbose=verbose,
-        )
-    )
+    # Configure EarlyStopping
+    if early_stopping_config is False:
+        pass  # Disabled
+    elif isinstance(early_stopping_config, EarlyStoppingConfig):
+        if early_stopping_config.enabled:
+            callbacks.append(EarlyStopping(**early_stopping_config.model_dump(exclude={"enabled"}, exclude_none=True)))
+    else:  # None or True (use defaults)
+        callbacks.append(EarlyStopping(monitor="val_loss", patience=10, mode="min", min_delta=1e-4, verbose=verbose))
 
-    # Configure loggers with experiment name
-    csv_logger = CSVLogger(
-        save_dir=f"{default_root_dir}/common_logs",
-        name=log_name,
-        version=None,  # Auto-increment version
-    )
-    tb_logger = TensorBoardLogger(
-        save_dir=f"{default_root_dir}/tb_logs",
-        name=log_name,
-        version=None,  # Auto-increment version
-    )
+    # Configure ModelCheckpoint
+    if checkpoint_config is False:
+        pass  # Disabled
+    elif isinstance(checkpoint_config, ModelCheckpointConfig):
+        if checkpoint_config.enabled:
+            cfg_dict = checkpoint_config.model_dump(exclude={"enabled"}, exclude_none=True)
+            if cfg_dict.get("dirpath") is None:
+                cfg_dict["dirpath"] = f"{default_root_dir}/checkpoints/{log_name}"
+
+            # Ensure filename is sensible if not provided or if monitor is None
+            if cfg_dict.get("filename") is None:
+                monitored_metric = cfg_dict.get("monitor")
+                if monitored_metric:
+                    # Ensure the metric name is valid for a filename
+                    safe_metric_name = monitored_metric.replace("/", "_")
+                    cfg_dict["filename"] = f"{{epoch:02d}}-{{{safe_metric_name}:.4f}}"
+                else:
+                    # If no monitor, save by epoch and step
+                    cfg_dict["filename"] = "{epoch:02d}-{step:06d}"
+
+            callbacks.append(ModelCheckpoint(**cfg_dict))
+    else:  # None or True (use defaults)
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=f"{default_root_dir}/checkpoints/{log_name}",
+                filename="{epoch:02d}-{val_loss:.4f}",
+                monitor="val_loss",
+                save_top_k=1,
+                mode="min",
+                save_last=True,
+                verbose=verbose,
+            )
+        )
+
+    # Configure CSVLogger
+    if csv_logger_config is False:
+        pass  # Disabled
+    elif isinstance(csv_logger_config, dict):
+        loggers.append(CSVLogger(**csv_logger_config))
+    else:  # None or True (use defaults)
+        loggers.append(
+            CSVLogger(
+                save_dir=f"{default_root_dir}/csv_logs",
+                name=log_name,
+                version=None,  # Auto-increment version
+            )
+        )
+
+    # Configure TensorBoardLogger
+    if tb_logger_config is False:
+        pass  # Disabled
+    elif isinstance(tb_logger_config, dict):
+        loggers.append(TensorBoardLogger(**tb_logger_config))
+    else:  # None or True (use defaults)
+        loggers.append(
+            TensorBoardLogger(
+                save_dir=f"{default_root_dir}/tb_logs",
+                name=log_name,
+                version=None,  # Auto-increment version
+            )
+        )
+
+    # Ensure loggers list is not empty for Trainer, or pass True for default logger
+    trainer_logger = loggers if loggers else True
 
     # Configure trainer
     trainer = L.Trainer(
@@ -112,8 +155,8 @@ def training(
         devices=devices,
         enable_progress_bar=True,
         enable_model_summary=True,
-        logger=[csv_logger, tb_logger],
-        callbacks=[early_stopping, checkpoint_callback],
+        logger=trainer_logger,
+        callbacks=callbacks,
         default_root_dir=default_root_dir,
         profiler=profiler,
         strategy=strategy,

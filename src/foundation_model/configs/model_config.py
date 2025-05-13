@@ -1,140 +1,106 @@
-from dataclasses import dataclass, field
-from typing import ClassVar, Dict, List
+# Copyright 2025 TsumiNa.
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+Configuration classes for the foundation model.
+"""
+
+from enum import Enum, auto
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 
-@dataclass
-class ModelConfig:
-    """Model architecture and optimization configuration"""
+class TaskType(Enum):
+    """Types of tasks supported by the model."""
 
-    # Model architecture configuration
-    shared_block_dims: List[int] = field(
-        default_factory=lambda: [None, 128, 64]
-    )  # None will be replaced with input_dim at runtime
-    task_block_dims: List[int] = field(default_factory=lambda: [64, 32, 16, 1])
-    norm_shared: bool = True
-    norm_tasks: bool = True
-    residual_shared: bool = False
-    residual_tasks: bool = False
+    REGRESSION = auto()
+    CLASSIFICATION = auto()
+    SEQUENCE = auto()
+
+
+class OptimizerConfig(BaseModel):
+    """Configuration for optimizer and learning rate scheduler."""
+
+    # Optimizer settings
+    optimizer_type: Literal["AdamW", "Adam", "SGD"] = Field("AdamW", description="Type of optimizer")
+    lr: float = Field(5e-3, description="Learning rate")
+    weight_decay: float = Field(1e-3, description="Weight decay (L2 penalty)")
+    eps: float = Field(1e-6, description="Term added to denominator for numerical stability")
+    betas: tuple[float, float] = Field(
+        (0.9, 0.999), description="Coefficients for computing running averages of gradient"
+    )
+    freeze_parameters: bool = Field(
+        False, description="If True, parameters associated with this optimizer will be frozen (requires_grad=False)"
+    )
+
+    # Scheduler settings
+    scheduler_type: Literal["ReduceLROnPlateau", "StepLR", "None"] = Field(
+        "ReduceLROnPlateau", description="Type of learning rate scheduler"
+    )
+    mode: Literal["min", "max"] = Field("min", description="Mode for ReduceLROnPlateau")
+    factor: float = Field(0.5, description="Factor by which the learning rate will be reduced")
+    patience: int = Field(
+        5, description="Number of epochs with no improvement after which learning rate will be reduced"
+    )
+    min_lr: float = Field(1e-4, description="A lower bound on the learning rate")
+    monitor: str = Field("train_loss", description="Quantity to monitor")
+    interval: str = Field("epoch", description="Interval for monitoring")
+    frequency: int = Field(1, description="Frequency of monitoring")
+
+
+class BaseTaskConfig(BaseModel):
+    """Base configuration for all task types."""
+
+    name: str = Field(..., description="Name of the task")
+    type: TaskType = Field(..., description="Type of the task")
+    enabled: bool = Field(True, description="Whether the task is enabled")
+    weight: float = Field(1.0, description="Weight of the task in the loss function")
+
+    # LoRA configuration
+    lora_enabled: bool = Field(False, description="Whether to enable LoRA adaptation")
+    lora_rank: int = Field(0, description="Rank for LoRA adaptation, 0 means disabled")
+    lora_alpha: float = Field(1.0, description="Scaling factor for LoRA adaptation")
+    lora_freeze_base: bool = Field(True, description="Whether to freeze the base weights when using LoRA")
 
     # Optimizer configuration
-    shared_block_lr: float = 0.001
-    task_block_lr: float = 0.01
+    optimizer: OptimizerConfig | None = Field(None, description="Optimizer configuration for this task")
 
 
-@dataclass
-class ExperimentConfig:
-    """Training experiment configuration"""
+class RegressionTaskConfig(BaseTaskConfig):
+    """Configuration for regression tasks."""
 
-    # Attribute groups for rate control
-    ac_qc_starry_attrs: ClassVar[List[str]] = [
-        "Seebeck coefficient",
-        "Thermal conductivity",
-        "Electrical resistivity",
-        "Magnetic susceptibility",
-        "Hall coefficient",
-        "ZT",
-        "Power factor",
-        "Carrier concentration",
-        "Electrical conductivity",
-        "Thermopower",
-        "Lattice thermal conductivity",
-        "Hall mobility",
-        "Electronic contribution",
-        "Electronic thermal conductivity",
-    ]
+    type: Literal[TaskType.REGRESSION] = TaskType.REGRESSION
+    dims: list[int] = Field(..., description="Dimensions of the regression head")
+    norm: bool = Field(True, description="Whether to use normalization layers")
+    residual: bool = Field(False, description="Whether to use residual connections")
 
-    mp_attrs: ClassVar[List[str]] = [
-        "Band gap",
-        "Density",
-        "Efermi",
-        "Final energy per atom",
-        "Formation energy per atom",
-        "Total magnetization",
-        "Volume",
-    ]
 
-    # Experiment configuration
-    exp_name: str = "default_experiment"
+class ClassificationTaskConfig(BaseTaskConfig):
+    """Configuration for classification tasks."""
 
-    # Path configuration
-    data_dir: str = "data/raw"
-    results_dir: str = "results"
-    model_save_dir: str = "results/models"
-    log_dir: str = "results/logs"
-    figures_dir: str = "results/figures"
+    type: Literal[TaskType.CLASSIFICATION] = TaskType.CLASSIFICATION
+    dims: list[int] = Field(..., description="Dimensions of the classification head")
+    num_classes: int = Field(..., description="Number of classes")
+    norm: bool = Field(True, description="Whether to use normalization layers")
+    residual: bool = Field(False, description="Whether to use residual connections")
 
-    # Feature extraction configuration
-    compositional_featurizers: List[str] = field(
-        default_factory=lambda: [
-            "WeightedAverage",
-            "WeightedVariance",
-            "MaxPooling",
-            "MinPooling",
-        ]
-    )
 
-    # Training configuration
-    batch_size: int = 128
-    num_workers: int = 0
-    max_epochs: int = 100
+class SequenceTaskConfig(BaseTaskConfig):
+    """Configuration for sequence prediction tasks."""
 
-    # Dataset configuration
-    train_ratio: float = 0.8
-    val_ratio: float = 0.2
-    test_ratio: float = 0.0
-    random_seed: int = 42
+    type: Literal[TaskType.SEQUENCE] = TaskType.SEQUENCE
+    subtype: str = Field(..., description="Subtype of sequence head (rnn, vec, tcn)")
+    d_in: int = Field(..., description="Input dimension for the sequence head")
 
-    # Attribute sampling ratios
-    attribute_rates: Dict[str, float] = field(
-        default_factory=lambda: {
-            "Seebeck coefficient": 1.0,
-            "Thermal conductivity": 1.0,
-            "Electrical resistivity": 1.0,
-            "Magnetic susceptibility": 1.0,
-            "Electrical conductivity": 1.0,
-            "ZT": 1.0,
-            "Hall coefficient": 1.0,
-            "Power factor": 1.0,
-            "Carrier concentration": 1.0,
-            "Thermopower": 1.0,
-            "Lattice thermal conductivity": 1.0,
-            "Hall mobility": 1.0,
-            "Electronic contribution": 1.0,
-            "Electronic thermal conductivity": 1.0,
-            "Band gap": 1.0,
-            "Density": 1.0,
-            "Efermi": 1.0,
-            "Final energy per atom": 1.0,
-            "Formation energy per atom": 1.0,
-            "Total magnetization": 1.0,
-            "Volume": 1.0,
-        }
-    )
+    # Common parameters
+    hidden: int = Field(128, description="Hidden dimension size")
 
-    # Training configuration
-    trainer_config: Dict = field(
-        default_factory=lambda: {
-            "accelerator": "auto",
-            "devices": 4,
-            "strategy": "auto",
-        }
-    )
+    # RNN-specific parameters
+    cell: str = Field("gru", description="Cell type for RNN (gru or lstm)")
 
-    # Early stopping and checkpoint configuration
-    early_stopping_config: Dict = field(
-        default_factory=lambda: {
-            "monitor": "val_loss",
-            "patience": 20,
-            "mode": "min",
-            "min_delta": 1e-4,
-        }
-    )
+    # Fixed vector-specific parameters
+    seq_len: int | None = Field(None, description="Sequence length for fixed vector output")
 
-    checkpoint_config: Dict = field(
-        default_factory=lambda: {
-            "monitor": "val_loss",
-            "save_top_k": 1,
-            "mode": "min",
-            "save_last": True,
-        }
-    )
+    # TCN-specific parameters
+    n_tcn_layers: int = Field(4, description="Number of TCN layers")
