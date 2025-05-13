@@ -1,0 +1,145 @@
+# Example configuration for foundation-model training using LightningCLI
+#
+# Usage:
+# foundation-model fit --config samples/example_config.yaml
+# or
+# python -m foundation_model.scripts.train fit --config samples/example_config.yaml
+#
+# You can override any of these settings from the command line, e.g.:
+# foundation-model fit --config samples/example_config.yaml --trainer.max_epochs=50 --data.batch_size=128
+
+# Optional: Define seed for global reproducibility
+seed_everything: 42
+
+model:
+  class_path: foundation_model.models.flexible_multi_task_model.FlexibleMultiTaskModel
+  init_args:
+    # --- Shared Encoder Configuration ---
+    shared_block_dims:
+      [256, 512, 256] # Example: [input_dim_formula, hidden1, output_latent_dim]
+      # The input_dim_formula (first element) should match the
+      # feature dimension of your formula_desc_source.
+    norm_shared: True
+    residual_shared: False
+
+    # --- Task Configurations ---
+    # These tasks will be passed to both the model and the datamodule.
+    # The datamodule uses them to know which attributes to load/process.
+    # The model uses them to build the appropriate prediction heads.
+    task_configs:
+      # You can merge task configurations from other YAML files:
+      - ${file(src/foundation_model/configs/legacy_ac_qc_starry_tasks.yaml):tasks}
+      - ${file(src/foundation_model/configs/legacy_mp_tasks.yaml):tasks}
+      # Or define tasks directly here:
+      # - name: "custom_regression_task"
+      #   type: REGRESSION
+      #   enabled: True
+      #   weight: 1.0 # Loss weight for this task
+      #   dims: [256, 128, 1] # Example: [model_latent_dim, head_hidden_dim, output_dim]
+      #                      # The first element should match the model's output_latent_dim (last element of shared_block_dims)
+      #   norm: True
+      #   residual: False
+      #   optimizer: # Optional: task-specific optimizer settings
+      #     lr: 0.001
+      # - name: "custom_classification_task"
+      #   type: CLASSIFICATION
+      #   enabled: True
+      #   weight: 1.0
+      #   dims: [256, 128] # Example: [model_latent_dim, head_hidden_dim]
+      #   num_classes: 3
+      #   norm: True
+
+    # --- Optimizer for Shared Blocks (Encoder/Deposit) ---
+    shared_block_optimizer:
+      optimizer_type: "AdamW"
+      lr: 0.005
+      weight_decay: 0.001
+      # ... other OptimizerConfig parameters
+
+    # --- Structure Fusion (Optional) ---
+    with_structure: False # Set to true if you provide structure_desc_source in data
+    # struct_block_dims: [128, 256, 256] # Example: [input_dim_structure, hidden1, output_latent_dim_must_match_model_latent]
+    # Only if with_structure: True. First element is structure feature dim.
+    # modality_dropout_p: 0.3           # Only if with_structure and enable_self_supervised_training are True
+
+    # --- Self-Supervised Learning (Optional) ---
+    enable_self_supervised_training: False
+    # loss_weights: # Weights for different loss components if SSL is enabled
+    #   mfm: 1.0
+    #   contrastive: 1.0 # Only if with_structure: True
+    #   cross_recon: 1.0 # Only if with_structure: True
+    # mask_ratio: 0.15
+    # temperature: 0.07 # For contrastive loss
+
+data:
+  class_path: foundation_model.data.datamodule.CompoundDataModule
+  init_args:
+    # --- Paths to your precomputed data files ---
+    formula_desc_source: "path/to/your/precomputed_formula_descriptors.pkl" # Or .csv
+    attributes_source: "path/to/your/precomputed_attributes.pkl" # Or .csv
+    # structure_desc_source: "path/to/your/precomputed_structure_descriptors.pkl" # Provide if model.init_args.with_structure is True
+
+    # --- Task configurations will be linked from model.init_args.task_configs by default ---
+    # task_configs: "${model.init_args.task_configs}" # This linking is usually automatic
+
+    # --- Data Handling and Splitting ---
+    # task_masking_ratios: # Optional: if you want to randomly mask portions of data for specific tasks during training
+    #   "Band gap": 0.9 # Example: use 90% of available "Band gap" data for training samples
+    val_split: 0.1 # Proportion of non-test data for validation
+    test_split: 0.1 # Proportion of total data for testing
+    train_random_seed: 42
+    test_random_seed: 24
+    # test_all: False # If True, all data is used for the test set
+    # predict_idx: null # Path to a file or list of indices for prediction
+
+    # --- Dataloader Settings ---
+    batch_size: 64
+    num_workers: 4 # Adjust based on your system's capabilities
+
+trainer:
+  # --- Basic Training Control ---
+  accelerator: "auto" # Automatically chooses best available (e.g., "gpu", "cpu", "mps")
+  devices:
+    "auto" # Automatically uses all available devices of the chosen accelerator type
+    # Or specify: 1 (for one GPU), [0, 1] (for specific GPUs), "mps" (for Apple Silicon)
+  max_epochs: 100
+  # min_epochs: 1 # Optional
+  # max_steps: -1 # Optional, -1 means determined by epochs and dataset size
+
+  # --- Logging ---
+  default_root_dir: "logs/foundation_model_runs" # Base directory for all logs and checkpoints
+  logger: # Example using TensorBoardLogger (default if not specified and tensorboard is installed)
+    - class_path: lightning.pytorch.loggers.TensorBoardLogger
+      init_args:
+        save_dir: "${trainer.default_root_dir}" # Logs to logs/foundation_model_runs/lightning_logs
+        name: "" # Subdirectory name, empty means version_X directly under save_dir
+        version: "" # Experiment version, empty means auto-incrementing (version_0, version_1, etc.)
+    - class_path: lightning.pytorch.loggers.CSVLogger
+      init_args:
+        save_dir: "${trainer.default_root_dir}"
+        name: "csv_logs"
+
+  # --- Checkpointing ---
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: null # If null, saves to default_root_dir/lightning_logs/version_X/checkpoints
+        filename: "{epoch}-{step}-{val_total_loss:.2f}" # Example filename
+        monitor: "val_total_loss" # Quantity to monitor for saving the best model
+        mode: "min" # "min" for loss/error, "max" for accuracy/metric
+        save_top_k: 1 # Save the top K models (e.g., 1 for best, 3 for top 3)
+        save_last: True # Also save the last checkpoint
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: "val_total_loss"
+        patience: 10 # Number of epochs with no improvement after which training will be stopped
+        mode: "min"
+    # - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+    #   init_args:
+    #     logging_interval: "step" # or "epoch"
+
+  # --- Other Trainer Options ---
+  # precision: "32-true" # Or "16-mixed", "bf16-mixed"
+  # deterministic: False # For reproducibility, can impact performance
+  # gradient_clip_val: 0.5 # Optional gradient clipping
+  # log_every_n_steps: 50
