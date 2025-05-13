@@ -1,3 +1,4 @@
+import ast  # For safely evaluating string representations of lists/arrays
 import logging
 from typing import Dict, List, Optional, Union
 
@@ -43,7 +44,12 @@ class CompoundDataset(Dataset):
             Ratios for randomly masking valid samples per task (for training).
             1.0 means use all valid samples, 0.0 means mask all. Defaults to None (no random masking).
         is_predict_set : bool, optional
-            If True, __getitem__ will only return formula_desc as model input 'x'. Defaults to False.
+            If True, the dataset is configured for prediction. This primarily affects:
+            - Task masking: `task_masking_ratios` are not applied.
+            - Target handling: The dataset should not expect true target values to be strictly necessary
+              (e.g., they might be placeholders or missing for new data).
+            It does NOT change the core input features (like formula or structure descriptors) provided to the model.
+            Defaults to False.
         dataset_name : str, optional
             A name for this dataset instance, used in logging. Defaults to "dataset".
         """
@@ -69,8 +75,14 @@ class CompoundDataset(Dataset):
         if not isinstance(attributes, pd.DataFrame):  # Attributes must be DataFrame
             logger.error(f"[{self.dataset_name}] attributes type error: {type(attributes)}")
             raise TypeError("attributes must be pd.DataFrame")
-        if attributes.empty:
-            raise ValueError("attributes DataFrame cannot be empty.")
+
+        # Allow attributes DataFrame with a valid index but no columns (e.g. from DataModule when attributes_source is None)
+        # Raise error only if it has columns defined but no rows (empty index).
+        if attributes.index.empty and len(attributes.columns) > 0:
+            logger.error(f"[{self.dataset_name}] attributes DataFrame has columns but an empty index.")
+            raise ValueError("attributes DataFrame has columns but an empty index (no samples).")
+        # An attributes DataFrame with an empty index AND no columns (pd.DataFrame().empty is True)
+        # would also pass this new check. This is acceptable as formula_desc validation should catch no-sample cases.
 
         if not task_configs:  # Check if list is empty
             raise ValueError("task_configs list cannot be empty.")
@@ -163,22 +175,93 @@ class CompoundDataset(Dataset):
                 task_data_pd_series = None  # Not primary for these types
 
             if task_data_pd_series is not None:  # Primarily for SEQUENCE using _series
-                # Handle cases where cells might be lists/ndarrays
-                if task_data_pd_series.dtype == "object" and isinstance(
-                    task_data_pd_series.iloc[0], (list, np.ndarray)
-                ):
-                    logger.debug(f"[{self.dataset_name}] Task '{task_name}': Stacking object series data.")
-                    processed_values = np.stack(task_data_pd_series.values)
-                else:
-                    processed_values = task_data_pd_series.values
+                # Handle cases where cells might be lists/ndarrays or string representations of them
+                def parse_series_element(element):
+                    if isinstance(element, (list, np.ndarray)):
+                        return np.asarray(element)
+                    elif isinstance(element, str):
+                        try:
+                            # Safely evaluate string: "[1, 2, 3]" -> [1, 2, 3]
+                            parsed_element = ast.literal_eval(element)
+                            if isinstance(parsed_element, (list, tuple)):  # ast.literal_eval can return tuples
+                                return np.asarray(parsed_element)
+                            else:  # If it parsed to a single number or other non-list/tuple type
+                                return np.array([parsed_element])  # Wrap single numbers in an array
+                        except (ValueError, SyntaxError, TypeError):
+                            # If parsing fails, or if it's a non-numeric string, treat as NaN-equivalent for sequences
+                            logger.warning(
+                                f"[{self.dataset_name}] Task '{task_name}': Could not parse string series element '{element}'. Treating as NaN-like."
+                            )
+                            # Determine sequence length from task_config if possible, else default to 1
+                            seq_len = cfg.dims[-1] if hasattr(cfg, "dims") and cfg.dims and len(cfg.dims) > 1 else 1
+                            return np.full(seq_len, np.nan)
+                    elif pd.isna(element):  # Handle explicit NaNs
+                        seq_len = cfg.dims[-1] if hasattr(cfg, "dims") and cfg.dims and len(cfg.dims) > 1 else 1
+                        return np.full(seq_len, np.nan)
+                    else:  # E.g. a single number not in a list/string
+                        return np.array([element])
 
-                if processed_values.ndim == 1:
-                    logger.debug(f"[{self.dataset_name}] Task '{task_name}': Reshaping 1D series data to 2D.")
+                parsed_series = task_data_pd_series.apply(parse_series_element)
+                # Check if all elements in parsed_series are arrays of the same length
+                # This is important before np.stack
+                first_elem_len = -1
+                if not parsed_series.empty:
+                    first_valid_elem = next((item for item in parsed_series if isinstance(item, np.ndarray)), None)
+                    if first_valid_elem is not None:
+                        first_elem_len = len(first_valid_elem)
+
+                consistent_len = True
+                if first_elem_len != -1:
+                    for item in parsed_series:
+                        if not (isinstance(item, np.ndarray) and len(item) == first_elem_len):
+                            consistent_len = False
+                            logger.error(
+                                f"[{self.dataset_name}] Task '{task_name}': Inconsistent sequence lengths after parsing. Expected {first_elem_len}, got {len(item) if isinstance(item, np.ndarray) else 'Non-array'}. Data: {item}"
+                            )
+                            # Fallback: create NaN arrays of expected length
+                            # This might be too aggressive; consider raising error or specific handling
+                            # For now, let's make them NaN arrays of the first_elem_len
+                            # This part needs careful thought on how to handle inconsistent user data.
+                            # A simpler approach might be to enforce that cfg.dims[-1] is the seq_len and pad/truncate.
+                            # For now, if inconsistent, we'll have issues with np.stack.
+                            # Let's assume for now that parse_series_element produces consistent length or NaNs of consistent length.
+                            break  # Stop checking if inconsistency found
+
+                if not parsed_series.empty and consistent_len:
+                    try:
+                        processed_values = np.stack(parsed_series.values)
+                    except Exception as e:
+                        logger.error(
+                            f"[{self.dataset_name}] Task '{task_name}': Failed to stack parsed series data. Error: {e}. Series data: {parsed_series.head().to_list()}"
+                        )
+                        # Fallback to a placeholder of NaNs if stacking fails
+                        num_samples = len(self.x_formula)
+                        seq_len = cfg.dims[-1] if hasattr(cfg, "dims") and cfg.dims and len(cfg.dims) > 1 else 1
+                        processed_values = np.full((num_samples, seq_len), np.nan)
+
+                elif parsed_series.empty:  # Should not happen if task_data_pd_series was not None
+                    num_samples = len(self.x_formula)
+                    seq_len = cfg.dims[-1] if hasattr(cfg, "dims") and cfg.dims and len(cfg.dims) > 1 else 1
+                    processed_values = np.full((num_samples, seq_len), np.nan)
+                else:  # inconsistent_len
+                    num_samples = len(self.x_formula)
+                    seq_len = (
+                        cfg.dims[-1] if hasattr(cfg, "dims") and cfg.dims and len(cfg.dims) > 1 else 1
+                    )  # Use configured dim
+                    logger.warning(
+                        f"[{self.dataset_name}] Task '{task_name}': Using placeholder for y_dict due to inconsistent sequence lengths after parsing. Expected length: {seq_len}"
+                    )
+                    processed_values = np.full((num_samples, seq_len), np.nan)
+
+                if processed_values.ndim == 1:  # Should be rare now if parse_series_element ensures array output
+                    logger.debug(
+                        f"[{self.dataset_name}] Task '{task_name}': Reshaping 1D series data to 2D (unexpected)."
+                    )
                     processed_values = processed_values.reshape(-1, 1)
+
                 self.y_dict[task_name] = torch.tensor(np.nan_to_num(processed_values, nan=0.0), dtype=torch.float32)
-                base_mask_np = ~task_data_pd_series.apply(
-                    lambda x: np.all(np.isnan(x)) if isinstance(x, (list, np.ndarray)) else pd.isna(x)
-                ).values.astype(bool)
+                # Mask based on whether the original or parsed element was all NaN
+                base_mask_np = ~parsed_series.apply(lambda x: np.all(np.isnan(x))).values.astype(bool)
                 logger.debug(
                     f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
                 )
@@ -238,21 +321,101 @@ class CompoundDataset(Dataset):
                 if temps_col_name in attributes.columns:
                     logger.debug(f"[{self.dataset_name}] Task '{task_name}': Found temps column '{temps_col_name}'.")
                     temps_data_pd_series = attributes[temps_col_name]
-                    if temps_data_pd_series.dtype == "object" and isinstance(
-                        temps_data_pd_series.iloc[0], (list, np.ndarray)
-                    ):
-                        logger.debug(f"[{self.dataset_name}] Task '{task_name}': Stacking object temps data.")
-                        processed_temps = np.stack(temps_data_pd_series.values)
-                    else:
-                        processed_temps = temps_data_pd_series.values
 
-                    if processed_temps.ndim == 1:
-                        logger.debug(f"[{self.dataset_name}] Task '{task_name}': Reshaping 1D temps data to 2D.")
+                    # Similar parsing for temps data
+                    def parse_temps_element(element):
+                        if isinstance(element, (list, np.ndarray)):
+                            return np.asarray(element)
+                        elif isinstance(element, str):
+                            try:
+                                parsed_element = ast.literal_eval(element)
+                                if isinstance(parsed_element, (list, tuple)):
+                                    return np.asarray(parsed_element)
+                                else:  # Single number
+                                    return np.array([parsed_element])
+                            except (ValueError, SyntaxError, TypeError):
+                                logger.warning(
+                                    f"[{self.dataset_name}] Task '{task_name}': Could not parse string temps element '{element}'. Treating as NaN-like."
+                                )
+                                seq_len = (
+                                    self.y_dict[task_name].shape[1]
+                                    if task_name in self.y_dict and self.y_dict[task_name].ndim > 1
+                                    else 1
+                                )
+                                return np.full(seq_len, np.nan)
+                        elif pd.isna(element):
+                            seq_len = (
+                                self.y_dict[task_name].shape[1]
+                                if task_name in self.y_dict and self.y_dict[task_name].ndim > 1
+                                else 1
+                            )
+                            return np.full(seq_len, np.nan)
+                        else:  # Single number
+                            return np.array([element])
+
+                    parsed_temps_series = temps_data_pd_series.apply(parse_temps_element)
+
+                    # Similar consistency check and stacking for temps
+                    first_temp_len = -1
+                    if not parsed_temps_series.empty:
+                        first_valid_temp = next(
+                            (item for item in parsed_temps_series if isinstance(item, np.ndarray)), None
+                        )
+                        if first_valid_temp is not None:
+                            first_temp_len = len(first_valid_temp)
+
+                    consistent_temp_len = True
+                    if first_temp_len != -1:
+                        for item in parsed_temps_series:
+                            if not (isinstance(item, np.ndarray) and len(item) == first_temp_len):
+                                consistent_temp_len = False
+                                logger.error(
+                                    f"[{self.dataset_name}] Task '{task_name}': Inconsistent temps lengths after parsing. Expected {first_temp_len}, got {len(item) if isinstance(item, np.ndarray) else 'Non-array'}."
+                                )
+                                break
+
+                    if not parsed_temps_series.empty and consistent_temp_len:
+                        try:
+                            processed_temps = np.stack(parsed_temps_series.values)
+                        except Exception as e:
+                            logger.error(
+                                f"[{self.dataset_name}] Task '{task_name}': Failed to stack parsed temps data. Error: {e}. Temps data: {parsed_temps_series.head().to_list()}"
+                            )
+                            num_samples = len(self.x_formula)
+                            seq_len = (
+                                self.y_dict[task_name].shape[1]
+                                if task_name in self.y_dict and self.y_dict[task_name].ndim > 1
+                                else 1
+                            )
+                            processed_temps = np.full((num_samples, seq_len), np.nan)  # Fallback
+                    elif parsed_temps_series.empty:
+                        num_samples = len(self.x_formula)
+                        seq_len = (
+                            self.y_dict[task_name].shape[1]
+                            if task_name in self.y_dict and self.y_dict[task_name].ndim > 1
+                            else 1
+                        )
+                        processed_temps = np.full((num_samples, seq_len), np.nan)  # Fallback
+                    else:  # inconsistent_temp_len
+                        num_samples = len(self.x_formula)
+                        seq_len = (
+                            self.y_dict[task_name].shape[1]
+                            if task_name in self.y_dict and self.y_dict[task_name].ndim > 1
+                            else 1
+                        )
+                        logger.warning(
+                            f"[{self.dataset_name}] Task '{task_name}': Using placeholder for temps_dict due to inconsistent sequence lengths after parsing. Expected length: {seq_len}"
+                        )
+                        processed_temps = np.full((num_samples, seq_len), np.nan)
+
+                    if processed_temps.ndim == 1:  # Should be rare
                         processed_temps = processed_temps.reshape(-1, 1)
                     if processed_temps.ndim == 2:  # Add channel dim: [N, L] -> [N, L, 1]
-                        logger.debug(f"[{self.dataset_name}] Task '{task_name}': Adding channel dim to temps data.")
                         processed_temps = np.expand_dims(processed_temps, axis=-1)
-                    self.temps_dict[task_name] = torch.tensor(processed_temps, dtype=torch.float32)
+
+                    self.temps_dict[task_name] = torch.tensor(
+                        np.nan_to_num(processed_temps, nan=0.0), dtype=torch.float32
+                    )
                     logger.debug(
                         f"[{self.dataset_name}] Task '{task_name}': temps_dict shape {self.temps_dict[task_name].shape}"
                     )
@@ -331,13 +494,10 @@ class CompoundDataset(Dataset):
         current_x_formula = self.x_formula[idx]
         model_input_x: Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]
 
-        if self.is_predict_set:
-            model_input_x = current_x_formula
+        if self.use_structure_for_this_dataset and self.x_struct is not None:
+            model_input_x = (current_x_formula, self.x_struct[idx])
         else:
-            if self.use_structure_for_this_dataset and self.x_struct is not None:
-                model_input_x = (current_x_formula, self.x_struct[idx])
-            else:
-                model_input_x = current_x_formula
+            model_input_x = current_x_formula
 
         sample_y_dict = {name: self.y_dict[name][idx] for name in self.enabled_task_names if name in self.y_dict}
         sample_task_masks_dict = {

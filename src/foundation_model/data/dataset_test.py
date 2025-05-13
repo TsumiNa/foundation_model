@@ -280,8 +280,31 @@ def test_getitem_predict_mode(sample_formula_desc_df, sample_attributes_df, samp
     )
     model_input_x, y_dict, masks_dict, temps_dict = dataset[0]
 
-    assert isinstance(model_input_x, torch.Tensor)  # Should be just x_formula
+    assert isinstance(model_input_x, torch.Tensor)  # Should be just x_formula as no structure is used here
     assert torch.allclose(model_input_x, dataset.x_formula[0])
+    assert "task_reg" in y_dict
+    assert "task_reg" in masks_dict
+
+
+def test_getitem_predict_mode_with_structure(
+    sample_formula_desc_df, sample_attributes_df, sample_structure_desc_df, sample_task_configs
+):
+    """Test __getitem__ when is_predict_set=True and structure is used."""
+    dataset = CompoundDataset(
+        formula_desc=sample_formula_desc_df,
+        attributes=sample_attributes_df,
+        task_configs=sample_task_configs,
+        structure_desc=sample_structure_desc_df,
+        use_structure_for_this_dataset=True,
+        is_predict_set=True,  # Predict mode
+        dataset_name="test_getitem_predict_with_struct",
+    )
+    model_input_x, y_dict, masks_dict, temps_dict = dataset[0]
+
+    assert isinstance(model_input_x, tuple)  # Should be (x_formula, x_struct)
+    assert len(model_input_x) == 2
+    assert torch.allclose(model_input_x[0], dataset.x_formula[0])
+    assert torch.allclose(model_input_x[1], dataset.x_struct[0])
     assert "task_reg" in y_dict
     assert "task_reg" in masks_dict
 
