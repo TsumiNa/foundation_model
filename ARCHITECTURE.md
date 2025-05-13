@@ -8,6 +8,13 @@ The following diagram illustrates the comprehensive structure of the `FlexibleMu
 
 ```mermaid
 graph TD
+    subgraph Legend["Tensor Shape Legend"]
+        direction LR
+        Legend_B["B: Batch size"]
+        Legend_L["L: Sequence length"]
+        Legend_D["D: Feature dimension"]
+    end
+
     subgraph InputLayer["Input Layer"]
         X_formula["x_formula (B, D_in_formula)"]
         X_structure["x_structure (B, D_in_structure)"]
@@ -76,7 +83,9 @@ graph TD
     classDef output fill:#EAEAEA,stroke:#888888,stroke-width:2px,color:#000000;
     classDef junction fill:#FFFFFF,stroke:#AAAAAA,stroke-width:1px,color:#000000,shape:circle;
     classDef point fill:#FFFFFF,stroke:#AAAAAA,stroke-width:1px,color:#000000,shape:point;
+    classDef legend_style fill:#f9f9f9,stroke:#ccc,stroke-width:1px,color:#333;
 
+    class Legend_B,Legend_L,Legend_D legend_style;
     class X_formula,X_structure,Task_Sequence_Data_Batch input;
     class F_Encoder,S_Encoder,DepositBlock foundation;
     class Fusion fusion;
