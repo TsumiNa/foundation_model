@@ -150,11 +150,27 @@ trainer:
   # default_root_dir: ${log_dir} # Handled by logger's save_dir
   # strategy: "auto" # e.g., "ddp", "fsdp", "deepspeed"
 
-  logger: # Example: CSVLogger. For TensorBoard, use lightning.pytorch.loggers.TensorBoardLogger
-    _target_: lightning.pytorch.loggers.CSVLogger
-    save_dir: ${log_dir} # Uses log_dir defined at the top
-    name: "" # Experiment name subdirectory (version_X will be created under save_dir directly if name is empty)
-    # version: "run_1" # Optional: specify a version string
+  logger:
+    - _target_: lightning.pytorch.loggers.CSVLogger
+      save_dir: ${log_dir} # Uses log_dir defined at the top
+      name: "" # Logs will be in ${log_dir}/version_X
+      # version: "run_1" # Optional: specify a version string
+
+    - _target_: lightning.pytorch.loggers.TensorBoardLogger
+      save_dir: ${log_dir} # Uses log_dir defined at the top
+      name: "" # TensorBoard event files will also be in ${log_dir}/version_X
+      # version: "run_1" # Optional: specify a version string
+      # log_graph: True # Optional: log the model graph
+
+    # - _target_: lightning.pytorch.loggers.WandbLogger
+    #   save_dir: ${log_dir} # WandB artifacts might be stored here if configured
+    #   name: null # Optional: WandB run name, defaults to a generated one
+    #   project: "my_foundation_model_project" # REQUIRED: Specify your WandB project name
+    #   entity: null # Optional: Specify your WandB entity (username or team)
+    #   log_model: False # Can be True, "all", or path to checkpoint for model artifact logging
+    #   # offline: True # Uncomment if running in an environment without internet access
+    #   # group: "experiment_group_A" # Optional: Group runs in WandB UI
+    #   # tags: ["base_run", "example"] # Optional: Add tags to the run
 
   callbacks:
     - _target_: lightning.pytorch.callbacks.ModelCheckpoint

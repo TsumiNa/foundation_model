@@ -784,12 +784,14 @@ wheels = [
 
 [[package]]
 name = "foundation-model"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "lightning", extra = ["pytorch-extra"] },
+    { name = "matplotlib" },
     { name = "numpy" },
     { name = "pandas" },
+    { name = "scipy" },
     { name = "shotgun-csp" },
     { name = "tensorboard" },
     { name = "torch" },
@@ -807,8 +809,10 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "lightning", extras = ["pytorch-extra"], specifier = ">=2.5.1.post0" },
+    { name = "matplotlib", specifier = ">=3.10.1" },
     { name = "numpy", specifier = "<2" },
     { name = "pandas", specifier = ">=2.2.3" },
+    { name = "scipy", specifier = ">=1.15.2" },
     { name = "shotgun-csp", git = "https://github.com/TsumiNa/shotgun_csp_next?branch=main" },
     { name = "tensorboard", specifier = ">=2.19.0" },
     { name = "torch", specifier = ">=2.1" },

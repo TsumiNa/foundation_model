@@ -7,8 +7,10 @@ authors = [{ name = "TsumiNa", email = "liu.chang.1865@gmail.com" }]
 requires-python = ">=3.11, <3.14"
 dependencies = [
     "lightning[pytorch-extra]>=2.5.1.post0",
+    "matplotlib>=3.10.1",
     "numpy<2",
     "pandas>=2.2.3",
+    "scipy>=1.15.2",
     "shotgun-csp",
     "tensorboard>=2.19.0",
     "torch>=2.1",

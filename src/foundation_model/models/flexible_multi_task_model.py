@@ -15,9 +15,10 @@ Tensor shape legend (used across all docstrings):
 """
 
 import logging  # Added
-from typing import Any
+from typing import Any, List, Optional  # Added List, Optional
 
 import lightning as L
+import pandas as pd  # Added
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -711,7 +712,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return None
 
     def predict_step(
-        self, batch, batch_idx, dataloader_idx=0, additional_output: bool = False
+        self,
+        batch,
+        batch_idx,
+        dataloader_idx=0,
+        additional_output: bool = False,
+        tasks_to_predict: Optional[List[str]] = None,
     ) -> dict[str, torch.Tensor]:
         """
         Prediction step. Performs standard forward pass assuming only formula input
@@ -735,6 +741,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         additional_output : bool, optional
             If True, task heads will return additional prediction information
             (e.g., probabilities for classification). Defaults to False.
+        tasks_to_predict : list[str] | None, optional
+            A list of task names to predict. If None (default), predicts all enabled tasks.
+            If a task in the list is not found or not enabled, a warning is logged and it's skipped.
 
         Returns
         -------
@@ -771,23 +780,55 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # 4. Process raw predictions using each task head's `predict` method
         final_predictions = {}
-        for task_name, raw_pred_tensor in raw_preds.items():
-            if task_name in self.task_heads:
-                head = self.task_heads[task_name]
-                # The head.predict() method now handles snake_case prefixing
-                processed_pred_dict = head.predict(raw_pred_tensor, additional=additional_output)
-                final_predictions.update(processed_pred_dict)
-            else:
-                # Should not happen if task_heads and forward output are consistent
-                # but as a fallback, include raw prediction with a generic key
-                # (or raise an error, or log a warning)
-                # For now, let's assume consistency and this branch is not hit.
-                # If it were, we might do:
-                # from .task_head.base import _to_snake_case
-                # final_predictions[f"{_to_snake_case(task_name)}_raw_prediction"] = raw_pred_tensor
-                pass
+
+        tasks_to_iterate = []
+        if tasks_to_predict is None:
+            # Predict all tasks present in raw_preds that have a corresponding head
+            tasks_to_iterate = [(name, tensor) for name, tensor in raw_preds.items() if name in self.task_heads]
+        else:
+            # Predict only specified tasks, after validation
+            for task_name in tasks_to_predict:
+                if task_name not in self.task_heads:
+                    logger.warning(
+                        f"Task '{task_name}' requested for prediction but not found or not enabled in the model. Skipping."
+                    )
+                    continue
+                if task_name not in raw_preds:
+                    logger.warning(
+                        f"Task '{task_name}' requested for prediction, found in model heads, "
+                        f"but not present in raw model output. Skipping."
+                    )
+                    continue
+                tasks_to_iterate.append((task_name, raw_preds[task_name]))
+
+        for task_name, raw_pred_tensor in tasks_to_iterate:
+            head = self.task_heads[task_name]
+            # The head.predict() method now handles snake_case prefixing
+            processed_pred_dict = head.predict(raw_pred_tensor, additional=additional_output)
+            final_predictions.update(processed_pred_dict)
 
         return final_predictions
+
+    @property
+    def registered_tasks_info(self) -> pd.DataFrame:
+        """
+        Provides information about all registered tasks in the model.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame with columns 'name', 'type', and 'enabled', detailing each configured task.
+        """
+        task_info = []
+        for task_config in self.task_configs:
+            task_info.append(
+                {
+                    "name": task_config.name,
+                    "type": task_config.type.value,  # Get the string value of the enum
+                    "enabled": task_config.enabled,
+                }
+            )
+        return pd.DataFrame(task_info)
 
     def _create_optimizer(self, params: list[torch.nn.Parameter], config: OptimizerConfig) -> torch.optim.Optimizer:
         """Create an optimizer based on the configuration."""

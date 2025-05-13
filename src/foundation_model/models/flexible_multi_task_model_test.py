@@ -368,8 +368,8 @@ def test_model_validation_step(model_config_mixed_tasks, sample_batch_mixed_task
     assert "val_cross_recon_loss" not in logged_metrics
 
 
-def test_model_predict_step(model_config_mixed_tasks, sample_batch_mixed_tasks):
-    """Test the predict_step for mixed regression and classification tasks."""
+def test_model_predict_step_all_tasks(model_config_mixed_tasks, sample_batch_mixed_tasks):
+    """Test the predict_step for all enabled tasks."""
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
@@ -725,9 +725,96 @@ def test_trainer_integration_mixed_tasks(model_config_mixed_tasks, dummy_compoun
             assert isinstance(predictions, list)
             if len(predictions) > 0:
                 assert isinstance(predictions[0], dict)  # Each item in list is output of predict_step for a batch
-
     except Exception as e:
         pytest.fail(f"Trainer integration test failed: {e}")
+
+
+def test_model_predict_step_specific_tasks(model_config_mixed_tasks, sample_batch_mixed_tasks, mocker):
+    """Test the predict_step with specific tasks requested."""
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        shared_block_dims=config.shared_block_dims,
+        task_configs=config.task_configs,
+        # ... other params from config ...
+    )
+    model.eval()
+    x_formula, y_dict, task_masks, temps_batch = sample_batch_mixed_tasks
+    predict_batch_tuple = (x_formula, y_dict, task_masks, temps_batch)
+
+    # Mock logger to check warnings
+    mock_logger = mocker.patch("foundation_model.models.flexible_multi_task_model.logger")
+
+    # 1. Predict a single existing task
+    task_to_predict_single = [config.task_configs[0].name]
+    output_single = model.predict_step(
+        predict_batch_tuple, batch_idx=0, additional_output=True, tasks_to_predict=task_to_predict_single
+    )
+    assert isinstance(output_single, dict)
+    # Check that only keys related to task_to_predict_single are present
+    for key in output_single.keys():
+        assert task_to_predict_single[0].replace("-", "_") in key
+    # Verify that other tasks are not in the output
+    if len(config.task_configs) > 1:
+        other_task_name_snake = config.task_configs[1].name.replace("-", "_")
+        assert not any(other_task_name_snake in key for key in output_single.keys()), (
+            f"Predictions for '{other_task_name_snake}' should not be in output when only '{task_to_predict_single[0]}' is requested."
+        )
+
+    # 2. Predict multiple existing tasks
+    if len(config.task_configs) > 1:
+        tasks_to_predict_multiple = [config.task_configs[0].name, config.task_configs[1].name]
+        output_multiple = model.predict_step(
+            predict_batch_tuple, batch_idx=0, additional_output=True, tasks_to_predict=tasks_to_predict_multiple
+        )
+        assert isinstance(output_multiple, dict)
+        # Check that keys related to both tasks are present
+        task0_snake = tasks_to_predict_multiple[0].replace("-", "_")
+        task1_snake = tasks_to_predict_multiple[1].replace("-", "_")
+        assert any(task0_snake in key for key in output_multiple.keys())
+        assert any(task1_snake in key for key in output_multiple.keys())
+        if len(config.task_configs) > 2:  # If there's a third task, ensure it's not predicted
+            third_task_snake = config.task_configs[2].name.replace("-", "_")
+            assert not any(third_task_snake in key for key in output_multiple.keys())
+
+    # 3. Predict a non-existent task (should log warning and return empty dict or only valid tasks)
+    tasks_to_predict_non_existent = ["non_existent_task", config.task_configs[0].name]
+    output_non_existent = model.predict_step(
+        predict_batch_tuple, batch_idx=0, additional_output=True, tasks_to_predict=tasks_to_predict_non_existent
+    )
+    mock_logger.warning.assert_any_call(
+        "Task 'non_existent_task' requested for prediction but not found or not enabled in the model. Skipping."
+    )
+    # Output should only contain predictions for the valid task
+    task0_snake = config.task_configs[0].name.replace("-", "_")
+    assert all(task0_snake in key for key in output_non_existent.keys())
+    assert not any("non_existent_task" in key for key in output_non_existent.keys())
+
+    # 4. Predict with an empty list (should return empty dict)
+    output_empty_list = model.predict_step(
+        predict_batch_tuple, batch_idx=0, additional_output=True, tasks_to_predict=[]
+    )
+    assert isinstance(output_empty_list, dict)
+    assert len(output_empty_list) == 0
+
+
+def test_model_registered_tasks_info_property(model_config_mixed_tasks):
+    """Test the registered_tasks_info property."""
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        shared_block_dims=config.shared_block_dims,
+        task_configs=config.task_configs,
+        # ... other params from config ...
+    )
+
+    df_info = model.registered_tasks_info
+    assert isinstance(df_info, pd.DataFrame)
+    assert list(df_info.columns) == ["name", "type", "enabled"]
+    assert len(df_info) == len(config.task_configs)
+
+    for i, task_cfg_from_model in enumerate(config.task_configs):
+        assert df_info.loc[i, "name"] == task_cfg_from_model.name
+        assert df_info.loc[i, "type"] == task_cfg_from_model.type.value  # Enum value
+        assert df_info.loc[i, "enabled"] == task_cfg_from_model.enabled
 
 
 # Helper for creating dummy dataframes
