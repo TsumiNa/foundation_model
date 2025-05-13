@@ -135,8 +135,9 @@ data:
 trainer:
   default_root_dir: results/logs/default_experiment
   max_epochs: 100
-  accelerator: auto
+  # accelerator: auto
   # devices: auto
+  accelerator: cpu
   devices: 1
   enable_progress_bar: true
   fast_dev_run: True

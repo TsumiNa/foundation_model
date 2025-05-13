@@ -435,7 +435,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # 1. Unpack batch data
         # y_dict_batch, task_masks_batch, task_sequence_data_batch are now dictionaries keyed by task_name
         x, y_dict_batch, task_masks_batch, task_sequence_data_batch = batch
-        total_loss = 0.0
+        # total_loss = 0.0 # Removed
         logs = {}
 
         # 2. Determine input modalities based on configuration and batch data
@@ -457,6 +457,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
             raise TypeError(
                 f"Unexpected input type/combination. with_structure={self.with_structure}, type(x)={type(x)}"
             )
+
+        total_loss = torch.tensor(0.0, device=x_formula.device if x_formula is not None else "cpu")
 
         # 3. Handle Modality Dropout (only during SSL training)
         x_struct_for_processing = original_x_struct  # Start with the original structure input
@@ -577,15 +579,31 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
 
         # Manual optimization
-        self.manual_backward(total_loss)
-        optimizers = self.optimizers()
-        if isinstance(optimizers, list):
-            for opt in optimizers:
-                opt.step()
-                opt.zero_grad()
-        else:  # Single optimizer case
-            optimizers.step()
-            optimizers.zero_grad()
+        if total_loss.requires_grad:
+            self.manual_backward(total_loss)
+            optimizers = self.optimizers()
+            if isinstance(optimizers, list):
+                for opt in optimizers:
+                    opt.step()
+                    opt.zero_grad(set_to_none=True)
+            else:  # Single optimizer case
+                optimizers.step()
+                optimizers.zero_grad(set_to_none=True)
+        else:
+            logger.warning(
+                "total_loss does not require grad and has no grad_fn at batch_idx %s. "
+                "Skipping backward pass and optimizer step. "
+                "This might indicate all parameters are frozen, loss contributions are zero, "
+                "or an issue with the computation graph.",
+                batch_idx,  # Add batch_idx for better logging
+            )
+            # It's good practice to still zero_grad optimizers to clear any stale grads from previous iterations
+            optimizers = self.optimizers()
+            if isinstance(optimizers, list):
+                for opt in optimizers:
+                    opt.zero_grad(set_to_none=True)
+            else:
+                optimizers.zero_grad(set_to_none=True)
 
         return total_loss
 
@@ -609,7 +627,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """
         # 1. Unpack batch data
         x, y_dict_batch, task_masks_batch, task_sequence_data_batch = batch
-        total_val_loss = 0.0  # Accumulates unweighted losses
+        # total_val_loss = 0.0  # Accumulates unweighted losses # Removed
         logs = {}
 
         # 2. Determine input modalities based on configuration and batch data
@@ -627,6 +645,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
             raise TypeError(
                 f"Unexpected input type/combination during validation. with_structure={self.with_structure}, type(x)={type(x)}"
             )
+
+        total_val_loss = torch.tensor(0.0, device=x_formula.device if x_formula is not None else "cpu")
 
         # For validation, x_struct_for_processing is always the original_x_struct (no dropout)
         x_struct_for_processing = original_x_struct
