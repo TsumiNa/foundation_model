@@ -41,7 +41,10 @@ def sample_formula_desc_df():
 def sample_structure_desc_df():
     """Returns a sample structure descriptor DataFrame."""
     return pd.DataFrame(
-        {"struct_feat_0": [10.1, 10.2, 10.3, 10.4, 10.5], "struct_feat_1": [11.1, 11.2, 11.3, 11.4, 11.5]},
+        {
+            "struct_feat_0": [10.1, 10.2, 10.3, 10.4, 10.5],
+            "struct_feat_1": [11.1, 11.2, 11.3, 11.4, 11.5],
+        },
         index=[f"id_{i}" for i in range(5)],
     )
 
@@ -101,7 +104,7 @@ def test_dataset_initialization_basic(sample_formula_desc_df, sample_attributes_
     assert "task_seq" in dataset.y_dict
     assert "task_seq" in dataset.temps_dict
     assert "task_another_reg" in dataset.y_dict
-    assert "task_disabled" not in dataset.enabled_task_names  # Check if disabled task is skipped
+    assert "task_disabled" not in dataset.enabled_task_names  # Check disabled task
     assert "task_fully_missing_data_col" in dataset.y_dict  # Should have placeholder
 
 
@@ -175,7 +178,7 @@ def test_task_data_processing_sequence(sample_formula_desc_df, sample_attributes
     assert torch.allclose(dataset.y_dict[task_name], torch.tensor(expected_y_seq_vals, dtype=torch.float32))
 
     assert task_name in dataset.temps_dict
-    assert dataset.temps_dict[task_name].shape == (5, 3, 1)  # 5 samples, 3 seq points, 1 channel
+    assert dataset.temps_dict[task_name].shape == (5, 3, 1)  # 5 samples, 3 seq, 1 chan
     expected_temps = torch.tensor([[[10], [20], [30]]] * 5, dtype=torch.float32)  # Repeated for each sample
     assert torch.allclose(dataset.temps_dict[task_name], expected_temps)
 
@@ -191,7 +194,8 @@ def test_task_data_processing_missing_columns(sample_formula_desc_df, sample_att
     dataset = CompoundDataset(
         formula_desc=sample_formula_desc_df,
         attributes=sample_attributes_df,
-        task_configs=sample_task_configs,  # sample_task_configs includes 'task_fully_missing_data_col'
+        # sample_task_configs includes 'task_fully_missing_data_col'
+        task_configs=sample_task_configs,
         dataset_name="test_missing_cols",
     )
     task_name = "task_fully_missing_data_col"
@@ -205,7 +209,8 @@ def test_task_data_processing_missing_columns(sample_formula_desc_df, sample_att
 
 
 def test_nan_masking(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
-    """Test that NaNs in attributes correctly generate masks (already covered in specific task tests, but good to have a focused one)."""
+    """Test that NaNs in attributes correctly generate masks."""
+    # (already covered in specific task tests, but good to have a focused one)
     dataset = CompoundDataset(
         formula_desc=sample_formula_desc_df,
         attributes=sample_attributes_df,
@@ -357,7 +362,7 @@ def test_attribute_names_property(sample_formula_desc_df, sample_attributes_df, 
 
 
 def test_input_dtypes_conversion(sample_attributes_df, sample_task_configs):
-    """Test that input DataFrames with different dtypes are converted to float32 for tensors."""
+    """Test that input DataFrames with different dtypes are converted to float32."""
     # Create formula_desc with int dtype
     formula_int_df = pd.DataFrame(
         {"feat_0": [1, 2, 3, 4, 5], "feat_1": [11, 12, 13, 14, 15]},
@@ -373,7 +378,8 @@ def test_input_dtypes_conversion(sample_attributes_df, sample_task_configs):
 
     dataset = CompoundDataset(
         formula_desc=formula_int_df,
-        attributes=sample_attributes_df,  # sample_attributes_df already has floats and objects (lists)
+        # sample_attributes_df already has floats and objects (lists)
+        attributes=sample_attributes_df,
         task_configs=sample_task_configs,
         structure_desc=structure_mixed_df,
         use_structure_for_this_dataset=True,
@@ -398,7 +404,8 @@ def test_input_dtypes_conversion(sample_attributes_df, sample_task_configs):
 # TODO: Add more tests:
 # - Edge case: empty formula_desc or attributes (should raise error or handle gracefully if allowed by design)
 # - Edge case: task_configs list is empty (should raise error)
-# - Test sequence data where individual items in the list/array are not all numbers (e.g. strings, though unlikely)
+# - Test sequence data where individual items in the list/array are not all numbers
+#   (e.g. strings, though unlikely)
 # - Test when `temps` column is missing for a sequence task.
 
 
@@ -435,7 +442,8 @@ def test_empty_inputs_raise_error(sample_formula_desc_df, sample_attributes_df, 
 
     # Test case where formula_desc or attributes_df might be None (though type hints suggest DataFrame)
     # This is more about robust handling if None is somehow passed.
-    # The class currently expects DataFrames, so this might be redundant if type checking is strict.
+    # The class currently expects DataFrames, so this might be redundant
+    # if type checking is strict.
     with pytest.raises(TypeError, match="formula_desc must be pd.DataFrame or np.ndarray"):
         CompoundDataset(
             formula_desc=None,
@@ -453,7 +461,8 @@ def test_sequence_data_with_non_numeric(sample_formula_desc_df, sample_attribute
     # Introduce a string into a sequence using .at for scalar assignment
     attributes_bad_seq.at["id_0", "task_seq_sequence_series"] = [0.1, "not_a_number", 0.3]
 
-    with pytest.raises(TypeError):  # Expect TypeError when converting list with string to tensor
+    # Expect TypeError when converting list with string to tensor
+    with pytest.raises(TypeError):
         CompoundDataset(
             formula_desc=sample_formula_desc_df,
             attributes=attributes_bad_seq,
@@ -489,12 +498,15 @@ def test_missing_temps_for_sequence_task(sample_formula_desc_df, sample_attribut
     task_name = "task_seq"
     assert task_name in dataset.temps_dict
     # Expect a placeholder (e.g., zeros) for temps
-    # The shape should match y_dict for that task, but with an added channel dim (B, SeqLen, 1)
+    # Shape should match y_dict for that task, but with added channel dim (B, SeqLen, 1)
     expected_temps_shape = (len(sample_formula_desc_df), dataset.y_dict[task_name].shape[1], 1)
     assert dataset.temps_dict[task_name].shape == expected_temps_shape
-    assert torch.all(dataset.temps_dict[task_name] == 0)  # Check if placeholder is zeros
+    assert torch.all(dataset.temps_dict[task_name] == 0)  # Check placeholder is zeros
 
     # Check for a warning log message
     temps_col_name = f"{task_name}_temps"  # Reconstruct for the log message
-    expected_log_message = f"[{dataset.dataset_name}] Task '{task_name}': Temps column '{temps_col_name}' not found for sequence task. Using zero placeholder."
+    expected_log_message = (
+        f"[{dataset.dataset_name}] Task '{task_name}': Temps column '{temps_col_name}' "
+        f"not found for sequence task. Using zero placeholder."
+    )
     assert any(expected_log_message in record.message and record.levelname == "WARNING" for record in caplog.records)

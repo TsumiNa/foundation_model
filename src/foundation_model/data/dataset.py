@@ -17,11 +17,12 @@ class CompoundDataset(Dataset):
     def __init__(
         self,
         formula_desc: Union[pd.DataFrame, np.ndarray],
-        attributes: pd.DataFrame,  # Contains targets, series data, temps data, and potentially masks
+        attributes: pd.DataFrame,  # Contains targets, series, temps, masks
         task_configs: List,  # List of task configuration objects
         structure_desc: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         use_structure_for_this_dataset: bool = False,
-        task_masking_ratios: Optional[Dict[str, float]] = None,  # Key: task_name, Value: keep_ratio (0.0 to 1.0)
+        # Key: task_name, Value: keep_ratio (0.0 to 1.0)
+        task_masking_ratios: Optional[Dict[str, float]] = None,
         is_predict_set: bool = False,
         dataset_name: str = "dataset",  # For logging purposes
     ):
@@ -42,13 +43,13 @@ class CompoundDataset(Dataset):
             Whether to use structure_desc if available. Defaults to False.
         task_masking_ratios : Optional[Dict[str, float]], optional
             Ratios for randomly masking valid samples per task (for training).
-            1.0 means use all valid samples, 0.0 means mask all. Defaults to None (no random masking).
+            1.0 means use all valid samples, 0.0 means mask all.
+            Defaults to None (no random masking).
         is_predict_set : bool, optional
             If True, the dataset is configured for prediction. This primarily affects:
             - Task masking: `task_masking_ratios` are not applied.
-            - Target handling: The dataset should not expect true target values to be strictly necessary
-              (e.g., they might be placeholders or missing for new data).
-            It does NOT change the core input features (like formula or structure descriptors) provided to the model.
+            - Target handling: True target values might be placeholders or missing.
+            It does NOT change core input features (formula/structure descriptors).
             Defaults to False.
         dataset_name : str, optional
             A name for this dataset instance, used in logging. Defaults to "dataset".
@@ -56,7 +57,7 @@ class CompoundDataset(Dataset):
         self.dataset_name = dataset_name
         logger.info(f"[{self.dataset_name}] Initializing CompoundDataset...")
         logger.info(
-            f"[{self.dataset_name}] is_predict_set: {is_predict_set}, use_structure_for_this_dataset: {use_structure_for_this_dataset}"
+            f"[{self.dataset_name}] is_predict_set: {is_predict_set}, use_structure: {use_structure_for_this_dataset}"
         )
 
         self.is_predict_set = is_predict_set
@@ -95,7 +96,8 @@ class CompoundDataset(Dataset):
             raise ValueError("attributes DataFrame has columns but an empty index (no samples).")
 
         # Scenario 3 (Allowed): attributes has rows, but 0 columns.
-        # (e.g., from DataModule when attributes_source is None, attributes = pd.DataFrame(index=formula_desc.index))
+        # (e.g., from DataModule when attributes_source is None,
+        #  attributes = pd.DataFrame(index=formula_desc.index))
         # len(attributes.index) > 0 and len(attributes.columns) == 0. This path does not raise an error.
 
         # Scenario 4 (Allowed): attributes has rows and columns (normal valid case).
@@ -122,11 +124,13 @@ class CompoundDataset(Dataset):
                 raise TypeError("structure_desc must be pd.DataFrame or np.ndarray if provided")
             if hasattr(structure_desc, "empty") and structure_desc.empty:
                 raise ValueError(
-                    "structure_desc cannot be an empty DataFrame if provided and use_structure_for_this_dataset is True."
+                    "structure_desc cannot be an empty DataFrame if provided and "
+                    "use_structure_for_this_dataset is True."
                 )
             if isinstance(structure_desc, np.ndarray) and structure_desc.size == 0:
                 raise ValueError(
-                    "structure_desc cannot be an empty np.ndarray if provided and use_structure_for_this_dataset is True."
+                    "structure_desc cannot be an empty np.ndarray if provided and "
+                    "use_structure_for_this_dataset is True."
                 )
 
             struct_shape = structure_desc.shape if hasattr(structure_desc, "shape") else "N/A"
@@ -138,7 +142,9 @@ class CompoundDataset(Dataset):
                 self.x_struct = torch.tensor(structure_desc, dtype=torch.float32)
             if len(self.x_formula) != len(self.x_struct):
                 logger.error(
-                    f"[{self.dataset_name}] Length mismatch: formula_desc ({len(self.x_formula)}) vs structure_desc ({len(self.x_struct)})"
+                    f"[{self.dataset_name}] Length mismatch: "
+                    f"formula_desc ({len(self.x_formula)}) vs "
+                    f"structure_desc ({len(self.x_struct)})"
                 )
                 raise ValueError("formula_desc and structure_desc must have the same number of samples.")
         else:
@@ -162,7 +168,8 @@ class CompoundDataset(Dataset):
         for cfg_idx, cfg in enumerate(task_configs):
             if not hasattr(cfg, "enabled") or not cfg.enabled:
                 logger.debug(
-                    f"[{self.dataset_name}] Task config {cfg_idx} ('{getattr(cfg, 'name', 'N/A')}') is not enabled, skipping."
+                    f"[{self.dataset_name}] Task config {cfg_idx} "
+                    f"('{getattr(cfg, 'name', 'N/A')}') is not enabled, skipping."
                 )
                 continue
 
@@ -176,7 +183,9 @@ class CompoundDataset(Dataset):
             target_col_name = f"{task_name}_{task_type_str}_value"
             series_col_name = f"{task_name}_{task_type_str}_series"
             logger.debug(
-                f"[{self.dataset_name}] Task '{task_name}': expected value col '{target_col_name}', series col '{series_col_name}'"
+                f"[{self.dataset_name}] Task '{task_name}': "
+                f"expected value col '{target_col_name}', "
+                f"series col '{series_col_name}'"
             )
 
             if task_type_enum_name == "SEQUENCE":
@@ -185,7 +194,9 @@ class CompoundDataset(Dataset):
                     task_data_pd_series = attributes[series_col_name]
                 else:
                     logger.warning(
-                        f"[{self.dataset_name}] Task '{task_name}': Series column '{series_col_name}' not found in attributes. Will use '{target_col_name}' if available or placeholder."
+                        f"[{self.dataset_name}] Task '{task_name}': Series column "
+                        f"'{series_col_name}' not found in attributes. Will use "
+                        f"'{target_col_name}' if available or placeholder."
                     )
                     task_data_pd_series = None  # Fallback to target_col_name or placeholder
             else:  # REGRESSION, CLASSIFICATION
@@ -205,9 +216,11 @@ class CompoundDataset(Dataset):
                             else:  # If it parsed to a single number or other non-list/tuple type
                                 return np.array([parsed_element])  # Wrap single numbers in an array
                         except (ValueError, SyntaxError, TypeError):
-                            # If parsing fails, or if it's a non-numeric string, treat as NaN-equivalent for sequences
+                            # If parsing fails, or if it's a non-numeric string,
+                            # treat as NaN-equivalent for sequences
                             logger.warning(
-                                f"[{self.dataset_name}] Task '{task_name}': Could not parse string series element '{element}'. Treating as NaN-like."
+                                f"[{self.dataset_name}] Task '{task_name}': Could not parse "
+                                f"string series element '{element}'. Treating as NaN-like."
                             )
                             # Determine sequence length from task_config if possible, else default to 1
                             seq_len = cfg.dims[-1] if hasattr(cfg, "dims") and cfg.dims and len(cfg.dims) > 1 else 1
@@ -233,7 +246,10 @@ class CompoundDataset(Dataset):
                         if not (isinstance(item, np.ndarray) and len(item) == first_elem_len):
                             consistent_len = False
                             logger.error(
-                                f"[{self.dataset_name}] Task '{task_name}': Inconsistent sequence lengths after parsing. Expected {first_elem_len}, got {len(item) if isinstance(item, np.ndarray) else 'Non-array'}. Data: {item}"
+                                f"[{self.dataset_name}] Task '{task_name}': Inconsistent "
+                                f"sequence lengths after parsing. Expected {first_elem_len}, "
+                                f"got {len(item) if isinstance(item, np.ndarray) else 'Non-array'}. "
+                                f"Data: {item}"
                             )
                             # Fallback: create NaN arrays of expected length
                             # This might be too aggressive; consider raising error or specific handling
@@ -249,7 +265,9 @@ class CompoundDataset(Dataset):
                         processed_values = np.stack(parsed_series.values)
                     except Exception as e:
                         logger.error(
-                            f"[{self.dataset_name}] Task '{task_name}': Failed to stack parsed series data. Error: {e}. Series data: {parsed_series.head().to_list()}"
+                            f"[{self.dataset_name}] Task '{task_name}': Failed to stack "
+                            f"parsed series data. Error: {e}. "
+                            f"Series data: {parsed_series.head().to_list()}"
                         )
                         # Fallback to a placeholder of NaNs if stacking fails
                         num_samples = len(self.x_formula)
@@ -262,15 +280,17 @@ class CompoundDataset(Dataset):
                     processed_values = np.full((num_samples, seq_len), np.nan)
                 else:  # inconsistent_len
                     num_samples = len(self.x_formula)
-                    seq_len = (
+                    seq_len = (  # Use configured dim
                         cfg.dims[-1] if hasattr(cfg, "dims") and cfg.dims and len(cfg.dims) > 1 else 1
-                    )  # Use configured dim
+                    )
                     logger.warning(
-                        f"[{self.dataset_name}] Task '{task_name}': Using placeholder for y_dict due to inconsistent sequence lengths after parsing. Expected length: {seq_len}"
+                        f"[{self.dataset_name}] Task '{task_name}': Using placeholder for "
+                        f"y_dict due to inconsistent sequence lengths after parsing. "
+                        f"Expected length: {seq_len}"
                     )
                     processed_values = np.full((num_samples, seq_len), np.nan)
 
-                if processed_values.ndim == 1:  # Should be rare now if parse_series_element ensures array output
+                if processed_values.ndim == 1:  # Should be rare if parse_series_element ensures array
                     logger.debug(
                         f"[{self.dataset_name}] Task '{task_name}': Reshaping 1D series data to 2D (unexpected)."
                     )
@@ -280,7 +300,8 @@ class CompoundDataset(Dataset):
                 # Mask based on whether the original or parsed element was all NaN
                 base_mask_np = ~parsed_series.apply(lambda x: np.all(np.isnan(x))).values.astype(bool)
                 logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
+                    f"[{self.dataset_name}] Task '{task_name}': y_dict shape "
+                    f"{self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
                 )
 
             elif target_col_name in attributes.columns:  # For REG/CLASS or SEQUENCE fallback to _value
@@ -293,23 +314,26 @@ class CompoundDataset(Dataset):
                 if task_type_enum_name == "CLASSIFICATION":
                     # For classification, target should be long integers (class indices)
                     # nan_to_num might be problematic if NaNs are present in integer labels;
-                    # assume classification targets are clean or handle NaNs appropriately before this step.
-                    # If NaNs are impossible for classification targets, nan_to_num can be removed for this path.
+                    # assume classification targets are clean or handle NaNs appropriately.
+                    # If NaNs are impossible for classification targets, nan_to_num can be removed.
                     # For now, keep nan_to_num but ensure long type.
                     self.y_dict[task_name] = torch.tensor(
                         np.nan_to_num(task_values, nan=-1).astype(np.int64), dtype=torch.long
                     )
-                    # Use -1 for NaN in integer arrays if they can occur, then handle in loss via ignore_index
+                    # Use -1 for NaN in integer arrays if they can occur,
+                    # then handle in loss via ignore_index
                 else:  # REGRESSION or SEQUENCE (if using _value column)
                     self.y_dict[task_name] = torch.tensor(np.nan_to_num(task_values, nan=0.0), dtype=torch.float32)
 
                 base_mask_np = ~np.isnan(attributes[target_col_name].values).astype(bool)
                 logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
+                    f"[{self.dataset_name}] Task '{task_name}': y_dict shape "
+                    f"{self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
                 )
             else:
                 logger.warning(
-                    f"[{self.dataset_name}] Task '{task_name}': Neither series column '{series_col_name}' nor value column '{target_col_name}' found. "
+                    f"[{self.dataset_name}] Task '{task_name}': Neither series column "
+                    f"'{series_col_name}' nor value column '{target_col_name}' found. "
                     f"Using zero placeholder."
                 )
                 placeholder_dim = 1
@@ -320,15 +344,17 @@ class CompoundDataset(Dataset):
 
                 # Determine dtype for placeholder based on task type
                 if task_type_enum_name == "CLASSIFICATION":
-                    # Placeholder for classification should be long, e.g., filled with a specific ignore_index like -1
+                    # Placeholder for classification should be long,
+                    # e.g., filled with a specific ignore_index like -1
                     self.y_dict[task_name] = torch.full(
                         (len(self.x_formula), placeholder_dim), fill_value=-1, dtype=torch.long
                     )
                 else:  # REGRESSION or SEQUENCE
                     self.y_dict[task_name] = torch.zeros((len(self.x_formula), placeholder_dim), dtype=torch.float32)
-                base_mask_np = np.zeros(len(self.x_formula), dtype=bool)  # All masked for placeholder
+                base_mask_np = np.zeros(len(self.x_formula), dtype=bool)  # All masked
                 logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': y_dict (placeholder) shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
+                    f"[{self.dataset_name}] Task '{task_name}': y_dict (placeholder) shape "
+                    f"{self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
                 )
 
             # --- Temps Data (for sequence tasks) ---
@@ -352,7 +378,8 @@ class CompoundDataset(Dataset):
                                     return np.array([parsed_element])
                             except (ValueError, SyntaxError, TypeError):
                                 logger.warning(
-                                    f"[{self.dataset_name}] Task '{task_name}': Could not parse string temps element '{element}'. Treating as NaN-like."
+                                    f"[{self.dataset_name}] Task '{task_name}': Could not parse "
+                                    f"string temps element '{element}'. Treating as NaN-like."
                                 )
                                 seq_len = (
                                     self.y_dict[task_name].shape[1]
@@ -387,7 +414,9 @@ class CompoundDataset(Dataset):
                             if not (isinstance(item, np.ndarray) and len(item) == first_temp_len):
                                 consistent_temp_len = False
                                 logger.error(
-                                    f"[{self.dataset_name}] Task '{task_name}': Inconsistent temps lengths after parsing. Expected {first_temp_len}, got {len(item) if isinstance(item, np.ndarray) else 'Non-array'}."
+                                    f"[{self.dataset_name}] Task '{task_name}': Inconsistent "
+                                    f"temps lengths after parsing. Expected {first_temp_len}, "
+                                    f"got {len(item) if isinstance(item, np.ndarray) else 'Non-array'}."
                                 )
                                 break
 
@@ -396,7 +425,9 @@ class CompoundDataset(Dataset):
                             processed_temps = np.stack(parsed_temps_series.values)
                         except Exception as e:
                             logger.error(
-                                f"[{self.dataset_name}] Task '{task_name}': Failed to stack parsed temps data. Error: {e}. Temps data: {parsed_temps_series.head().to_list()}"
+                                f"[{self.dataset_name}] Task '{task_name}': Failed to stack "
+                                f"parsed temps data. Error: {e}. "
+                                f"Temps data: {parsed_temps_series.head().to_list()}"
                             )
                             num_samples = len(self.x_formula)
                             seq_len = (
@@ -421,7 +452,9 @@ class CompoundDataset(Dataset):
                             else 1
                         )
                         logger.warning(
-                            f"[{self.dataset_name}] Task '{task_name}': Using placeholder for temps_dict due to inconsistent sequence lengths after parsing. Expected length: {seq_len}"
+                            f"[{self.dataset_name}] Task '{task_name}': Using placeholder "
+                            f"for temps_dict due to inconsistent sequence lengths after "
+                            f"parsing. Expected length: {seq_len}"
                         )
                         processed_temps = np.full((num_samples, seq_len), np.nan)
 
@@ -438,21 +471,27 @@ class CompoundDataset(Dataset):
                     )
                 else:
                     logger.warning(
-                        f"[{self.dataset_name}] Task '{task_name}': Temps column '{temps_col_name}' not found for sequence task. Using zero placeholder."
+                        f"[{self.dataset_name}] Task '{task_name}': Temps column "
+                        f"'{temps_col_name}' not found for sequence task. "
+                        f"Using zero placeholder."
                     )
-                    # Create a zero placeholder for temps. Shape should be (num_samples, seq_len, 1)
-                    # seq_len can be inferred from the corresponding y_dict entry for this task.
+                    # Create a zero placeholder for temps. Shape should be (N, SeqLen, 1)
+                    # seq_len can be inferred from y_dict entry for this task.
                     if task_name in self.y_dict:
                         num_samples = len(self.x_formula)
                         seq_len = self.y_dict[task_name].shape[1]
                         self.temps_dict[task_name] = torch.zeros((num_samples, seq_len, 1), dtype=torch.float32)
                         logger.debug(
-                            f"[{self.dataset_name}] Task '{task_name}': Created zero placeholder for temps_dict with shape {self.temps_dict[task_name].shape}"
+                            f"[{self.dataset_name}] Task '{task_name}': Created zero "
+                            f"placeholder for temps_dict with shape "
+                            f"{self.temps_dict[task_name].shape}"
                         )
                     else:
-                        # This case should ideally not happen if y_dict is always populated for enabled sequence tasks
+                        # This case should ideally not happen if y_dict is always
+                        # populated for enabled sequence tasks
                         logger.error(
-                            f"[{self.dataset_name}] Task '{task_name}': Cannot create temps placeholder because y_dict entry is missing."
+                            f"[{self.dataset_name}] Task '{task_name}': Cannot create "
+                            f"temps placeholder because y_dict entry is missing."
                         )
 
             # --- Task Masking ---
@@ -462,27 +501,35 @@ class CompoundDataset(Dataset):
             if task_masking_ratios and task_name in task_masking_ratios and not self.is_predict_set:
                 ratio_to_keep = task_masking_ratios[task_name]
                 logger.info(
-                    f"[{self.dataset_name}] Task '{task_name}': Applying random masking with keep_ratio={ratio_to_keep}. Initial valid samples: {num_valid_after_nan_mask}"
+                    f"[{self.dataset_name}] Task '{task_name}': Applying random masking "
+                    f"with keep_ratio={ratio_to_keep}. Initial valid "
+                    f"samples: {num_valid_after_nan_mask}"
                 )
                 if 0.0 <= ratio_to_keep < 1.0:
                     valid_indices = np.where(final_mask_np)[0]
                     if len(valid_indices) > 0:
                         num_to_keep = int(np.round(len(valid_indices) * ratio_to_keep))
-                        if num_to_keep < len(valid_indices):  # only mask if we are keeping fewer than all valid
+                        if num_to_keep < len(valid_indices):  # only mask if keeping fewer
                             indices_to_set_false = np.random.choice(
                                 valid_indices, size=len(valid_indices) - num_to_keep, replace=False
                             )
                             final_mask_np[indices_to_set_false] = False
                             logger.info(
-                                f"[{self.dataset_name}] Task '{task_name}': {len(valid_indices) - num_to_keep} samples further masked. Kept {num_to_keep}."
+                                f"[{self.dataset_name}] Task '{task_name}': "
+                                f"{len(valid_indices) - num_to_keep} samples "
+                                f"further masked. Kept {num_to_keep}."
                             )
                         else:
                             logger.info(
-                                f"[{self.dataset_name}] Task '{task_name}': Keep ratio {ratio_to_keep} results in keeping all {len(valid_indices)} valid samples. No random masking applied."
+                                f"[{self.dataset_name}] Task '{task_name}': Keep ratio "
+                                f"{ratio_to_keep} results in keeping all "
+                                f"{len(valid_indices)} valid samples. "
+                                f"No random masking applied."
                             )
                     else:
                         logger.info(
-                            f"[{self.dataset_name}] Task '{task_name}': No valid samples after NaN masking to apply random masking to."
+                            f"[{self.dataset_name}] Task '{task_name}': No valid samples "
+                            f"after NaN masking to apply random masking to."
                         )
 
                 elif ratio_to_keep == 0.0:
@@ -490,18 +537,23 @@ class CompoundDataset(Dataset):
                     logger.info(f"[{self.dataset_name}] Task '{task_name}': All samples masked due to keep_ratio=0.0.")
                 elif ratio_to_keep >= 1.0:
                     logger.info(
-                        f"[{self.dataset_name}] Task '{task_name}': Keep ratio {ratio_to_keep} >= 1.0. No random masking applied beyond NaN masking."
+                        f"[{self.dataset_name}] Task '{task_name}': Keep ratio "
+                        f"{ratio_to_keep} >= 1.0. No random masking applied "
+                        f"beyond NaN masking."
                     )
 
             if final_mask_np.ndim == 1:  # Ensure mask is [N, 1]
                 final_mask_np = final_mask_np.reshape(-1, 1)
             self.task_masks_dict[task_name] = torch.tensor(final_mask_np, dtype=torch.bool)
             logger.debug(
-                f"[{self.dataset_name}] Task '{task_name}': final task_mask shape {self.task_masks_dict[task_name].shape}, final valid count: {torch.sum(self.task_masks_dict[task_name]).item()}"
+                f"[{self.dataset_name}] Task '{task_name}': final task_mask shape "
+                f"{self.task_masks_dict[task_name].shape}, final valid count: "
+                f"{torch.sum(self.task_masks_dict[task_name]).item()}"
             )
 
         logger.info(
-            f"[{self.dataset_name}] CompoundDataset initialization complete. Processed {len(self.enabled_task_names)} enabled tasks."
+            f"[{self.dataset_name}] CompoundDataset initialization complete. "
+            f"Processed {len(self.enabled_task_names)} enabled tasks."
         )
 
     def __len__(self):
