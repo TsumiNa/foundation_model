@@ -41,7 +41,7 @@ graph TD
     DepositBlock --"h_task (B, D_deposit)"--> SeqTaskHeadsJunction{"To Sequence Heads"}
 
 
-    subgraph TaskHeadsModule["Task Heads (self.task_heads)"]
+    subgraph TaskHeadsModule["Task Heads<br/>(self.task_heads)"]
         direction TB
         subgraph AttrClassHeads["Attribute/Classification Heads"]
             direction LR
