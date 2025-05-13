@@ -1,165 +1,53 @@
-experiment_name: base_experiment
-log_dir: results/logs/${experiment_name}
-datamodule:
-  _target_: foundation_model.data.datamodule.CompoundDataModule
-  formula_desc_source: /data/foundation_model/samples/fake_data/formula_features.csv
-  attributes_source: /data/foundation_model/samples/fake_data/attributes.csv
-  task_configs: ${model.task_configs}
-  batch_size: 64
-  num_workers: 4
-  val_split: 0.1
-  test_split: 0.1
-  train_random_seed: 42
-  test_random_seed: 24
+# experiment_name: base_experiment # This can be overridden by CLI or defaults if not set
+# log_dir: results/logs/${experiment_name} # Replaced by trainer.default_root_dir
+
 model:
-  _target_: foundation_model.models.flexible_multi_task_model.FlexibleMultiTaskModel
-  shared_block_dims:
-  - 256
-  - 512
-  - 512
-  task_configs:
-  - name: regression_1
-    type: REGRESSION
-    dims:
-    - 512
-    - 128
-    - 1
-    norm: true
-    residual: false
-    weight: 1.0
-    enabled: true
-    optimizer:
+  class_path: foundation_model.models.flexible_multi_task_model.FlexibleMultiTaskModel
+  init_args:
+    shared_block_dims: [256, 128, 64]
+    task_configs:
+      - ${file(samples/generated_configs/common_task_configs.yaml):tasks}
+    shared_block_optimizer:
       optimizer_type: AdamW
       lr: 0.001
       weight_decay: 0.01
       eps: 1.0e-06
-      betas:
-      - 0.9
-      - 0.999
+      betas: [0.9, 0.999]
+      freeze_parameters: false # Control encoder freezing here
       scheduler_type: ReduceLROnPlateau
       mode: min
-      factor: 0.5
-      patience: 10
-      min_lr: 1.0e-05
-      monitor: val_regression_1_loss
-  - name: regression_2
-    type: REGRESSION
-    dims:
-    - 512
-    - 128
-    - 1
-    norm: true
-    residual: false
-    weight: 1.0
-    enabled: true
-    optimizer:
-      optimizer_type: AdamW
-      lr: 0.001
-      weight_decay: 0.01
-      eps: 1.0e-06
-      betas:
-      - 0.9
-      - 0.999
-      scheduler_type: ReduceLROnPlateau
-      mode: min
-      factor: 0.5
-      patience: 10
-      min_lr: 1.0e-05
-      monitor: val_regression_2_loss
-  - name: regression_3
-    type: REGRESSION
-    dims:
-    - 512
-    - 128
-    - 1
-    norm: true
-    residual: false
-    weight: 1.0
-    enabled: true
-    optimizer:
-      optimizer_type: AdamW
-      lr: 0.001
-      weight_decay: 0.01
-      eps: 1.0e-06
-      betas:
-      - 0.9
-      - 0.999
-      scheduler_type: ReduceLROnPlateau
-      mode: min
-      factor: 0.5
-      patience: 10
-      min_lr: 1.0e-05
-      monitor: val_regression_3_loss
-  - name: classification_A
-    type: CLASSIFICATION
-    dims:
-    - 512
-    - 64
-    - 2
-    num_classes: 2
-    norm: true
-    residual: false
-    weight: 0.5
-    enabled: true
-    optimizer:
-      optimizer_type: AdamW
-      lr: 0.002
-      scheduler_type: StepLR
-      step_size: 30
-      gamma: 0.1
-      monitor: val_classification_A_loss
-  - name: classification_B
-    type: CLASSIFICATION
-    dims:
-    - 512
-    - 64
-    - 3
-    num_classes: 3
-    norm: true
-    residual: false
-    weight: 0.5
-    enabled: true
-    optimizer:
-      optimizer_type: AdamW
-      lr: 0.002
-      scheduler_type: StepLR
-      step_size: 30
-      gamma: 0.1
-      monitor: val_classification_B_loss
-  shared_block_optimizer:
-    optimizer_type: AdamW
-    lr: 0.001
-    weight_decay: 0.01
-    eps: 1.0e-06
-    betas:
-    - 0.9
-    - 0.999
-    scheduler_type: ReduceLROnPlateau
-    mode: min
-    factor: 0.1
-    patience: 20
-    min_lr: 1.0e-06
-    monitor: val_total_loss
-  with_structure: false
-  struct_block_dims:
-  - 128
-  - 256
-  - 512
-  modality_dropout_p: 0.3
-  norm_shared: true
-  residual_shared: false
-  enable_self_supervised_training: false
-  ssl_config:
-    contrastive_loss_weight: 1.0
-    cross_reconstruction_loss_weight: 1.0
-    masked_feature_modeling_loss_weight: 1.0
+      factor: 0.1
+      patience: 20
+      min_lr: 1.0e-06
+      monitor: val_total_loss
+    with_structure: false
+    modality_dropout_p: 0.3
+    norm_shared: true
+    residual_shared: false
+    enable_self_supervised_training: false
     mask_ratio: 0.15
     temperature: 0.07
-  freeze_encoder: false
-  lora_rank: 0
-  lora_alpha: 1.0
+    loss_weights:
+      mfm: 1.0
+      contrastive: 1.0
+      cross_recon: 1.0
+    # lora_rank and lora_alpha are per-task configurations
+
+data:
+  class_path: foundation_model.data.datamodule.CompoundDataModule
+  init_args:
+    formula_desc_source: /data/foundation_model/samples/fake_data/formula_features.csv
+    attributes_source: /data/foundation_model/samples/fake_data/attributes.csv
+    # task_configs should be automatically linked from model.init_args.task_configs
+    batch_size: 64
+    num_workers: 4
+    val_split: 0.1
+    test_split: 0.1
+    train_random_seed: 42
+    test_random_seed: 24
+
 trainer:
-  _target_: lightning.pytorch.Trainer
+  default_root_dir: results/logs/default_experiment
   max_epochs: 100
   accelerator: auto
   devices: auto
@@ -168,22 +56,26 @@ trainer:
   gradient_clip_val: 1.0
   log_every_n_steps: 50
   logger:
-  - _target_: lightning.pytorch.loggers.CSVLogger
-    save_dir: ${log_dir}
-    name: ''
-  - _target_: lightning.pytorch.loggers.TensorBoardLogger
-    save_dir: ${log_dir}
-    name: ''
+    - class_path: lightning.pytorch.loggers.CSVLogger
+      init_args:
+        save_dir: "${trainer.default_root_dir}"
+        name: ""
+    - class_path: lightning.pytorch.loggers.TensorBoardLogger
+      init_args:
+        save_dir: "${trainer.default_root_dir}"
+        name: ""
   callbacks:
-  - _target_: lightning.pytorch.callbacks.ModelCheckpoint
-    dirpath: ${log_dir}/checkpoints
-    filename: '{epoch}-{step}-{val_total_loss:.2f}'
-    monitor: val_total_loss
-    mode: min
-    save_top_k: 1
-    save_last: true
-  - _target_: lightning.pytorch.callbacks.EarlyStopping
-    monitor: val_total_loss
-    patience: 25
-    mode: min
-    verbose: true
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: null
+        filename: "{epoch}-{step}-{val_total_loss:.2f}"
+        monitor: val_total_loss
+        mode: min
+        save_top_k: 1
+        save_last: true
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: val_total_loss
+        patience: 25
+        mode: min
+        verbose: true

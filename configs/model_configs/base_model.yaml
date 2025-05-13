@@ -3,14 +3,14 @@
 
 # Base model configuration for FlexibleMultiTaskModel
 # This serves as a comprehensive template.
-# Assumes a training script that can instantiate components using _target_ (e.g., PyTorch Lightning CLI).
+# Assumes a training script that can instantiate components using class_path (e.g., PyTorch Lightning CLI).
 
 experiment_name: "base_experiment"
 log_dir: "results/logs/${experiment_name}" # Logs will go into results/logs_base_experiment
 
 # --- Data Module Configuration ---
 datamodule:
-  _target_: foundation_model.data.datamodule.CompoundDataModule
+  class_path: foundation_model.data.datamodule.CompoundDataModule
   formula_desc_source: "path/to/your/formula_features.csv" # REQUIRED: Update this path
   attributes_source: "path/to/your/attributes.csv" # REQUIRED: Update this path
   # structure_desc_source: "path/to/your/structure_features.csv" # Optional: Uncomment and update if using structure
@@ -26,7 +26,7 @@ datamodule:
 
 # --- Model Configuration ---
 model:
-  _target_: foundation_model.models.flexible_multi_task_model.FlexibleMultiTaskModel
+  class_path: foundation_model.models.flexible_multi_task_model.FlexibleMultiTaskModel
   shared_block_dims: [256, 512, 512] # Example: Input_dim_formula -> hidden -> latent_dim
   task_configs:
     # Example regression task for material formation energy
@@ -139,7 +139,7 @@ model:
 
 # --- Trainer Configuration (PyTorch Lightning) ---
 trainer:
-  _target_: lightning.pytorch.Trainer
+  class_path: lightning.pytorch.Trainer
   max_epochs: 100
   accelerator: "auto" # Options: "cpu", "gpu", "tpu", "ipu", "hpu", "mps", "auto"
   devices: "auto" # Number of devices or "auto"
@@ -151,18 +151,18 @@ trainer:
   # strategy: "auto" # e.g., "ddp", "fsdp", "deepspeed"
 
   logger:
-    - _target_: lightning.pytorch.loggers.CSVLogger
+    - class_path: lightning.pytorch.loggers.CSVLogger
       save_dir: ${log_dir} # Uses log_dir defined at the top
       name: "" # Logs will be in ${log_dir}/version_X
       # version: "run_1" # Optional: specify a version string
 
-    - _target_: lightning.pytorch.loggers.TensorBoardLogger
+    - class_path: lightning.pytorch.loggers.TensorBoardLogger
       save_dir: ${log_dir} # Uses log_dir defined at the top
       name: "" # TensorBoard event files will also be in ${log_dir}/version_X
       # version: "run_1" # Optional: specify a version string
       # log_graph: True # Optional: log the model graph
 
-    # - _target_: lightning.pytorch.loggers.WandbLogger
+    # - class_path: lightning.pytorch.loggers.WandbLogger
     #   save_dir: ${log_dir} # WandB artifacts might be stored here if configured
     #   name: null # Optional: WandB run name, defaults to a generated one
     #   project: "my_foundation_model_project" # REQUIRED: Specify your WandB project name
@@ -173,17 +173,17 @@ trainer:
     #   # tags: ["base_run", "example"] # Optional: Add tags to the run
 
   callbacks:
-    - _target_: lightning.pytorch.callbacks.ModelCheckpoint
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       dirpath: "${log_dir}/checkpoints" # Save checkpoints in a subfolder of log_dir
       filename: "{epoch}-{step}-{val_total_loss:.2f}"
       monitor: "val_total_loss"
       mode: "min"
       save_top_k: 1
       save_last: true # Recommended to save the last epoch's checkpoint
-    - _target_: lightning.pytorch.callbacks.EarlyStopping
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
       monitor: "val_total_loss"
       patience: 25 # Number of epochs with no improvement after which training will be stopped
       mode: "min"
       verbose: true
-    # - _target_: lightning.pytorch.callbacks.LearningRateMonitor
+    # - class_path: lightning.pytorch.callbacks.LearningRateMonitor
     #   logging_interval: "step" # or "epoch"

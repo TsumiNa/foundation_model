@@ -13,14 +13,14 @@
 #    python samples/helper_tools/config_generator.py \
 #      --attributes_csv samples/fake_data/attributes.csv \
 #      --formula_features_csv samples/fake_data/formula_features.csv \
-#      --output_config samples/generated_configs/default_config.yaml
+#      --output_config samples/generated_configs/generated_model_config.yaml
 #
 # Ensure your Python environment with necessary dependencies (PyTorch, Lightning, etc.)
 # and the foundation_model package are active.
 
 # --- Configuration ---
 # Path to the generated model configuration file
-CONFIG_FILE="samples/generated_configs/default_config.yaml"
+CONFIG_FILE="samples/generated_configs/generated_model_config.yaml"
 
 # Directory to store logs for this specific run
 LOG_DIR_BASE="samples/example_logs/basic_run"
@@ -50,14 +50,16 @@ mkdir -p "$LOG_DIR"
 # to ensure logs and checkpoints for this example run are stored in a specific location.
 # Note: The exact index for ModelCheckpoint in callbacks might vary if base_model.yaml changes.
 # We also set trainer.logger.name to an empty string so that version_X is created directly under LOG_DIR.
+# The YAML now handles pathing based on trainer.default_root_dir.
+# We pass the fully resolved LOG_DIR (which includes the timestamped experiment name)
+# directly as the default_root_dir for the trainer.
 python -m foundation_model.scripts.train fit \
     --config "$CONFIG_FILE" \
-    trainer.logger.save_dir="$LOG_DIR" \
-    trainer.logger.name="" \
-    trainer.callbacks[0].dirpath="$LOG_DIR/checkpoints/" \
-    experiment_name="$EXPERIMENT_NAME" # Optional: if your script/config uses this for top-level naming
+    --trainer.default_root_dir="$LOG_DIR"
 
-# trainer.default_root_dir="$LOG_DIR" # Alternative way to set log output, often used by Trainer.
+# The trainer.default_root_dir in the YAML is a static fallback.
+# The CLI argument --trainer.default_root_dir="$LOG_DIR" overrides it.
+# Loggers and ModelCheckpoint will then use this resolved default_root_dir.
 
 echo "--------------------------------------------------"
 echo "Basic Training Run Command Executed."
@@ -68,4 +70,4 @@ echo "--------------------------------------------------"
 # - This script assumes `foundation_model.scripts.train` is the entry point for your Lightning CLI.
 # - Adjust paths and Python command if your project structure or entry point differs.
 # - For actual training, you might want to remove `trainer.max_epochs` override or set it higher
-#   if it's defined low in the default_config.yaml for quick testing.
+#   if it's defined low in the generated_model_config.yaml for quick testing.

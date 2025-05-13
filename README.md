@@ -305,7 +305,7 @@ log_dir: "results/logs_scaling_demo"
 
 # --- Data Module Configuration (for CompoundDataModule) ---
 datamodule:
-  _target_: foundation_model.data.datamodule.CompoundDataModule
+  class_path: foundation_model.data.datamodule.CompoundDataModule
   formula_desc_source: "examples/data/dummy_formula_descriptors.csv" # Path to your formula data
   attributes_source: "examples/data/dummy_attributes.csv"     # Path to your attributes data
   task_configs:
@@ -329,7 +329,7 @@ datamodule:
 
 # --- Model Configuration (for FlexibleMultiTaskModel) ---
 model:
-  _target_: foundation_model.models.flexible_multi_task_model.FlexibleMultiTaskModel
+  class_path: foundation_model.models.flexible_multi_task_model.FlexibleMultiTaskModel
   shared_block_dims: [2, 128, 256] # Input (2 features from dummy_formula) -> hidden -> latent (D_deposit for attr heads, D_latent for seq heads)
   # task_configs are automatically passed from datamodule by the training script if using LightningCLI or similar
   norm_shared: true
@@ -343,13 +343,13 @@ trainer:
   accelerator: "cpu"
   devices: 1
   logger: # Example CSVLogger configuration
-    _target_: lightning.pytorch.loggers.CSVLogger
+    class_path: lightning.pytorch.loggers.CSVLogger
     save_dir: "results/logs_scaling_demo" # Should match experiment_config.log_dir or be derived
     name: ${experiment_name} # Uses experiment_name defined above
   # Add callbacks like ModelCheckpoint if needed
   # default_root_dir: ${log_dir} # Usually set by log_dir
 ```
-*This YAML structure assumes a training script that can instantiate components using `_target_` (e.g., using `jsonargparse` with PyTorch Lightning's `CLI`). The existing `src/foundation_model/scripts/train.py` would need modification or a new script created to support this fully.*
+*This YAML structure assumes a training script that can instantiate components using `class_path` (e.g., using `jsonargparse` with PyTorch Lightning's `CLI`). The existing `src/foundation_model/scripts/train.py` would need modification or a new script created to support this fully.*
 
 **3. Run Training:**
 

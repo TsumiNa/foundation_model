@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 DEFAULT_NUM_SAMPLES = 1000
-DEFAULT_NUM_FORMULA_FEATURES = 20
+DEFAULT_NUM_FORMULA_FEATURES = 256
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "fake_data"
 
 # For reproducibility of fake data

@@ -39,36 +39,36 @@ def load_base_template(template_path: Path) -> dict:
             "experiment_name": "generated_experiment",
             "log_dir": "results/logs/${experiment_name}",
             "datamodule": {
-                "_target_": "foundation_model.data.datamodule.CompoundDataModule",
+                "class_path": "foundation_model.data.datamodule.CompoundDataModule",
                 "batch_size": 64,
                 "num_workers": 4,
                 "val_split": 0.1,
                 "test_split": 0.1,
             },
             "model": {
-                "_target_": "foundation_model.models.flexible_multi_task_model.FlexibleMultiTaskModel",
+                "class_path": "foundation_model.models.flexible_multi_task_model.FlexibleMultiTaskModel",
                 "shared_block_dims": [256, 512, 512],
                 "task_configs": [],
                 "shared_block_optimizer": {"optimizer_type": "AdamW", "lr": 0.001, "weight_decay": 0.01},
                 "with_structure": False,
             },
             "trainer": {
-                "_target_": "lightning.pytorch.Trainer",
+                "class_path": "lightning.pytorch.Trainer",
                 "max_epochs": 50,
                 "accelerator": "auto",
                 "devices": "auto",
                 "logger": [  # Logger is now a list
-                    {"_target_": "lightning.pytorch.loggers.CSVLogger", "save_dir": "${log_dir}", "name": ""},
-                    {"_target_": "lightning.pytorch.loggers.TensorBoardLogger", "save_dir": "${log_dir}", "name": ""},
+                    {"class_path": "lightning.pytorch.loggers.CSVLogger", "save_dir": "${log_dir}", "name": ""},
+                    {"class_path": "lightning.pytorch.loggers.TensorBoardLogger", "save_dir": "${log_dir}", "name": ""},
                 ],
                 "callbacks": [
                     {
-                        "_target_": "lightning.pytorch.callbacks.ModelCheckpoint",
+                        "class_path": "lightning.pytorch.callbacks.ModelCheckpoint",
                         "monitor": "val_total_loss",
                         "mode": "min",
                     },
                     {
-                        "_target_": "lightning.pytorch.callbacks.EarlyStopping",
+                        "class_path": "lightning.pytorch.callbacks.EarlyStopping",
                         "monitor": "val_total_loss",
                         "patience": 10,
                     },
