@@ -1,6 +1,6 @@
 [project]
 name = "foundation-model"
-version = "0.2.0"
+version = "0.2.1"
 description = "A multi-task learning model for predicting material properties"
 readme = "README.md"
 authors = [{ name = "TsumiNa", email = "liu.chang.1865@gmail.com" }]

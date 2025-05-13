@@ -194,8 +194,8 @@ def test_model_forward_pass(model_config_mixed_tasks, sample_batch_mixed_tasks):
 
     x_formula, _, _, temps_batch = sample_batch_mixed_tasks  # y_dict and masks not needed for forward pass directly
 
-    # Forward pass expects x_formula (or (x_formula, x_struct)) and temps_batch
-    output = model(x_formula, temps_batch=temps_batch)
+    # Forward pass expects x_formula (or (x_formula, x_struct)) and task_sequence_data_batch
+    output = model(x_formula, task_sequence_data_batch=temps_batch)
 
     assert isinstance(output, dict), "Output should be a dictionary"
 
