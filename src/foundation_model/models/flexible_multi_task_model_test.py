@@ -5,6 +5,7 @@
 Tests for FlexibleMultiTaskModel, including integration with CompoundDataModule.
 """
 
+from pathlib import Path  # To use Path objects for directory manipulation
 from types import SimpleNamespace
 
 import lightning as L
@@ -13,6 +14,7 @@ import pandas as pd
 import pytest
 import torch
 import torch.nn as nn
+from lightning.pytorch.loggers import CSVLogger
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
@@ -168,7 +170,7 @@ def test_model_initialization(model_config_mixed_tasks):
 
     assert model.with_structure == config.with_structure
     assert model.enable_self_supervised_training == config.enable_self_supervised_training
-    assert model.automatic_optimization, "automatic_optimization should be True by default"
+    assert not model.automatic_optimization, "automatic_optimization should be False for FlexibleMultiTaskModel"
 
 
 def test_model_forward_pass(model_config_mixed_tasks, sample_batch_mixed_tasks):
@@ -246,6 +248,34 @@ def test_model_training_step(model_config_mixed_tasks, sample_batch_mixed_tasks,
     )
     model.train()  # Set model to training mode
 
+    # Mock trainer and strategy for manual_backward
+    mock_trainer = mocker.MagicMock(spec=L.Trainer)
+    mock_strategy = mocker.MagicMock()
+    mock_strategy.backward = mocker.MagicMock()
+    mock_trainer.strategy = mock_strategy
+    model.trainer = mock_trainer
+
+    # Mock optimizers
+    # The model's configure_optimizers returns a list of dicts or optimizers
+    # For simplicity in this unit test, we'll mock the self.optimizers() call
+    # which is what training_step uses internally.
+    # Number of optimizers = 1 (shared) + num_enabled_tasks
+    num_enabled_tasks = sum(1 for tc in config.task_configs if tc.enabled)
+    mock_optimizers_list = []
+    for _ in range(1 + num_enabled_tasks):
+        opt = mocker.MagicMock(spec=torch.optim.Optimizer)
+        opt.step = mocker.MagicMock()
+        opt.zero_grad = mocker.MagicMock()
+        mock_optimizers_list.append(opt)
+
+    # Patch model.optimizers() to return our list of mock optimizers
+    # Note: model.optimizers() is a property that calls self.trainer.optimizers,
+    # so we need to ensure model.trainer.optimizers returns our mocks.
+    # A more direct way if model.optimizers() is called:
+    mocker.patch.object(model, "optimizers", return_value=mock_optimizers_list)
+    # If training_step directly accesses self.trainer.optimizers:
+    # mock_trainer.optimizers = mock_optimizers_list # This might be needed if self.optimizers() is complex
+
     mock_log_dict = mocker.patch.object(model, "log_dict")
 
     # sample_batch_mixed_tasks provides (x_formula, y_dict_batch, task_masks_batch, temps_batch)
@@ -253,8 +283,24 @@ def test_model_training_step(model_config_mixed_tasks, sample_batch_mixed_tasks,
     loss = model.training_step(sample_batch_mixed_tasks, batch_idx=0)
 
     assert isinstance(loss, torch.Tensor), "Loss should be a Tensor"
-    assert loss.requires_grad, "Loss should require gradients for backpropagation"
+    # With manual optimization, the returned loss might not directly have requires_grad=True
+    # if it's detached or cloned before returning. The important part is that the original
+    # computed loss that was passed to manual_backward had requires_grad=True.
+    # We'll assert that backward was called on a tensor.
+    # assert loss.requires_grad, "Loss should require gradients for backpropagation"
     assert loss.ndim == 0, "Loss should be a scalar"
+
+    # Check that manual_backward was called (via strategy)
+    mock_strategy.backward.assert_called_once()
+    # Check that backward was called with a tensor that requires grad
+    backward_loss_arg = mock_strategy.backward.call_args[0][0]
+    assert isinstance(backward_loss_arg, torch.Tensor)
+    assert backward_loss_arg.requires_grad, "Loss passed to backward should require gradients"
+
+    # Check that optimizer steps and zero_grads were called
+    for opt_mock in mock_optimizers_list:
+        opt_mock.step.assert_called_once()
+        opt_mock.zero_grad.assert_called_once()
 
     mock_log_dict.assert_called()
     logged_metrics = mock_log_dict.call_args[0][0]
@@ -588,25 +634,84 @@ def test_trainer_integration_mixed_tasks(model_config_mixed_tasks, dummy_compoun
         temperature=config.temperature,
     )
 
+    # Using integer for version, and a slightly different name for clarity
+    csv_logger = CSVLogger(save_dir=str(tmp_path), name="pytest_csv_logs", version=0)
     trainer = L.Trainer(
-        default_root_dir=tmp_path,  # Log to a temporary directory
-        fast_dev_run=True,  # Runs 1 batch for train, val, test and predict
+        logger=csv_logger,
+        max_epochs=1,
+        limit_train_batches=1,
+        limit_val_batches=1,
         accelerator="cpu",
-        # logger=False, # Removed to enable default logger (TensorBoardLogger)
-        enable_checkpointing=False,  # Disable checkpointing for this test
-        enable_progress_bar=False,  # Keep test output clean
+        enable_checkpointing=False,
+        enable_progress_bar=False,
     )
 
     # The main assertion is that this runs without errors.
     try:
         trainer.fit(model, datamodule=dummy_compound_datamodule)
+        csv_logger.finalize("success")  # Ensure logs are flushed
 
-        # Check if logger created the log directory
-        log_dir = tmp_path / "lightning_logs" / "version_0"
-        assert log_dir.is_dir(), f"Log directory not found: {log_dir}"
-        # Check for hparams file (TensorBoardLogger creates this)
-        hparams_file = log_dir / "hparams.yaml"
-        assert hparams_file.is_file(), f"hparams.yaml not found in {log_dir}"
+        # Construct the expected path based on CSVLogger's default behavior with name and version
+        # CSVLogger creates save_dir / name / version_X / metrics.csv
+        # Here, save_dir is tmp_path, name is "pytest_csv_logs", version is 0.
+        # Use the logger's reported log_dir to be more robust
+        actual_log_dir = Path(csv_logger.log_dir)
+        log_file_path = actual_log_dir / "metrics.csv"
+
+        # --- Start Debugging Prints ---
+        print("\n--- Debugging CSVLogger ---")
+        print(f"tmp_path: {tmp_path}")
+        print(f"CSVLogger save_dir: {csv_logger.save_dir}")
+        print(f"CSVLogger name: {csv_logger.name}")
+        print(f"CSVLogger version: {csv_logger.version}")
+        print(f"CSVLogger reported log_dir: {csv_logger.log_dir}")
+        print(f"Constructed actual_log_dir: {actual_log_dir}")
+        print(f"Constructed log_file_path: {log_file_path}")
+
+        if tmp_path.exists():
+            print(f"Contents of tmp_path ({tmp_path}):")
+            for item in tmp_path.rglob("*"):
+                print(f"  {item}")
+        else:
+            print(f"tmp_path ({tmp_path}) does not exist.")
+
+        if actual_log_dir.exists():
+            print(f"Contents of actual_log_dir ({actual_log_dir}):")
+            for item in actual_log_dir.glob("*"):
+                print(f"  {item}")
+        else:
+            print(f"actual_log_dir ({actual_log_dir}) does not exist (before assertion).")
+        # --- End Debugging Prints ---
+
+        assert log_file_path.is_file(), f"metrics.csv not found at {log_file_path}"
+
+        # Read the CSV and check its content
+        metrics_df = pd.read_csv(log_file_path)
+        assert not metrics_df.empty, "metrics.csv is empty"
+
+        # When on_epoch=True (default for training_step), CSVLogger appends "_epoch"
+        # For on_step=True, it does not append "_step" but uses the "step" column.
+        # Validation step logs with on_epoch=True, on_step=False by default.
+        expected_train_cols = ["epoch", "step", "train_total_loss_epoch"]
+        expected_val_cols = ["val_total_loss"]  # Validation metrics don't get _epoch if only logged on epoch end.
+
+        enabled_tasks_in_config = [tc for tc in config.task_configs if tc.enabled]
+        for task_cfg in enabled_tasks_in_config:
+            expected_train_cols.append(f"train_{task_cfg.name}_loss_epoch")
+            expected_train_cols.append(f"train_{task_cfg.name}_loss_weighted_epoch")
+            expected_val_cols.append(f"val_{task_cfg.name}_loss")  # val metrics are typically epoch-only
+
+        all_expected_cols = set(expected_train_cols + expected_val_cols)
+
+        # Check if all expected columns are present (some might be NaN if not logged in a particular step/epoch)
+        for col in all_expected_cols:
+            assert col in metrics_df.columns, f"Expected column '{col}' not found in metrics.csv"
+
+        # With fast_dev_run, we expect at least one row for training metrics and one for validation metrics
+        # (though they might be combined or logged at different steps by CSVLogger)
+        # A simple check for non-empty columns for key metrics:
+        assert metrics_df["train_total_loss_epoch"].notna().any(), "train_total_loss_epoch column has no data"
+        assert metrics_df["val_total_loss"].notna().any(), "val_total_loss column has no data"
 
         # If fast_dev_run is True, it also runs validation and test loops if defined.
         # And predict_loop if predict_dataloaders are available.

@@ -333,9 +333,144 @@ def test_attribute_names_property(sample_formula_desc_df, sample_attributes_df, 
     assert sorted(dataset.attribute_names) == sorted(expected_names)
 
 
+def test_input_dtypes_conversion(sample_attributes_df, sample_task_configs):
+    """Test that input DataFrames with different dtypes are converted to float32 for tensors."""
+    # Create formula_desc with int dtype
+    formula_int_df = pd.DataFrame(
+        {"feat_0": [1, 2, 3, 4, 5], "feat_1": [11, 12, 13, 14, 15]},
+        index=[f"id_{i}" for i in range(5)],
+        dtype=np.int32,
+    )
+    # Create structure_desc with a mix of int and float
+    structure_mixed_df = pd.DataFrame(
+        {"struct_feat_0": [10, 10, 10, 10, 10], "struct_feat_1": [11.1, 11.2, 11.3, 11.4, 11.5]},
+        index=[f"id_{i}" for i in range(5)],
+    )
+    structure_mixed_df["struct_feat_0"] = structure_mixed_df["struct_feat_0"].astype(np.int64)
+
+    dataset = CompoundDataset(
+        formula_desc=formula_int_df,
+        attributes=sample_attributes_df,  # sample_attributes_df already has floats and objects (lists)
+        task_configs=sample_task_configs,
+        structure_desc=structure_mixed_df,
+        use_structure_for_this_dataset=True,
+        dataset_name="test_dtypes",
+    )
+
+    assert dataset.x_formula.dtype == torch.float32
+    assert dataset.x_struct.dtype == torch.float32
+
+    # Check y_dict dtypes (regression and sequence should be float32)
+    for task_name, y_tensor in dataset.y_dict.items():
+        task_cfg = next(tc for tc in sample_task_configs if tc.name == task_name)
+        if task_cfg.type == MockTaskType.REGRESSION or task_cfg.type == MockTaskType.SEQUENCE:
+            assert y_tensor.dtype == torch.float32, f"Task {task_name} y_dict dtype mismatch"
+        # Classification tasks (if added) would be long
+
+    # Check temps_dict dtype (should be float32)
+    for task_name, temps_tensor in dataset.temps_dict.items():
+        assert temps_tensor.dtype == torch.float32, f"Task {task_name} temps_dict dtype mismatch"
+
+
 # TODO: Add more tests:
-# - Different dtypes in input DataFrames (though CompoundDataset converts to float32)
 # - Edge case: empty formula_desc or attributes (should raise error or handle gracefully if allowed by design)
 # - Edge case: task_configs list is empty (should raise error)
 # - Test sequence data where individual items in the list/array are not all numbers (e.g. strings, though unlikely)
 # - Test when `temps` column is missing for a sequence task.
+
+
+def test_empty_inputs_raise_error(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+    """Test that empty DataFrames or task_configs list raise ValueError."""
+    empty_df = pd.DataFrame()
+    non_empty_formula_df = sample_formula_desc_df
+    non_empty_attributes_df = sample_attributes_df
+    non_empty_task_configs = sample_task_configs
+
+    with pytest.raises(ValueError, match="formula_desc DataFrame cannot be empty."):
+        CompoundDataset(
+            formula_desc=empty_df,
+            attributes=non_empty_attributes_df,
+            task_configs=non_empty_task_configs,
+            dataset_name="test_empty_formula",
+        )
+
+    with pytest.raises(ValueError, match="attributes DataFrame cannot be empty."):
+        CompoundDataset(
+            formula_desc=non_empty_formula_df,
+            attributes=empty_df,
+            task_configs=non_empty_task_configs,
+            dataset_name="test_empty_attributes",
+        )
+
+    with pytest.raises(ValueError, match="task_configs list cannot be empty."):
+        CompoundDataset(
+            formula_desc=non_empty_formula_df,
+            attributes=non_empty_attributes_df,
+            task_configs=[],  # Empty task_configs
+            dataset_name="test_empty_task_configs",
+        )
+
+    # Test case where formula_desc or attributes_df might be None (though type hints suggest DataFrame)
+    # This is more about robust handling if None is somehow passed.
+    # The class currently expects DataFrames, so this might be redundant if type checking is strict.
+    with pytest.raises(AttributeError):  # or TypeError depending on how None is handled internally before .empty
+        CompoundDataset(
+            formula_desc=None,
+            attributes=non_empty_attributes_df,
+            task_configs=non_empty_task_configs,
+            dataset_name="test_none_formula",
+        )
+
+
+def test_sequence_data_with_non_numeric(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+    """Test that non-numeric data in sequence series raises an error."""
+    attributes_bad_seq = sample_attributes_df.copy()
+    # Introduce a string into a sequence
+    attributes_bad_seq.loc["id_0", "task_seq_sequence_series"] = [0.1, "not_a_number", 0.3]
+
+    with pytest.raises(TypeError):  # Expect TypeError when converting list with string to tensor
+        CompoundDataset(
+            formula_desc=sample_formula_desc_df,
+            attributes=attributes_bad_seq,
+            task_configs=sample_task_configs,
+            dataset_name="test_bad_seq_data",
+        )
+
+    attributes_bad_temps = sample_attributes_df.copy()
+    # Introduce a string into temps
+    attributes_bad_temps.loc["id_0", "task_seq_temps"] = [10, "bad_temp", 30]
+    with pytest.raises(TypeError):  # Expect TypeError for temps as well
+        CompoundDataset(
+            formula_desc=sample_formula_desc_df,
+            attributes=attributes_bad_temps,
+            task_configs=sample_task_configs,
+            dataset_name="test_bad_temps_data",
+        )
+
+
+def test_missing_temps_for_sequence_task(sample_formula_desc_df, sample_attributes_df, sample_task_configs, caplog):
+    """Test behavior when 'temps' column is missing for a sequence task."""
+    attributes_no_temps = sample_attributes_df.drop(columns=["task_seq_temps"])
+
+    dataset = CompoundDataset(
+        formula_desc=sample_formula_desc_df,
+        attributes=attributes_no_temps,
+        task_configs=sample_task_configs,  # task_seq is a sequence task
+        dataset_name="test_missing_temps",
+    )
+
+    task_name = "task_seq"
+    assert task_name in dataset.temps_dict
+    # Expect a placeholder (e.g., zeros) for temps
+    # The shape should match y_dict for that task, but with an added channel dim (B, SeqLen, 1)
+    expected_temps_shape = (len(sample_formula_desc_df), dataset.y_dict[task_name].shape[1], 1)
+    assert dataset.temps_dict[task_name].shape == expected_temps_shape
+    assert torch.all(dataset.temps_dict[task_name] == 0)  # Check if placeholder is zeros
+
+    # Check for a warning log message
+    assert any(
+        "Temperature data column 'task_seq_temps' not found for sequence task 'task_seq'. Using zero placeholder."
+        in record.message
+        and record.levelname == "WARNING"
+        for record in caplog.records
+    )

@@ -69,6 +69,20 @@ class CompoundDataModule(L.LightningDataModule):
         """
         super().__init__()
         logger.info("Initializing CompoundDataModule...")
+
+        # Explicitly assign parameters to self for clarity and linter compatibility
+        self.task_configs = task_configs
+        self.with_structure = with_structure
+        self.task_masking_ratios = task_masking_ratios
+        self.val_split = val_split
+        self.test_split = test_split
+        self.train_random_seed = train_random_seed
+        self.test_random_seed = test_random_seed
+        self.test_all = test_all
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        # formula_desc_source, attributes_source, structure_desc_source are handled separately
+
         self.save_hyperparameters(ignore=["formula_desc_source", "attributes_source", "structure_desc_source"])
 
         # --- Load Data ---
@@ -88,7 +102,7 @@ class CompoundDataModule(L.LightningDataModule):
 
         self.structure_df = None
         self.actual_with_structure = False  # Tracks if structure data is actually used
-        if self.hparams.with_structure:
+        if self.with_structure:
             logger.info("Attempting to load structure_desc as with_structure is True.")
             if structure_desc_source is not None:
                 self.structure_df = self._load_data(structure_desc_source, "structure_desc")
@@ -205,8 +219,11 @@ class CompoundDataModule(L.LightningDataModule):
         except FileNotFoundError:
             logger.error(f"File not found for '{name}': {source}")
             return None
-        except Exception as e:
-            logger.error(f"Error loading '{name}' data from {source}: {e}", exc_info=True)
+        except (ValueError, TypeError) as e:  # Catch specific errors to re-raise
+            # These are intentionally raised for unsupported types/files, so let them propagate
+            raise e
+        except Exception as e:  # Catch other, unexpected exceptions
+            logger.error(f"Unexpected error loading '{name}' data from {source}: {e}", exc_info=True)
             return None
 
     def setup(self, stage: str = None):
@@ -219,7 +236,7 @@ class CompoundDataModule(L.LightningDataModule):
         full_idx = self.attributes_df.index
         logger.info(f"Total samples available before splitting: {len(full_idx)}")
 
-        if self.hparams.test_all:
+        if self.test_all:
             self.train_idx = pd.Index([])
             self.val_idx = pd.Index([])
             self.test_idx = full_idx
@@ -239,49 +256,53 @@ class CompoundDataModule(L.LightningDataModule):
             if self.val_idx.empty and not self.train_idx.empty:
                 logger.warning("No 'val' samples in 'split' column. Splitting 10% of 'train' for validation.")
                 self.train_idx, self.val_idx = train_test_split(
-                    self.train_idx, test_size=0.1, random_state=self.hparams.train_random_seed, shuffle=True
+                    self.train_idx, test_size=0.1, random_state=self.train_random_seed, shuffle=True
                 )
         else:
             logger.info("Data split strategy: Performing random train/val/test splits.")
-            logger.info(
-                f"Test split ratio: {self.hparams.test_split}, Validation split ratio (of non-test): {self.hparams.val_split}"
-            )
-            if self.hparams.test_split > 0:
+            logger.info(f"Test split ratio: {self.test_split}, Validation split ratio (of non-test): {self.val_split}")
+            if self.test_split >= 1.0:  # Handle case where test_split is 1.0 or more
+                logger.info(f"test_split is {self.test_split}, assigning all data to test set.")
+                self.test_idx = full_idx
+                train_val_idx = pd.Index([])
+            elif self.test_split > 0:  # test_split is > 0 and < 1.0
                 train_val_idx, self.test_idx = train_test_split(
                     full_idx,
-                    test_size=self.hparams.test_split,
-                    random_state=self.hparams.test_random_seed,
+                    test_size=self.test_split,
+                    random_state=self.test_random_seed,
                     shuffle=True,
                 )
                 logger.info(
-                    f"Split full data ({len(full_idx)}) into train_val ({len(train_val_idx)}) and test ({len(self.test_idx)}) using seed {self.hparams.test_random_seed}."
+                    f"Split full data ({len(full_idx)}) into train_val ({len(train_val_idx)}) and test ({len(self.test_idx)}) using seed {self.test_random_seed}."
                 )
             else:
                 train_val_idx = full_idx
                 self.test_idx = pd.Index([])
                 logger.info("test_split is 0. All data used for train_val.")
 
-            if self.hparams.val_split > 0 and len(train_val_idx) > 0:
+            if self.val_split > 0 and len(train_val_idx) > 0:
                 # Adjust val_split relative to the size of train_val_idx
-                effective_val_split = self.hparams.val_split
-                if (1.0 - self.hparams.test_split) > 1e-6:  # Avoid division by zero if test_split is ~1.0
-                    effective_val_split = self.hparams.val_split / (1.0 - self.hparams.test_split)
+                effective_val_split = self.val_split
+                if (1.0 - self.test_split) > 1e-6:  # Avoid division by zero if test_split is ~1.0
+                    effective_val_split = self.val_split / (1.0 - self.test_split)
 
-                if effective_val_split >= 1.0:  # Safety net if val_split is too large relative to remaining data
-                    logger.warning(
-                        f"Calculated effective_val_split ({effective_val_split:.3f}) is >= 1.0. Capping at 0.1 of train_val data."
+                if effective_val_split >= 1.0:
+                    logger.info(
+                        f"Calculated effective_val_split ({effective_val_split:.3f}) is >= 1.0. "
+                        "Assigning all remaining train_val data to validation set."
                     )
-                    effective_val_split = 0.1
-
-                self.train_idx, self.val_idx = train_test_split(
-                    train_val_idx,
-                    test_size=effective_val_split,
-                    random_state=self.hparams.train_random_seed,
-                    shuffle=True,
-                )
-                logger.info(
-                    f"Split train_val data ({len(train_val_idx)}) into train ({len(self.train_idx)}) and val ({len(self.val_idx)}) using seed {self.hparams.train_random_seed} and effective_val_split {effective_val_split:.3f}."
-                )
+                    self.val_idx = train_val_idx
+                    self.train_idx = pd.Index([])
+                else:  # effective_val_split is < 1.0
+                    self.train_idx, self.val_idx = train_test_split(
+                        train_val_idx,
+                        test_size=effective_val_split,
+                        random_state=self.train_random_seed,
+                        shuffle=True,
+                    )
+                    logger.info(
+                        f"Split train_val data ({len(train_val_idx)}) into train ({len(self.train_idx)}) and val ({len(self.val_idx)}) using seed {self.train_random_seed} and effective_val_split {effective_val_split:.3f}."
+                    )
             elif len(train_val_idx) > 0:
                 self.train_idx = train_val_idx
                 self.val_idx = pd.Index([])
@@ -316,7 +337,7 @@ class CompoundDataModule(L.LightningDataModule):
                     if current_structure_df_for_dataset is not None
                     else None,
                     use_structure_for_this_dataset=self.actual_with_structure,
-                    task_masking_ratios=self.hparams.task_masking_ratios,
+                    task_masking_ratios=self.task_masking_ratios,
                     is_predict_set=False,
                     dataset_name="train_dataset",
                 )
@@ -390,9 +411,9 @@ class CompoundDataModule(L.LightningDataModule):
             return None
         return DataLoader(
             self.train_dataset,
-            batch_size=self.hparams.batch_size,
+            batch_size=self.batch_size,
             shuffle=True,
-            num_workers=self.hparams.num_workers,
+            num_workers=self.num_workers,
             pin_memory=True,  # Added for potential speedup
         )
 
@@ -402,9 +423,9 @@ class CompoundDataModule(L.LightningDataModule):
             return None
         return DataLoader(
             self.val_dataset,
-            batch_size=self.hparams.batch_size,
+            batch_size=self.batch_size,
             shuffle=False,
-            num_workers=self.hparams.num_workers,
+            num_workers=self.num_workers,
             pin_memory=True,
         )
 
@@ -414,9 +435,9 @@ class CompoundDataModule(L.LightningDataModule):
             return None
         return DataLoader(
             self.test_dataset,
-            batch_size=self.hparams.batch_size,
+            batch_size=self.batch_size,
             shuffle=False,
-            num_workers=self.hparams.num_workers,
+            num_workers=self.num_workers,
             pin_memory=True,
         )
 
@@ -426,8 +447,8 @@ class CompoundDataModule(L.LightningDataModule):
             return None
         return DataLoader(
             self.predict_dataset,
-            batch_size=self.hparams.batch_size,
+            batch_size=self.batch_size,
             shuffle=False,
-            num_workers=self.hparams.num_workers,
+            num_workers=self.num_workers,
             pin_memory=True,
         )

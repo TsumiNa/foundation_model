@@ -120,6 +120,72 @@ def test_datamodule_load_data_from_paths(temp_files_dir, base_formula_df, base_a
     assert dm.attributes_df.shape == base_attributes_df.shape
 
 
+def test_datamodule_load_data_numpy_array(sample_task_configs_dm):
+    """Test _load_data method with np.ndarray source."""
+    numpy_array = np.random.rand(10, 3)
+    # Need a dummy DM instance to call its private _load_data method
+    # Provide minimal valid inputs for __init__ to avoid errors there.
+    dummy_formula_df = pd.DataFrame(np.random.rand(1, 1))
+    dummy_attrs_df = pd.DataFrame({"col": [1]})
+
+    dm = CompoundDataModule(
+        formula_desc_source=dummy_formula_df,
+        attributes_source=dummy_attrs_df,
+        task_configs=sample_task_configs_dm,
+    )
+    loaded_df = dm._load_data(numpy_array, "test_numpy_load")
+    assert loaded_df is not None
+    assert isinstance(loaded_df, pd.DataFrame)
+    assert loaded_df.shape == numpy_array.shape
+    pd.testing.assert_frame_equal(loaded_df, pd.DataFrame(numpy_array), check_dtype=False)
+
+
+def test_datamodule_load_data_unsupported_file(temp_files_dir, sample_task_configs_dm, caplog):
+    """Test _load_data with an unsupported file type."""
+    unsupported_file_path = os.path.join(temp_files_dir, "data.txt")
+    with open(unsupported_file_path, "w") as f:
+        f.write("some data")
+
+    dummy_formula_df = pd.DataFrame(np.random.rand(1, 1))
+    dummy_attrs_df = pd.DataFrame({"col": [1]})
+    dm = CompoundDataModule(
+        formula_desc_source=dummy_formula_df,
+        attributes_source=dummy_attrs_df,
+        task_configs=sample_task_configs_dm,
+    )
+
+    caplog.clear()
+    with pytest.raises(ValueError, match="Unsupported file type for test_unsupported_load: .*data.txt"):
+        dm._load_data(unsupported_file_path, "test_unsupported_load")
+
+    # Check for logged error as well, though the primary check is the raised ValueError
+    assert any(
+        "Unsupported file type for 'test_unsupported_load'" in record.message and record.levelname == "ERROR"
+        for record in caplog.records
+    )
+
+
+def test_datamodule_load_data_file_not_found(sample_task_configs_dm, caplog):
+    """Test _load_data with a non-existent file path."""
+    non_existent_path = "non_existent_file.pkl"
+    dummy_formula_df = pd.DataFrame(np.random.rand(1, 1))
+    dummy_attrs_df = pd.DataFrame({"col": [1]})
+    dm = CompoundDataModule(
+        formula_desc_source=dummy_formula_df,
+        attributes_source=dummy_attrs_df,
+        task_configs=sample_task_configs_dm,
+    )
+
+    caplog.clear()
+    loaded_df = dm._load_data(non_existent_path, "test_file_not_found")
+    assert loaded_df is None
+    assert any(
+        f"File not found for 'test_file_not_found': {non_existent_path}" in record.message
+        and record.levelname == "ERROR"
+        for record in caplog.records
+    )
+
+
 def test_datamodule_alignment(base_formula_df, base_attributes_df, sample_task_configs_dm):
     """Test DataFrame alignment logic."""
     # Create misaligned data
@@ -135,6 +201,38 @@ def test_datamodule_alignment(base_formula_df, base_attributes_df, sample_task_c
     common_idx_len = len(attributes_misaligned.index.intersection(formula_misaligned.index))
     assert len(dm.formula_df) == common_idx_len
     assert len(dm.attributes_df) == common_idx_len
+
+
+def test_datamodule_alignment_structure_mismatch(
+    base_formula_df, base_attributes_df, base_structure_df, sample_task_configs_dm, caplog
+):
+    """Test alignment when structure_df index mismatches, leading to structure data not being used."""
+    # Use full base_formula_df and base_attributes_df (20 samples)
+    # Create a structure_df with only a subset of indices or different indices
+    structure_mismatched_idx = base_structure_df.sample(n=10, random_state=1)  # Only 10 samples
+    structure_different_idx = base_structure_df.copy()
+    structure_different_idx.index = [f"new_s{i}" for i in range(len(structure_different_idx))]
+
+    test_cases = [
+        ("subset_indices", structure_mismatched_idx),
+        ("different_indices", structure_different_idx),
+    ]
+
+    for name, struct_df_variant in test_cases:
+        caplog.clear()
+        dm = CompoundDataModule(
+            formula_desc_source=base_formula_df.copy(),  # Use copies to avoid modification across tests
+            attributes_source=base_attributes_df.copy(),
+            structure_desc_source=struct_df_variant,
+            task_configs=sample_task_configs_dm,
+            with_structure=True,  # Attempt to use structure
+        )
+        assert dm.structure_df is None, f"Test case '{name}': structure_df should be None after alignment failure."
+        assert not dm.actual_with_structure, f"Test case '{name}': actual_with_structure should be False."
+        assert any(
+            "Structure data will NOT be used." in record.message and record.levelname == "WARNING"
+            for record in caplog.records
+        ), f"Test case '{name}': Expected warning about structure data not being used."
 
 
 def test_datamodule_setup_split_column(base_formula_df, base_attributes_df, sample_task_configs_dm):
@@ -154,6 +252,193 @@ def test_datamodule_setup_split_column(base_formula_df, base_attributes_df, samp
     dm.setup(stage="test")
     assert len(dm.test_idx) == 5
     assert dm.test_dataset is not None
+
+
+def test_datamodule_setup_zero_splits(base_formula_df, base_attributes_df, sample_task_configs_dm):
+    """Test setup method when val_split and test_split are zero."""
+    attributes_no_split = base_attributes_df.drop(columns=["split"])
+    total_samples = len(attributes_no_split)
+
+    # Case 1: val_split = 0, test_split = 0
+    dm_zero_all = CompoundDataModule(
+        formula_desc_source=base_formula_df,
+        attributes_source=attributes_no_split.copy(),
+        task_configs=sample_task_configs_dm,
+        val_split=0.0,
+        test_split=0.0,
+    )
+    dm_zero_all.setup("fit")
+    assert len(dm_zero_all.train_idx) == total_samples
+    assert dm_zero_all.val_idx.empty
+    assert dm_zero_all.test_idx.empty
+
+    # Case 2: val_split = 0, test_split > 0
+    dm_zero_val = CompoundDataModule(
+        formula_desc_source=base_formula_df,
+        attributes_source=attributes_no_split.copy(),
+        task_configs=sample_task_configs_dm,
+        val_split=0.0,
+        test_split=0.1,  # 10% for test
+    )
+    dm_zero_val.setup("fit")
+    expected_test_count = int(total_samples * 0.1)
+    expected_train_count = total_samples - expected_test_count
+    assert len(dm_zero_val.test_idx) == expected_test_count
+    assert len(dm_zero_val.train_idx) == expected_train_count
+    assert dm_zero_val.val_idx.empty
+
+    # Case 3: val_split > 0, test_split = 0
+    dm_zero_test = CompoundDataModule(
+        formula_desc_source=base_formula_df,
+        attributes_source=attributes_no_split.copy(),
+        task_configs=sample_task_configs_dm,
+        val_split=0.1,  # 10% of train_val for val
+        test_split=0.0,
+    )
+    dm_zero_test.setup("fit")
+    expected_val_count = int(total_samples * 0.1)  # val_split is applied to all data as test_split is 0
+    expected_train_count_zero_test = total_samples - expected_val_count
+    assert dm_zero_test.test_idx.empty
+    assert len(dm_zero_test.val_idx) == expected_val_count
+    assert len(dm_zero_test.train_idx) == expected_train_count_zero_test
+
+
+def test_datamodule_setup_empty_train_idx(base_formula_df, base_attributes_df, sample_task_configs_dm, caplog):
+    """Test setup when train_idx becomes empty after splits."""
+    attributes_no_split = base_attributes_df.drop(columns=["split"])
+
+    # Case 1: test_split = 1.0 (all data goes to test)
+    dm_all_test = CompoundDataModule(
+        formula_desc_source=base_formula_df,
+        attributes_source=attributes_no_split.copy(),
+        task_configs=sample_task_configs_dm,
+        val_split=0.1,  # This won't matter as test_split takes all
+        test_split=1.0,
+    )
+    caplog.clear()
+    dm_logger = logging.getLogger("foundation_model.data.datamodule")
+    original_level = dm_logger.getEffectiveLevel()
+    dm_logger.setLevel(logging.INFO)
+    try:
+        dm_all_test.setup("fit")  # Stage fit will try to create train/val
+        assert dm_all_test.train_idx.empty
+        assert dm_all_test.val_idx.empty
+        assert dm_all_test.train_dataset is None
+        assert dm_all_test.val_dataset is None
+        assert any(
+            "Train index is empty. train_dataset will be None." in rec.message
+            for rec in caplog.records
+            if rec.levelname == "WARNING"
+        )
+        assert any(
+            "Validation index is empty. val_dataset will be None." in rec.message
+            for rec in caplog.records
+            if rec.levelname == "INFO"
+        )
+    finally:
+        dm_logger.setLevel(original_level)
+
+    # Case 2: test_split is small, but val_split effectively takes all remaining train_val data
+    # e.g. test_split = 0.1, val_split = 1.0 (of remaining 90%)
+    dm_val_takes_all_train_val = CompoundDataModule(
+        formula_desc_source=base_formula_df,
+        attributes_source=attributes_no_split.copy(),
+        task_configs=sample_task_configs_dm,
+        val_split=1.0,  # Takes all of train_val_idx
+        test_split=0.1,
+    )
+    caplog.clear()
+    dm_val_takes_all_train_val.setup("fit")
+    assert dm_val_takes_all_train_val.train_idx.empty
+    assert not dm_val_takes_all_train_val.val_idx.empty  # Val should have the train_val data
+    assert len(dm_val_takes_all_train_val.val_idx) == len(base_formula_df) - int(
+        len(base_formula_df) * 0.1
+    )  # 20 - 2 = 18
+    assert dm_val_takes_all_train_val.train_dataset is None
+    assert dm_val_takes_all_train_val.val_dataset is not None
+    assert any(
+        "Train index is empty. train_dataset will be None." in rec.message
+        for rec in caplog.records
+        if rec.levelname == "WARNING"
+    )
+
+
+def test_datamodule_setup_predict_idx_logic(base_formula_df, base_attributes_df, sample_task_configs_dm):
+    """Test the logic for determining predict_idx in setup(stage='predict')."""
+    attributes_no_split = base_attributes_df.drop(columns=["split"])
+    full_idx = attributes_no_split.index
+    num_total_samples = len(full_idx)
+
+    # Case 1: test_idx is populated (test_split > 0)
+    dm_with_test_split = CompoundDataModule(
+        formula_desc_source=base_formula_df.copy(),
+        attributes_source=attributes_no_split.copy(),
+        task_configs=sample_task_configs_dm,
+        test_split=0.2,  # 20% for test
+        val_split=0.1,
+    )
+    # First, run setup for a stage that populates test_idx (e.g., 'test' or 'fit' or None)
+    dm_with_test_split.setup(stage="test")
+    # Now, run setup for 'predict'
+    dm_with_test_split.setup(stage="predict")
+    assert dm_with_test_split.predict_idx.equals(dm_with_test_split.test_idx)
+    assert len(dm_with_test_split.predict_idx) == int(num_total_samples * 0.2)
+    assert dm_with_test_split.predict_dataset is not None
+    assert len(dm_with_test_split.predict_dataset) == int(num_total_samples * 0.2)
+
+    # Case 2: test_idx is empty (test_split = 0)
+    dm_no_test_split = CompoundDataModule(
+        formula_desc_source=base_formula_df.copy(),
+        attributes_source=attributes_no_split.copy(),
+        task_configs=sample_task_configs_dm,
+        test_split=0.0,
+        val_split=0.1,
+    )
+    dm_no_test_split.setup(stage="test")  # test_idx will be empty
+    dm_no_test_split.setup(stage="predict")
+    assert dm_no_test_split.predict_idx.equals(full_idx)
+    assert len(dm_no_test_split.predict_idx) == num_total_samples
+    assert dm_no_test_split.predict_dataset is not None
+    assert len(dm_no_test_split.predict_dataset) == num_total_samples
+
+    # Case 3: test_all = True
+    dm_test_all = CompoundDataModule(
+        formula_desc_source=base_formula_df.copy(),
+        attributes_source=attributes_no_split.copy(),
+        task_configs=sample_task_configs_dm,
+        test_all=True,
+    )
+    dm_test_all.setup(stage="test")  # test_idx will be full_idx
+    dm_test_all.setup(stage="predict")
+    assert dm_test_all.predict_idx.equals(full_idx)
+    assert len(dm_test_all.predict_idx) == num_total_samples
+    assert dm_test_all.predict_dataset is not None
+    assert len(dm_test_all.predict_dataset) == num_total_samples
+
+
+def test_datamodule_task_masking_ratios_propagation(base_formula_df, base_attributes_df, sample_task_configs_dm):
+    """Test that task_masking_ratios are passed to train_dataset but not others."""
+    mask_ratios = {"task1": 0.5}
+    dm = CompoundDataModule(
+        formula_desc_source=base_formula_df,
+        attributes_source=base_attributes_df,  # Has 'split' column
+        task_configs=sample_task_configs_dm,
+        task_masking_ratios=mask_ratios,
+    )
+    dm.setup(stage="fit")  # Creates train and val
+    assert dm.train_dataset is not None
+    assert dm.train_dataset.task_masking_ratios == mask_ratios
+    assert dm.val_dataset is not None
+    assert dm.val_dataset.task_masking_ratios is None  # Should be None for val
+
+    dm.setup(stage="test")  # Creates test
+    assert dm.test_dataset is not None
+    assert dm.test_dataset.task_masking_ratios is None  # Should be None for test
+
+    # Predict dataset also should not have masking ratios applied like training
+    dm.setup(stage="predict")
+    assert dm.predict_dataset is not None
+    assert dm.predict_dataset.task_masking_ratios is None
 
 
 def test_datamodule_setup_random_split(base_formula_df, base_attributes_df, sample_task_configs_dm):
