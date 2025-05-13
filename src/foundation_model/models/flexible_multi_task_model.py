@@ -24,15 +24,16 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import _LRScheduler
 
-from .components.foundation_encoder import FoundationEncoder, MultiModalFoundationEncoder
-from .components.self_supervised import SelfSupervisedModule
-from .model_config import (
+from foundation_model.configs.model_config import (
     ClassificationTaskConfig,
     OptimizerConfig,
     RegressionTaskConfig,
     SequenceTaskConfig,
     TaskType,
 )
+
+from .components.foundation_encoder import FoundationEncoder, MultiModalFoundationEncoder
+from .components.self_supervised import SelfSupervisedModule
 from .task_head.classification import ClassificationHead
 from .task_head.regression import RegressionHead
 from .task_head.sequence import create_sequence_head

@@ -8,9 +8,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..components.lora_adapter import LoRAAdapter
-from ..fc_layers import LinearBlock
-from ..model_config import ClassificationTaskConfig  # Changed import
+from foundation_model.configs.model_config import ClassificationTaskConfig  # Changed import
+from foundation_model.models.components.lora_adapter import LoRAAdapter
+from foundation_model.models.fc_layers import LinearBlock
+
 from .base import BaseTaskHead
 
 

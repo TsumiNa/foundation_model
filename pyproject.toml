@@ -31,7 +31,7 @@ classifiers = [
 
 
 [project.scripts]
-foundation-model = "foundation_model:main"
+foundation-model = "foundation_model.scripts.train:cli_main"
 
 [build-system]
 requires = ["hatchling"]

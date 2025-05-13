@@ -8,9 +8,9 @@ RNN-based sequence head for the FlexibleMultiTaskModel.
 import torch
 import torch.nn as nn
 
-from foundation_model.models.model_config import SequenceTaskConfig
+from foundation_model.configs.model_config import SequenceTaskConfig
 
-from ..sequence.base import SequenceBaseHead
+from .base import SequenceBaseHead
 
 
 class SequenceHeadRNN(SequenceBaseHead):

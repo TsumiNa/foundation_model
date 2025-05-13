@@ -5,8 +5,7 @@
 Foundation model implementation and related modules.
 """
 
-from .flexible_multi_task_model import FlexibleMultiTaskModel
-from .model_config import (
+from foundation_model.configs.model_config import (
     BaseTaskConfig,
     ClassificationTaskConfig,
     OptimizerConfig,
@@ -14,6 +13,8 @@ from .model_config import (
     SequenceTaskConfig,
     TaskType,
 )
+
+from .flexible_multi_task_model import FlexibleMultiTaskModel
 
 __all__ = [
     "FlexibleMultiTaskModel",

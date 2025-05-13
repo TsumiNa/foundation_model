@@ -2,7 +2,8 @@
 Sequence task heads for the FlexibleMultiTaskModel.
 """
 
-from ...model_config import SequenceTaskConfig
+from foundation_model.configs.model_config import SequenceTaskConfig
+
 from .base import SequenceBaseHead
 from .fixed_vec import SequenceHeadFixedVec
 from .rnn import SequenceHeadRNN
