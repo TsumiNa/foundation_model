@@ -415,6 +415,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return outputs
 
     def training_step(self, batch, batch_idx):
+        print(f"--- FlexibleMultiTaskModel: training_step() called for batch_idx: {batch_idx} ---")  # DEBUG PRINT
         """
         Training step implementation with multi-component loss calculation,
         handling self-supervised learning and modality dropout.

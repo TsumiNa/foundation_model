@@ -15,6 +15,7 @@ class LoggerSaveConfigCallback(SaveConfigCallback):
 
 
 def cli_main():
+    print("--- train.py: Initializing LightningCLI ---")  # DEBUG PRINT
     """
     Main function to run the Lightning CLI.
     Initializes LightningCLI with the model and datamodule.
@@ -24,8 +25,10 @@ def cli_main():
     cli = LightningCLI(
         # FlexibleMultiTaskModel,
         # CompoundDataModule,
+        # subclass_mode_model=True,
+        # subclass_mode_data=True,
         auto_configure_optimizers=False,
-        save_config_callback=LoggerSaveConfigCallback,
+        # save_config_callback=LoggerSaveConfigCallback,
         parser_kwargs={"parser_mode": "omegaconf"},
         # subclass_mode_model=True, # Uncomment if multiple model classes are possible
         # subclass_mode_data=True,  # Uncomment if multiple data module classes are possible

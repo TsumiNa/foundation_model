@@ -498,6 +498,9 @@ class CompoundDataModule(L.LightningDataModule):
         logger.info(f"--- DataModule setup for stage '{stage}' complete ---")
 
     def train_dataloader(self):
+        print(
+            f"--- CompoundDataModule: train_dataloader() called. Train dataset length: {len(self.train_dataset) if hasattr(self, 'train_dataset') and self.train_dataset is not None else 'N/A or None'}"
+        )  # DEBUG PRINT
         if not hasattr(self, "train_dataset") or self.train_dataset is None:
             logger.warning("train_dataloader: Train dataset is None or not initialized. Returning None.")
             return None

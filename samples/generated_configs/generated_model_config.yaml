@@ -2,12 +2,12 @@
 # log_dir: results/logs/${experiment_name} # Replaced by trainer.default_root_dir
 
 model:
-  class_path: foundation_model.models.flexible_multi_task_model.FlexibleMultiTaskModel
+  class_path: foundation_model.models.FlexibleMultiTaskModel
   init_args:
     shared_block_dims: [256, 128, 64]
     task_configs:
       - name: regression_1
-        type: "REGRESSION"
+        type: REGRESSION
         dims: [64, 32, 1]
         norm: true
         residual: false
@@ -26,7 +26,7 @@ model:
           min_lr: 1.0e-05
           monitor: val_regression_1_loss
       - name: regression_2
-        type: "REGRESSION"
+        type: REGRESSION
         dims: [64, 32, 1]
         norm: true
         residual: false
@@ -44,55 +44,55 @@ model:
           patience: 10
           min_lr: 1.0e-05
           monitor: val_regression_2_loss
-      - name: regression_3
-        type: "REGRESSION"
-        dims: [64, 32, 1]
-        norm: true
-        residual: false
-        weight: 1.0
-        enabled: true
-        optimizer:
-          optimizer_type: AdamW
-          lr: 0.001
-          weight_decay: 0.01
-          eps: 1.0e-06
-          betas: [0.9, 0.999]
-          scheduler_type: ReduceLROnPlateau
-          mode: min
-          factor: 0.5
-          patience: 10
-          min_lr: 1.0e-05
-          monitor: val_regression_3_loss
-      - name: classification_A
-        type: "CLASSIFICATION"
-        dims: [64, 32, 2]
-        num_classes: 2
-        norm: true
-        residual: false
-        weight: 0.5
-        enabled: true
-        optimizer:
-          optimizer_type: AdamW
-          lr: 0.002
-          scheduler_type: StepLR
-          patience: 30
-          factor: 0.1
-          monitor: val_classification_A_loss
-      - name: classification_B
-        type: "CLASSIFICATION"
-        dims: [64, 32, 3]
-        num_classes: 3
-        norm: true
-        residual: false
-        weight: 0.5
-        enabled: true
-        optimizer:
-          optimizer_type: AdamW
-          lr: 0.002
-          scheduler_type: StepLR
-          patience: 30
-          factor: 0.1
-          monitor: val_classification_B_loss
+      #   - name: regression_3
+      #     type: REGRESSION
+      #     dims: [64, 32, 1]
+      #     norm: true
+      #     residual: false
+      #     weight: 1.0
+      #     enabled: true
+      #     optimizer:
+      #       optimizer_type: AdamW
+      #       lr: 0.001
+      #       weight_decay: 0.01
+      #       eps: 1.0e-06
+      #       betas: [0.9, 0.999]
+      #       scheduler_type: ReduceLROnPlateau
+      #       mode: min
+      #       factor: 0.5
+      #       patience: 10
+      #       min_lr: 1.0e-05
+      #       monitor: val_regression_3_loss
+      #   - name: classification_A
+      #     type: CLASSIFICATION
+      #     dims: [64, 32, 2]
+      #     num_classes: 2
+      #     norm: true
+      #     residual: false
+      #     weight: 0.5
+      #     enabled: true
+      #     optimizer:
+      #       optimizer_type: AdamW
+      #       lr: 0.002
+      #       scheduler_type: StepLR
+      #       patience: 30
+      #       factor: 0.1
+      #       monitor: val_classification_A_loss
+      # - name: classification_B
+      #   type: CLASSIFICATION
+      #   dims: [64, 32, 3]
+      #   num_classes: 3
+      #   norm: true
+      #   residual: false
+      #   weight: 0.5
+      #   enabled: true
+      #   optimizer:
+      #     optimizer_type: AdamW
+      #     lr: 0.002
+      #     scheduler_type: StepLR
+      #     patience: 30
+      #     factor: 0.1
+      #     monitor: val_classification_B_loss
     shared_block_optimizer:
       optimizer_type: AdamW
       lr: 0.001
@@ -120,7 +120,7 @@ model:
     # lora_rank and lora_alpha are per-task configurations
 
 data:
-  class_path: foundation_model.data.datamodule.CompoundDataModule
+  class_path: foundation_model.data.CompoundDataModule
   init_args:
     formula_desc_source: /data/foundation_model/samples/fake_data/formula_features.csv
     attributes_source: /data/foundation_model/samples/fake_data/attributes.csv
