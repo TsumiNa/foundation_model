@@ -55,6 +55,25 @@ class CompoundDataset(Dataset):
 
         self.is_predict_set = is_predict_set
         self.use_structure_for_this_dataset = use_structure_for_this_dataset
+        self.task_masking_ratios = task_masking_ratios  # Store for accessibility
+
+        # --- Input Validation ---
+        if not isinstance(formula_desc, (pd.DataFrame, np.ndarray)):  # Check type before .empty or .shape
+            logger.error(f"[{self.dataset_name}] formula_desc type error: {type(formula_desc)}")
+            raise TypeError("formula_desc must be pd.DataFrame or np.ndarray")
+        if hasattr(formula_desc, "empty") and formula_desc.empty:  # Check if DataFrame is empty
+            raise ValueError("formula_desc DataFrame cannot be empty.")
+        if isinstance(formula_desc, np.ndarray) and formula_desc.size == 0:  # Check if ndarray is empty
+            raise ValueError("formula_desc np.ndarray cannot be empty.")
+
+        if not isinstance(attributes, pd.DataFrame):  # Attributes must be DataFrame
+            logger.error(f"[{self.dataset_name}] attributes type error: {type(attributes)}")
+            raise TypeError("attributes must be pd.DataFrame")
+        if attributes.empty:
+            raise ValueError("attributes DataFrame cannot be empty.")
+
+        if not task_configs:  # Check if list is empty
+            raise ValueError("task_configs list cannot be empty.")
 
         # Log shapes of input data
         formula_shape = formula_desc.shape if hasattr(formula_desc, "shape") else "N/A"
@@ -62,24 +81,32 @@ class CompoundDataset(Dataset):
         attributes_shape = attributes.shape if hasattr(attributes, "shape") else "N/A"
         logger.info(f"[{self.dataset_name}] Received attributes with shape: {attributes_shape}")
 
+        # Convert formula_desc to tensor (type already checked)
         if isinstance(formula_desc, pd.DataFrame):
             self.x_formula = torch.tensor(formula_desc.values, dtype=torch.float32)
-        elif isinstance(formula_desc, np.ndarray):
+        elif isinstance(formula_desc, np.ndarray):  # Should be else, but being explicit
             self.x_formula = torch.tensor(formula_desc, dtype=torch.float32)
-        else:
-            logger.error(f"[{self.dataset_name}] formula_desc type error: {type(formula_desc)}")
-            raise TypeError("formula_desc must be pd.DataFrame or np.ndarray")
 
         if self.use_structure_for_this_dataset and structure_desc is not None:
-            struct_shape = structure_desc.shape if hasattr(structure_desc, "shape") else "N/A"
-            logger.info(f"[{self.dataset_name}] Received structure_desc with shape: {struct_shape}")
-            if isinstance(structure_desc, pd.DataFrame):
-                self.x_struct = torch.tensor(structure_desc.values, dtype=torch.float32)
-            elif isinstance(structure_desc, np.ndarray):
-                self.x_struct = torch.tensor(structure_desc, dtype=torch.float32)
-            else:
+            if not isinstance(structure_desc, (pd.DataFrame, np.ndarray)):
                 logger.error(f"[{self.dataset_name}] structure_desc type error: {type(structure_desc)}")
                 raise TypeError("structure_desc must be pd.DataFrame or np.ndarray if provided")
+            if hasattr(structure_desc, "empty") and structure_desc.empty:
+                raise ValueError(
+                    "structure_desc cannot be an empty DataFrame if provided and use_structure_for_this_dataset is True."
+                )
+            if isinstance(structure_desc, np.ndarray) and structure_desc.size == 0:
+                raise ValueError(
+                    "structure_desc cannot be an empty np.ndarray if provided and use_structure_for_this_dataset is True."
+                )
+
+            struct_shape = structure_desc.shape if hasattr(structure_desc, "shape") else "N/A"
+            logger.info(f"[{self.dataset_name}] Received structure_desc with shape: {struct_shape}")
+
+            if isinstance(structure_desc, pd.DataFrame):
+                self.x_struct = torch.tensor(structure_desc.values, dtype=torch.float32)
+            elif isinstance(structure_desc, np.ndarray):  # Should be else
+                self.x_struct = torch.tensor(structure_desc, dtype=torch.float32)
             if len(self.x_formula) != len(self.x_struct):
                 logger.error(
                     f"[{self.dataset_name}] Length mismatch: formula_desc ({len(self.x_formula)}) vs structure_desc ({len(self.x_struct)})"
@@ -231,9 +258,22 @@ class CompoundDataset(Dataset):
                     )
                 else:
                     logger.warning(
-                        f"[{self.dataset_name}] Task '{task_name}': Temps column '{temps_col_name}' not found for sequence task."
+                        f"[{self.dataset_name}] Task '{task_name}': Temps column '{temps_col_name}' not found for sequence task. Using zero placeholder."
                     )
-                    # self.temps_dict[task_name] will not be populated, model needs to handle this.
+                    # Create a zero placeholder for temps. Shape should be (num_samples, seq_len, 1)
+                    # seq_len can be inferred from the corresponding y_dict entry for this task.
+                    if task_name in self.y_dict:
+                        num_samples = len(self.x_formula)
+                        seq_len = self.y_dict[task_name].shape[1]
+                        self.temps_dict[task_name] = torch.zeros((num_samples, seq_len, 1), dtype=torch.float32)
+                        logger.debug(
+                            f"[{self.dataset_name}] Task '{task_name}': Created zero placeholder for temps_dict with shape {self.temps_dict[task_name].shape}"
+                        )
+                    else:
+                        # This case should ideally not happen if y_dict is always populated for enabled sequence tasks
+                        logger.error(
+                            f"[{self.dataset_name}] Task '{task_name}': Cannot create temps placeholder because y_dict entry is missing."
+                        )
 
             # --- Task Masking ---
             final_mask_np = base_mask_np.copy()

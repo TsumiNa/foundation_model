@@ -413,7 +413,7 @@ def test_empty_inputs_raise_error(sample_formula_desc_df, sample_attributes_df, 
     # Test case where formula_desc or attributes_df might be None (though type hints suggest DataFrame)
     # This is more about robust handling if None is somehow passed.
     # The class currently expects DataFrames, so this might be redundant if type checking is strict.
-    with pytest.raises(AttributeError):  # or TypeError depending on how None is handled internally before .empty
+    with pytest.raises(TypeError, match="formula_desc must be pd.DataFrame or np.ndarray"):
         CompoundDataset(
             formula_desc=None,
             attributes=non_empty_attributes_df,
@@ -425,8 +425,10 @@ def test_empty_inputs_raise_error(sample_formula_desc_df, sample_attributes_df, 
 def test_sequence_data_with_non_numeric(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
     """Test that non-numeric data in sequence series raises an error."""
     attributes_bad_seq = sample_attributes_df.copy()
-    # Introduce a string into a sequence
-    attributes_bad_seq.loc["id_0", "task_seq_sequence_series"] = [0.1, "not_a_number", 0.3]
+    # Ensure the column can hold arbitrary objects before assigning a mixed-type list
+    attributes_bad_seq["task_seq_sequence_series"] = attributes_bad_seq["task_seq_sequence_series"].astype("object")
+    # Introduce a string into a sequence using .at for scalar assignment
+    attributes_bad_seq.at["id_0", "task_seq_sequence_series"] = [0.1, "not_a_number", 0.3]
 
     with pytest.raises(TypeError):  # Expect TypeError when converting list with string to tensor
         CompoundDataset(
@@ -437,8 +439,10 @@ def test_sequence_data_with_non_numeric(sample_formula_desc_df, sample_attribute
         )
 
     attributes_bad_temps = sample_attributes_df.copy()
-    # Introduce a string into temps
-    attributes_bad_temps.loc["id_0", "task_seq_temps"] = [10, "bad_temp", 30]
+    # Ensure the column can hold arbitrary objects
+    attributes_bad_temps["task_seq_temps"] = attributes_bad_temps["task_seq_temps"].astype("object")
+    # Introduce a string into temps using .at for scalar assignment
+    attributes_bad_temps.at["id_0", "task_seq_temps"] = [10, "bad_temp", 30]
     with pytest.raises(TypeError):  # Expect TypeError for temps as well
         CompoundDataset(
             formula_desc=sample_formula_desc_df,
@@ -468,9 +472,6 @@ def test_missing_temps_for_sequence_task(sample_formula_desc_df, sample_attribut
     assert torch.all(dataset.temps_dict[task_name] == 0)  # Check if placeholder is zeros
 
     # Check for a warning log message
-    assert any(
-        "Temperature data column 'task_seq_temps' not found for sequence task 'task_seq'. Using zero placeholder."
-        in record.message
-        and record.levelname == "WARNING"
-        for record in caplog.records
-    )
+    temps_col_name = f"{task_name}_temps"  # Reconstruct for the log message
+    expected_log_message = f"[{dataset.dataset_name}] Task '{task_name}': Temps column '{temps_col_name}' not found for sequence task. Using zero placeholder."
+    assert any(expected_log_message in record.message and record.levelname == "WARNING" for record in caplog.records)
