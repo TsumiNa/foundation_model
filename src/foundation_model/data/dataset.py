@@ -161,7 +161,21 @@ class CompoundDataset(Dataset):
                 task_values = attributes[target_col_name].values
                 if task_values.ndim == 1:
                     task_values = task_values.reshape(-1, 1)
-                self.y_dict[task_name] = torch.tensor(np.nan_to_num(task_values, nan=0.0), dtype=torch.float32)
+
+                # Determine dtype based on task type
+                if task_type_enum_name == "CLASSIFICATION":
+                    # For classification, target should be long integers (class indices)
+                    # nan_to_num might be problematic if NaNs are present in integer labels;
+                    # assume classification targets are clean or handle NaNs appropriately before this step.
+                    # If NaNs are impossible for classification targets, nan_to_num can be removed for this path.
+                    # For now, keep nan_to_num but ensure long type.
+                    self.y_dict[task_name] = torch.tensor(
+                        np.nan_to_num(task_values, nan=-1).astype(np.int64), dtype=torch.long
+                    )
+                    # Use -1 for NaN in integer arrays if they can occur, then handle in loss via ignore_index
+                else:  # REGRESSION or SEQUENCE (if using _value column)
+                    self.y_dict[task_name] = torch.tensor(np.nan_to_num(task_values, nan=0.0), dtype=torch.float32)
+
                 base_mask_np = ~np.isnan(attributes[target_col_name].values).astype(bool)
                 logger.debug(
                     f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
@@ -174,10 +188,18 @@ class CompoundDataset(Dataset):
                 placeholder_dim = 1
                 if hasattr(cfg, "dims") and cfg.dims:
                     placeholder_dim = cfg.dims[-1]
-                elif hasattr(cfg, "num_classes"):
+                elif hasattr(cfg, "num_classes"):  # This is for ClassificationTaskConfig
                     placeholder_dim = cfg.num_classes
-                self.y_dict[task_name] = torch.zeros((len(self.x_formula), placeholder_dim), dtype=torch.float32)
-                base_mask_np = np.zeros(len(self.x_formula), dtype=bool)
+
+                # Determine dtype for placeholder based on task type
+                if task_type_enum_name == "CLASSIFICATION":
+                    # Placeholder for classification should be long, e.g., filled with a specific ignore_index like -1
+                    self.y_dict[task_name] = torch.full(
+                        (len(self.x_formula), placeholder_dim), fill_value=-1, dtype=torch.long
+                    )
+                else:  # REGRESSION or SEQUENCE
+                    self.y_dict[task_name] = torch.zeros((len(self.x_formula), placeholder_dim), dtype=torch.float32)
+                base_mask_np = np.zeros(len(self.x_formula), dtype=bool)  # All masked for placeholder
                 logger.debug(
                     f"[{self.dataset_name}] Task '{task_name}': y_dict (placeholder) shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
                 )

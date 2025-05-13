@@ -525,7 +525,9 @@ def dummy_compound_datamodule(model_config_mixed_tasks, tmp_path):
         elif task_cfg.type == TaskType.CLASSIFICATION:
             assert isinstance(task_cfg, ClassificationTaskConfig)
             # Classification target (indices)
-            attributes_data[task_cfg.name] = np.random.randint(0, task_cfg.num_classes, num_samples)
+            # Column name should match what CompoundDataset expects for classification values
+            col_name = f"{task_cfg.name}_classification_value"
+            attributes_data[col_name] = np.random.randint(0, task_cfg.num_classes, num_samples)
 
     attributes_df = pd.DataFrame(attributes_data, index=sample_indices)
 
@@ -565,10 +567,10 @@ def dummy_compound_datamodule(model_config_mixed_tasks, tmp_path):
 # --- Integration Test with Trainer ---
 
 
-def test_trainer_integration_mixed_tasks(model_config_mixed_tasks, dummy_compound_datamodule):
+def test_trainer_integration_mixed_tasks(model_config_mixed_tasks, dummy_compound_datamodule, tmp_path):
     """
     Test the model with pytorch_lightning.Trainer and CompoundDataModule
-    for mixed regression and classification tasks.
+    for mixed regression and classification tasks, including logger functionality.
     """
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
@@ -587,20 +589,27 @@ def test_trainer_integration_mixed_tasks(model_config_mixed_tasks, dummy_compoun
     )
 
     trainer = L.Trainer(
+        default_root_dir=tmp_path,  # Log to a temporary directory
         fast_dev_run=True,  # Runs 1 batch for train, val, test and predict
         accelerator="cpu",
-        logger=False,
-        enable_checkpointing=False,
+        # logger=False, # Removed to enable default logger (TensorBoardLogger)
+        enable_checkpointing=False,  # Disable checkpointing for this test
         enable_progress_bar=False,  # Keep test output clean
     )
 
     # The main assertion is that this runs without errors.
     try:
         trainer.fit(model, datamodule=dummy_compound_datamodule)
+
+        # Check if logger created the log directory
+        log_dir = tmp_path / "lightning_logs" / "version_0"
+        assert log_dir.is_dir(), f"Log directory not found: {log_dir}"
+        # Check for hparams file (TensorBoardLogger creates this)
+        hparams_file = log_dir / "hparams.yaml"
+        assert hparams_file.is_file(), f"hparams.yaml not found in {log_dir}"
+
         # If fast_dev_run is True, it also runs validation and test loops if defined.
         # And predict_loop if predict_dataloaders are available.
-        # We can add more specific assertions on logged metrics if needed,
-        # but fast_dev_run is a good smoke test.
 
         # Explicitly test predict if predict_dataloader is set up by dm.setup()
         if dummy_compound_datamodule.predict_dataloader() is not None:

@@ -118,46 +118,60 @@ class ClassificationHead(BaseTaskHead):
             (total_loss, per_class_loss) where total_loss is a scalar tensor
             and per_class_loss contains loss per class.
         """
-        if mask is None:
-            # If no mask provided, all samples are valid. Create a 1D mask.
-            mask_1d = torch.ones_like(target, device=pred.device, dtype=torch.float)
+        # pred is (B, C), target is (B, 1) from dataloader, mask is (B, 1) from dataloader
+
+        # 1. Process target to be (B,) and long type for F.cross_entropy
+        if target.ndim == 2 and target.shape[1] == 1:
+            final_target_for_loss = target.squeeze(-1).long()
+        elif target.ndim == 1:
+            final_target_for_loss = target.long()
         else:
-            # Ensure mask is 1D for consistent operations
-            mask_1d = mask.squeeze(-1).float()  # Squeeze and convert to float for multiplication
+            raise ValueError(f"Classification target has unexpected shape: {target.shape}. Expected (B, 1) or (B,).")
 
-        # Ensure target is long type and squeezed for cross_entropy (shape B,)
-        # Target from dataloader is (B, 1)
-        squeezed_target = target.squeeze(-1).long()
+        if final_target_for_loss.shape[0] != pred.shape[0] or final_target_for_loss.ndim != 1:
+            raise ValueError(
+                f"Internal shape error for classification target. "
+                f"Pred shape: {pred.shape}, Processed target shape: {final_target_for_loss.shape}. Expected target (B,)."
+            )
 
-        # Individual sample losses - apply 1D mask after loss calculation
-        losses = F.cross_entropy(pred, squeezed_target, reduction="none")  # losses is (B,)
-        masked_losses = losses * mask_1d  # Apply 1D mask here, result is (B,)
+        # 2. Process mask to be (B,) and float type for multiplication
+        if mask is None:
+            # If no mask provided, all samples are valid. Create a 1D mask of shape (B,).
+            mask_1d = torch.ones(pred.shape[0], device=pred.device, dtype=torch.float)
+        elif mask.ndim == 2 and mask.shape[1] == 1:  # Expected (B, 1)
+            mask_1d = mask.squeeze(-1).float()
+        elif mask.ndim == 1:  # Allow (B,)
+            mask_1d = mask.float()
+        else:
+            raise ValueError(f"Classification mask has unexpected shape: {mask.shape}. Expected (B, 1) or (B,).")
 
-        # Compute per-class losses (average loss for samples belonging to each class)
+        if mask_1d.shape[0] != pred.shape[0] or mask_1d.ndim != 1:
+            raise ValueError(
+                f"Internal shape error for classification mask. "
+                f"Pred shape: {pred.shape}, Processed mask shape: {mask_1d.shape}. Expected mask (B,)."
+            )
+
+        # 3. Individual sample losses
+        losses = F.cross_entropy(pred, final_target_for_loss, reduction="none")  # losses is (B,)
+        masked_losses = losses * mask_1d  # Apply 1D mask, result is (B,)
+
+        # 4. Compute per-class losses
         per_class_loss = torch.zeros(self.num_classes, device=pred.device)
-
-        # valid_mask should also be 1D
         valid_mask_1d = mask_1d > 0  # boolean, shape (B,)
 
         if valid_mask_1d.any():
-            # Ensure tensors used for indexing are 1D
-            # Use squeezed_target for indexing
-            target_valid = squeezed_target[valid_mask_1d]  # (N_valid,)
+            target_valid = final_target_for_loss[valid_mask_1d]  # (N_valid,)
             masked_losses_valid = masked_losses[valid_mask_1d]  # (N_valid,)
 
-            # Calculate sum of losses per class for valid samples
             class_loss_sum = torch.zeros(self.num_classes, device=pred.device).scatter_add_(
                 0, target_valid, masked_losses_valid
             )
-            # Calculate count per class for valid samples
             class_count = torch.zeros(self.num_classes, device=pred.device).scatter_add_(
                 0, target_valid, torch.ones_like(target_valid, dtype=torch.float)
             )
-            # Calculate average loss per class, handle division by zero
             per_class_loss = torch.nan_to_num(class_loss_sum / class_count.clamp_min(1.0))
 
-        # Total loss (average over valid samples)
-        # Use mask_1d.sum() for the denominator
+        # 5. Total loss
         total_loss = masked_losses.sum() / mask_1d.sum().clamp_min(1.0)
 
         return total_loss, per_class_loss
