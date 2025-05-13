@@ -32,12 +32,11 @@ graph TD
         X_structure --> S_Encoder
         F_Encoder --"h_formula (B, D_latent)"--> Fusion
         S_Encoder --"h_structure (B, D_latent)"--> Fusion
-        F_Encoder -.-> H_Latent_Output_Point("h_latent / h_fused") # This represents potential latent output, not direct input to heads
-        Fusion      --"h_fused (B, D_latent)"--> H_Latent_Output_Point # Same as above
-        H_Latent_Output_Point --> DepositBlock # Deposit block processes the latent/fused representation
+        F_Encoder -.-> H_Latent_Output_Point("h_latent / h_fused")
+        Fusion      --"h_fused (B, D_latent)"--> H_Latent_Output_Point
+        H_Latent_Output_Point --> DepositBlock
     end
 
-    # DepositBlock is the source for ALL heads
     DepositBlock --"h_task (B, D_deposit)"--> AttrTaskHeadsJunction{"To Attribute/Classification Heads"}
     DepositBlock --"h_task (B, D_deposit)"--> SeqTaskHeadsJunction{"To Sequence Heads"}
 
@@ -69,17 +68,16 @@ graph TD
     SeqHeadRNN --"pred_C (B, L, D_out_C)"--> OutputLayer
     SeqHeadTransformer --"pred_D (B, L, D_out_D)"--> OutputLayer
 
-    %% Styling for White Background Clarity
     classDef input fill:#E0EFFF,stroke:#5C9DFF,stroke-width:2px,color:#000000;
     classDef foundation fill:#DFF0D8,stroke:#77B55A,stroke-width:2px,color:#000000;
-    classDef fusion fill:#D9EDF7,stroke:#6BADCF,stroke-width:2px,color:#000000; %% Slightly different blue for fusion
-    classDef taskhead fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000000; %% Attribute/Class Heads - yellow/orange
-    classDef seqtaskhead fill:#F2DEDE,stroke:#D9534F,stroke-width:2px,color:#000000; %% Sequence Heads - red/pink
+    classDef fusion fill:#D9EDF7,stroke:#6BADCF,stroke-width:2px,color:#000000;
+    classDef taskhead fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000000;
+    classDef seqtaskhead fill:#F2DEDE,stroke:#D9534F,stroke-width:2px,color:#000000;
     classDef output fill:#EAEAEA,stroke:#888888,stroke-width:2px,color:#000000;
     classDef junction fill:#FFFFFF,stroke:#AAAAAA,stroke-width:1px,color:#000000,shape:circle;
     classDef point fill:#FFFFFF,stroke:#AAAAAA,stroke-width:1px,color:#000000,shape:point;
 
-    class X_formula,X_structure,Temps_batch input;
+    class X_formula,X_structure,Task_Sequence_Data_Batch input;
     class F_Encoder,S_Encoder,DepositBlock foundation;
     class Fusion fusion;
     class H_Latent_Output_Point point;

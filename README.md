@@ -201,7 +201,6 @@ graph TD
     NonSeqHeads --> Outputs["Outputs (Dictionary)"]
     SeqHeads --> Outputs
 
-    %% Styling for White Background Clarity
     classDef io fill:#E0EFFF,stroke:#5C9DFF,stroke-width:2px,color:#000000;
     classDef main fill:#DFF0D8,stroke:#77B55A,stroke-width:2px,color:#000000;
     classDef heads fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000000;
