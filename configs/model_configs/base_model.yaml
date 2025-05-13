@@ -2,66 +2,172 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Base model configuration for FlexibleMultiTaskModel
+# This serves as a comprehensive template.
+# Assumes a training script that can instantiate components using _target_ (e.g., PyTorch Lightning CLI).
+
+experiment_name: "base_experiment"
+log_dir: "results/logs/${experiment_name}" # Logs will go into results/logs_base_experiment
+
+# --- Data Module Configuration ---
+datamodule:
+  _target_: foundation_model.data.datamodule.CompoundDataModule
+  formula_desc_source: "path/to/your/formula_features.csv" # REQUIRED: Update this path
+  attributes_source: "path/to/your/attributes.csv" # REQUIRED: Update this path
+  # structure_desc_source: "path/to/your/structure_features.csv" # Optional: Uncomment and update if using structure
+  task_configs: ${model.task_configs} # Referencing task_configs from the model section
+  batch_size: 64
+  num_workers: 4
+  val_split: 0.1 # Proportion of non-test data for validation (if no 'split' column in attributes)
+  test_split: 0.1 # Proportion of data for testing (if no 'split' column in attributes)
+  train_random_seed: 42
+  test_random_seed: 24
+  # task_masking_ratios: null # Example: { "formation_energy": 0.8, "band_gap": 1.0 }
+  # with_structure: ${model.with_structure} # Ensure consistency if model's with_structure is the source of truth
+
+# --- Model Configuration ---
 model:
-  shared_block_dims: [256, 512, 512]
+  _target_: foundation_model.models.flexible_multi_task_model.FlexibleMultiTaskModel
+  shared_block_dims: [256, 512, 512] # Example: Input_dim_formula -> hidden -> latent_dim
   task_configs:
     # Example regression task for material formation energy
-    - name: formation_energy
-      type: regression
-      dims: [256, 128, 1]
+    - name: "formation_energy"
+      type: "REGRESSION" # Ensure these match TaskType enum values (REGRESSION, CLASSIFICATION, SEQUENCE)
+      dims: [512, 128, 1] # Example: latent_dim_from_deposit -> hidden -> output
       norm: true
       residual: false
       weight: 1.0
       enabled: true
+      optimizer:
+        optimizer_type: "AdamW"
+        lr: 0.001
+        weight_decay: 0.01
+        eps: 0.000001
+        betas: [0.9, 0.999]
+        scheduler_type: "ReduceLROnPlateau"
+        mode: "min"
+        factor: 0.5
+        patience: 10
+        min_lr: 0.00001
+        monitor: "val_formation_energy_loss" # Monitor this task's validation loss
 
     # Example regression task for band gap
-    - name: band_gap
-      type: regression
-      dims: [256, 128, 1]
+    - name: "band_gap"
+      type: "REGRESSION"
+      dims: [512, 128, 1]
       norm: true
       residual: false
       weight: 1.0
       enabled: true
+      optimizer:
+        optimizer_type: "AdamW"
+        lr: 0.001
+        weight_decay: 0.01
+        scheduler_type: "None"
+        monitor: "val_band_gap_loss"
+
+    # Example classification task
+    - name: "is_stable"
+      type: "CLASSIFICATION"
+      dims: [512, 64, 2] # Example: latent_dim_from_deposit -> hidden -> num_classes
+      num_classes: 2
+      norm: true
+      residual: false
+      weight: 0.5
+      enabled: true
+      optimizer:
+        optimizer_type: "AdamW"
+        lr: 0.002
+        scheduler_type: "StepLR"
+        step_size: 30
+        gamma: 0.1
+        monitor: "val_is_stable_loss"
 
     # Example sequence task for temperature curve prediction
-    - name: temp_curve
-      type: sequence
-      subtype: rnn
+    - name: "temp_curve"
+      type: "SEQUENCE"
+      subtype: "rnn" # Options: rnn, vec, tcn
+      d_in: 512 # Should match the latent dim fed to sequence heads
       hidden: 128
-      cell: gru
+      cell: "gru" # Options: gru, lstm (for rnn subtype)
+      # seq_len: 100 # For 'vec' subtype if outputting fixed vector
+      # n_tcn_layers: 4 # For 'tcn' subtype
       weight: 1.0
       enabled: true
+      optimizer:
+        optimizer_type: "AdamW"
+        lr: 0.0005
+        scheduler_type: "None"
+        monitor: "val_temp_curve_loss"
+
+  # Shared block optimizer configuration (for encoder, fusion, deposit)
+  shared_block_optimizer:
+    optimizer_type: "AdamW"
+    lr: 0.001
+    weight_decay: 0.01
+    eps: 0.000001
+    betas: [0.9, 0.999]
+    scheduler_type: "ReduceLROnPlateau"
+    mode: "min"
+    factor: 0.1
+    patience: 20
+    min_lr: 0.000001
+    monitor: "val_total_loss" # Monitor overall validation loss for shared parts
 
   # Structure fusion options
-  with_structure: false
-  struct_block_dims: [128, 256, 512]
+  with_structure: false # Set to true to enable structure branch
+  struct_block_dims: [128, 256, 512] # Example: Input_dim_structure -> hidden -> latent_dim (must match shared_block_dims[-1])
   modality_dropout_p: 0.3
 
-  # Optimization options
-  shared_block_lr: 5.0e-3
-  task_block_lr: 5.0e-3
-  seq_head_lr: 5.0e-3
-
-  # Normalization options
+  # Normalization options for shared encoder
   norm_shared: true
   residual_shared: false
 
-  # Pre-training options
-  pretrain: false
-  mask_ratio: 0.15
-  temperature: 0.07
+  # Pre-training options (SelfSupervisedModule config)
+  enable_self_supervised_training: false # Set to true to enable SSL losses
+  ssl_config: # Configuration for SelfSupervisedModule
+    contrastive_loss_weight: 1.0
+    cross_reconstruction_loss_weight: 1.0
+    masked_feature_modeling_loss_weight: 1.0
+    mask_ratio: 0.15
+    temperature: 0.07
+    # projection_dims: [512, 256, 128] # Example projection head for contrastive loss
 
   # LoRA options
-  freeze_encoder: false
-  lora_rank: 0
-  lora_alpha: 1.0
+  freeze_encoder: false # If true, only task heads (and LoRA adapters if rank > 0) are trained
+  lora_rank: 0 # Rank for LoRA adapters. 0 means LoRA is disabled.
+  lora_alpha: 1.0 # Alpha for LoRA scaling.
 
-# Trainer configuration
+# --- Trainer Configuration (PyTorch Lightning) ---
 trainer:
+  _target_: lightning.pytorch.Trainer
   max_epochs: 100
-  accelerator: gpu
-  devices: 1
-  precision: 16-mixed
+  accelerator: "auto" # Options: "cpu", "gpu", "tpu", "ipu", "hpu", "mps", "auto"
+  devices: "auto" # Number of devices or "auto"
+  precision: "16-mixed" # Options: "16-mixed", "32", "64", "bf16-mixed"
   accumulate_grad_batches: 1
   gradient_clip_val: 1.0
-  log_every_n_steps: 10
+  log_every_n_steps: 50
+  # default_root_dir: ${log_dir} # Handled by logger's save_dir
+  # strategy: "auto" # e.g., "ddp", "fsdp", "deepspeed"
+
+  logger: # Example: CSVLogger. For TensorBoard, use lightning.pytorch.loggers.TensorBoardLogger
+    _target_: lightning.pytorch.loggers.CSVLogger
+    save_dir: ${log_dir} # Uses log_dir defined at the top
+    name: "" # Experiment name subdirectory (version_X will be created under save_dir directly if name is empty)
+    # version: "run_1" # Optional: specify a version string
+
+  callbacks:
+    - _target_: lightning.pytorch.callbacks.ModelCheckpoint
+      dirpath: "${log_dir}/checkpoints" # Save checkpoints in a subfolder of log_dir
+      filename: "{epoch}-{step}-{val_total_loss:.2f}"
+      monitor: "val_total_loss"
+      mode: "min"
+      save_top_k: 1
+      save_last: true # Recommended to save the last epoch's checkpoint
+    - _target_: lightning.pytorch.callbacks.EarlyStopping
+      monitor: "val_total_loss"
+      patience: 25 # Number of epochs with no improvement after which training will be stopped
+      mode: "min"
+      verbose: true
+    # - _target_: lightning.pytorch.callbacks.LearningRateMonitor
+    #   logging_interval: "step" # or "epoch"

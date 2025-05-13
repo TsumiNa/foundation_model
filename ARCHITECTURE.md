@@ -70,9 +70,9 @@ graph TD
     %% Styling for White Background Clarity
     classDef input fill:#E0EFFF,stroke:#5C9DFF,stroke-width:2px,color:#000000;
     classDef foundation fill:#DFF0D8,stroke:#77B55A,stroke-width:2px,color:#000000;
-    classDef fusion fill:#D9EDF7,stroke:#6BADCF,stroke-width:2px,color:#000000; /* Slightly different blue for fusion */
-    classDef taskhead fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000000; /* Attribute/Class Heads - yellow/orange */
-    classDef seqtaskhead fill:#F2DEDE,stroke:#D9534F,stroke-width:2px,color:#000000; /* Sequence Heads - red/pink */
+    classDef fusion fill:#D9EDF7,stroke:#6BADCF,stroke-width:2px,color:#000000; %% Slightly different blue for fusion
+    classDef taskhead fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000000; %% Attribute/Class Heads - yellow/orange
+    classDef seqtaskhead fill:#F2DEDE,stroke:#D9534F,stroke-width:2px,color:#000000; %% Sequence Heads - red/pink
     classDef output fill:#EAEAEA,stroke:#888888,stroke-width:2px,color:#000000;
     classDef junction fill:#FFFFFF,stroke:#AAAAAA,stroke-width:1px,color:#000000,shape:circle;
     classDef point fill:#FFFFFF,stroke:#AAAAAA,stroke-width:1px,color:#000000,shape:point;
