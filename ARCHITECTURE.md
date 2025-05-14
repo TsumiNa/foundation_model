@@ -172,10 +172,10 @@ This structure allows for flexible combination of shared representations with ta
 
 ## Loss Calculation and Weighting
 
-The `FlexibleMultiTaskModel` employs a sophisticated strategy for calculating and weighting losses from multiple tasks (supervised prediction tasks and self-supervised learning (SSL) objectives) to enable stable and effective multi-task learning.
+The `FlexibleMultiTaskModel` employs a sophisticated strategy for calculating and weighting losses from multiple tasks (supervised prediction tasks and self-supervised learning (SSL) objectives) to enable stable and effective multi-task learning. This section details the approach, including the use of learnable uncertainty weighting.
 
 ### 1. Raw Task Losses
-Each individual task head (e.g., `RegressionHead`, `ClassificationHead`, `SequenceRNNHead`) computes its own "raw" loss (`raw_loss_t`). This is typically a standard loss function appropriate for the task type:
+Each individual task head (e.g., `RegressionHead`, `ClassificationHead`, `SequenceRNNHead`) computes its own "raw" loss ($\mathcal{L}_t$). This is typically a standard loss function appropriate for the task type:
 -   **Regression Tasks**: Mean Squared Error (MSE) is common, often calculated on target values that may have been pre-scaled by a `target_scaler` (e.g., `StandardScaler`) for numerical stability.
 -   **Classification Tasks**: Cross-Entropy Loss is typical.
 -   **Sequence Tasks**: Depends on the nature of the sequence; could be MSE per time step or another sequence-appropriate loss, also potentially on scaled targets.
@@ -183,33 +183,125 @@ Each individual task head (e.g., `RegressionHead`, `ClassificationHead`, `Sequen
 Self-supervised tasks (MFM, contrastive, cross-reconstruction) also compute their respective raw losses.
 
 ### 2. Learnable Uncertainty Weighting for Supervised Tasks
-To address challenges with balancing tasks that may have different loss scales or learning difficulties, the model implements learnable uncertainty weighting for supervised tasks, inspired by the work of Kendall, Gal, and Cipolla (2018).
 
--   **Learnable Parameters**: For each enabled supervised task `t`, a learnable scalar parameter `log_sigma_t` (representing the logarithm of an uncertainty measure `sigma_t`) is introduced. These are stored in `model.task_log_sigmas`.
--   **Loss Formulation**: The final loss contribution for a supervised task `t` is calculated as:
-    `final_task_loss_component_t = static_weight_t * (0.5 * precision_factor_t * raw_loss_t) + log_sigma_t`
-    Where:
-    -   `raw_loss_t`: The raw loss for task `t` (e.g., MSE).
-    -   `log_sigma_t`: The learnable log uncertainty for task `t`.
-    -   `precision_factor_t = exp(-2 * log_sigma_t)`: This term is equivalent to `1 / sigma_t^2`, acting as a precision weighting. Tasks with higher learned uncertainty (`sigma_t`) will have their `raw_loss_t` down-weighted.
-    -   `static_weight_t`: An optional, user-defined static weight for task `t`, sourced from the `loss_weights` configuration (`model.init_args.loss_weights['task_name']`). Defaults to `1.0`. This allows for a fixed manual emphasis on certain tasks if desired, applied to the data-dependent term.
-    -   The `0.5 * ... * raw_loss_t` part is standard for Gaussian likelihood losses (like MSE). The `log_sigma_t` term acts as a regularizer, preventing `sigma_t` from becoming too small (which would excessively amplify the loss).
+To address challenges with balancing tasks that may have different loss scales or learning difficulties, the model implements learnable uncertainty weighting for supervised tasks, inspired by the work of Kendall, Gal, and Cipolla, "Multi-task Learning Using Uncertainty to Weigh Losses for Scene Geometry and Semantics," CVPR 2018.
+
+#### Conceptual Basis: Homoscedastic Uncertainty
+Homoscedastic uncertainty refers to task-dependent uncertainty that is constant for all input samples of a given task but varies between tasks. The model learns these task-specific uncertainties ($\sigma_t$) and uses them to automatically balance the contribution of each task's loss.
+
+#### Probabilistic Formulation
+For a regression task $t$, modeling the likelihood $p(y_t | f_t(\mathbf{x}), \sigma_t^2)$ as a Gaussian $\mathcal{N}(y_t | f_t(\mathbf{x}), \sigma_t^2)$, the negative log-likelihood (NLL) to be minimized is proportional to:
+$$ \mathcal{L}'_t = \frac{1}{2\sigma_t^2} \mathcal{L}_t + \log \sigma_t $$
+where $\mathcal{L}_t = (y_t - f_t(\mathbf{x}))^2$ is the raw squared error. A similar formulation applies to classification tasks.
+
+#### Practical Implementation
+The model learns $\log \sigma_t$ for each supervised task $t$, stored in `model.task_log_sigmas`. The final loss component for a supervised task $t$ is:
+$$ \mathcal{L}'_{t, \text{final}} = w_t \cdot \left( \frac{\exp(-2 \log \sigma_t)}{2} \mathcal{L}_t \right) + \log \sigma_t $$
+Where:
+-   $\mathcal{L}_t$: The raw, unweighted loss for task $t$.
+-   $\log \sigma_t$: The learnable log uncertainty for task $t$.
+-   $\exp(-2 \log \sigma_t)$: Equivalent to $1/\sigma_t^2$ (precision). If $\mathcal{L}_t$ is large (task is hard/noisy), $\log \sigma_t$ increases, down-weighting $\mathcal{L}_t$.
+-   $w_t$: Optional static weight from `loss_weights` (defaults to 1.0), scaling the data-dependent term.
+-   The $\log \sigma_t$ term regularizes, preventing $\sigma_t$ from collapsing.
 
 ### 3. Static Weighting for Self-Supervised Learning (SSL) Tasks
-SSL tasks (Masked Feature Modeling, Contrastive Loss, Cross-Reconstruction Loss) are weighted using only the static weights provided in the `loss_weights` configuration.
--   Example: `final_mfm_loss_component = loss_weights['mfm'] * raw_mfm_loss`
+SSL tasks (MFM, Contrastive, Cross-Reconstruction) are weighted using only the static weights $w_{ssl}$ from the `loss_weights` configuration:
+$\mathcal{L}'_{ssl, \text{final}} = w_{ssl} \cdot \mathcal{L}_{ssl, \text{raw}}$
 
 ### 4. Total Loss for Optimization
-The total loss that the model optimizes during training is the sum of:
--   All `final_task_loss_component_t` from the supervised tasks.
--   All final weighted loss components from the enabled SSL tasks.
+The total loss optimized during training (`train_final_loss`) is:
+$$ \text{train\_final\_loss} = \sum_{t \in \text{supervised}} \mathcal{L}'_{t, \text{final}} + \sum_{s \in \text{SSL}} \mathcal{L}'_{s, \text{final}} $$
 
-`total_training_loss = sum(final_task_loss_component_t for all supervised tasks) + sum(final_ssl_loss_component for all SSL tasks)`
+This is accumulated as `final_supervised_loss + final_ssl_loss`.
 
 ### 5. Validation Loss
-During validation:
--   The same uncertainty-weighting formulation is used to calculate `final_task_loss_component_t` for supervised tasks, using the `log_sigma_t` values learned during training (these are not updated during validation).
--   The primary metric monitored for model checkpointing and early stopping is `val_final_loss`, which is the sum of all final weighted validation losses (supervised and SSL).
--   Raw losses for each task are also logged for diagnostic purposes.
+During validation, the same weighting formulation is applied using the learned $\log \sigma_t$ values (without updating them). The primary metric for callbacks (e.g., `ModelCheckpoint`, `EarlyStopping`) is `val_final_loss`.
+
+### Loss Calculation Flow Diagram
+
+The following diagram illustrates the combination of different loss components:
+
+```mermaid
+graph TD
+    subgraph OverallLoss["Total Training Loss (train_final_loss)"]
+        direction TB
+        SumLosses["Sum All Contributions"]:::output
+
+        subgraph SupervisedLosses["Supervised Tasks Contribution (final_supervised_loss)"]
+            direction TB
+            SumSupervised["Sum Task Components"]:::output
+            Task1_Final["Task 1: Final Component"]:::taskhead
+            Task2_Final["Task 2: Final Component"]:::taskhead
+            TaskN_Final["Task N: Final Component"]:::taskhead
+
+            Task1_Raw["Raw Loss (L1)"]:::rawloss --> Op1_Scale["Scale by <br/>0.5 * w1 * exp(-2*log_sigma1)"]:::operation
+            Op1_Scale --> Op1_AddReg["Add log_sigma1"]:::operation
+            Op1_AddReg --> Task1_Final
+
+            Task2_Raw["Raw Loss (L2)"]:::rawloss --> Op2_Scale["Scale by <br/>0.5 * w2 * exp(-2*log_sigma2)"]:::operation
+            Op2_Scale --> Op2_AddReg["Add log_sigma2"]:::operation
+            Op2_AddReg --> Task2_Final
+            
+            TaskN_Raw["..."]:::rawloss --> TaskN_Final
+            
+            Task1_Final --> SumSupervised
+            Task2_Final --> SumSupervised
+            TaskN_Final --> SumSupervised
+        end
+
+        subgraph SSLLosses["SSL Tasks Contribution (final_ssl_loss)"]
+            direction TB
+            SumSSL["Sum SSL Components"]:::output
+            SSL_MFM_Final["MFM: Final Component"]:::sslcomp
+            SSL_Contrast_Final["Contrastive: Final Component"]:::sslcomp
+            
+            SSL_MFM_Raw["Raw MFM Loss"]:::rawloss --"Scale by w_mfm"--> SSL_MFM_Final
+            SSL_Contrast_Raw["Raw Contrastive Loss"]:::rawloss --"Scale by w_contrast"--> SSL_Contrast_Final
+            
+            SSL_MFM_Final --> SumSSL
+            SSL_Contrast_Final --> SumSSL
+        end
+        
+        SumSupervised --> SumLosses
+        SumSSL --> SumLosses
+    end
+
+    subgraph InputsToLossCalc["Inputs to Loss Calculation"]
+        L1_Head["Task 1 Head"]:::taskhead --> Task1_Raw
+        L2_Head["Task 2 Head"]:::taskhead --> Task2_Raw
+        LN_Head["..."]:::taskhead --> TaskN_Raw
+        
+        SSL_Module["SSL Module"]:::foundation --> SSL_MFM_Raw
+        SSL_Module:::foundation --> SSL_Contrast_Raw
+        
+        Config_LossWeights["Config: loss_weights (w_t, w_mfm, ...)"]:::inputsrc -.-> Op1_Scale
+        Config_LossWeights -.-> Op2_Scale
+        Config_LossWeights -.-> SSL_MFM_Final
+        Config_LossWeights -.-> SSL_Contrast_Final
+        
+        Learnable_LogSigmas["Learnable: task_log_sigmas (log_sigma_t)"]:::inputsrc -.-> Op1_Scale
+        Learnable_LogSigmas -.-> Op1_AddReg
+        Learnable_LogSigmas -.-> Op2_Scale
+        Learnable_LogSigmas -.-> Op2_AddReg
+    end
+
+    classDef output fill:#EAEAEA,stroke:#888888,stroke-width:2px,color:#000000;
+    classDef taskhead fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000000;
+    classDef foundation fill:#DFF0D8,stroke:#77B55A,stroke-width:2px,color:#000000;
+    
+    classDef rawloss fill:#FFF3CD,stroke:#FFC107,stroke-width:1px,color:#000000;
+    classDef operation fill:#E1F5FE,stroke:#0288D1,stroke-width:1px,color:#000000;
+    classDef sslcomp fill:#FFEBEE,stroke:#D32F2F,stroke-width:1px,color:#000000;
+    classDef inputsrc fill:#E8EAF6,stroke:#3F51B5,stroke-width:1px,color:#000000;
+
+    class Task1_Final,Task2_Final,TaskN_Final;
+    class SSL_MFM_Final,SSL_Contrast_Final;
+    class SumLosses,SumSupervised,SumSSL;
+    class L1_Head,L2_Head,LN_Head;
+    class SSL_Module;
+    class Config_LossWeights,Learnable_LogSigmas;
+    class Task1_Raw,Task2_Raw,TaskN_Raw,SSL_MFM_Raw,SSL_Contrast_Raw;
+    class Op1_Scale,Op1_AddReg,Op2_Scale,Op2_AddReg;
+```
 
 This adaptive weighting scheme allows the model to dynamically balance the influence of different tasks based on their learned uncertainties, promoting more robust multi-task training.

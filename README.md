@@ -154,6 +154,78 @@ Update history has been moved to [changes.md](changes.md).
 - Configurable data splitting strategies  
 - Early stopping and model checkpointing
 
+### Loss Weighting Strategy
+
+To effectively train the `FlexibleMultiTaskModel` on diverse tasks (supervised and self-supervised) which may have different loss scales and learning dynamics, a sophisticated loss weighting strategy is employed:
+
+1.  **Supervised Tasks (e.g., Regression, Classification):**
+    *   Each supervised task $t$ has its raw loss $\mathcal{L}_t$ (e.g., MSE, Cross-Entropy) calculated by its respective head.
+    *   **Learnable Uncertainty:** The model learns a task-specific uncertainty parameter $\sigma_t$ (actually $\log \sigma_t$) for each supervised task. This allows the model to adaptively down-weight tasks that are inherently noisier or harder to learn.
+    *   **Static Weights:** An optional static weight $w_t$ (from the `loss_weights` configuration) can also be applied as a manual emphasis.
+    *   The final loss component for a supervised task $t$ is calculated as:
+        $\mathcal{L}'_{t, \text{final}} = w_t \cdot \frac{\exp(-2 \log \sigma_t)}{2} \mathcal{L}_t + \log \sigma_t$
+        This formula balances the raw loss (scaled by precision $1/\sigma_t^2$ and $w_t$) with a regularization term ($\log \sigma_t$) that prevents $\sigma_t$ from collapsing.
+
+2.  **Self-Supervised Learning (SSL) Tasks:**
+    *   SSL tasks (e.g., Masked Feature Modeling) are weighted using only their static weights $w_{ssl}$ from the `loss_weights` configuration:
+        $\mathcal{L}'_{ssl, \text{final}} = w_{ssl} \cdot \mathcal{L}_{ssl, \text{raw}}$
+
+3.  **Total Loss:**
+    *   The total training loss is the sum of all $\mathcal{L}'_{t, \text{final}}$ from supervised tasks and all $\mathcal{L}'_{ssl, \text{final}}$ from SSL tasks.
+
+This adaptive approach, inspired by [Kendall, Gal, and Cipolla (CVPR 2018)](https://doi.org/10.1109/CVPR.2018.00781), helps in robustly training the multi-task model. For a more detailed mathematical derivation and component breakdown, please see the [**Loss Calculation and Weighting section in ARCHITECTURE.md**](ARCHITECTURE.md#loss-calculation-and-weighting).
+
+**Simplified Loss Flow:**
+
+```mermaid
+graph TD
+    subgraph OverallLoss["Total Training Loss"]
+        direction TB
+        Combine["Sum All Weighted Losses"]:::output
+
+        subgraph SupervisedTaskLoss["Supervised Task 't'"]
+            RawLoss_t["Raw Loss L_t"]:::inputdata
+            LogSigma_t["Learnable log_sigma_t"]:::param
+            StaticWeight_t["Static Weight w_t"]:::param
+            
+            WeightingLogic["Weighting Logic <br> w_t * exp(-2*log_sigma_t)/2 * L_t + log_sigma_t"]:::operation
+            FinalLoss_t["Final Loss Component L'_t"]:::taskhead
+
+            RawLoss_t --> WeightingLogic
+            LogSigma_t --> WeightingLogic
+            StaticWeight_t --> WeightingLogic
+            WeightingLogic --> FinalLoss_t
+        end
+
+        subgraph SSLTaskLoss["SSL Task 's'"]
+            RawLoss_s["Raw Loss L_s"]:::inputdata
+            StaticWeight_s["Static Weight w_s"]:::param
+            WeightedSSL["w_s * L_s"]:::operation
+            FinalLoss_s["Final Loss Component L'_s"]:::taskhead 
+
+            RawLoss_s --> WeightedSSL
+            StaticWeight_s --> WeightedSSL
+            WeightedSSL --> FinalLoss_s
+        end
+        
+        FinalLoss_t --> Combine
+        FinalLoss_s --> Combine
+        Ellipsis["... (other tasks) ..."] --> Combine
+    end
+    
+    classDef output fill:#EAEAEA,stroke:#888888,stroke-width:2px,color:#000000;
+    classDef taskhead fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000000;
+    classDef param fill:#DFF0D8,stroke:#77B55A,stroke-width:1px,color:#000000;
+    classDef inputdata fill:#E0EFFF,stroke:#5C9DFF,stroke-width:1px,color:#000000;
+    classDef operation fill:#D9EDF7,stroke:#6BADCF,stroke-width:1px,color:#000000;
+
+    class Combine;
+    class RawLoss_t, RawLoss_s;
+    class LogSigma_t, StaticWeight_t, StaticWeight_s;
+    class WeightingLogic, WeightedSSL;
+    class FinalLoss_t, FinalLoss_s;
+```
+
 ## Model Architecture
 
 The `FlexibleMultiTaskModel` is designed with a modular and extensible architecture. At its core, it features:
