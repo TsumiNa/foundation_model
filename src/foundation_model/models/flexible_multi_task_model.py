@@ -617,7 +617,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
             for opt in optimizers:
                 opt.step()
             for scheduler in lr_schedulers:
-                scheduler.step(total_loss)
+                if scheduler is not None:  # Add check for None scheduler
+                    scheduler.step(total_loss)
         else:
             logger.warning(
                 f"total_loss does not require grad and has no grad_fn at batch_idx {batch_idx}. "
