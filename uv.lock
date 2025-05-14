@@ -788,11 +788,13 @@ version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "lightning", extra = ["pytorch-extra"] },
+    { name = "loguru" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "omegaconf" },
     { name = "pandas" },
     { name = "scipy" },
+    { name = "seaborn" },
     { name = "shotgun-csp" },
     { name = "tensorboard" },
     { name = "torch" },
@@ -810,11 +812,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "lightning", extras = ["pytorch-extra"], specifier = ">=2.5.1.post0" },
+    { name = "loguru", specifier = ">=0.7.3" },
     { name = "matplotlib", specifier = ">=3.10.1" },
     { name = "numpy", specifier = "<2" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "scipy", specifier = ">=1.15.2" },
+    { name = "seaborn", specifier = ">=0.13.2" },
     { name = "shotgun-csp", git = "https://github.com/TsumiNa/shotgun_csp_next?branch=main" },
     { name = "tensorboard", specifier = ">=2.19.0" },
     { name = "torch", specifier = ">=2.1" },
