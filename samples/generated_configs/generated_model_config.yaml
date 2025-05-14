@@ -6,9 +6,9 @@ model:
   init_args:
     shared_block_dims: [256, 128, 64]
     task_configs:
-      - name: regression_b
+      - name: regression_1
         type: REGRESSION
-        data_column: "regression_b_regression_value"
+        data_column: regression_1
         dims: [64, 32, 1]
         norm: true
         residual: false
@@ -28,7 +28,7 @@ model:
 
       - name: regression_b # Note: Duplicate task name, this might be an issue or intended for some reason.
         type: REGRESSION
-        data_column: "regression_b_regression_value" # Assuming same column for this duplicate
+        data_column: regression_b # Assuming same column for this duplicate
         dims: [64, 32, 1]
         norm: true
         residual: false
@@ -86,7 +86,7 @@ model:
       #       monitor: val_classification_A_loss
       - name: classification_a
         type: CLASSIFICATION
-        data_column: "classification_a_classification_value"
+        data_column: classification_a
         dims: [64, 32, 3]
         num_classes: 3
         norm: true
@@ -99,7 +99,6 @@ model:
           scheduler_type: StepLR
           patience: 30
           factor: 0.1
-          monitor: val_classification_B_loss
     shared_block_optimizer:
       optimizer_type: AdamW
       lr: 0.001
@@ -142,7 +141,6 @@ data:
 trainer:
   default_root_dir: results/logs/default_experiment
   max_epochs: 100
-  # accelerator: auto
   # devices: auto
   accelerator: auto
   devices: 1

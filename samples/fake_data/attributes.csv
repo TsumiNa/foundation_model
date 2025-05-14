@@ -1,4 +1,4 @@
-id,regression_a_regression_value,regression_b_regression_value,regression_3_regression_value,classification_a_classification_value,classification_b_classification_value,split
+id,regression_1,regression_b,regression_3,classification_a,classification_b,split
 sample_0000,-1.254598811526375,1.3554020018665076,0.8611381655775646,0,1,train
 sample_0001,4.507143064099161,-1.6706887174202025,3.1233270918800455,0,2,train
 sample_0002,2.3199394181140507,1.7603957020119263,3.5507548832107645,0,1,train
