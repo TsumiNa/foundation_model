@@ -169,3 +169,47 @@ During `predict_step`, the output dictionary keys are further processed by each 
 -   **Sequence Head Output**: `(B, SequenceLength, task_specific_output_dim_per_point)`
 
 This structure allows for flexible combination of shared representations with task-specific processing.
+
+## Loss Calculation and Weighting
+
+The `FlexibleMultiTaskModel` employs a sophisticated strategy for calculating and weighting losses from multiple tasks (supervised prediction tasks and self-supervised learning (SSL) objectives) to enable stable and effective multi-task learning.
+
+### 1. Raw Task Losses
+Each individual task head (e.g., `RegressionHead`, `ClassificationHead`, `SequenceRNNHead`) computes its own "raw" loss (`raw_loss_t`). This is typically a standard loss function appropriate for the task type:
+-   **Regression Tasks**: Mean Squared Error (MSE) is common, often calculated on target values that may have been pre-scaled by a `target_scaler` (e.g., `StandardScaler`) for numerical stability.
+-   **Classification Tasks**: Cross-Entropy Loss is typical.
+-   **Sequence Tasks**: Depends on the nature of the sequence; could be MSE per time step or another sequence-appropriate loss, also potentially on scaled targets.
+
+Self-supervised tasks (MFM, contrastive, cross-reconstruction) also compute their respective raw losses.
+
+### 2. Learnable Uncertainty Weighting for Supervised Tasks
+To address challenges with balancing tasks that may have different loss scales or learning difficulties, the model implements learnable uncertainty weighting for supervised tasks, inspired by the work of Kendall, Gal, and Cipolla (2018).
+
+-   **Learnable Parameters**: For each enabled supervised task `t`, a learnable scalar parameter `log_sigma_t` (representing the logarithm of an uncertainty measure `sigma_t`) is introduced. These are stored in `model.task_log_sigmas`.
+-   **Loss Formulation**: The final loss contribution for a supervised task `t` is calculated as:
+    `final_task_loss_component_t = static_weight_t * (0.5 * precision_factor_t * raw_loss_t) + log_sigma_t`
+    Where:
+    -   `raw_loss_t`: The raw loss for task `t` (e.g., MSE).
+    -   `log_sigma_t`: The learnable log uncertainty for task `t`.
+    -   `precision_factor_t = exp(-2 * log_sigma_t)`: This term is equivalent to `1 / sigma_t^2`, acting as a precision weighting. Tasks with higher learned uncertainty (`sigma_t`) will have their `raw_loss_t` down-weighted.
+    -   `static_weight_t`: An optional, user-defined static weight for task `t`, sourced from the `loss_weights` configuration (`model.init_args.loss_weights['task_name']`). Defaults to `1.0`. This allows for a fixed manual emphasis on certain tasks if desired, applied to the data-dependent term.
+    -   The `0.5 * ... * raw_loss_t` part is standard for Gaussian likelihood losses (like MSE). The `log_sigma_t` term acts as a regularizer, preventing `sigma_t` from becoming too small (which would excessively amplify the loss).
+
+### 3. Static Weighting for Self-Supervised Learning (SSL) Tasks
+SSL tasks (Masked Feature Modeling, Contrastive Loss, Cross-Reconstruction Loss) are weighted using only the static weights provided in the `loss_weights` configuration.
+-   Example: `final_mfm_loss_component = loss_weights['mfm'] * raw_mfm_loss`
+
+### 4. Total Loss for Optimization
+The total loss that the model optimizes during training is the sum of:
+-   All `final_task_loss_component_t` from the supervised tasks.
+-   All final weighted loss components from the enabled SSL tasks.
+
+`total_training_loss = sum(final_task_loss_component_t for all supervised tasks) + sum(final_ssl_loss_component for all SSL tasks)`
+
+### 5. Validation Loss
+During validation:
+-   The same uncertainty-weighting formulation is used to calculate `final_task_loss_component_t` for supervised tasks, using the `log_sigma_t` values learned during training (these are not updated during validation).
+-   The primary metric monitored for model checkpointing and early stopping is `val_final_loss`, which is the sum of all final weighted validation losses (supervised and SSL).
+-   Raw losses for each task are also logged for diagnostic purposes.
+
+This adaptive weighting scheme allows the model to dynamically balance the influence of different tasks based on their learned uncertainties, promoting more robust multi-task training.
