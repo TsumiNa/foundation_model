@@ -1,30 +1,19 @@
 import logging
 import os
 import tempfile
-from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 import pytest
+from loguru import logger as loguru_logger  # ADDED for loguru bridge
 
+from foundation_model.configs.model_config import (
+    ClassificationTaskConfig,
+    RegressionTaskConfig,
+    SequenceTaskConfig,
+    TaskType,
+)
 from foundation_model.data.datamodule import CompoundDataModule
-
-
-# --- Mock Objects ---
-class MockTaskType:
-    REGRESSION = SimpleNamespace(name="REGRESSION")
-    CLASSIFICATION = SimpleNamespace(name="CLASSIFICATION")  # Added for more diverse tests
-    SEQUENCE = SimpleNamespace(name="SEQUENCE")
-
-
-class MockTaskConfig:
-    def __init__(self, name, task_type, enabled=True, dims=None, num_classes=None, optimizer=None):
-        self.name = name
-        self.type = task_type
-        self.enabled = enabled
-        self.dims = dims
-        self.num_classes = num_classes  # For classification
-        self.optimizer = optimizer
 
 
 # --- Fixtures ---
@@ -84,17 +73,31 @@ def structure_df_partial_match():  # 16 samples s0-s15
 @pytest.fixture
 def sample_task_configs_dm():
     return [
-        MockTaskConfig(name="task1", task_type=MockTaskType.REGRESSION, dims=[None, 1]),
-        MockTaskConfig(name="task2", task_type=MockTaskType.SEQUENCE, dims=[None, 5]),
-        MockTaskConfig(name="task_cls", task_type=MockTaskType.CLASSIFICATION, num_classes=3),
+        RegressionTaskConfig(
+            name="task1", type=TaskType.REGRESSION, data_column="task1_regression_value", dims=[None, 1]
+        ),
+        SequenceTaskConfig(
+            name="task2",
+            type=TaskType.SEQUENCE,
+            data_column="task2_sequence_series",
+            steps_column="task2_temps",
+            seq_len=5,  # Explicitly state expected/data sequence length
+        ),
+        ClassificationTaskConfig(
+            name="task_cls", type=TaskType.CLASSIFICATION, data_column="task_cls_classification_value", num_classes=3
+        ),
     ]
 
 
 @pytest.fixture
 def sample_task_configs_no_seq_dm():
     return [
-        MockTaskConfig(name="task1", task_type=MockTaskType.REGRESSION, dims=[None, 1]),
-        MockTaskConfig(name="task_cls", task_type=MockTaskType.CLASSIFICATION, num_classes=3),
+        RegressionTaskConfig(
+            name="task1", type=TaskType.REGRESSION, data_column="task1_regression_value", dims=[None, 1]
+        ),
+        ClassificationTaskConfig(
+            name="task_cls", type=TaskType.CLASSIFICATION, data_column="task_cls_classification_value", num_classes=3
+        ),
     ]
 
 
@@ -158,22 +161,34 @@ def test_datamodule_alignment_structure_mismatch(
     base_formula_df, attributes_df_full_match, structure_df_partial_match, sample_task_configs_dm, caplog
 ):
     """Test structure alignment failure when its index doesn't fully match the master_index."""
-    # Master index (from formula_df & attributes_df_full_match) is s0-s19.
-    # structure_df_partial_match is s0-s15.
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df.copy(),
-        attributes_source=attributes_df_full_match.copy(),
-        structure_desc_source=structure_df_partial_match.copy(),
-        task_configs=sample_task_configs_dm,
-        with_structure=True,
-    )
-    assert dm.structure_df is None
-    assert not dm.actual_with_structure
-    assert any(
-        "Structure data will NOT be used" in record.message
-        for record in caplog.records
-        if record.levelname == "WARNING"
-    )
+
+    # --- Loguru to caplog bridge (local to this test) ---
+    class PropagateHandler(logging.Handler):
+        def emit(self, record):
+            logging.getLogger(record.name).handle(record)
+
+    handler_id = loguru_logger.add(PropagateHandler(), format="{message}", level="WARNING")
+    # --- End bridge ---
+
+    try:
+        # Master index (from formula_df & attributes_df_full_match) is s0-s19.
+        # structure_df_partial_match is s0-s15.
+        dm = CompoundDataModule(
+            formula_desc_source=base_formula_df.copy(),
+            attributes_source=attributes_df_full_match.copy(),
+            structure_desc_source=structure_df_partial_match.copy(),
+            task_configs=sample_task_configs_dm,
+            with_structure=True,
+        )
+        assert dm.structure_df is None
+        assert not dm.actual_with_structure
+        assert any(
+            "Structure data will NOT be used" in record.message
+            for record in caplog.records
+            if record.levelname == "WARNING"
+        )
+    finally:
+        loguru_logger.remove(handler_id)  # Clean up the handler
 
 
 def test_datamodule_init_attributes_none_non_sequence(base_formula_df, sample_task_configs_no_seq_dm):
@@ -189,13 +204,39 @@ def test_datamodule_init_attributes_none_non_sequence(base_formula_df, sample_ta
 
 
 def test_datamodule_init_attributes_none_with_sequence_raises_error(base_formula_df, sample_task_configs_dm):
-    """Test ValueError if attributes_source=None but sequence task is enabled."""
-    with pytest.raises(ValueError, match="attributes_source cannot be None when SEQUENCE task 'task2' is enabled."):
+    """Test ValueError if attributes_source=None but a sequence task requires a steps_column."""
+    # sample_task_configs_dm includes a SequenceTaskConfig for "task2" with steps_column="task2_temps"
+    with pytest.raises(
+        ValueError,
+        match="attributes_source cannot be None when SEQUENCE task 'task2' requires a steps_column \\('task2_temps'\\).",
+    ):
         CompoundDataModule(
             formula_desc_source=base_formula_df,
             attributes_source=None,
-            task_configs=sample_task_configs_dm,  # Contains sequence task 'task2'
+            task_configs=sample_task_configs_dm,
         )
+
+
+def test_datamodule_init_attributes_none_with_sequence_no_steps_ok(base_formula_df, sample_task_configs_dm):
+    """Test that init is OK if attributes_source=None and sequence task does NOT specify steps_column."""
+    # Modify task2 config to not have a steps_column
+    modified_task_configs = [
+        RegressionTaskConfig(
+            name="task1", type=TaskType.REGRESSION, data_column="task1_regression_value", dims=[None, 1]
+        ),
+        SequenceTaskConfig(
+            name="task2", type=TaskType.SEQUENCE, data_column="task2_sequence_series", steps_column="", seq_len=5
+        ),  # steps_column is empty
+        ClassificationTaskConfig(
+            name="task_cls", type=TaskType.CLASSIFICATION, data_column="task_cls_classification_value", num_classes=3
+        ),
+    ]
+    dm = CompoundDataModule(  # Should not raise error
+        formula_desc_source=base_formula_df,
+        attributes_source=None,
+        task_configs=modified_task_configs,
+    )
+    assert dm.attributes_df is None
 
 
 def test_datamodule_setup_split_column(base_formula_df, attributes_df_full_match, sample_task_configs_dm):
@@ -253,55 +294,67 @@ def test_datamodule_setup_attributes_none_splitting(base_formula_df, sample_task
 
 def test_datamodule_setup_with_user_predict_idx(base_formula_df, sample_task_configs_no_seq_dm, caplog):
     """Test setup(stage='predict') with user-provided predict_idx."""
-    user_indices = pd.Index([f"s{i}" for i in range(5)])  # s0-s4
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,  # s0-s19
-        attributes_source=None,  # Test with no attributes
-        task_configs=sample_task_configs_no_seq_dm,
-        predict_idx=user_indices,
-    )
-    dm.setup(stage="predict")
-    assert dm.predict_idx.equals(user_indices)
-    assert len(dm.predict_dataset) == 5
 
-    # Test with partially valid predict_idx
-    user_indices_mixed = pd.Index(
-        [f"s{i}" for i in range(3)] + ["non_existent_1", "s19"]
-    )  # s0,s1,s2,non_existent_1,s19
-    expected_valid_mixed = pd.Index(["s0", "s1", "s2", "s19"])
-    caplog.clear()
-    dm_mixed = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=None,
-        task_configs=sample_task_configs_no_seq_dm,
-        predict_idx=user_indices_mixed,
-    )
-    dm_mixed.setup(stage="predict")
-    assert dm_mixed.predict_idx.equals(expected_valid_mixed)
-    assert len(dm_mixed.predict_dataset) == 4
-    assert any(
-        "User-provided predict_idx contains indices not found" in rec.message
-        for rec in caplog.records
-        if rec.levelname == "WARNING"
-    )
+    # --- Loguru to caplog bridge (local to this test) ---
+    class PropagateHandler(logging.Handler):
+        def emit(self, record):
+            logging.getLogger(record.name).handle(record)
 
-    # Test with all invalid predict_idx
-    user_indices_invalid = pd.Index(["invalid1", "invalid2"])
-    caplog.clear()
-    dm_invalid = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=None,
-        task_configs=sample_task_configs_no_seq_dm,
-        predict_idx=user_indices_invalid,
-    )
-    dm_invalid.setup(stage="predict")
-    assert dm_invalid.predict_idx.empty
-    assert dm_invalid.predict_dataset is None
-    assert any(
-        "User-provided predict_idx resulted in an empty set" in rec.message
-        for rec in caplog.records
-        if rec.levelname == "WARNING"
-    )
+    handler_id = loguru_logger.add(PropagateHandler(), format="{message}", level="WARNING")
+    # --- End bridge ---
+
+    try:
+        user_indices = pd.Index([f"s{i}" for i in range(5)])  # s0-s4
+        dm = CompoundDataModule(
+            formula_desc_source=base_formula_df,  # s0-s19
+            attributes_source=None,  # Test with no attributes
+            task_configs=sample_task_configs_no_seq_dm,
+            predict_idx=user_indices,
+        )
+        dm.setup(stage="predict")
+        assert dm.predict_idx.equals(user_indices)
+        assert len(dm.predict_dataset) == 5
+
+        # Test with partially valid predict_idx
+        user_indices_mixed = pd.Index(
+            [f"s{i}" for i in range(3)] + ["non_existent_1", "s19"]
+        )  # s0,s1,s2,non_existent_1,s19
+        expected_valid_mixed = pd.Index(["s0", "s1", "s2", "s19"])
+        caplog.clear()
+        dm_mixed = CompoundDataModule(
+            formula_desc_source=base_formula_df,
+            attributes_source=None,
+            task_configs=sample_task_configs_no_seq_dm,
+            predict_idx=user_indices_mixed,
+        )
+        dm_mixed.setup(stage="predict")
+        assert dm_mixed.predict_idx.equals(expected_valid_mixed)
+        assert len(dm_mixed.predict_dataset) == 4
+        assert any(
+            "User-provided predict_idx contains indices not found" in rec.message
+            for rec in caplog.records  # Corrected from 'record' to 'rec' if that was the var name
+            if rec.levelname == "WARNING"
+        )
+
+        # Test with all invalid predict_idx
+        user_indices_invalid = pd.Index(["invalid1", "invalid2"])
+        caplog.clear()
+        dm_invalid = CompoundDataModule(
+            formula_desc_source=base_formula_df,
+            attributes_source=None,
+            task_configs=sample_task_configs_no_seq_dm,
+            predict_idx=user_indices_invalid,
+        )
+        dm_invalid.setup(stage="predict")
+        assert dm_invalid.predict_idx.empty
+        assert dm_invalid.predict_dataset is None
+        assert any(
+            "User-provided predict_idx resulted in an empty set" in rec.message
+            for rec in caplog.records  # Corrected from 'record' to 'rec' if that was the var name
+            if rec.levelname == "WARNING"
+        )
+    finally:
+        loguru_logger.remove(handler_id)  # Clean up the handler
 
 
 def test_datamodule_setup_predict_idx_fallback(
@@ -415,49 +468,58 @@ def test_datamodule_task_masking_ratios_propagation(base_formula_df, attributes_
 
 
 def test_datamodule_empty_dataset_returns_none_dataloader(base_formula_df, sample_task_configs_no_seq_dm, caplog):
-    # Initialize DM with valid, non-empty formula_df to pass __init__
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=None,  # attributes_source can be None
-        task_configs=sample_task_configs_no_seq_dm,
-    )
+    # --- Loguru to caplog bridge (local to this test) ---
+    class PropagateHandler(logging.Handler):
+        def emit(self, record):
+            logging.getLogger(record.name).handle(record)
 
-    # Manually set dataset attributes to None to directly test dataloader guard clauses.
-    # This bypasses the setup logic for creating these datasets, focusing only on the dataloader methods' behavior.
-    dm.train_dataset = None
-    dm.val_dataset = None
-    dm.test_dataset = None
-    dm.predict_dataset = None  # predict_dataset is also an attribute that can be None
+    handler_id = loguru_logger.add(PropagateHandler(), format="{message}", level="INFO")
+    # --- End bridge ---
 
-    caplog.set_level(logging.INFO)  # Ensure INFO messages are captured
+    try:
+        # Initialize DM with valid, non-empty formula_df to pass __init__
+        dm = CompoundDataModule(
+            formula_desc_source=base_formula_df,
+            attributes_source=None,  # attributes_source can be None
+            task_configs=sample_task_configs_no_seq_dm,
+        )
 
-    assert dm.train_dataloader() is None, "Train dataloader should be None when train_dataset is None"
-    assert any(
-        "train_dataloader: Train dataset is None or not initialized" in rec.message
-        for rec in caplog.records
-        if rec.levelname == "WARNING"
-    ), "Expected log for None train_dataset not found"
-    caplog.clear()
+        # Manually set dataset attributes to None to directly test dataloader guard clauses.
+        # This bypasses the setup logic for creating these datasets, focusing only on the dataloader methods' behavior.
+        dm.train_dataset = None
+        dm.val_dataset = None
+        dm.test_dataset = None
+        dm.predict_dataset = None  # predict_dataset is also an attribute that can be None
 
-    assert dm.val_dataloader() is None, "Validation dataloader should be None when val_dataset is None"
-    assert any(
-        "val_dataloader: Validation dataset is None or not initialized" in rec.message
-        for rec in caplog.records
-        if rec.levelname == "INFO"
-    ), "Expected log for None val_dataset not found"
-    caplog.clear()
+        assert dm.train_dataloader() is None, "Train dataloader should be None when train_dataset is None"
+        assert any(
+            "train_dataloader: Train dataset is None or not initialized" in rec.message
+            for rec in caplog.records
+            if rec.levelname == "WARNING"
+        ), "Expected log for None train_dataset not found"
+        caplog.clear()
 
-    assert dm.test_dataloader() is None, "Test dataloader should be None when test_dataset is None"
-    assert any(
-        "test_dataloader: Test dataset is None or not initialized" in rec.message
-        for rec in caplog.records
-        if rec.levelname == "INFO"
-    ), "Expected log for None test_dataset not found"
-    caplog.clear()
+        assert dm.val_dataloader() is None, "Validation dataloader should be None when val_dataset is None"
+        assert any(
+            "val_dataloader: Validation dataset is None or not initialized" in rec.message
+            for rec in caplog.records
+            if rec.levelname == "INFO"
+        ), "Expected log for None val_dataset not found"
+        caplog.clear()
 
-    assert dm.predict_dataloader() is None, "Predict dataloader should be None when predict_dataset is None"
-    assert any(
-        "predict_dataloader: Predict dataset is None or not initialized" in rec.message
-        for rec in caplog.records
-        if rec.levelname == "INFO"
-    ), "Expected log for None predict_dataset not found"
+        assert dm.test_dataloader() is None, "Test dataloader should be None when test_dataset is None"
+        assert any(
+            "test_dataloader: Test dataset is None or not initialized" in rec.message
+            for rec in caplog.records
+            if rec.levelname == "INFO"
+        ), "Expected log for None test_dataset not found"
+        caplog.clear()
+
+        assert dm.predict_dataloader() is None, "Predict dataloader should be None when predict_dataset is None"
+        assert any(
+            "predict_dataloader: Predict dataset is None or not initialized" in rec.message
+            for rec in caplog.records
+            if rec.levelname == "INFO"
+        ), "Expected log for None predict_dataset not found"
+    finally:
+        loguru_logger.remove(handler_id)  # Clean up the handler

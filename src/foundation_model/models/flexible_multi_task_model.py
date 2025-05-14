@@ -14,7 +14,6 @@ Tensor shape legend (used across all docstrings):
 * **D** - latent / embedding feature dimension
 """
 
-import logging  # Added
 from typing import Any, List, Optional  # Added List, Optional
 
 import lightning as L
@@ -22,6 +21,7 @@ import pandas as pd  # Added
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from loguru import logger  # Replaced logging with loguru
 from torch.optim.lr_scheduler import _LRScheduler
 
 from foundation_model.configs.model_config import (
@@ -38,8 +38,6 @@ from .task_head.classification import ClassificationHead
 from .task_head.regression import RegressionHead
 from .task_head.sequence import create_sequence_head
 from .task_head.sequence.base import SequenceBaseHead
-
-logger = logging.getLogger(__name__)  # Added
 
 
 class FlexibleMultiTaskModel(L.LightningModule):
@@ -183,6 +181,17 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Initialize loss weights
         self._init_loss_weights(loss_weights)
 
+        # Initialize learnable uncertainty parameters (log(sigma_t) for each supervised task)
+        self.task_log_sigmas = nn.ParameterDict(
+            {
+                cfg.name: nn.Parameter(torch.zeros((), device=self.device))  # Ensure device matches
+                for cfg in self.task_configs
+                if cfg.enabled
+                # SSL tasks like "mfm", "contrastive", "cross_recon" are handled separately by self.w
+                # and do not get their own learnable sigmas here unless explicitly designed.
+            }
+        )
+
         # Initialize model components
         self._init_foundation_encoder()
         self._init_task_heads()
@@ -197,6 +206,25 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # Set to manual optimization as we handle multiple optimizers
         self.automatic_optimization = False
+
+        logger.info("Initializing FlexibleMultiTaskModel...")
+        logger.info("Registered Task Heads:")
+        task_info_df = self.registered_tasks_info
+        if not task_info_df.empty:
+            # Log as a formatted table if pandas is available and dataframe is not empty
+            # For a cleaner log, convert DataFrame to string
+            task_info_str = task_info_df.to_string(index=False)
+            for line in task_info_str.split("\n"):
+                logger.info(f"  {line}")
+        else:
+            logger.info("  No task heads configured.")
+
+        logger.info("FlexibleMultiTaskModel Structure:")
+        # Convert the model's string representation into multiple log lines for readability
+        model_structure_str = str(self)
+        for line in model_structure_str.split("\n"):
+            logger.info(f"  {line}")
+        logger.info("FlexibleMultiTaskModel initialization complete.")
 
     def _init_loss_weights(self, loss_weights: dict[str, float] | None = None):
         """Initialize loss weights for different components."""
@@ -415,7 +443,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return outputs
 
     def training_step(self, batch, batch_idx):
-        print(f"--- FlexibleMultiTaskModel: training_step() called for batch_idx: {batch_idx} ---")  # DEBUG PRINT
         """
         Training step implementation with multi-component loss calculation,
         handling self-supervised learning and modality dropout.
@@ -432,11 +459,20 @@ class FlexibleMultiTaskModel(L.LightningModule):
         torch.Tensor
             Total weighted loss for optimization.
         """
+        optimizers = self.optimizers()
+        if not isinstance(optimizers, list):
+            optimizers = [optimizers]
+        for opt in optimizers:
+            opt.zero_grad(set_to_none=True)
+
+        lr_schedulers = self.lr_schedulers()
+        if not isinstance(lr_schedulers, list):
+            lr_schedulers = [lr_schedulers]
+
         # 1. Unpack batch data
         # y_dict_batch, task_masks_batch, task_sequence_data_batch are now dictionaries keyed by task_name
         x, y_dict_batch, task_masks_batch, task_sequence_data_batch = batch
-        # total_loss = 0.0 # Removed
-        logs = {}
+        train_logs = {}  # For detailed logging, not on progress bar
 
         # 2. Determine input modalities based on configuration and batch data
         x_formula = None
@@ -458,7 +494,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 f"Unexpected input type/combination. with_structure={self.with_structure}, type(x)={type(x)}"
             )
 
-        total_loss = torch.tensor(0.0, device=x_formula.device if x_formula is not None else "cpu")
+        zero = torch.zeros([], device=x_formula.device if x_formula is not None else "cpu")
+        total_loss = zero + 0.0  # non-leaf tensor placeholder for loss accumulation
 
         # 3. Handle Modality Dropout (only during SSL training)
         x_struct_for_processing = original_x_struct  # Start with the original structure input
@@ -470,15 +507,24 @@ class FlexibleMultiTaskModel(L.LightningModule):
         ):
             # Apply dropout: use None for structure in subsequent processing
             x_struct_for_processing = None
-            logs["train_modality_dropout_applied"] = True  # CHANGED
+            train_logs["train_modality_dropout_applied"] = 1.0  # Use float for logging
         elif self.enable_self_supervised_training and self.with_structure:
-            logs["train_modality_dropout_applied"] = False  # CHANGED
+            train_logs["train_modality_dropout_applied"] = 0.0  # Use float for logging
 
         # --- Self-Supervised Learning (SSL) Calculations ---
+        ssl_loss_contribution = torch.tensor(0.0, device=total_loss.device)
+        sum_ssl_raw_loss = torch.tensor(0.0, device=total_loss.device)
+
         if self.enable_self_supervised_training:
             # We need non-masked embeddings for contrastive/cross-recon later
             # Get these based on potentially dropped structure input
-            h_formula_ssl, h_structure_ssl, _, _ = self.encoder(x_formula, x_struct_for_processing)
+            if self.with_structure:
+                h_formula_ssl, h_structure_ssl, _, _ = self.encoder(x_formula, x_struct_for_processing)
+            else:
+                # When not using structure, FoundationEncoder takes only x_formula
+                # and returns (latent, task_representation)
+                h_formula_ssl, _ = self.encoder(x_formula)  # x_struct_for_processing is None or not used
+                h_structure_ssl = None
 
             # 4a. Masked Feature Modeling (MFM)
             if self.w.get("mfm", 0) > 0:
@@ -488,11 +534,17 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
                     encoder_fn, x_formula, x_struct_for_processing
                 )
-                weighted_mfm_loss = self.w["mfm"] * mfm_loss
-                total_loss += weighted_mfm_loss
-                # Log MFM specific losses (e.g., formula_mfm, struct_mfm if applicable)
-                logs.update({f"train_{k}": v.detach() for k, v in mfm_logs.items()})
-                logs["train_mfm_loss_weighted"] = weighted_mfm_loss.detach()
+                # Log MFM specific raw losses (e.g., formula_mfm, struct_mfm if applicable)
+                for k, v_loss in mfm_logs.items():
+                    train_logs[f"train_raw_{k}"] = v_loss.detach()  # e.g. train_raw_formula_mfm_loss
+
+                # Use self.w for SSL task weighting
+                static_weight_mfm = self.w.get("mfm", 1.0)
+                weighted_mfm_loss = static_weight_mfm * mfm_loss
+                ssl_loss_contribution += weighted_mfm_loss
+                sum_ssl_raw_loss += mfm_loss.detach()
+                train_logs["train_mfm_raw_loss"] = mfm_loss.detach()
+                train_logs["train_mfm_final_loss_contrib"] = weighted_mfm_loss.detach()
 
             # 4b. Contrastive Loss
             if (
@@ -501,14 +553,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 and self.w.get("contrastive", 0) > 0
             ):
                 contrastive_loss = self.ssl_module.compute_contrastive_loss(h_formula_ssl, h_structure_ssl)
-                weighted_contrastive_loss = self.w["contrastive"] * contrastive_loss
-                total_loss += weighted_contrastive_loss
-                logs["train_contrastive_loss"] = contrastive_loss.detach()
-                logs["train_contrastive_loss_weighted"] = weighted_contrastive_loss.detach()
+                static_weight_contrastive = self.w.get("contrastive", 1.0)
+                weighted_contrastive_loss = static_weight_contrastive * contrastive_loss
+                ssl_loss_contribution += weighted_contrastive_loss
+                sum_ssl_raw_loss += contrastive_loss.detach()
+                train_logs["train_contrastive_raw_loss"] = contrastive_loss.detach()
+                train_logs["train_contrastive_final_loss_contrib"] = weighted_contrastive_loss.detach()
             elif self.with_structure and self.w.get("contrastive", 0) > 0:
                 # Log zero if structure was dropped or missing
-                logs["train_contrastive_loss"] = 0.0
-                logs["train_contrastive_loss_weighted"] = 0.0
+                train_logs["train_contrastive_raw_loss"] = 0.0
+                train_logs["train_contrastive_final_loss_contrib"] = 0.0
 
             # 4c. Cross-Reconstruction Loss
             if (
@@ -522,16 +576,25 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 cross_recon_loss = self.ssl_module.compute_cross_reconstruction_loss(
                     h_formula_ssl, h_structure_ssl, x_formula, original_x_struct
                 )
-                weighted_cross_recon_loss = self.w["cross_recon"] * cross_recon_loss
-                total_loss += weighted_cross_recon_loss
-                logs["train_cross_recon_loss"] = cross_recon_loss.detach()
-                logs["train_cross_recon_loss_weighted"] = weighted_cross_recon_loss.detach()
+                static_weight_cross_recon = self.w.get("cross_recon", 1.0)
+                weighted_cross_recon_loss = static_weight_cross_recon * cross_recon_loss
+                ssl_loss_contribution += weighted_cross_recon_loss
+                sum_ssl_raw_loss += cross_recon_loss.detach()
+                train_logs["train_cross_recon_raw_loss"] = cross_recon_loss.detach()
+                train_logs["train_cross_recon_final_loss_contrib"] = weighted_cross_recon_loss.detach()
             elif self.with_structure and self.w.get("cross_recon", 0) > 0:
                 # Log zero if structure was dropped or missing
-                logs["train_cross_recon_loss"] = 0.0
-                logs["train_cross_recon_loss_weighted"] = 0.0
+                train_logs["train_cross_recon_raw_loss"] = 0.0
+                train_logs["train_cross_recon_final_loss_contrib"] = 0.0
+
+        if self.enable_self_supervised_training:
+            train_logs["train_sum_ssl_raw_loss"] = sum_ssl_raw_loss
+            train_logs["train_final_ssl_loss"] = ssl_loss_contribution.detach()
 
         # --- Supervised Task Calculations ---
+        supervised_loss_contribution = torch.tensor(0.0, device=total_loss.device)
+        sum_supervised_raw_loss = torch.tensor(0.0, device=total_loss.device)
+
         # 5. Prepare input for the standard forward pass
         # Use the structure input *after* potential modality dropout for consistent forward pass
         if self.with_structure:
@@ -543,67 +606,81 @@ class FlexibleMultiTaskModel(L.LightningModule):
         preds = self(forward_input, task_sequence_data_batch)  # Pass task_sequence_data_batch dictionary
 
         # 7. Calculate supervised task losses
-        # task_mask_indices = {name: i for i, name in enumerate(self.task_heads.keys())} # Not needed anymore
+        raw_supervised_losses = {}
         for name, pred_tensor in preds.items():
             if name not in y_dict_batch or not self.task_configs_map[name].enabled:
-                continue  # Skip tasks without targets or disabled tasks
+                continue
 
             head = self.task_heads[name]
             target = y_dict_batch[name]
-
-            # Get mask for the current task from the task_masks_batch dictionary
             sample_mask = task_masks_batch.get(name)
-            if sample_mask is None:  # Should not happen if dataset prepares it
-                # Default: all samples are valid if no specific mask provided
+            if sample_mask is None:
                 logger.warning(f"Mask not found for task {name} in training_step. Assuming all valid.")
                 sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
-            # Ensure mask has a compatible shape for broadcasting, e.g. [B, 1] or [B, L] or [B, L, 1]
-            # The mask from dataset is already [B,1] (bool)
-            # For sequence tasks, compute_loss in SequenceBaseHead handles mask expansion if needed.
+            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_supervised_losses[name] = raw_loss_t
+            sum_supervised_raw_loss += raw_loss_t.detach()
+            train_logs[f"train_{name}_raw_loss"] = raw_loss_t.detach()
 
-            # Compute loss using the head's method
-            loss, _ = head.compute_loss(pred_tensor, target, sample_mask)  # Changed pred to pred_tensor
+        train_logs["train_sum_supervised_raw_loss"] = sum_supervised_raw_loss
 
-            # Apply task-specific weight and accumulate
-            task_weight = self.w.get(name, 1.0)
-            weighted_loss = task_weight * loss
-            total_loss += weighted_loss
+        # Apply uncertainty weighting for supervised tasks
+        for name, raw_loss_t in raw_supervised_losses.items():
+            if name in self.task_log_sigmas:  # This task uses learnable uncertainty
+                current_log_sigma_t = self.task_log_sigmas[name]
+                static_weight = self.w.get(name, 1.0)  # User-defined static weight
 
-            # Log individual task losses (unweighted and weighted)
-            logs[f"train_{name}_loss"] = loss.detach()
-            logs[f"train_{name}_loss_weighted"] = weighted_loss.detach()
+                precision_factor_t = torch.exp(-2 * current_log_sigma_t)  # 1 / sigma_t^2
 
-        # 8. Log total loss and other aggregated metrics
-        logs["train_total_loss"] = total_loss.detach()
-        self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
+                # final_task_loss_component = static_weight * 0.5 * precision_factor_t * raw_loss_t + current_log_sigma_t
+                # Using the formulation: static_w * (1/(2*sigma^2)) * raw_loss + log(sigma)
+                task_loss_data_term = static_weight * 0.5 * precision_factor_t * raw_loss_t
+                task_loss_reg_term = current_log_sigma_t
+                final_task_loss_component = task_loss_data_term + task_loss_reg_term
+
+                supervised_loss_contribution += final_task_loss_component
+
+                train_logs[f"train_{name}_sigma_t"] = torch.exp(current_log_sigma_t).detach()
+                train_logs[f"train_{name}_final_loss_contrib"] = final_task_loss_component.detach()
+            else:  # Should not happen if task_log_sigmas is created for all enabled supervised tasks
+                logger.warning(
+                    f"Task {name} found in predictions but not in task_log_sigmas. Using static weight only."
+                )
+                static_weight = self.w.get(name, 1.0)
+                final_task_loss_component = static_weight * raw_loss_t
+                supervised_loss_contribution += final_task_loss_component
+                train_logs[f"train_{name}_final_loss_contrib"] = final_task_loss_component.detach()
+
+        train_logs["train_final_supervised_loss"] = supervised_loss_contribution.detach()
+
+        # Combine supervised and SSL contributions for total loss
+        total_loss = supervised_loss_contribution + ssl_loss_contribution
+
+        # 8. Log metrics
+        # Log detailed metrics without progress bar
+        self.log_dict(train_logs, prog_bar=False, on_step=True, on_epoch=True, sync_dist=True)
+        # Log the main training loss with progress bar
+        self.log("train_final_loss", total_loss.detach(), prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
 
         # Manual optimization
-        if total_loss.requires_grad:
+        if total_loss.requires_grad:  # Ensure there's something to backpropagate
             self.manual_backward(total_loss)
-            optimizers = self.optimizers()
-            if isinstance(optimizers, list):
-                for opt in optimizers:
-                    opt.step()
-                    opt.zero_grad(set_to_none=True)
-            else:  # Single optimizer case
-                optimizers.step()
-                optimizers.zero_grad(set_to_none=True)
+            for opt in optimizers:
+                opt.step()
+            for scheduler in lr_schedulers:
+                if scheduler is not None:  # Add check for None scheduler
+                    scheduler.step(total_loss)
         else:
             logger.warning(
-                "total_loss does not require grad and has no grad_fn at batch_idx %s. "
+                f"total_loss does not require grad and has no grad_fn at batch_idx {batch_idx}. "
                 "Skipping backward pass and optimizer step. "
                 "This might indicate all parameters are frozen, loss contributions are zero, "
                 "or an issue with the computation graph.",
-                batch_idx,  # Add batch_idx for better logging
             )
             # It's good practice to still zero_grad optimizers to clear any stale grads from previous iterations
-            optimizers = self.optimizers()
-            if isinstance(optimizers, list):
-                for opt in optimizers:
-                    opt.zero_grad(set_to_none=True)
-            else:
-                optimizers.zero_grad(set_to_none=True)
+            for opt in optimizers:
+                opt.step()
 
         return total_loss
 
@@ -627,8 +704,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """
         # 1. Unpack batch data
         x, y_dict_batch, task_masks_batch, task_sequence_data_batch = batch
-        # total_val_loss = 0.0  # Accumulates unweighted losses # Removed
-        logs = {}
+        val_logs = {}  # For detailed logging
 
         # 2. Determine input modalities based on configuration and batch data
         x_formula = None
@@ -646,54 +722,86 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 f"Unexpected input type/combination during validation. with_structure={self.with_structure}, type(x)={type(x)}"
             )
 
-        total_val_loss = torch.tensor(0.0, device=x_formula.device if x_formula is not None else "cpu")
+        # Initialize accumulators for validation losses
+        sum_val_raw_loss = torch.tensor(0.0, device=x_formula.device if x_formula is not None else "cpu")
+        final_val_loss = torch.tensor(
+            0.0, device=x_formula.device if x_formula is not None else "cpu"
+        )  # This will be val_final_loss
 
         # For validation, x_struct_for_processing is always the original_x_struct (no dropout)
         x_struct_for_processing = original_x_struct
 
         # --- Self-Supervised Learning (SSL) Calculations (if enabled) ---
+        val_ssl_loss_contribution = torch.tensor(0.0, device=final_val_loss.device)
+        val_sum_ssl_raw_loss = torch.tensor(0.0, device=final_val_loss.device)
+
         if self.enable_self_supervised_training:
             # Get SSL-specific embeddings using the (non-dropped) structure input
-            h_formula_ssl, h_structure_ssl, _, _ = self.encoder(x_formula, x_struct_for_processing)
+            if self.with_structure:
+                h_formula_ssl, h_structure_ssl, _, _ = self.encoder(x_formula, x_struct_for_processing)
+            else:
+                # When not using structure, FoundationEncoder takes only x_formula
+                # and returns (latent, task_representation)
+                h_formula_ssl, _ = self.encoder(x_formula)  # x_struct_for_processing is None or not used
+                h_structure_ssl = None
 
             # 3a. Masked Feature Modeling (MFM)
-            if self.w.get("mfm", 0) > 0:  # Check if MFM is weighted, implying it's active
+            if self.w.get("mfm", 0) > 0:
                 encoder_fn = self.encoder.encode_masked
                 mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
                     encoder_fn, x_formula, x_struct_for_processing
                 )
-                total_val_loss += mfm_loss.detach()  # Add unweighted MFM loss
-                logs["val_mfm_loss"] = mfm_loss.detach()
-                logs.update({f"val_{k}": v.detach() for k, v in mfm_logs.items()})
+                for k, v_loss in mfm_logs.items():
+                    val_logs[f"val_raw_{k}"] = v_loss.detach()
 
-            # 3b. Contrastive Loss
-            if (
-                self.with_structure
-                and h_structure_ssl is not None
-                and self.w.get("contrastive", 0) > 0  # Check if contrastive is weighted
-            ):
+                static_weight_mfm = self.w.get("mfm", 1.0)
+                weighted_mfm_loss = static_weight_mfm * mfm_loss
+                val_ssl_loss_contribution += weighted_mfm_loss.detach()
+                val_sum_ssl_raw_loss += mfm_loss.detach()
+                val_logs["val_mfm_raw_loss"] = mfm_loss.detach()
+                val_logs["val_mfm_final_loss_contrib"] = weighted_mfm_loss.detach()
+
+            if self.with_structure and h_structure_ssl is not None and self.w.get("contrastive", 0) > 0:
                 contrastive_loss = self.ssl_module.compute_contrastive_loss(h_formula_ssl, h_structure_ssl)
-                total_val_loss += contrastive_loss.detach()  # Add unweighted contrastive loss
-                logs["val_contrastive_loss"] = contrastive_loss.detach()
+                static_weight_contrastive = self.w.get("contrastive", 1.0)
+                weighted_contrastive_loss = static_weight_contrastive * contrastive_loss
+                val_ssl_loss_contribution += weighted_contrastive_loss.detach()
+                val_sum_ssl_raw_loss += contrastive_loss.detach()
+                val_logs["val_contrastive_raw_loss"] = contrastive_loss.detach()
+                val_logs["val_contrastive_final_loss_contrib"] = weighted_contrastive_loss.detach()
             elif self.with_structure and self.w.get("contrastive", 0) > 0:
-                logs["val_contrastive_loss"] = 0.0  # Log zero if not applicable
+                val_logs["val_contrastive_raw_loss"] = 0.0
+                val_logs["val_contrastive_final_loss_contrib"] = 0.0
 
-            # 3c. Cross-Reconstruction Loss
             if (
                 self.with_structure
                 and h_structure_ssl is not None
-                and original_x_struct is not None  # Target for reconstruction must exist
-                and self.w.get("cross_recon", 0) > 0  # Check if cross-recon is weighted
+                and original_x_struct is not None
+                and self.w.get("cross_recon", 0) > 0
             ):
                 cross_recon_loss = self.ssl_module.compute_cross_reconstruction_loss(
                     h_formula_ssl, h_structure_ssl, x_formula, original_x_struct
                 )
-                total_val_loss += cross_recon_loss.detach()  # Add unweighted cross-recon loss
-                logs["val_cross_recon_loss"] = cross_recon_loss.detach()
+                static_weight_cross_recon = self.w.get("cross_recon", 1.0)
+                weighted_cross_recon_loss = static_weight_cross_recon * cross_recon_loss
+                val_ssl_loss_contribution += weighted_cross_recon_loss.detach()
+                val_sum_ssl_raw_loss += cross_recon_loss.detach()
+                val_logs["val_cross_recon_raw_loss"] = cross_recon_loss.detach()
+                val_logs["val_cross_recon_final_loss_contrib"] = weighted_cross_recon_loss.detach()
             elif self.with_structure and self.w.get("cross_recon", 0) > 0:
-                logs["val_cross_recon_loss"] = 0.0  # Log zero if not applicable
+                val_logs["val_cross_recon_raw_loss"] = 0.0
+                val_logs["val_cross_recon_final_loss_contrib"] = 0.0
+
+        if self.enable_self_supervised_training:
+            val_logs["val_sum_ssl_raw_loss"] = val_sum_ssl_raw_loss
+            val_logs["val_final_ssl_loss"] = val_ssl_loss_contribution.detach()
+            sum_val_raw_loss += val_sum_ssl_raw_loss  # Add to total raw sum
+            final_val_loss += val_ssl_loss_contribution  # Add to total final sum
 
         # --- Supervised Task Calculations ---
+        val_supervised_loss_contribution = torch.tensor(0.0, device=final_val_loss.device)
+        val_sum_supervised_raw_loss = torch.tensor(0.0, device=final_val_loss.device)
+
         # 4. Prepare input for the standard forward pass
         if self.with_structure:
             forward_input = (x_formula, x_struct_for_processing)
@@ -703,35 +811,64 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # 5. Get predictions from the forward method
         preds = self(forward_input, task_sequence_data_batch)  # Pass task_sequence_data_batch dictionary
 
-        # 6. Calculate supervised task losses (unweighted for validation)
-        # task_mask_indices = {name: i for i, name in enumerate(self.task_heads.keys())} # Not needed
+        # 6. Calculate supervised task losses
+        raw_val_supervised_losses = {}
         for name, pred_tensor in preds.items():
             if name not in y_dict_batch or not self.task_configs_map[name].enabled:
                 continue
 
             head = self.task_heads[name]
             target = y_dict_batch[name]
-
-            # Get mask for the current task
             sample_mask = task_masks_batch.get(name)
             if sample_mask is None:
                 logger.warning(f"Mask not found for task {name} in validation_step. Assuming all valid.")
                 sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
-            # Compute unweighted loss
-            loss, _ = head.compute_loss(pred_tensor, target, sample_mask)  # Changed pred to pred_tensor
-            total_val_loss += loss.detach()  # Accumulate unweighted task loss
+            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_val_supervised_losses[name] = raw_loss_t
+            val_sum_supervised_raw_loss += raw_loss_t.detach()
+            val_logs[f"val_{name}_raw_loss"] = raw_loss_t.detach()
 
-            # Log individual task validation losses (unweighted)
-            logs[f"val_{name}_loss"] = loss.detach()
+        val_logs["val_sum_supervised_raw_loss"] = val_sum_supervised_raw_loss
+        sum_val_raw_loss += val_sum_supervised_raw_loss  # Add to total raw sum
 
-        # 7. Log total validation loss and other metrics
-        logs["val_total_loss"] = total_val_loss  # total_val_loss is already detached
-        # Log on epoch end, disable progress bar for validation
-        self.log_dict(logs, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+        # Apply uncertainty weighting for supervised tasks
+        for name, raw_loss_t in raw_val_supervised_losses.items():
+            if name in self.task_log_sigmas:  # This task uses learnable uncertainty
+                current_log_sigma_t = self.task_log_sigmas[name]  # Use learned value
+                static_weight = self.w.get(name, 1.0)
 
-        # As per Lightning best practices when using self.log_dict, return None
-        return None
+                precision_factor_t = torch.exp(-2 * current_log_sigma_t)
+
+                task_loss_data_term = static_weight * 0.5 * precision_factor_t * raw_loss_t
+                task_loss_reg_term = current_log_sigma_t
+                final_task_loss_component = task_loss_data_term + task_loss_reg_term
+
+                val_supervised_loss_contribution += final_task_loss_component.detach()
+
+                val_logs[f"val_{name}_sigma_t"] = torch.exp(current_log_sigma_t).detach()
+                val_logs[f"val_{name}_final_loss_contrib"] = final_task_loss_component.detach()
+            else:  # Should not happen
+                logger.warning(
+                    f"Task {name} found in validation predictions but not in task_log_sigmas. Using static weight only."
+                )
+                static_weight = self.w.get(name, 1.0)
+                final_task_loss_component = static_weight * raw_loss_t
+                val_supervised_loss_contribution += final_task_loss_component.detach()
+                val_logs[f"val_{name}_final_loss_contrib"] = final_task_loss_component.detach()
+
+        val_logs["val_final_supervised_loss"] = val_supervised_loss_contribution.detach()
+        final_val_loss += val_supervised_loss_contribution  # Add to total final sum
+
+        # 7. Log metrics
+        val_logs["val_sum_raw_loss"] = sum_val_raw_loss  # Total raw loss (supervised + SSL)
+
+        # Log detailed metrics without progress bar
+        self.log_dict(val_logs, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+        # Log the main validation loss with progress bar (this is the one for callbacks)
+        self.log("val_final_loss", final_val_loss.detach(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+
+        return None  # As per Lightning best practices when using self.log_dict
 
     def predict_step(
         self,

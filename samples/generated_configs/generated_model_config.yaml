@@ -1,6 +1,6 @@
 # experiment_name: base_experiment # This can be overridden by CLI or defaults if not set
 # log_dir: results/logs/${experiment_name} # Replaced by trainer.default_root_dir
-
+seed_everything: 42
 model:
   class_path: foundation_model.models.FlexibleMultiTaskModel
   init_args:
@@ -8,6 +8,7 @@ model:
     task_configs:
       - name: regression_1
         type: REGRESSION
+        data_column: regression_1
         dims: [64, 32, 1]
         norm: true
         residual: false
@@ -24,9 +25,10 @@ model:
           factor: 0.5
           patience: 10
           min_lr: 1.0e-05
-          monitor: val_regression_1_loss
-      - name: regression_2
+
+      - name: regression_b # Note: Duplicate task name, this might be an issue or intended for some reason.
         type: REGRESSION
+        data_column: regression_b # Assuming same column for this duplicate
         dims: [64, 32, 1]
         norm: true
         residual: false
@@ -43,27 +45,31 @@ model:
           factor: 0.5
           patience: 10
           min_lr: 1.0e-05
-          monitor: val_regression_2_loss
-      #   - name: regression_3
-      #     type: REGRESSION
-      #     dims: [64, 32, 1]
-      #     norm: true
-      #     residual: false
-      #     weight: 1.0
-      #     enabled: true
-      #     optimizer:
-      #       optimizer_type: AdamW
-      #       lr: 0.001
-      #       weight_decay: 0.01
-      #       eps: 1.0e-06
-      #       betas: [0.9, 0.999]
-      #       scheduler_type: ReduceLROnPlateau
-      #       mode: min
-      #       factor: 0.5
-      #       patience: 10
-      #       min_lr: 1.0e-05
-      #       monitor: val_regression_3_loss
-      #   - name: classification_A
+      # - name: regression_3
+      #   type: REGRESSION
+      #   dims: [64, 32, 1]
+      #   norm: true
+      #   residual: false
+      #   weight: 1.0
+      #   enabled: true
+      #   optimizer:
+      #     optimizer_type: AdamW
+      #     lr: 0.001
+      #     weight_decay: 0.01
+      #     eps: 1.0e-06
+      #     betas: [0.9, 0.999]
+      #     scheduler_type: ReduceLROnPlateau
+      #     mode: min
+      #     factor: 0.5
+      #     patience: 10
+      #     min_lr: 1.0e-05
+      # - name: regression_4
+      #   type: REGRESSION
+      #   dims: [64, 32, 1]
+      #   norm: true
+      #   residual: false
+      #   weight: 1.0
+      #   enabled: true
       #     type: CLASSIFICATION
       #     dims: [64, 32, 2]
       #     num_classes: 2
@@ -78,21 +84,21 @@ model:
       #       patience: 30
       #       factor: 0.1
       #       monitor: val_classification_A_loss
-      # - name: classification_B
-      #   type: CLASSIFICATION
-      #   dims: [64, 32, 3]
-      #   num_classes: 3
-      #   norm: true
-      #   residual: false
-      #   weight: 0.5
-      #   enabled: true
-      #   optimizer:
-      #     optimizer_type: AdamW
-      #     lr: 0.002
-      #     scheduler_type: StepLR
-      #     patience: 30
-      #     factor: 0.1
-      #     monitor: val_classification_B_loss
+      - name: classification_a
+        type: CLASSIFICATION
+        data_column: classification_a
+        dims: [64, 32, 3]
+        num_classes: 3
+        norm: true
+        residual: false
+        weight: 0.5
+        enabled: true
+        optimizer:
+          optimizer_type: AdamW
+          lr: 0.002
+          scheduler_type: StepLR
+          patience: 30
+          factor: 0.1
     shared_block_optimizer:
       optimizer_type: AdamW
       lr: 0.001
@@ -109,7 +115,7 @@ model:
     with_structure: false
     modality_dropout_p: 0.3
     norm_shared: true
-    residual_shared: false
+    residual_shared: true
     enable_self_supervised_training: false
     mask_ratio: 0.15
     temperature: 0.07
@@ -135,12 +141,11 @@ data:
 trainer:
   default_root_dir: results/logs/default_experiment
   max_epochs: 100
-  # accelerator: auto
   # devices: auto
-  accelerator: cpu
+  accelerator: auto
   devices: 1
   enable_progress_bar: true
-  fast_dev_run: True
+  fast_dev_run: false
   # precision: 16-mixed
   # accumulate_grad_batches: 1
   log_every_n_steps: 50
@@ -156,12 +161,12 @@ trainer:
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        dirpath: null
-        filename: "{epoch}-{step}-{val_total_loss:.2f}"
+        filename: "model-{epoch:02d}-{val_total_loss:.4f}"
         monitor: val_total_loss
         mode: min
         save_top_k: 1
         save_last: true
+        verbose: true
     - class_path: lightning.pytorch.callbacks.EarlyStopping
       init_args:
         monitor: val_total_loss

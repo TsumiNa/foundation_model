@@ -153,7 +153,7 @@ class ClassificationHead(BaseTaskHead):
             )
 
         # 3. Individual sample losses
-        losses = F.cross_entropy(pred, final_target_for_loss, reduction="none")  # losses is (B,)
+        losses = F.cross_entropy(pred, final_target_for_loss, reduction="none", ignore_index=-1)  # losses is (B,)
         masked_losses = losses * mask_1d  # Apply 1D mask, result is (B,)
 
         # 4. Compute per-class losses

@@ -1,30 +1,29 @@
 # Copyright 2025 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-import logging
 from typing import Dict, List, Optional, Union
 
+import joblib
 import lightning as L
 import numpy as np
 import pandas as pd
-from jsonargparse.typing import Path_fr  # ADDED IMPORT
-
-# import torch # Not directly used in this file anymore for temps
+from jsonargparse.typing import Path_fr
+from loguru import logger
 from sklearn.model_selection import train_test_split  # For data splitting
 from torch.utils.data import DataLoader
 
-from .dataset import CompoundDataset
+from foundation_model.configs.model_config import ClassificationTaskConfig, RegressionTaskConfig, SequenceTaskConfig
 
-logger = logging.getLogger(__name__)
+from .dataset import CompoundDataset
 
 
 class CompoundDataModule(L.LightningDataModule):
     def __init__(
         self,
-        formula_desc_source: Path_fr,  # CHANGED
-        task_configs: List,
-        attributes_source: Optional[Path_fr] = None,  # CHANGED
-        structure_desc_source: Optional[Path_fr] = None,  # CHANGED
+        formula_desc_source: Union[pd.DataFrame, Path_fr],  # type: ignore
+        task_configs: List[Union[RegressionTaskConfig, ClassificationTaskConfig, SequenceTaskConfig]],
+        attributes_source: Optional[Union[pd.DataFrame, Path_fr]] = None,  # type: ignore
+        structure_desc_source: Optional[Union[pd.DataFrame, Path_fr]] = None,  # type: ignore
         with_structure: bool = False,
         task_masking_ratios: Optional[Dict[str, float]] = None,
         val_split: float = 0.1,
@@ -111,7 +110,8 @@ class CompoundDataModule(L.LightningDataModule):
 
         # --- Load Data ---
         logger.info("--- Loading Data ---")
-        self.formula_df = self._load_data(str(formula_desc_source), "formula_desc")  # ADDED str()
+        source_to_load = str(formula_desc_source) if isinstance(formula_desc_source, Path_fr) else formula_desc_source
+        self.formula_df = self._load_data(source_to_load, "formula_desc")
         if self.formula_df is None or self.formula_df.empty:
             raise ValueError("formula_desc_source must be successfully loaded and cannot be empty.")
         logger.info(f"Initial loaded formula_df length: {len(self.formula_df)}")
@@ -128,7 +128,10 @@ class CompoundDataModule(L.LightningDataModule):
         # Handle optional attributes_source
         self.attributes_df = None
         if attributes_source is not None:
-            self.attributes_df = self._load_data(str(attributes_source), "attributes")  # ADDED str()
+            source_to_load_attrs = (
+                str(attributes_source) if isinstance(attributes_source, Path_fr) else attributes_source
+            )
+            self.attributes_df = self._load_data(source_to_load_attrs, "attributes")
             if self.attributes_df is None or self.attributes_df.empty:
                 # If source was provided but failed to load or was empty, it's an error.
                 raise ValueError("attributes_source was provided but could not be loaded or is empty.")
@@ -152,16 +155,16 @@ class CompoundDataModule(L.LightningDataModule):
 
             # Update master_index based on intersection after attributes_df processing
             common_index_after_attrs = master_index.intersection(self.attributes_df.index)
+            if common_index_after_attrs.empty:
+                raise ValueError(
+                    "No common_index found between formula_df and attributes_df after processing. Data is not alignable."
+                )
             if len(common_index_after_attrs) < len(master_index):
                 logger.warning(
                     f"Master index (from formula_df) reduced from {len(master_index)} to {len(common_index_after_attrs)} after aligning with attributes_df. "
                     "Some formula_df entries might not have corresponding attributes_df entries or vice-versa after NaN removal."
                 )
             master_index = common_index_after_attrs
-            if master_index.empty:
-                raise ValueError(
-                    "No common_index found between formula_df and attributes_df after processing. Data is not alignable."
-                )
 
             self.formula_df = self.formula_df.loc[master_index]
             self.attributes_df = self.attributes_df.loc[master_index]  # attributes_df is now aligned
@@ -170,21 +173,20 @@ class CompoundDataModule(L.LightningDataModule):
             logger.info(
                 "attributes_source is None. Proceeding without attributes_df. This is only supported if no sequence tasks require it."
             )
-            # Validate that no task requires attributes_df if it's None
+            # Validate that no task requires attributes_df if it's None,
+            # especially if a SEQUENCE task specifies a steps_column.
             for cfg in self.task_configs:
-                if hasattr(cfg, "enabled") and cfg.enabled and cfg.type.name == "SEQUENCE":
-                    # Sequence tasks might need _series or _temps from attributes_df
-                    series_col_name = f"{cfg.name}_{cfg.type.name.lower()}_series"
-                    temps_col_name = f"{cfg.name}_temps"
-                    # This check is a bit simplistic; CompoundDataset might have more complex needs.
-                    # A more robust check would be to see if CompoundDataset would try to access specific columns.
-                    # For now, assume any SEQUENCE task implies a need for attributes_df.
+                if cfg.enabled and isinstance(cfg, SequenceTaskConfig) and cfg.steps_column:
                     logger.error(
-                        f"Task '{cfg.name}' is a SEQUENCE task, but attributes_source is None. "
-                        "attributes_source is required for tasks that might need sequence or temperature data from it."
+                        f"Task '{cfg.name}' is a SEQUENCE task that specifies a 'steps_column' ('{cfg.steps_column}'), "
+                        f"but attributes_source is None. attributes_source is required to load this steps data."
                     )
-                    raise ValueError(f"attributes_source cannot be None when SEQUENCE task '{cfg.name}' is enabled.")
-            # If we reach here, attributes_source is None AND no sequence tasks are problematic.
+                    raise ValueError(
+                        f"attributes_source cannot be None when SEQUENCE task '{cfg.name}' requires a steps_column ('{cfg.steps_column}')."
+                    )
+            # If we reach here, attributes_source is None, and no enabled SequenceTaskConfig requires a steps_column.
+            # Other tasks (or sequence tasks without a steps_column) will have their data_column handled by CompoundDataset
+            # (likely resulting in placeholders if data_column was specified).
             # self.attributes_df remains None. self.formula_df uses the original master_index.
             logger.info(f"formula_df (master) length: {len(master_index)}")
 
@@ -194,7 +196,10 @@ class CompoundDataModule(L.LightningDataModule):
         if self.with_structure:
             logger.info("Attempting to load and align structure_desc as with_structure is True.")
             if structure_desc_source is not None:
-                loaded_structure_df = self._load_data(str(structure_desc_source), "structure_desc")  # ADDED str()
+                source_to_load_struct = (
+                    str(structure_desc_source) if isinstance(structure_desc_source, Path_fr) else structure_desc_source
+                )
+                loaded_structure_df = self._load_data(source_to_load_struct, "structure_desc")
                 if loaded_structure_df is not None and not loaded_structure_df.empty:
                     logger.info(f"Initial loaded structure_df length: {len(loaded_structure_df)}")
 
@@ -211,7 +216,8 @@ class CompoundDataModule(L.LightningDataModule):
                         logger.warning(
                             f"Failed to align structure_df with the common index of formula_df and attributes_df. "
                             f"Master index len: {len(master_index)}, structure_df after reindex & dropna len: {len(aligned_structure_df)}, "
-                            f"Indices equal: {aligned_structure_df.index.equals(master_index) if not aligned_structure_df.empty else 'N/A (empty)'}. Structure data will NOT be used."
+                            f"Indices equal: {aligned_structure_df.index.equals(master_index) if not aligned_structure_df.empty else 'N/A (empty)'}. "
+                            f"Structure data will NOT be used."
                         )
                         # self.structure_df remains None, self.actual_with_structure remains False
                 else:  # loaded_structure_df was None or empty
@@ -241,7 +247,7 @@ class CompoundDataModule(L.LightningDataModule):
         # self.task_configs was already assigned
         logger.info(f"DataModule initialized with {len(self.task_configs)} task configurations.")
 
-    def _load_data(self, source: Union[pd.DataFrame, np.ndarray, str], name: str) -> Optional[pd.DataFrame]:
+    def _load_data(self, source: Union[pd.DataFrame, str], name: str) -> Optional[pd.DataFrame]:
         """Helper to load data from various sources."""
         logger.debug(f"Attempting to load '{name}' from source type: {type(source)}")
         if source is None:
@@ -252,15 +258,16 @@ class CompoundDataModule(L.LightningDataModule):
             if isinstance(source, str):
                 logger.info(f"Loading '{name}' data from path: {source}")
                 if source.endswith(".pkl"):
+                    df = joblib.load(source)
+                elif source.endswith((".pd", ".pd.z", ".pd.xz")):
                     df = pd.read_pickle(source)
                 elif source.endswith(".csv"):
                     df = pd.read_csv(source, index_col=0)  # Assuming first column as index
                 else:
-                    logger.error(f"Unsupported file type for '{name}': {source}. Must be .pkl or .csv.")
+                    logger.error(
+                        f"Unsupported file type for '{name}': {source}. Must be .pkl, .pd, .pd.z, .pd.xz, or .csv."
+                    )
                     raise ValueError(f"Unsupported file type for {name}: {source}.")
-            elif isinstance(source, np.ndarray):
-                logger.info(f"Converting '{name}' data from np.ndarray to pd.DataFrame.")
-                df = pd.DataFrame(source)
             elif isinstance(source, pd.DataFrame):
                 logger.info(f"Using provided pd.DataFrame for '{name}' data.")
                 df = source.copy()  # Use a copy
@@ -505,9 +512,6 @@ class CompoundDataModule(L.LightningDataModule):
         logger.info(f"--- DataModule setup for stage '{stage}' complete ---")
 
     def train_dataloader(self):
-        print(
-            f"--- CompoundDataModule: train_dataloader() called. Train dataset length: {len(self.train_dataset) if hasattr(self, 'train_dataset') and self.train_dataset is not None else 'N/A or None'}"
-        )  # DEBUG PRINT
         if not hasattr(self, "train_dataset") or self.train_dataset is None:
             logger.warning("train_dataloader: Train dataset is None or not initialized. Returning None.")
             return None
