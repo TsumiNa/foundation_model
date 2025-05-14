@@ -21,6 +21,7 @@ default_optimizer_config: &default_optimizer
 tasks:
   - name: "Seebeck coefficient"
     type: REGRESSION
+    data_column: "Seebeck coefficient_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -33,6 +34,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Thermal conductivity"
     type: REGRESSION
+    data_column: "Thermal conductivity_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -45,6 +47,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Electrical resistivity"
     type: REGRESSION
+    data_column: "Electrical resistivity_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -57,6 +60,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Magnetic susceptibility"
     type: REGRESSION
+    data_column: "Magnetic susceptibility_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -69,6 +73,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Hall coefficient"
     type: REGRESSION
+    data_column: "Hall coefficient_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -81,6 +86,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "ZT"
     type: REGRESSION
+    data_column: "ZT_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -93,6 +99,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Power factor"
     type: REGRESSION
+    data_column: "Power factor_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -105,6 +112,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Carrier concentration"
     type: REGRESSION
+    data_column: "Carrier concentration_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -117,6 +125,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Electrical conductivity"
     type: REGRESSION
+    data_column: "Electrical conductivity_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -129,6 +138,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Thermopower"
     type: REGRESSION
+    data_column: "Thermopower_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -141,6 +151,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Lattice thermal conductivity"
     type: REGRESSION
+    data_column: "Lattice thermal conductivity_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -153,6 +164,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Hall mobility"
     type: REGRESSION
+    data_column: "Hall mobility_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -165,6 +177,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Electronic contribution"
     type: REGRESSION
+    data_column: "Electronic contribution_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -177,6 +190,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Electronic thermal conductivity"
     type: REGRESSION
+    data_column: "Electronic thermal conductivity_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]

@@ -220,6 +220,59 @@ For a more detailed diagram and in-depth explanation of each component, data flo
 - Configurable data splitting ratios
 - Property-specific sampling fractions
 
+### Input Data: `attributes_source` Column Naming
+
+When providing data through the `attributes_source` (typically an `attributes.csv` file or a Pandas DataFrame), it is essential to configure your tasks to point to the correct data columns. This is done via the `data_column` field in each task's configuration and, for sequence tasks, the optional `steps_column`.
+
+**1. Primary Data Column (`data_column`):**
+   - **Applies to**: `RegressionTaskConfig`, `ClassificationTaskConfig`, `SequenceTaskConfig`.
+   - **Field in Config**: `data_column: str`
+   - **Purpose**: Specifies the exact name of the column in your `attributes_source` file/DataFrame that contains the primary data for the task.
+     - For regression and classification tasks: This column holds the target values.
+     - For sequence tasks: This column holds the main sequence data (e.g., the y-values of a spectrum or time series).
+   - **Example**:
+     ```yaml
+     # In your task configuration list:
+     # - name: "band_gap_prediction"
+     #   type: REGRESSION
+     #   data_column: "actual_band_gap_values" # Points to 'actual_band_gap_values' column in attributes.csv
+     #   ... other task parameters
+     #
+     # - name: "xrd_pattern_analysis"
+     #   type: SEQUENCE
+     #   data_column: "xrd_intensity_series" # Points to 'xrd_intensity_series' column for sequence y-values
+     #   steps_column: "xrd_two_theta_angles" # See below
+     #   ... other task parameters
+     ```
+
+**2. Sequence Steps Column (`steps_column`):**
+   - **Applies to**: `SequenceTaskConfig` only.
+   - **Field in Config**: `steps_column: str` (optional, defaults to `""`)
+   - **Purpose**: Specifies the exact name of the column in your `attributes_source` that contains the steps or x-axis values corresponding to the sequence data (e.g., temperature points, time steps, 2-theta angles).
+   - **Behavior**:
+     - If specified and the column exists: This data will be loaded and passed to the sequence task head (available in `temps_dict` within `CompoundDataset`).
+     - If specified but the column does *not* exist in `attributes_source`: A `ValueError` will be raised during data loading, as this explicitly requested data is missing.
+     - If left as an empty string (default): No specific steps column is loaded. `CompoundDataset` will provide a placeholder (e.g., zeros) for the steps data. The sequence model head should be prepared to handle this (e.g., by assuming a default step interval like `torch.arange(sequence_length)`).
+   - **Example**:
+     ```yaml
+     # - name: "temperature_dependent_property"
+     #   type: SEQUENCE
+     #   data_column: "property_vs_temp_series"
+     #   steps_column: "temperature_points" # Points to 'temperature_points' column for x-axis of the sequence
+     #   ...
+     ```
+
+**Important Considerations:**
+*   **Exact Column Names**: The values provided for `data_column` and `steps_column` must exactly match the column headers in your `attributes_source` data file.
+*   **Data Format in CSV**: If your `attributes_source` is a CSV file and a column contains list-like data (e.g., for sequence series, multi-dimensional regression targets, or sequence steps), these should be stored as strings that Python's `ast.literal_eval` can parse (e.g., `"[1.0, 2.5, 3.0]"`).
+*   **Missing `data_column` Data**: If a `data_column` is specified in a task config but the column is not found in `attributes_source`, or if the column exists but contains many NaNs, the corresponding samples for that task will be masked out (i.e., not used for training or loss calculation for that specific task). Placeholders (e.g., zeros or -1 for classification) will be used for the target values in `y_dict`.
+*   **`attributes_source` is `None`**:
+    *   If `attributes_source` is not provided to `CompoundDataModule` (typically for prediction scenarios where only input features like `formula_desc_source` are given):
+        *   Any task specifying a `data_column` will have its targets treated as placeholders by `CompoundDataset`.
+        *   If a `SequenceTaskConfig` specifies a non-empty `steps_column`, `CompoundDataModule` will raise a `ValueError` because `attributes_source` is required to load this essential steps data, even for prediction.
+
+This explicit column mapping approach provides clarity and flexibility in defining how your task configurations link to your data.
+
 ### Quick Examples
 
 ##### Example 1 – Pre‑train with formula+structure

@@ -51,6 +51,7 @@ class BaseTaskConfig:
 
     name: str  # Name of the task
     type: TaskType  # Type of the task (will be overridden by subclasses with a default)
+    data_column: str = ""  # Column name in attributes_df for primary task data
 
     # Default fields below are now keyword-only
     enabled: bool = field(default=True, kw_only=True)  # Whether the task is enabled
@@ -97,6 +98,7 @@ class SequenceTaskConfig(BaseTaskConfig):
 
     # Common parameters - these become positional with defaults
     hidden: int = 128  # Hidden dimension size
+    steps_column: str = ""  # Column name in attributes_df for sequence steps/x-axis
 
     # RNN-specific parameters
     cell: str = "gru"  # Cell type for RNN (gru or lstm)

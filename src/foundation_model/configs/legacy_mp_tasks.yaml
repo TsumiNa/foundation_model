@@ -21,6 +21,7 @@ default_optimizer_config: &default_optimizer
 tasks:
   - name: "Band gap"
     type: REGRESSION
+    data_column: "Band gap_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -33,6 +34,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Density"
     type: REGRESSION
+    data_column: "Density_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -45,6 +47,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Efermi"
     type: REGRESSION
+    data_column: "Efermi_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -57,6 +60,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Final energy per atom"
     type: REGRESSION
+    data_column: "Final energy per atom_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -69,6 +73,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Formation energy per atom"
     type: REGRESSION
+    data_column: "Formation energy per atom_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -81,6 +86,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Total magnetization"
     type: REGRESSION
+    data_column: "Total magnetization_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]
@@ -93,6 +99,7 @@ tasks:
     optimizer: *default_optimizer
   - name: "Volume"
     type: REGRESSION
+    data_column: "Volume_regression_value"
     enabled: True
     weight: 1.0
     dims: [64, 32, 16, 1]

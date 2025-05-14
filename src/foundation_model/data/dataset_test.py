@@ -1,30 +1,14 @@
-from types import SimpleNamespace
-
 import numpy as np
 import pandas as pd
 import pytest
 import torch
 
+from foundation_model.configs.model_config import (
+    RegressionTaskConfig,
+    SequenceTaskConfig,
+    TaskType,
+)
 from foundation_model.data.dataset import CompoundDataset
-
-
-# --- Mock Objects ---
-class MockTaskType:
-    REGRESSION = SimpleNamespace(name="REGRESSION")
-    CLASSIFICATION = SimpleNamespace(name="CLASSIFICATION")
-    SEQUENCE = SimpleNamespace(name="SEQUENCE")
-
-
-class MockTaskConfig:
-    def __init__(self, name, task_type, enabled=True, dims=None, num_classes=None):
-        self.name = name
-        self.type = task_type
-        self.enabled = enabled
-        self.dims = dims
-        self.num_classes = num_classes
-        # Add other attributes if CompoundDataset specifically checks for them,
-        # e.g., optimizer, but for basic data processing, these might be enough.
-
 
 # --- Fixtures ---
 
@@ -74,15 +58,25 @@ def sample_attributes_df():
 
 @pytest.fixture
 def sample_task_configs():
-    """Returns a list of sample MockTaskConfig objects."""
+    """Returns a list of sample TaskConfig objects."""
     return [
-        MockTaskConfig(name="task_reg", task_type=MockTaskType.REGRESSION, dims=[None, 1]),
-        MockTaskConfig(name="task_seq", task_type=MockTaskType.SEQUENCE, dims=[None, 3]),  # Assuming seq_len is 3
-        MockTaskConfig(name="task_another_reg", task_type=MockTaskType.REGRESSION, dims=[None, 1]),
-        MockTaskConfig(name="task_disabled", task_type=MockTaskType.REGRESSION, enabled=False),
-        MockTaskConfig(
-            name="task_fully_missing_data_col", task_type=MockTaskType.REGRESSION, dims=[None, 1]
-        ),  # This task's data column won't exist in attributes_df
+        RegressionTaskConfig(name="task_reg", type=TaskType.REGRESSION, data_column="task_reg_regression_value"),
+        SequenceTaskConfig(
+            name="task_seq",
+            type=TaskType.SEQUENCE,
+            data_column="task_seq_sequence_series",
+            steps_column="task_seq_temps",
+            seq_len=3,
+        ),
+        RegressionTaskConfig(
+            name="task_another_reg", type=TaskType.REGRESSION, data_column="task_another_reg_regression_value"
+        ),
+        RegressionTaskConfig(
+            name="task_disabled", type=TaskType.REGRESSION, data_column="task_disabled_regression_value", enabled=False
+        ),
+        RegressionTaskConfig(
+            name="task_fully_missing_data_col", type=TaskType.REGRESSION, data_column="non_existent_column"
+        ),
     ]
 
 
@@ -391,10 +385,11 @@ def test_input_dtypes_conversion(sample_attributes_df, sample_task_configs):
 
     # Check y_dict dtypes (regression and sequence should be float32)
     for task_name, y_tensor in dataset.y_dict.items():
-        task_cfg = next(tc for tc in sample_task_configs if tc.name == task_name)
-        if task_cfg.type == MockTaskType.REGRESSION or task_cfg.type == MockTaskType.SEQUENCE:
+        task_cfg = next(tc for tc in sample_task_configs if tc.name == task_name)  # type: ignore
+        if task_cfg.type == TaskType.REGRESSION or task_cfg.type == TaskType.SEQUENCE:
             assert y_tensor.dtype == torch.float32, f"Task {task_name} y_dict dtype mismatch"
-        # Classification tasks (if added) would be long
+        elif task_cfg.type == TaskType.CLASSIFICATION:  # Added for completeness
+            assert y_tensor.dtype == torch.long, f"Task {task_name} y_dict dtype mismatch for classification"
 
     # Check temps_dict dtype (should be float32)
     for task_name, temps_tensor in dataset.temps_dict.items():
@@ -453,60 +448,91 @@ def test_empty_inputs_raise_error(sample_formula_desc_df, sample_attributes_df, 
         )
 
 
-def test_sequence_data_with_non_numeric(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
-    """Test that non-numeric data in sequence series raises an error."""
+def test_sequence_data_with_non_numeric(sample_formula_desc_df, sample_attributes_df, sample_task_configs, caplog):
+    """Test that non-numeric data in sequence series is handled by creating NaNs, then converted by nan_to_num."""
     attributes_bad_seq = sample_attributes_df.copy()
-    # Ensure the column can hold arbitrary objects before assigning a mixed-type list
     attributes_bad_seq["task_seq_sequence_series"] = attributes_bad_seq["task_seq_sequence_series"].astype("object")
-    # Introduce a string into a sequence using .at for scalar assignment
     attributes_bad_seq.at["id_0", "task_seq_sequence_series"] = [0.1, "not_a_number", 0.3]
 
-    # Expect TypeError when converting list with string to tensor
-    with pytest.raises(TypeError):
-        CompoundDataset(
-            formula_desc=sample_formula_desc_df,
-            attributes=attributes_bad_seq,
-            task_configs=sample_task_configs,
-            dataset_name="test_bad_seq_data",
-        )
+    dataset_bad_seq = CompoundDataset(
+        formula_desc=sample_formula_desc_df,
+        attributes=attributes_bad_seq,
+        task_configs=sample_task_configs,
+        dataset_name="test_bad_seq_data",
+    )
+    # Check that the problematic entry became [0.1, 0.0, 0.3] after nan_to_num(nan=0.0)
+    # The middle "not_a_number" should have been parsed as np.nan by _parse_structured_element, then 0.0
+    assert torch.allclose(dataset_bad_seq.y_dict["task_seq"][0], torch.tensor([0.1, 0.0, 0.3], dtype=torch.float32))
+    assert any(
+        "Could not parse string element 'not_a_number'" in rec.message
+        for rec in caplog.records
+        if rec.levelname == "WARNING"
+    )
+    caplog.clear()
 
     attributes_bad_temps = sample_attributes_df.copy()
-    # Ensure the column can hold arbitrary objects
     attributes_bad_temps["task_seq_temps"] = attributes_bad_temps["task_seq_temps"].astype("object")
-    # Introduce a string into temps using .at for scalar assignment
     attributes_bad_temps.at["id_0", "task_seq_temps"] = [10, "bad_temp", 30]
-    with pytest.raises(TypeError):  # Expect TypeError for temps as well
+
+    dataset_bad_temps = CompoundDataset(
+        formula_desc=sample_formula_desc_df,
+        attributes=attributes_bad_temps,
+        task_configs=sample_task_configs,
+        dataset_name="test_bad_temps_data",
+    )
+    # Check that the problematic entry became [[10], [0], [30]]
+    assert torch.allclose(
+        dataset_bad_temps.temps_dict["task_seq"][0], torch.tensor([[10.0], [0.0], [30.0]], dtype=torch.float32)
+    )
+    assert any(
+        "Could not parse string element 'bad_temp'" in rec.message
+        for rec in caplog.records
+        if rec.levelname == "WARNING"
+    )
+
+
+def test_missing_specified_steps_column_raises_error(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+    """Test ValueError if a specified steps_column is missing for a sequence task."""
+    attributes_no_temps = sample_attributes_df.drop(columns=["task_seq_temps"])
+
+    # sample_task_configs already has task_seq configured with steps_column="task_seq_temps"
+
+    with pytest.raises(
+        ValueError, match="Steps column 'task_seq_temps' for task 'task_seq' not found in attributes data."
+    ):
         CompoundDataset(
             formula_desc=sample_formula_desc_df,
-            attributes=attributes_bad_temps,
+            attributes=attributes_no_temps,
             task_configs=sample_task_configs,
-            dataset_name="test_bad_temps_data",
+            dataset_name="test_missing_specified_steps",
         )
 
 
-def test_missing_temps_for_sequence_task(sample_formula_desc_df, sample_attributes_df, sample_task_configs, caplog):
-    """Test behavior when 'temps' column is missing for a sequence task."""
-    attributes_no_temps = sample_attributes_df.drop(columns=["task_seq_temps"])
+def test_sequence_task_no_steps_column_specified(sample_formula_desc_df, sample_attributes_df, caplog):
+    """Test behavior when steps_column is not specified for a sequence task (uses placeholder)."""
+
+    task_configs_no_steps_spec = [
+        RegressionTaskConfig(name="task_reg", type=TaskType.REGRESSION, data_column="task_reg_regression_value"),
+        SequenceTaskConfig(
+            name="task_seq", type=TaskType.SEQUENCE, data_column="task_seq_sequence_series", steps_column="", seq_len=3
+        ),  # steps_column is empty
+    ]
 
     dataset = CompoundDataset(
         formula_desc=sample_formula_desc_df,
-        attributes=attributes_no_temps,
-        task_configs=sample_task_configs,  # task_seq is a sequence task
-        dataset_name="test_missing_temps",
+        attributes=sample_attributes_df,  # attributes_df still has "task_seq_temps" but it won't be used
+        task_configs=task_configs_no_steps_spec,
+        dataset_name="test_no_steps_column_spec",
     )
 
     task_name = "task_seq"
     assert task_name in dataset.temps_dict
-    # Expect a placeholder (e.g., zeros) for temps
-    # Shape should match y_dict for that task, but with added channel dim (B, SeqLen, 1)
-    expected_temps_shape = (len(sample_formula_desc_df), dataset.y_dict[task_name].shape[1], 1)
+    expected_temps_shape = (len(sample_formula_desc_df), 3, 1)  # seq_len is 3
     assert dataset.temps_dict[task_name].shape == expected_temps_shape
-    assert torch.all(dataset.temps_dict[task_name] == 0)  # Check placeholder is zeros
+    assert torch.all(dataset.temps_dict[task_name] == 0)  # Placeholder is zeros
 
-    # Check for a warning log message
-    temps_col_name = f"{task_name}_temps"  # Reconstruct for the log message
     expected_log_message = (
-        f"[{dataset.dataset_name}] Task '{task_name}': Temps column '{temps_col_name}' "
-        f"not found for sequence task. Using zero placeholder."
+        f"[{dataset.dataset_name}] Task '{task_name}': No steps_column specified. "
+        f"Using zero placeholder for steps (temps_dict)."
     )
-    assert any(expected_log_message in record.message and record.levelname == "WARNING" for record in caplog.records)
+    assert any(expected_log_message in record.message and record.levelname == "INFO" for record in caplog.records)

@@ -33,6 +33,7 @@ model:
       # Or define tasks directly here:
       # - name: "custom_regression_task"
       #   type: REGRESSION
+      #   data_column: "name_of_column_for_regression_targets_in_attributes_file" # NEW
       #   enabled: True
       #   weight: 1.0 # Loss weight for this task
       #   dims: [256, 128, 1] # Example: [model_latent_dim, head_hidden_dim, output_dim]
@@ -43,11 +44,22 @@ model:
       #     lr: 0.001
       # - name: "custom_classification_task"
       #   type: CLASSIFICATION
+      #   data_column: "name_of_column_for_classification_targets_in_attributes_file" # NEW
       #   enabled: True
       #   weight: 1.0
       #   dims: [256, 128] # Example: [model_latent_dim, head_hidden_dim]
       #   num_classes: 3
       #   norm: True
+      # - name: "custom_sequence_task"
+      #   type: SEQUENCE
+      #   data_column: "name_of_column_for_sequence_data_in_attributes_file" # NEW
+      #   steps_column: "name_of_column_for_sequence_steps_in_attributes_file" # NEW (optional, for sequence steps/x-axis)
+      #   enabled: True
+      #   weight: 1.0
+      #   subtype: "rnn" # Or "tcn", "fixed_vec"
+      #   d_in: 256 # Should match model_latent_dim
+      #   hidden: 128
+      #   # seq_len: 100 # Required for fixed_vec if not inferable
 
     # --- Optimizer for Shared Blocks (Encoder/Deposit) ---
     shared_block_optimizer:

@@ -787,6 +787,7 @@ name = "foundation-model"
 version = "0.2.1"
 source = { editable = "." }
 dependencies = [
+    { name = "joblib" },
     { name = "lightning", extra = ["pytorch-extra"] },
     { name = "loguru" },
     { name = "matplotlib" },
@@ -811,6 +812,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "joblib", specifier = ">=1.5.0" },
     { name = "lightning", extras = ["pytorch-extra"], specifier = ">=2.5.1.post0" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "matplotlib", specifier = ">=3.10.1" },
