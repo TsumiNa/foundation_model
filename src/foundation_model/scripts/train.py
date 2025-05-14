@@ -22,8 +22,6 @@ def cli_main():
     the appropriate trainer actions (fit, validate, test, predict).
     """
     cli = LightningCLI(
-        # FlexibleMultiTaskModel,
-        # CompoundDataModule,
         # subclass_mode_model=True,
         # subclass_mode_data=True,
         auto_configure_optimizers=False,
