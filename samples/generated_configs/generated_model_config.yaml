@@ -111,7 +111,7 @@ model:
       factor: 0.1
       patience: 20
       min_lr: 1.0e-06
-      monitor: val_total_loss
+      monitor: val_final_loss
     with_structure: false
     modality_dropout_p: 0.3
     norm_shared: true
@@ -161,15 +161,15 @@ trainer:
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        filename: "model-{epoch:02d}-{val_total_loss:.4f}"
-        monitor: val_total_loss
+        filename: "model-{epoch:02d}-{val_final_loss:.4f}"
+        monitor: val_final_loss
         mode: min
         save_top_k: 1
         save_last: true
         verbose: true
     - class_path: lightning.pytorch.callbacks.EarlyStopping
       init_args:
-        monitor: val_total_loss
+        monitor: val_final_loss
         patience: 25
         mode: min
         verbose: true
