@@ -1,6 +1,6 @@
 # experiment_name: base_experiment # This can be overridden by CLI or defaults if not set
 # log_dir: results/logs/${experiment_name} # Replaced by trainer.default_root_dir
-
+seed_everything: 42
 model:
   class_path: foundation_model.models.FlexibleMultiTaskModel
   init_args:
@@ -78,21 +78,21 @@ model:
       #       patience: 30
       #       factor: 0.1
       #       monitor: val_classification_A_loss
-      # - name: classification_B
-      #   type: CLASSIFICATION
-      #   dims: [64, 32, 3]
-      #   num_classes: 3
-      #   norm: true
-      #   residual: false
-      #   weight: 0.5
-      #   enabled: true
-      #   optimizer:
-      #     optimizer_type: AdamW
-      #     lr: 0.002
-      #     scheduler_type: StepLR
-      #     patience: 30
-      #     factor: 0.1
-      #     monitor: val_classification_B_loss
+      - name: classification_B
+        type: CLASSIFICATION
+        dims: [64, 32, 3]
+        num_classes: 3
+        norm: true
+        residual: false
+        weight: 0.5
+        enabled: true
+        optimizer:
+          optimizer_type: AdamW
+          lr: 0.002
+          scheduler_type: StepLR
+          patience: 30
+          factor: 0.1
+          monitor: val_classification_B_loss
     shared_block_optimizer:
       optimizer_type: AdamW
       lr: 0.001
@@ -109,8 +109,8 @@ model:
     with_structure: false
     modality_dropout_p: 0.3
     norm_shared: true
-    residual_shared: false
-    enable_self_supervised_training: false
+    residual_shared: true
+    enable_self_supervised_training: true
     mask_ratio: 0.15
     temperature: 0.07
     loss_weights:
@@ -137,10 +137,10 @@ trainer:
   max_epochs: 100
   # accelerator: auto
   # devices: auto
-  accelerator: cpu
+  accelerator: auto
   devices: 1
   enable_progress_bar: true
-  fast_dev_run: True
+  fast_dev_run: false
   # precision: 16-mixed
   # accumulate_grad_batches: 1
   log_every_n_steps: 50
@@ -156,12 +156,12 @@ trainer:
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        dirpath: null
-        filename: "{epoch}-{step}-{val_total_loss:.2f}"
+        filename: "model-{epoch:02d}-{val_total_loss:.4f}"
         monitor: val_total_loss
         mode: min
         save_top_k: 1
         save_last: true
+        verbose: true
     - class_path: lightning.pytorch.callbacks.EarlyStopping
       init_args:
         monitor: val_total_loss

@@ -1,21 +1,19 @@
 # Copyright 2025 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-import logging
 from typing import Dict, List, Optional, Union
 
 import lightning as L
 import numpy as np
 import pandas as pd
 from jsonargparse.typing import Path_fr  # ADDED IMPORT
+from loguru import logger  # Replaced logging with loguru
 
 # import torch # Not directly used in this file anymore for temps
 from sklearn.model_selection import train_test_split  # For data splitting
 from torch.utils.data import DataLoader
 
 from .dataset import CompoundDataset
-
-logger = logging.getLogger(__name__)
 
 
 class CompoundDataModule(L.LightningDataModule):
@@ -505,9 +503,6 @@ class CompoundDataModule(L.LightningDataModule):
         logger.info(f"--- DataModule setup for stage '{stage}' complete ---")
 
     def train_dataloader(self):
-        print(
-            f"--- CompoundDataModule: train_dataloader() called. Train dataset length: {len(self.train_dataset) if hasattr(self, 'train_dataset') and self.train_dataset is not None else 'N/A or None'}"
-        )  # DEBUG PRINT
         if not hasattr(self, "train_dataset") or self.train_dataset is None:
             logger.warning("train_dataloader: Train dataset is None or not initialized. Returning None.")
             return None

@@ -40,7 +40,7 @@ class OptimizerConfig:
     factor: float = 0.5  # Factor by which the learning rate will be reduced
     patience: int = 5  # Number of epochs with no improvement after which learning rate will be reduced
     min_lr: float = 1e-4  # A lower bound on the learning rate
-    monitor: str = "train_loss"  # Quantity to monitor
+    monitor: str = "train_total_loss"  # Quantity to monitor
     interval: str = "epoch"  # Interval for monitoring
     frequency: int = 1  # Frequency of monitoring
 

@@ -14,7 +14,6 @@ Tensor shape legend (used across all docstrings):
 * **D** - latent / embedding feature dimension
 """
 
-import logging  # Added
 from typing import Any, List, Optional  # Added List, Optional
 
 import lightning as L
@@ -22,6 +21,7 @@ import pandas as pd  # Added
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from loguru import logger  # Replaced logging with loguru
 from torch.optim.lr_scheduler import _LRScheduler
 
 from foundation_model.configs.model_config import (
@@ -38,8 +38,6 @@ from .task_head.classification import ClassificationHead
 from .task_head.regression import RegressionHead
 from .task_head.sequence import create_sequence_head
 from .task_head.sequence.base import SequenceBaseHead
-
-logger = logging.getLogger(__name__)  # Added
 
 
 class FlexibleMultiTaskModel(L.LightningModule):
@@ -197,6 +195,25 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # Set to manual optimization as we handle multiple optimizers
         self.automatic_optimization = False
+
+        logger.info("Initializing FlexibleMultiTaskModel...")
+        logger.info("Registered Task Heads:")
+        task_info_df = self.registered_tasks_info
+        if not task_info_df.empty:
+            # Log as a formatted table if pandas is available and dataframe is not empty
+            # For a cleaner log, convert DataFrame to string
+            task_info_str = task_info_df.to_string(index=False)
+            for line in task_info_str.split("\n"):
+                logger.info(f"  {line}")
+        else:
+            logger.info("  No task heads configured.")
+
+        logger.info("FlexibleMultiTaskModel Structure:")
+        # Convert the model's string representation into multiple log lines for readability
+        model_structure_str = str(self)
+        for line in model_structure_str.split("\n"):
+            logger.info(f"  {line}")
+        logger.info("FlexibleMultiTaskModel initialization complete.")
 
     def _init_loss_weights(self, loss_weights: dict[str, float] | None = None):
         """Initialize loss weights for different components."""
@@ -415,7 +432,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return outputs
 
     def training_step(self, batch, batch_idx):
-        print(f"--- FlexibleMultiTaskModel: training_step() called for batch_idx: {batch_idx} ---")  # DEBUG PRINT
         """
         Training step implementation with multi-component loss calculation,
         handling self-supervised learning and modality dropout.
@@ -432,6 +448,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
         torch.Tensor
             Total weighted loss for optimization.
         """
+        optimizers = self.optimizers()
+        if not isinstance(optimizers, list):
+            optimizers = [optimizers]
+        for opt in optimizers:
+            opt.zero_grad(set_to_none=True)
+
+        lr_schedulers = self.lr_schedulers()
+        if not isinstance(lr_schedulers, list):
+            lr_schedulers = [lr_schedulers]
+
         # 1. Unpack batch data
         # y_dict_batch, task_masks_batch, task_sequence_data_batch are now dictionaries keyed by task_name
         x, y_dict_batch, task_masks_batch, task_sequence_data_batch = batch
@@ -458,7 +484,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 f"Unexpected input type/combination. with_structure={self.with_structure}, type(x)={type(x)}"
             )
 
-        total_loss = torch.tensor(0.0, device=x_formula.device if x_formula is not None else "cpu")
+        total_loss = torch.tensor(0.0, device=x_formula.device if x_formula is not None else "cpu", requires_grad=True)
 
         # 3. Handle Modality Dropout (only during SSL training)
         x_struct_for_processing = original_x_struct  # Start with the original structure input
@@ -478,7 +504,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if self.enable_self_supervised_training:
             # We need non-masked embeddings for contrastive/cross-recon later
             # Get these based on potentially dropped structure input
-            h_formula_ssl, h_structure_ssl, _, _ = self.encoder(x_formula, x_struct_for_processing)
+            if self.with_structure:
+                h_formula_ssl, h_structure_ssl, _, _ = self.encoder(x_formula, x_struct_for_processing)
+            else:
+                # When not using structure, FoundationEncoder takes only x_formula
+                # and returns (latent, task_representation)
+                h_formula_ssl, _ = self.encoder(x_formula)  # x_struct_for_processing is None or not used
+                h_structure_ssl = None
 
             # 4a. Masked Feature Modeling (MFM)
             if self.w.get("mfm", 0) > 0:
@@ -581,14 +613,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Manual optimization
         if total_loss.requires_grad:
             self.manual_backward(total_loss)
-            optimizers = self.optimizers()
-            if isinstance(optimizers, list):
-                for opt in optimizers:
-                    opt.step()
-                    opt.zero_grad(set_to_none=True)
-            else:  # Single optimizer case
-                optimizers.step()
-                optimizers.zero_grad(set_to_none=True)
+            for opt in optimizers:
+                opt.step()
+            for scheduler in lr_schedulers:
+                scheduler.step(total_loss)
         else:
             logger.warning(
                 "total_loss does not require grad and has no grad_fn at batch_idx %s. "
@@ -598,12 +626,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 batch_idx,  # Add batch_idx for better logging
             )
             # It's good practice to still zero_grad optimizers to clear any stale grads from previous iterations
-            optimizers = self.optimizers()
-            if isinstance(optimizers, list):
-                for opt in optimizers:
-                    opt.zero_grad(set_to_none=True)
-            else:
-                optimizers.zero_grad(set_to_none=True)
 
         return total_loss
 
@@ -654,7 +676,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # --- Self-Supervised Learning (SSL) Calculations (if enabled) ---
         if self.enable_self_supervised_training:
             # Get SSL-specific embeddings using the (non-dropped) structure input
-            h_formula_ssl, h_structure_ssl, _, _ = self.encoder(x_formula, x_struct_for_processing)
+            if self.with_structure:
+                h_formula_ssl, h_structure_ssl, _, _ = self.encoder(x_formula, x_struct_for_processing)
+            else:
+                # When not using structure, FoundationEncoder takes only x_formula
+                # and returns (latent, task_representation)
+                h_formula_ssl, _ = self.encoder(x_formula)  # x_struct_for_processing is None or not used
+                h_structure_ssl = None
 
             # 3a. Masked Feature Modeling (MFM)
             if self.w.get("mfm", 0) > 0:  # Check if MFM is weighted, implying it's active
