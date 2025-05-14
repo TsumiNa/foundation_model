@@ -3,6 +3,7 @@
 
 from typing import Dict, List, Optional, Union
 
+import joblib  # ADDED
 import lightning as L
 import numpy as np
 import pandas as pd
@@ -19,10 +20,10 @@ from .dataset import CompoundDataset
 class CompoundDataModule(L.LightningDataModule):
     def __init__(
         self,
-        formula_desc_source: Path_fr,  # CHANGED
+        formula_desc_source: Union[pd.DataFrame, np.ndarray, Path_fr],  # type: ignore
         task_configs: List,
-        attributes_source: Optional[Path_fr] = None,  # CHANGED
-        structure_desc_source: Optional[Path_fr] = None,  # CHANGED
+        attributes_source: Optional[Union[pd.DataFrame, Path_fr]] = None,  # type: ignore
+        structure_desc_source: Optional[Union[pd.DataFrame, np.ndarray, Path_fr]] = None,  # type: ignore
         with_structure: bool = False,
         task_masking_ratios: Optional[Dict[str, float]] = None,
         val_split: float = 0.1,
@@ -250,11 +251,15 @@ class CompoundDataModule(L.LightningDataModule):
             if isinstance(source, str):
                 logger.info(f"Loading '{name}' data from path: {source}")
                 if source.endswith(".pkl"):
+                    df = joblib.load(source)
+                elif source.endswith((".pd", ".pd.z", ".pd.xz")):
                     df = pd.read_pickle(source)
                 elif source.endswith(".csv"):
                     df = pd.read_csv(source, index_col=0)  # Assuming first column as index
                 else:
-                    logger.error(f"Unsupported file type for '{name}': {source}. Must be .pkl or .csv.")
+                    logger.error(
+                        f"Unsupported file type for '{name}': {source}. Must be .pkl, .pd, .pd.z, .pd.xz, or .csv."
+                    )
                     raise ValueError(f"Unsupported file type for {name}: {source}.")
             elif isinstance(source, np.ndarray):
                 logger.info(f"Converting '{name}' data from np.ndarray to pd.DataFrame.")

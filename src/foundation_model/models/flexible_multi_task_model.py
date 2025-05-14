@@ -484,7 +484,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 f"Unexpected input type/combination. with_structure={self.with_structure}, type(x)={type(x)}"
             )
 
-        total_loss = torch.tensor(0.0, device=x_formula.device if x_formula is not None else "cpu", requires_grad=True)
+        zero = torch.zeros([], device=x_formula.device if x_formula is not None else "cpu")
+        total_loss = zero + 0.0  # non-leaf tensor placeholder for loss accumulation
 
         # 3. Handle Modality Dropout (only during SSL training)
         x_struct_for_processing = original_x_struct  # Start with the original structure input
@@ -619,13 +620,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 scheduler.step(total_loss)
         else:
             logger.warning(
-                "total_loss does not require grad and has no grad_fn at batch_idx %s. "
+                f"total_loss does not require grad and has no grad_fn at batch_idx {batch_idx}. "
                 "Skipping backward pass and optimizer step. "
                 "This might indicate all parameters are frozen, loss contributions are zero, "
                 "or an issue with the computation graph.",
-                batch_idx,  # Add batch_idx for better logging
             )
             # It's good practice to still zero_grad optimizers to clear any stale grads from previous iterations
+            for opt in optimizers:
+                opt.step()
 
         return total_loss
 
