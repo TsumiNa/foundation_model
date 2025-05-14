@@ -1,3 +1,5 @@
+import logging  # Add logging import
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -510,6 +512,7 @@ def test_missing_specified_steps_column_raises_error(sample_formula_desc_df, sam
 
 def test_sequence_task_no_steps_column_specified(sample_formula_desc_df, sample_attributes_df, caplog):
     """Test behavior when steps_column is not specified for a sequence task (uses placeholder)."""
+    caplog.set_level(logging.INFO)  # Set caplog level to INFO
 
     task_configs_no_steps_spec = [
         RegressionTaskConfig(name="task_reg", type=TaskType.REGRESSION, data_column="task_reg_regression_value"),

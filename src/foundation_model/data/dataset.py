@@ -22,26 +22,70 @@ def _parse_structured_element(
     Handles scalars, lists, numpy arrays, string representations of lists/arrays, and NaNs.
     Returns a numpy array. For NaNs or parsing errors, returns np.full(expected_shape_for_nan, np.nan).
     """
-    if isinstance(element, (list, np.ndarray)):
-        return np.asarray(element)
+    if isinstance(element, np.ndarray) and np.issubdtype(element.dtype, np.number):
+        return element.astype(float)  # Ensure float type for consistency
+    elif isinstance(element, (list, tuple)) or (isinstance(element, np.ndarray) and element.dtype == object):
+        # Handle lists, tuples, or object arrays that might contain mixed types
+        processed_list = []
+        for item in element:
+            if isinstance(item, str):
+                try:
+                    # Attempt to evaluate if it's a string representation of a number
+                    eval_item = ast.literal_eval(item)
+                    if isinstance(eval_item, (int, float, bool)):  # bool is subclass of int
+                        processed_list.append(float(eval_item))
+                    else:  # ast.literal_eval returned a list/tuple/dict, treat as unparsable for this context
+                        logger.debug(
+                            f"[{dataset_name}] Task '{task_name}', column '{column_name}': Item '{item}' in list evaluated to non-scalar {type(eval_item)}. Using NaN."
+                        )
+                        processed_list.append(np.nan)
+                except (ValueError, SyntaxError, TypeError):
+                    logger.warning(  # Changed from debug to warning
+                        f"[{dataset_name}] Task '{task_name}', column '{column_name}': Could not parse string element '{item}' in list. Using NaN."  # Changed "item" to "element"
+                    )
+                    processed_list.append(np.nan)
+            elif isinstance(item, (int, float, bool)):
+                processed_list.append(float(item))
+            elif pd.isna(item):
+                processed_list.append(np.nan)
+            else:  # Other non-numeric types within the list
+                logger.debug(
+                    f"[{dataset_name}] Task '{task_name}', column '{column_name}': Non-numeric item '{item}' (type: {type(item)}) in list. Using NaN."
+                )
+                processed_list.append(np.nan)
+        return np.array(processed_list, dtype=float)
     elif isinstance(element, str):
         try:
+            # For string elements that are supposed to be lists/arrays themselves
             parsed_element = ast.literal_eval(element)
             # Ensure it's an array, even if ast.literal_eval returns a scalar
-            return (
-                np.array(parsed_element, ndmin=1)
-                if not isinstance(parsed_element, (list, tuple))
-                else np.asarray(parsed_element)
-            )
+            # This branch now primarily handles strings that represent entire lists/arrays like "[1, 2, 3]"
+            if isinstance(parsed_element, (list, tuple)):
+                # Recursively call to process items within the parsed list/tuple
+                return _parse_structured_element(
+                    parsed_element, task_name, column_name, dataset_name, expected_shape_for_nan
+                )
+            elif isinstance(parsed_element, (int, float, bool)):
+                return np.array([float(parsed_element)])  # Single numeric value from string
+            else:  # Parsed to something else unexpected
+                logger.warning(
+                    f"[{dataset_name}] Task '{task_name}', column '{column_name}': String element '{element}' evaluated to unexpected type {type(parsed_element)}. Using NaN placeholder."
+                )
+                return np.full(expected_shape_for_nan, np.nan)
         except (ValueError, SyntaxError, TypeError):
             logger.warning(
-                f"[{dataset_name}] Task '{task_name}', column '{column_name}': Could not parse string element '{element}'. Using NaN placeholder."
+                f"[{dataset_name}] Task '{task_name}', column '{column_name}': Could not parse string element '{element}' as a list/scalar. Using NaN placeholder."
             )
             return np.full(expected_shape_for_nan, np.nan)
     elif pd.isna(element):
         return np.full(expected_shape_for_nan, np.nan)
-    else:  # Scalar number
-        return np.array([element])  # Ensure it's an array
+    elif isinstance(element, (int, float, bool)):  # Scalar number
+        return np.array([float(element)])
+    else:  # Other unhandled type, treat as error / NaN
+        logger.warning(
+            f"[{dataset_name}] Task '{task_name}', column '{column_name}': Unhandled element type '{type(element)}' ('{element}'). Using NaN placeholder."
+        )
+        return np.full(expected_shape_for_nan, np.nan)
 
 
 class CompoundDataset(Dataset):
@@ -144,8 +188,12 @@ class CompoundDataset(Dataset):
             current_task_mask_list = []
 
             expected_data_dim = 1  # Default for scalar
-            if task_type == TaskType.REGRESSION and hasattr(cfg, "dims") and cfg.dims:
-                expected_data_dim = cfg.dims[-1]
+            if task_type == TaskType.REGRESSION:
+                # For regression targets, the expected dimension is typically 1 (a single scalar value).
+                # If the data_column contains multiple values (e.g., a list for multi-output regression),
+                # _parse_structured_element and np.stack should handle creating an (N, M) array.
+                # cfg.dims is for the model head architecture, not for target data shape.
+                expected_data_dim = 1
             elif task_type == TaskType.CLASSIFICATION:  # Target is class index, so dim is 1
                 expected_data_dim = 1
             elif task_type == TaskType.SEQUENCE:
