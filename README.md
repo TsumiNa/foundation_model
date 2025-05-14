@@ -179,51 +179,54 @@ This adaptive approach, inspired by [Kendall, Gal, and Cipolla (CVPR 2018)](http
 
 ```mermaid
 graph TD
-    subgraph OverallLoss["Total Training Loss"]
-        direction TB
-        Combine["Sum All Weighted Losses"]:::output
+    direction TB                     %% 顶层方向
 
-        subgraph SupervisedTaskLoss["Supervised Task 't'"]
-            RawLoss_t["Raw Loss L_t"]:::inputdata
-            LogSigma_t["Learnable log_sigma_t"]:::param
-            StaticWeight_t["Static Weight w_t"]:::param
-            
-            WeightingLogic["Weighting Logic <br> w_t * exp(-2*log_sigma_t)/2 * L_t + log_sigma_t"]:::operation
-            FinalLoss_t["Final Loss Component L'_t"]:::taskhead
-
-            RawLoss_t --> WeightingLogic
-            LogSigma_t --> WeightingLogic
-            StaticWeight_t --> WeightingLogic
-            WeightingLogic --> FinalLoss_t
-        end
-
-        subgraph SSLTaskLoss["SSL Task 's'"]
-            RawLoss_s["Raw Loss L_s"]:::inputdata
-            StaticWeight_s["Static Weight w_s"]:::param
-            WeightedSSL["w_s * L_s"]:::operation
-            FinalLoss_s["Final Loss Component L'_s"]:::taskhead 
-
-            RawLoss_s --> WeightedSSL
-            StaticWeight_s --> WeightedSSL
-            WeightedSSL --> FinalLoss_s
-        end
+    %% ---------- Supervised Task ----------
+    subgraph SupervisedTaskLoss["Supervised Task 't'"]
+        RawLoss_t["Raw Loss L_t"]:::inputdata
+        LogSigma_t["Learnable log_sigma_t"]:::param
+        StaticWeight_t["Static Weight w_t"]:::param
         
-        FinalLoss_t --> Combine
-        FinalLoss_s --> Combine
-        Ellipsis["... (other tasks) ..."] --> Combine
+        WeightingLogic["Weighting Logic<br>w_t * exp(-2 logσ_t)/2 * L_t + logσ_t"]:::operation
+        FinalLoss_t["Final Loss Component L'_t"]:::taskhead
+
+        RawLoss_t --> WeightingLogic
+        LogSigma_t --> WeightingLogic
+        StaticWeight_t --> WeightingLogic
+        WeightingLogic --> FinalLoss_t
+    end
+
+    %% ------------- SSL Task -------------
+    subgraph SSLTaskLoss["SSL Task 's'"]
+        RawLoss_s["Raw Loss L_s"]:::inputdata
+        StaticWeight_s["Static Weight w_s"]:::param
+        WeightedSSL["w_s * L_s"]:::operation
+        FinalLoss_s["Final Loss Component L'_s"]:::taskhead 
+
+        RawLoss_s --> WeightedSSL
+        StaticWeight_s --> WeightedSSL
+        WeightedSSL --> FinalLoss_s
     end
     
-    classDef output fill:#EAEAEA,stroke:#888888,stroke-width:2px,color:#000000;
-    classDef taskhead fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000000;
-    classDef param fill:#DFF0D8,stroke:#77B55A,stroke-width:1px,color:#000000;
-    classDef inputdata fill:#E0EFFF,stroke:#5C9DFF,stroke-width:1px,color:#000000;
-    classDef operation fill:#D9EDF7,stroke:#6BADCF,stroke-width:1px,color:#000000;
+    %% ---------- 汇总节点 ----------
+    Combine["Sum All Weighted Losses"]:::output
+    FinalLoss_t --> Combine
+    FinalLoss_s --> Combine
+    Ellipsis["... (other tasks) ..."] --> Combine
 
-    class Combine;
-    class RawLoss_t, RawLoss_s;
-    class LogSigma_t, StaticWeight_t, StaticWeight_s;
-    class WeightingLogic, WeightedSSL;
-    class FinalLoss_t, FinalLoss_s;
+    %% ------------- STYLES ----------------
+    classDef output fill:#EAEAEA,stroke:#888888,stroke-width:2px,color:#000;
+    classDef taskhead fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000;
+    classDef param fill:#DFF0D8,stroke:#77B55A,stroke-width:1px,color:#000;
+    classDef inputdata fill:#E0EFFF,stroke:#5C9DFF,stroke-width:1px,color:#000;
+    classDef operation fill:#D9EDF7,stroke:#6BADCF,stroke-width:1px,color:#000;
+
+    %% --------- CLASS ASSIGNMENTS ----------
+    class Combine output
+    class RawLoss_t,RawLoss_s inputdata
+    class LogSigma_t,StaticWeight_t,StaticWeight_s param
+    class WeightingLogic,WeightedSSL operation
+    class FinalLoss_t,FinalLoss_s taskhead
 ```
 
 ## Model Architecture
