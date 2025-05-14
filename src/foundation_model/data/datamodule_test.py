@@ -468,49 +468,58 @@ def test_datamodule_task_masking_ratios_propagation(base_formula_df, attributes_
 
 
 def test_datamodule_empty_dataset_returns_none_dataloader(base_formula_df, sample_task_configs_no_seq_dm, caplog):
-    # Initialize DM with valid, non-empty formula_df to pass __init__
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=None,  # attributes_source can be None
-        task_configs=sample_task_configs_no_seq_dm,
-    )
+    # --- Loguru to caplog bridge (local to this test) ---
+    class PropagateHandler(logging.Handler):
+        def emit(self, record):
+            logging.getLogger(record.name).handle(record)
 
-    # Manually set dataset attributes to None to directly test dataloader guard clauses.
-    # This bypasses the setup logic for creating these datasets, focusing only on the dataloader methods' behavior.
-    dm.train_dataset = None
-    dm.val_dataset = None
-    dm.test_dataset = None
-    dm.predict_dataset = None  # predict_dataset is also an attribute that can be None
+    handler_id = loguru_logger.add(PropagateHandler(), format="{message}", level="INFO")
+    # --- End bridge ---
 
-    caplog.set_level(logging.INFO)  # Ensure INFO messages are captured
+    try:
+        # Initialize DM with valid, non-empty formula_df to pass __init__
+        dm = CompoundDataModule(
+            formula_desc_source=base_formula_df,
+            attributes_source=None,  # attributes_source can be None
+            task_configs=sample_task_configs_no_seq_dm,
+        )
 
-    assert dm.train_dataloader() is None, "Train dataloader should be None when train_dataset is None"
-    assert any(
-        "train_dataloader: Train dataset is None or not initialized" in rec.message
-        for rec in caplog.records
-        if rec.levelname == "WARNING"
-    ), "Expected log for None train_dataset not found"
-    caplog.clear()
+        # Manually set dataset attributes to None to directly test dataloader guard clauses.
+        # This bypasses the setup logic for creating these datasets, focusing only on the dataloader methods' behavior.
+        dm.train_dataset = None
+        dm.val_dataset = None
+        dm.test_dataset = None
+        dm.predict_dataset = None  # predict_dataset is also an attribute that can be None
 
-    assert dm.val_dataloader() is None, "Validation dataloader should be None when val_dataset is None"
-    assert any(
-        "val_dataloader: Validation dataset is None or not initialized" in rec.message
-        for rec in caplog.records
-        if rec.levelname == "INFO"
-    ), "Expected log for None val_dataset not found"
-    caplog.clear()
+        assert dm.train_dataloader() is None, "Train dataloader should be None when train_dataset is None"
+        assert any(
+            "train_dataloader: Train dataset is None or not initialized" in rec.message
+            for rec in caplog.records
+            if rec.levelname == "WARNING"
+        ), "Expected log for None train_dataset not found"
+        caplog.clear()
 
-    assert dm.test_dataloader() is None, "Test dataloader should be None when test_dataset is None"
-    assert any(
-        "test_dataloader: Test dataset is None or not initialized" in rec.message
-        for rec in caplog.records
-        if rec.levelname == "INFO"
-    ), "Expected log for None test_dataset not found"
-    caplog.clear()
+        assert dm.val_dataloader() is None, "Validation dataloader should be None when val_dataset is None"
+        assert any(
+            "val_dataloader: Validation dataset is None or not initialized" in rec.message
+            for rec in caplog.records
+            if rec.levelname == "INFO"
+        ), "Expected log for None val_dataset not found"
+        caplog.clear()
 
-    assert dm.predict_dataloader() is None, "Predict dataloader should be None when predict_dataset is None"
-    assert any(
-        "predict_dataloader: Predict dataset is None or not initialized" in rec.message
-        for rec in caplog.records
-        if rec.levelname == "INFO"
-    ), "Expected log for None predict_dataset not found"
+        assert dm.test_dataloader() is None, "Test dataloader should be None when test_dataset is None"
+        assert any(
+            "test_dataloader: Test dataset is None or not initialized" in rec.message
+            for rec in caplog.records
+            if rec.levelname == "INFO"
+        ), "Expected log for None test_dataset not found"
+        caplog.clear()
+
+        assert dm.predict_dataloader() is None, "Predict dataloader should be None when predict_dataset is None"
+        assert any(
+            "predict_dataloader: Predict dataset is None or not initialized" in rec.message
+            for rec in caplog.records
+            if rec.levelname == "INFO"
+        ), "Expected log for None predict_dataset not found"
+    finally:
+        loguru_logger.remove(handler_id)  # Clean up the handler
