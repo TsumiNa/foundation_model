@@ -1,3 +1,39 @@
+## Project Structure
+
+```
+foundation_model/
+├── src/
+│   └── foundation_model/    # Main Python package
+│       ├── models/          # Neural network models and components
+│       │   ├── components/  # Reusable model parts (encoders, fusion, SSL)
+│       │   └── task_head/   # Task-specific prediction heads (regression, classification, sequence)
+│       ├── data/            # Data handling (Dataset, DataModule, splitter)
+│       ├── utils/           # Utility functions (plotting, training helpers)
+│       ├── configs/         # Configuration models
+│       └── scripts/         # Execution scripts (e.g., train.py)
+
+├── data/                    # Placeholder for larger, persistent datasets (e.g., raw data)
+│
+├── results/                 # Default output directory for models, logs, figures
+│
+├── notebooks/               # Jupyter notebooks for experiments, analysis, and visualization
+│   └── experiments/         # Older experimental notebooks
+│
+├── samples/                 # Example configurations, data, and helper scripts
+│   ├── cli_examples/        # Shell script examples for CLI usage
+│   ├── fake_data/           # Small fake datasets for testing
+│   ├── generated_configs/   # Example generated YAML configurations
+│   └── helper_tools/        # Utility scripts for data/config generation
+│
+├── .gitignore
+├── .python-version
+├── ARCHITECTURE.md          # Detailed model architecture documentation
+├── CHANGES.md               # Changelog
+├── pyproject.toml           # Project metadata and dependencies
+├── README.md                # This file
+└── uv.lock                  # uv lock file
+```
+
 # Model Architecture Documentation
 
 This document provides a detailed overview of the `FlexibleMultiTaskModel` architecture, its components, and data flow.

@@ -2,41 +2,41 @@
 
 A multi-task learning model for predicting various material properties.
 
-## Project Structure
+## Model Architecture
 
-```
-foundation_model/
-├── src/
-│   └── foundation_model/    # Main Python package
-│       ├── models/          # Neural network models and components
-│       │   ├── components/  # Reusable model parts (encoders, fusion, SSL)
-│       │   └── task_head/   # Task-specific prediction heads (regression, classification, sequence)
-│       ├── data/            # Data handling (Dataset, DataModule, splitter)
-│       ├── utils/           # Utility functions (plotting, training helpers)
-│       ├── configs/         # Configuration models
-│       └── scripts/         # Execution scripts (e.g., train.py)
+The `FlexibleMultiTaskModel` is designed with a modular and extensible architecture. At its core, it features:
 
-├── data/                    # Placeholder for larger, persistent datasets (e.g., raw data)
-│
-├── results/                 # Default output directory for models, logs, figures
-│
-├── notebooks/               # Jupyter notebooks for experiments, analysis, and visualization
-│   └── experiments/         # Older experimental notebooks
-│
-├── samples/                 # Example configurations, data, and helper scripts
-│   ├── cli_examples/        # Shell script examples for CLI usage
-│   ├── fake_data/           # Small fake datasets for testing
-│   ├── generated_configs/   # Example generated YAML configurations
-│   └── helper_tools/        # Utility scripts for data/config generation
-│
-├── .gitignore
-├── .python-version
-├── ARCHITECTURE.md          # Detailed model architecture documentation
-├── CHANGES.md               # Changelog
-├── pyproject.toml           # Project metadata and dependencies
-├── README.md                # This file
-└── uv.lock                  # uv lock file
+1.  A **Foundation Encoder** that processes input features (formula-based, and optionally structure-based) to generate shared representations. This encoder includes mechanisms for multi-modal fusion if structural data is provided.
+2.  An intermediate **Deposit Layer** that acts as a bridge between the shared encoder and task-specific components.
+3.  A collection of **Task-specific Heads** that take representations from the foundation encoder (either directly from the latent space or via the deposit layer) to make predictions for various tasks, such as:
+    *   Regression (e.g., predicting band gap)
+    *   Classification (e.g., predicting material stability)
+    *   Sequence Prediction (e.g., predicting density of states curves)
+
+Below is a high-level overview of the architecture:
+
+```mermaid
+graph TD
+    GeneralInputs["Inputs<br/>(x_formula, x_structure*)<br/>*optional"] --> FE["Foundation Encoder<br/>(Shared MLP, Fusion*, Deposit)<br/>*optional"]
+    SequenceDataInputs["Sequence Data<br/>(task_sequence_y_data*,<br/>task_sequence_steps_data*)<br/>*optional"] --> SeqHeads["Sequence Heads"]
+    
+    FE --"h_task (for Reg/Class)"--> NonSeqHeads["Regression/Classification Heads"]
+    FE --"h_task (for Seq)"--> SeqHeads
+    
+    NonSeqHeads --> Outputs["Outputs (Dictionary)"]
+    SeqHeads --> Outputs
+
+    classDef io fill:#E0EFFF,stroke:#5C9DFF,stroke-width:2px,color:#000000;
+    classDef main fill:#DFF0D8,stroke:#77B55A,stroke-width:2px,color:#000000;
+    classDef heads fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000000;
+
+    class GeneralInputs, SequenceDataInputs io;
+    class FE main;
+    class NonSeqHeads,SeqHeads heads;
+    class Outputs io;
 ```
+
+For a more detailed diagram and in-depth explanation of each component, data flow, and dimensionality, please refer to the [**Model Architecture Documentation (ARCHITECTURE.md)**](ARCHITECTURE.md).
 
 ## Installation
 
@@ -68,77 +68,31 @@ uv pip freeze > uv.lock
 
 ## Usage
 
+The primary way to use this model is through the `train.py` script, which leverages PyTorch Lightning's `CLI`. This allows for flexible configuration via YAML files and command-line overrides.
+
 ### Training
 
-To train the model with default settings:
+To train the model, you will typically use a command like:
 
 ```bash
 # From the project root directory
-python src/foundation_model/scripts/train.py
+python -m foundation_model.scripts.train --config path/to/your/config.yaml [OTHER_CLI_OVERRIDES]
 ```
-
-The training script is installed as part of the package, so you can also run it from anywhere after installation:
-
+Or, if you are in `src/foundation_model/scripts/`:
 ```bash
-python -m foundation_model.scripts.train
+python train.py --config path/to/your/config.yaml [OTHER_CLI_OVERRIDES]
 ```
+
+-   Replace `path/to/your/config.yaml` with the path to your experiment's configuration file.
+-   `[OTHER_CLI_OVERRIDES]` can be used to override specific parameters within your YAML file (e.g., `--trainer.max_epochs=50`).
 
 ### Configuration
 
-There are two ways to configure the model:
+Model configuration is primarily handled through YAML files. These files define the model architecture (`FlexibleMultiTaskModel`), data loading (`CompoundDataModule`), PyTorch Lightning trainer settings, and any callbacks.
 
-1. **Command-line arguments**:
+You can find examples of configuration files in the `samples/generated_configs/` directory (e.g., `generated_model_config.yaml`) and more specific model component configurations in `configs/model_configs/` (e.g., `base_model.yaml`).
 
-The `src/foundation_model/scripts/train.py` script (which uses `MultiTaskAttributePredictor`) accepts the following arguments to override defaults from `ExperimentConfig` and `ModelConfig`:
-
-- **Attribute Configuration:**
-  - `--mp_attrs_rate` (float): Sampling rate for Materials Project attributes (default: 1.0).
-- **Training Configuration:**
-  - `--max_epochs` (int): Maximum number of training epochs.
-  - `--batch_size` (int): Batch size for training.
-  - `--num_workers` (int): Number of workers for data loading.
-- **Dataset Configuration:**
-  - `--train_ratio` (float): Ratio of training data.
-  - `--val_ratio` (float): Ratio of validation data.
-  - `--test_ratio` (float): Ratio of test data.
-  - `--random_seed` (int): Random seed for data splitting.
-- **Trainer Configuration (PyTorch Lightning):**
-  - `--accelerator` (str): Accelerator type (e.g., "cpu", "gpu").
-  - `--devices` (int): Number of devices to use.
-  - `--strategy` (str): Training strategy (e.g., "ddp").
-- **Experiment Configuration:**
-  - `--exp_name` (str): Name of the experiment for logging.
-- **Path Configuration:**
-  - `--data_dir` (str): Directory containing raw data.
-  - `--results_dir` (str): Directory for saving results.
-  - `--log_dir` (str): Directory for saving logs (overrides `default_root_dir` for Trainer).
-- **Learning Rate Configuration:**
-  - `--shared_block_lr` (float): Learning rate for shared blocks.
-  - `--task_block_lr` (float): Learning rate for task-specific blocks.
-
-*Note: The `FlexibleMultiTaskModel` and its associated features (like `--pretrain`, `--with_structure`, `--lora_rank`, sequence heads, etc., mentioned in "Quick Examples") are typically configured via YAML files, as shown in `configs/model_configs/base_model.yaml`. The main `train.py` script would need to be adapted or a different script used to run `FlexibleMultiTaskModel` with those specific CLI flags.*
-
-2. **YAML configuration**:
-
-You can also use YAML configuration files for more complex setups. See `configs/model_configs/base_model.yaml` for an example.
-
-#### Pre‑training vs. Fine‑tuning
-
-| Mode | Arguments | What trains |
-|------|-----------|-------------|
-| **Encoder frozen** | `--freeze_encoder --lora_rank 0` | Only task heads (linear probe) |
-| **LoRA micro‑tune** | `--freeze_encoder --lora_rank 8` | Heads + small LoRA adapters |
-| **Full fine‑tune** | *(default)* | Encoder + heads |
-| **Pre‑train** | `--pretrain --with_structure` | Encoder with dual‑modality losses |
-
-> Tip: combine `--pretrain` with `--loss_weights '{"attr":0,"seq":0}'` if you
-> don't want downstream heads to affect pre‑training.
-
-
-## Update History
-
-Update history has been moved to [changes.md](changes.md).
-
+For detailed examples of different configurations (such as pre-training, fine-tuning, using specific model components like different sequence heads) and how to effectively use command-line overrides, please refer to the **## Quick Examples** section below.
 
 ## Features
 
@@ -229,39 +183,6 @@ graph TD
     class FinalLoss_t,FinalLoss_s taskhead
 ```
 
-## Model Architecture
-
-The `FlexibleMultiTaskModel` is designed with a modular and extensible architecture. At its core, it features:
-
-1.  A **Foundation Encoder** that processes input features (formula-based, and optionally structure-based) to generate shared representations. This encoder includes mechanisms for multi-modal fusion if structural data is provided.
-2.  An intermediate **Deposit Layer** that acts as a bridge between the shared encoder and task-specific components.
-3.  A collection of **Task-specific Heads** that take representations from the foundation encoder (either directly from the latent space or via the deposit layer) to make predictions for various tasks, such as:
-    *   Regression (e.g., predicting band gap)
-    *   Classification (e.g., predicting material stability)
-    *   Sequence Prediction (e.g., predicting density of states curves)
-
-Below is a high-level overview of the architecture:
-
-```mermaid
-graph TD
-    Inputs["Inputs<br/>(x_formula, x_structure*, task_sequence_data_batch*)<br/>*optional"] --> FE["Foundation Encoder<br/>(Shared MLP, Fusion*, Deposit)<br/>*optional"]
-    FE --"h_task (for Attr/Class)"--> NonSeqHeads["Attribute/Classification Heads"]
-    FE --"h_task (for Seq)"--> SeqHeads["Sequence Heads"]
-    NonSeqHeads --> Outputs["Outputs (Dictionary)"]
-    SeqHeads --> Outputs
-
-    classDef io fill:#E0EFFF,stroke:#5C9DFF,stroke-width:2px,color:#000000;
-    classDef main fill:#DFF0D8,stroke:#77B55A,stroke-width:2px,color:#000000;
-    classDef heads fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000000;
-
-    class Inputs io;
-    class FE main;
-    class NonSeqHeads,SeqHeads heads;
-    class Outputs io;
-```
-
-For a more detailed diagram and in-depth explanation of each component, data flow, and dimensionality, please refer to the [**Model Architecture Documentation (ARCHITECTURE.md)**](ARCHITECTURE.md).
-
 ## Data Handling
 
 - Supports multiple material properties
@@ -322,7 +243,7 @@ When providing data through the `attributes_source` (typically an `attributes.cs
 
 This explicit column mapping approach provides clarity and flexibility in defining how your task configurations link to your data.
 
-### Quick Examples
+## Quick Examples
 
 The `train.py` script utilizes PyTorch Lightning's `CLI` ([see official documentation](https://lightning.ai/docs/pytorch/stable/cli/lightning_cli.html)). This allows for comprehensive configuration of the model (`FlexibleMultiTaskModel`) and data module (`CompoundDataModule`) through YAML files, with parameters passed directly to their `__init__` methods via an `init_args` block. You can also override these YAML settings using command-line arguments.
 
@@ -629,3 +550,7 @@ To observe a scaling law for `task_A`:
 **Expected Observation:** Generally, as the `task_masking_ratios` for `task_A` decreases (less data used), the final validation loss for `task_A` is expected to be higher, demonstrating the scaling law principle that model performance often improves with more data. Plotting these losses against the data fraction (1.0, 0.5, 0.2) can visualize this relationship.
 
 This setup provides a controlled way to study the impact of data quantity on individual task performance within a multi-task learning framework.
+
+## Update History
+
+Update history has been moved to [changes.md](changes.md).
