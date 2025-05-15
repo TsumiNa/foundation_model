@@ -563,4 +563,4 @@ This setup provides a controlled way to study the impact of data quantity on ind
 
 ## Update History
 
-Update history has been moved to [changes.md](changes.md).
+Update history has been moved to [CHANGES.md](CHANGES.md).
