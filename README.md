@@ -76,11 +76,6 @@ uv add <package_name>
 uv add --dev <package_name>
 ```
 
-After adding new dependencies, update the lock file:
-```bash
-uv pip freeze > uv.lock
-```
-
 ## Usage
 
 The primary way to use this model is through the `train.py` script, which leverages PyTorch Lightning's `CLI`. This allows for flexible configuration via YAML files and command-line overrides.
