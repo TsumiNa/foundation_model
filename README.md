@@ -17,23 +17,38 @@ Below is a high-level overview of the architecture:
 
 ```mermaid
 graph TD
-    GeneralInputs["Inputs<br/>(x_formula, x_structure*)<br/>*optional"] --> FE["Foundation Encoder<br/>(Shared MLP, Fusion*, Deposit)<br/>*optional"]
-    SequenceDataInputs["Sequence Data<br/>(task_sequence_y_data*,<br/>task_sequence_steps_data*)<br/>*optional"] --> SeqHeads["Sequence Heads"]
-    
-    FE --"h_task (for Reg/Class)"--> NonSeqHeads["Regression/Classification Heads"]
-    FE --"h_task (for Seq)"--> SeqHeads
-    
+    %% ---------- Inputs (同一级) ----------
+    subgraph InputsLayer["Inputs"]
+        direction TB
+        GeneralInputs["Formula / Structure<br/>(x_formula, x_structure*)<br/>*optional"]
+        SequenceDataInputs["Sequence Data<br/>(task_sequence_* data)<br/>*optional"]
+    end
+
+    %% ---------- Foundation encoder ----------
+    FE["Foundation Encoder<br/>(Shared MLP, Fusion*, Deposit)<br/>*optional"]
+
+    %% ---------- Task heads ----------
+    NonSeqHeads["Regression / Classification Heads"]
+    SeqHeads["Sequence Heads"]
+
+    %% ---------- Edges ----------
+    GeneralInputs --> FE
+    FE -- "h_task (for Reg/Class)" --> NonSeqHeads
+    FE -- "h_task (for Seq)" --> SeqHeads
+    SequenceDataInputs --> SeqHeads
     NonSeqHeads --> Outputs["Outputs (Dictionary)"]
     SeqHeads --> Outputs
 
-    classDef io fill:#E0EFFF,stroke:#5C9DFF,stroke-width:2px,color:#000000;
-    classDef main fill:#DFF0D8,stroke:#77B55A,stroke-width:2px,color:#000000;
-    classDef heads fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000000;
+    %% ---------- Styles ----------
+    classDef io    fill:#E0EFFF,stroke:#5C9DFF,stroke-width:2px,color:#000;
+    classDef main  fill:#DFF0D8,stroke:#77B55A,stroke-width:2px,color:#000;
+    classDef heads fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000;
 
-    class GeneralInputs, SequenceDataInputs io;
-    class FE main;
-    class NonSeqHeads,SeqHeads heads;
-    class Outputs io;
+    %% ---------- Class assignments ----------
+    class GeneralInputs,SequenceDataInputs io
+    class FE main
+    class NonSeqHeads,SeqHeads heads
+    class Outputs io
 ```
 
 For a more detailed diagram and in-depth explanation of each component, data flow, and dimensionality, please refer to the [**Model Architecture Documentation (ARCHITECTURE.md)**](ARCHITECTURE.md).
