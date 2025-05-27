@@ -13,6 +13,8 @@ dependencies = [
     "numpy<2",
     "omegaconf>=2.3.0",
     "pandas>=2.2.3",
+    "qpsolvers>=4.7.0",
+    "quadprog>=0.1.13",
     "scipy>=1.15.2",
     "seaborn>=0.13.2",
     "shotgun-csp",
