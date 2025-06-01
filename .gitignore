@@ -33,7 +33,9 @@ lightning_logs/
 **/images
 /matched_structures
 /tamura
-/data
+/data/*
+!/data/scripts/
+!/data/scripts/**
 
 # IDE
 .idea/
