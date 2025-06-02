@@ -12,6 +12,7 @@ and a function for generating descriptors with summary statistics.
 """
 
 # Import libraries.
+import os
 from statistics import median
 
 import numpy as np
@@ -22,28 +23,43 @@ from scipy.spatial import distance_matrix
 
 # Load preset data.
 element_features = pd.read_csv(
-    "data_set/element_features.csv", index_col=0
+    os.path.join(os.path.dirname(__file__), "element_features.csv"), index_col=0
 )  # element-level descriptors of shape (94, 58).
 elements = list(element_features.index)  # 94 elements, "H" ~ "Pu".
 
 
 # Define functions.
-def formula_to_composition(formula, elements=elements):
+def formula_to_composition(formula, elements=None):
     """
-    Convert a chemical formula to a composition vector for the predifened elements.
+    Convert a chemical formula, dictionary, or Composition object to a composition vector for the predefined elements.
 
     Args
     ----
-    formula: str
-          Chemical formula (e.g. "SiO2").
-    elements: a list of str
-          Chemical elements (e.g. ["H", "He", ...]).
+    formula: str, dict, or pymatgen.core.composition.Composition
+        Chemical formula (e.g. "SiO2"), a dictionary of element fractions, or a Composition object.
+    elements: list of str, optional (default=None)
+        Chemical elements (e.g. ["H", "He", ...]). If None, elements are loaded from "element_features.csv".
+
     Returns
     ----
-    vec: numpy.ndarray of shape (len(elements),).
+    vec: numpy.ndarray of shape (len(elements),)
+        Composition vector corresponding to the given elements.
     """
-    comp = Composition(formula)
-    vec = np.array([comp.get_atomic_fraction(elements[i]) for i in range(len(elements))])
+    if elements is None:
+        element_features_path = os.path.join(os.path.dirname(__file__), "element_features.csv")
+        element_features_df = pd.read_csv(element_features_path, index_col=0)
+        elements = list(element_features_df.index)
+
+    if isinstance(formula, str):
+        comp = Composition(formula)
+    elif isinstance(formula, dict):
+        comp = Composition.from_dict(formula)
+    elif isinstance(formula, Composition):
+        comp = formula
+    else:
+        raise ValueError("formula must be a string, dict, or pymatgen.core.composition.Composition object.")
+
+    vec = np.array([comp.get_atomic_fraction(el) if el in comp else 0.0 for el in elements])
     return vec
 
 
