@@ -146,3 +146,9 @@ trainer:
   devices: 1
   enable_progress_bar: true
   fast_dev_run: false
+  logger: false
+  callbacks:
+    - class_path: foundation_model.scripts.callbacks.PredictionDataFrameWriter
+      init_args:
+        output_path: ${oc.env:LOG_DIR,results/logs/default_experiment}/predict
+        write_interval: "epoch"

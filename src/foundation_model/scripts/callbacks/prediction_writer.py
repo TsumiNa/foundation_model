@@ -34,9 +34,9 @@ class PredictionDataFrameWriter(BasePredictionWriter):
     Parameters
     ----------
     output_path : str
-        The base path (without extension) for saving the output files.
+        The directory path where prediction result files will be saved.
         For example, if `output_path` is "outputs/predictions", files will be
-        saved as "outputs/predictions.csv" and "outputs/predictions.pd.xz".
+        saved as "outputs/predictions/predictions.csv" and "outputs/predictions/predictions.pd.xz".
     write_interval : str, optional
         When to write predictions. Supports "batch" and "epoch".
         Defaults to "epoch", which is recommended for this callback as it
@@ -49,7 +49,7 @@ class PredictionDataFrameWriter(BasePredictionWriter):
         super().__init__(write_interval)
         self.output_path = Path(output_path)
         # Ensure the output directory exists
-        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.output_path.mkdir(parents=True, exist_ok=True)
 
     def _process_predictions(self, predictions: List[STEP_OUTPUT]) -> pd.DataFrame:
         """
@@ -102,9 +102,13 @@ class PredictionDataFrameWriter(BasePredictionWriter):
 
                 if numpy_array_values.ndim == 0:  # Scalar
                     accumulated_data[key].append(numpy_array_values.item())
-                elif numpy_array_values.ndim == 1:  # Simple list of values
+                elif numpy_array_values.ndim == 1:  # Shape (B,): B scalar values
                     accumulated_data[key].extend(numpy_array_values.tolist())
-                else:  # Higher-dimensional array (e.g., list of sequences)
+                elif (
+                    numpy_array_values.ndim == 2 and numpy_array_values.shape[1] == 1
+                ):  # Shape (B, 1): Scalar per sample
+                    accumulated_data[key].extend(numpy_array_values.squeeze(axis=1).tolist())
+                else:  # Higher-dimensional array (e.g., list of sequences, or (B, N) with N>=2)
                     # Convert each row to a list
                     accumulated_data[key].extend([row.tolist() for row in numpy_array_values])
 
@@ -203,7 +207,7 @@ class PredictionDataFrameWriter(BasePredictionWriter):
             return
 
         # Save to CSV
-        csv_path = self.output_path.with_suffix(".csv")
+        csv_path = self.output_path / "predictions.csv"
         try:
             df.to_csv(csv_path, index=False)
             logger.info(f"Predictions saved to {csv_path}")
@@ -211,7 +215,7 @@ class PredictionDataFrameWriter(BasePredictionWriter):
             logger.error(f"Error saving predictions to CSV {csv_path}: {e}")
 
         # Save to compressed Pickle
-        pickle_path = self.output_path.with_suffix(".pd.xz")
+        pickle_path = self.output_path / "predictions.pd.xz"
         try:
             df.to_pickle(pickle_path, compression="xz")
             logger.info(f"Predictions saved to {pickle_path}")
