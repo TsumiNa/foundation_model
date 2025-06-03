@@ -10,7 +10,8 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from ..sequence.base import SequenceBaseHead
+from foundation_model.configs.model_config import SequenceTaskConfig
+from foundation_model.models.task_head.base import SequenceBaseHead
 
 
 class SequenceHeadFixedVec(SequenceBaseHead):
@@ -24,7 +25,7 @@ class SequenceHeadFixedVec(SequenceBaseHead):
         task name (`name`), and sequence length (`seq_len`).
     """
 
-    def __init__(self, config: object):  # TODO: Use specific SequenceTaskConfig type hint
+    def __init__(self, config: SequenceTaskConfig):  # TODO: Use specific SequenceTaskConfig type hint
         super().__init__(config)
 
         # Extract parameters from config

@@ -5,7 +5,8 @@ Dilated Temporal Convolutional Network with FiLM modulation for sequence predict
 import torch
 import torch.nn as nn
 
-from ..sequence.base import SequenceBaseHead
+from foundation_model.configs.model_config import SequenceTaskConfig
+from foundation_model.models.task_head.base import SequenceBaseHead
 
 
 class _DilatedTCN(nn.Module):
@@ -69,7 +70,7 @@ class SequenceHeadTCNFiLM(SequenceBaseHead):
         task name (`name`), hidden dimension (`hidden`), and number of TCN layers (`n_layers`).
     """
 
-    def __init__(self, config: object):  # TODO: Use specific SequenceTaskConfig type hint
+    def __init__(self, config: SequenceTaskConfig):  # TODO: Use specific SequenceTaskConfig type hint
         super().__init__(config)
 
         # Extract parameters from config

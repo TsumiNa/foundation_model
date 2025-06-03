@@ -53,13 +53,17 @@ mkdir -p "$LOG_DIR"
 # The YAML now handles pathing based on trainer.default_root_dir.
 # We pass the fully resolved LOG_DIR (which includes the timestamped experiment name)
 # directly as the default_root_dir for the trainer.
+# We also explicitly set the save_dir for each logger to ensure they use the $LOG_DIR.
 python -m foundation_model.scripts.train fit \
     --config "$CONFIG_FILE" \
-    --trainer.default_root_dir="$LOG_DIR"
+    --trainer.default_root_dir="$LOG_DIR" \
+    --trainer.logger.0.init_args.save_dir="$LOG_DIR" \
+    --trainer.logger.1.init_args.save_dir="$LOG_DIR"
 
 # The trainer.default_root_dir in the YAML is a static fallback.
 # The CLI argument --trainer.default_root_dir="$LOG_DIR" overrides it.
-# Loggers and ModelCheckpoint will then use this resolved default_root_dir.
+# The CLI arguments for logger save_dir will also override any YAML interpolation.
+# Loggers and ModelCheckpoint will then use these resolved paths.
 
 echo "--------------------------------------------------"
 echo "Basic Training Run Command Executed."

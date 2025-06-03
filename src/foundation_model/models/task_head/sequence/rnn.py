@@ -9,8 +9,7 @@ import torch
 import torch.nn as nn
 
 from foundation_model.configs.model_config import SequenceTaskConfig
-
-from .base import SequenceBaseHead
+from foundation_model.models.task_head.base import SequenceBaseHead
 
 
 class SequenceHeadRNN(SequenceBaseHead):
