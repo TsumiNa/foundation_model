@@ -143,9 +143,13 @@ class CompoundDataModule(L.LightningDataModule):
             # Align attributes_df to master_index (from formula_df)
             original_attributes_len = len(self.attributes_df)
             self.attributes_df = self.attributes_df.reindex(master_index)
-            if len(self.attributes_df) != original_attributes_len or self.attributes_df.isnull().values.any():
+            if len(self.attributes_df) != original_attributes_len:
                 logger.warning(
-                    f"Attributes_df reindexed. Original length: {original_attributes_len}, new length: {len(self.attributes_df)}. Check for NaNs."
+                    f"Attributes_df reindexed. Original length: {original_attributes_len}, new length: {len(self.attributes_df)}."
+                )
+            if self.attributes_df.isnull().values.any():
+                logger.warning(
+                    "attributes_df contains NaN values after reindexing. This is expected if some properties are missing for certain samples."
                 )
             self.attributes_df.dropna(how="all", inplace=True)
             if self.attributes_df.empty:
