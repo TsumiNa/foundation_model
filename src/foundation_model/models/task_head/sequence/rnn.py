@@ -86,7 +86,7 @@ class SequenceHeadRNN(SequenceBaseHead):
         Returns
         -------
         dict[str, torch.Tensor]
-            A dictionary containing the prediction: {"prediction": x}.
+            A dictionary containing the prediction: {"values": x}.
         """
         # For RNN sequence head, the raw output is the prediction
-        return {"prediction": x.cpu().numpy()}
+        return {"values": x.cpu().numpy()}
