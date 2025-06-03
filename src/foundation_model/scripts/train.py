@@ -14,6 +14,16 @@ class LoggerSaveConfigCallback(SaveConfigCallback):
             trainer.logger.log_hyperparams({"config": config})
 
 
+class StrictFalseLightningCLI(LightningCLI):
+    def instantiate_classes(self):
+        model, data, trainer, callbacks, loggers = super().instantiate_classes()
+        ckpt_path = self.config_fit.get("ckpt_path", None)
+        if ckpt_path and hasattr(model, "load_from_checkpoint"):
+            model = model.load_from_checkpoint(checkpoint_path=ckpt_path, strict=False)
+        self.model = model
+        return model, data, trainer, callbacks, loggers
+
+
 def cli_main():
     """
     Main function to run the Lightning CLI.
@@ -21,7 +31,7 @@ def cli_main():
     The CLI handles parsing arguments, loading configurations, and running
     the appropriate trainer actions (fit, validate, test, predict).
     """
-    cli = LightningCLI(
+    LightningCLI(
         # subclass_mode_model=True,
         # subclass_mode_data=True,
         auto_configure_optimizers=False,

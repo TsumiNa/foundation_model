@@ -124,6 +124,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         Temperature coefficient in contrastive learning. Controls the smoothness of
         the similarity distribution, with smaller values increasing contrast.
         Typical value is 0.07. Only used when enable_self_supervised_training=True and with_structure=True.
+    enable_learnable_loss_balancer : bool
+        Whether to use learnable log_sigma_t parameters for each supervised task to weight their losses.
+        Defaults to True. If False, only static loss_weights are used.
     """
 
     def __init__(
@@ -145,9 +148,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
         loss_weights: dict[str, float] | None = None,
         mask_ratio: float = 0.15,
         temperature: float = 0.07,
+        enable_learnable_loss_balancer: bool = True,  # New parameter
     ):
         super().__init__()
         self.save_hyperparameters()
+
+        # Store the new parameter
+        self.enable_learnable_loss_balancer = enable_learnable_loss_balancer
 
         # Validate inputs
         if len(shared_block_dims) < 2:
@@ -188,16 +195,20 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Initialize loss weights
         self._init_loss_weights(loss_weights)
 
-        # Initialize learnable uncertainty parameters (log(sigma_t) for each supervised task)
-        self.task_log_sigmas = nn.ParameterDict(
-            {
-                cfg.name: nn.Parameter(torch.zeros((), device=self.device))  # Ensure device matches
-                for cfg in self.task_configs
-                if cfg.enabled
-                # SSL tasks like "mfm", "contrastive", "cross_recon" are handled separately by self.w
-                # and do not get their own learnable sigmas here unless explicitly designed.
-            }
-        )
+        # Initialize learnable uncertainty parameters (log(sigma_t))
+        if self.enable_learnable_loss_balancer:
+            self.task_log_sigmas = nn.ParameterDict(
+                {
+                    cfg.name: nn.Parameter(torch.zeros((), device=self.device))  # Ensure device matches
+                    for cfg in self.task_configs
+                    if cfg.enabled
+                    # SSL tasks are handled by self.w, not learnable sigmas here
+                }
+            )
+            logger.info("Learnable task uncertainty (task_log_sigmas) is ENABLED.")
+        else:
+            self.task_log_sigmas = nn.ParameterDict()  # Empty, effectively disabling learnable sigmas
+            logger.info("Learnable task uncertainty (task_log_sigmas) is DISABLED.")
 
         # Initialize model components
         self._init_foundation_encoder()
@@ -635,31 +646,37 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # Apply uncertainty weighting for supervised tasks
         for name, raw_loss_t in raw_supervised_losses.items():
-            if name in self.task_log_sigmas:  # This task uses learnable uncertainty
-                current_log_sigma_t = self.task_log_sigmas[name]
-                static_weight = self.w.get(name, 1.0)  # User-defined static weight
+            static_weight = self.w.get(name, 1.0)  # User-defined static weight
 
+            if self.enable_learnable_loss_balancer and name in self.task_log_sigmas:
+                current_log_sigma_t = self.task_log_sigmas[name]
                 precision_factor_t = torch.exp(-2 * current_log_sigma_t)  # 1 / sigma_t^2
 
-                # final_task_loss_component = static_weight * 0.5 * precision_factor_t * raw_loss_t + current_log_sigma_t
-                # Using the formulation: static_w * (1/(2*sigma^2)) * raw_loss + log(sigma)
-                task_loss_data_term = static_weight * 0.5 * precision_factor_t * raw_loss_t
-                task_loss_reg_term = current_log_sigma_t
-                final_task_loss_component = task_loss_data_term + task_loss_reg_term
+                # Reverted to single-line calculation for the final task loss component
+                final_task_loss_component = (
+                    static_weight * 0.5 * precision_factor_t * raw_loss_t
+                ) + current_log_sigma_t
 
                 supervised_loss_contribution += final_task_loss_component
-
                 train_logs[f"train_{name}_sigma_t"] = torch.exp(current_log_sigma_t).detach()
                 train_logs[f"train_{name}_final_loss_contrib"] = final_task_loss_component.detach()
-            else:  # Should not happen if task_log_sigmas is created for all enabled supervised tasks
-                logger.warning(
-                    f"Task {name} found in predictions but not in task_log_sigmas. Using static weight only."
-                )
-                static_weight = self.w.get(name, 1.0)
+            else:
+                # Using static weight only (either learnable uncertainty is off, or task not in task_log_sigmas)
+                if not self.enable_learnable_loss_balancer:
+                    # Log that static weight is used because learnable uncertainty is off
+                    pass  # No specific log needed here, already logged at init
+                elif name not in self.task_log_sigmas:
+                    # This case should ideally not be hit if task_log_sigmas is populated correctly for all supervised tasks
+                    logger.warning(
+                        f"Task {name} uses static weight as it's not in task_log_sigmas (learnable uncertainty is ON)."
+                    )
+
                 final_task_loss_component = static_weight * raw_loss_t
                 supervised_loss_contribution += final_task_loss_component
-                # Reverting log key to original pattern
                 train_logs[f"train_{name}_final_loss_contrib"] = final_task_loss_component.detach()
+                # Log sigma as 1 (log_sigma as 0) if learnable uncertainty is off for this task
+                if name in self.task_log_sigmas:  # Should not be true if enable_learnable_loss_balancer is false
+                    train_logs[f"train_{name}_sigma_t"] = 1.0
 
         train_logs["train_final_supervised_loss"] = supervised_loss_contribution.detach()
 
@@ -855,28 +872,37 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # Apply uncertainty weighting for supervised tasks
         for name, raw_loss_t in raw_val_supervised_losses.items():
-            if name in self.task_log_sigmas:  # This task uses learnable uncertainty
-                current_log_sigma_t = self.task_log_sigmas[name]  # Use learned value
-                static_weight = self.w.get(name, 1.0)
+            static_weight = self.w.get(name, 1.0)
 
+            if self.enable_learnable_loss_balancer and name in self.task_log_sigmas:
+                current_log_sigma_t = self.task_log_sigmas[name]  # Use learned value
                 precision_factor_t = torch.exp(-2 * current_log_sigma_t)
 
-                task_loss_data_term = static_weight * 0.5 * precision_factor_t * raw_loss_t
-                task_loss_reg_term = current_log_sigma_t
-                final_task_loss_component = task_loss_data_term + task_loss_reg_term
+                # Reverted to single-line calculation for the final task loss component
+                final_task_loss_component = (
+                    static_weight * 0.5 * precision_factor_t * raw_loss_t
+                ) + current_log_sigma_t
 
                 val_supervised_loss_contribution += final_task_loss_component.detach()
-
                 val_logs[f"val_{name}_sigma_t"] = torch.exp(current_log_sigma_t).detach()
                 val_logs[f"val_{name}_final_loss_contrib"] = final_task_loss_component.detach()
-            else:  # Should not happen
-                logger.warning(
-                    f"Task {name} found in validation predictions but not in task_log_sigmas. Using static weight only."
-                )
-                static_weight = self.w.get(name, 1.0)
+            else:
+                # Using static weight only
+                if not self.enable_learnable_loss_balancer:
+                    pass  # Logged at init
+                elif (
+                    name not in self.task_log_sigmas
+                ):  # This case implies learnable uncertainty is ON but task is missing
+                    logger.warning(
+                        f"Task {name} uses static weight in validation as it's not in task_log_sigmas (learnable uncertainty is ON)."
+                    )
                 final_task_loss_component = static_weight * raw_loss_t
                 val_supervised_loss_contribution += final_task_loss_component.detach()
                 val_logs[f"val_{name}_final_loss_contrib"] = final_task_loss_component.detach()
+                # Log sigma as 1 (log_sigma as 0) if learnable uncertainty is off for this task,
+                # or if it was intended to be learnable but missing from task_log_sigmas.
+                # This ensures val_{name}_sigma_t is always logged if the task itself is processed.
+                val_logs[f"val_{name}_sigma_t"] = 1.0
 
         val_logs["val_final_supervised_loss"] = val_supervised_loss_contribution.detach()
         final_val_loss += val_supervised_loss_contribution  # Add to total final sum
@@ -1042,28 +1068,35 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # Apply uncertainty weighting for supervised tasks
         for name, raw_loss_t in raw_test_supervised_losses.items():
-            if name in self.task_log_sigmas:  # This task uses learnable uncertainty
-                current_log_sigma_t = self.task_log_sigmas[name]  # Use learned value
-                static_weight = self.w.get(name, 1.0)
+            static_weight = self.w.get(name, 1.0)
 
+            if self.enable_learnable_loss_balancer and name in self.task_log_sigmas:
+                current_log_sigma_t = self.task_log_sigmas[name]  # Use learned value
                 precision_factor_t = torch.exp(-2 * current_log_sigma_t)
 
-                task_loss_data_term = static_weight * 0.5 * precision_factor_t * raw_loss_t
-                task_loss_reg_term = current_log_sigma_t
-                final_task_loss_component = task_loss_data_term + task_loss_reg_term
+                # Reverted to single-line calculation for the final task loss component
+                final_task_loss_component = (
+                    static_weight * 0.5 * precision_factor_t * raw_loss_t
+                ) + current_log_sigma_t
 
                 test_supervised_loss_contribution += final_task_loss_component.detach()
-
                 test_logs[f"test_{name}_sigma_t"] = torch.exp(current_log_sigma_t).detach()
                 test_logs[f"test_{name}_final_loss_contrib"] = final_task_loss_component.detach()
-            else:  # Should not happen
-                logger.warning(
-                    f"Task {name} found in test predictions but not in task_log_sigmas. Using static weight only."
-                )
-                static_weight = self.w.get(name, 1.0)
+            else:
+                # Using static weight only
+                if not self.enable_learnable_loss_balancer:
+                    pass  # Logged at init
+                elif (
+                    name not in self.task_log_sigmas
+                ):  # This case implies learnable uncertainty is ON but task is missing
+                    logger.warning(
+                        f"Task {name} uses static weight in test as it's not in task_log_sigmas (learnable uncertainty is ON)."
+                    )
                 final_task_loss_component = static_weight * raw_loss_t
                 test_supervised_loss_contribution += final_task_loss_component.detach()
                 test_logs[f"test_{name}_final_loss_contrib"] = final_task_loss_component.detach()
+                # Log sigma as 1 (log_sigma as 0)
+                test_logs[f"test_{name}_sigma_t"] = 1.0
 
         test_logs["test_final_supervised_loss"] = test_supervised_loss_contribution.detach()
         final_test_loss += test_supervised_loss_contribution  # Add to total final sum
@@ -1204,6 +1237,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
     def _create_optimizer(self, params: list[torch.nn.Parameter], config: OptimizerConfig) -> torch.optim.Optimizer:
         """Create an optimizer based on the configuration."""
         params = list(filter(lambda p: p.requires_grad, params))
+        if not params:  # If no parameters require gradients, return a dummy optimizer or handle appropriately
+            # This path should ideally not be hit if checks are done before calling _create_optimizer
+            logger.warning(f"Optimizer creation called with no parameters requiring gradients for config: {config}")
+            # Depending on strictness, could raise error or return a dummy. For now, let it proceed (might error in optim).
+            # A more robust solution might be to return a specific dummy optimizer if PyTorch allows,
+            # or ensure this function is not called with empty grad-requiring params.
+            pass
 
         if config.optimizer_type == "AdamW":
             return optim.AdamW(
@@ -1239,87 +1279,38 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """Configure optimizers for all parameter groups."""
         optimizers_and_schedulers = []
 
-        # 1. Encoder parameters
+        # 1. Main parameters (Encoder + optionally task_log_sigmas)
+        main_params_to_optimize = []
         if self.with_structure:
-            encoder_params = list(self.encoder.parameters())  # Ensure it's a list
+            main_params_to_optimize.extend(list(self.encoder.parameters()))
         else:
-            encoder_params = list(self.encoder.parameters())  # Ensure it's a list
+            main_params_to_optimize.extend(list(self.encoder.parameters()))
 
-        encoder_opt = self._create_optimizer(encoder_params, self.shared_block_optimizer)
-        encoder_sched = self._create_scheduler(encoder_opt, self.shared_block_optimizer)
-
-        if encoder_sched:
-            optimizers_and_schedulers.append(
-                {
-                    "optimizer": encoder_opt,
-                    "lr_scheduler": {
-                        "scheduler": encoder_sched,
-                        "monitor": self.shared_block_optimizer.monitor,
-                        "interval": self.shared_block_optimizer.interval,
-                        "frequency": self.shared_block_optimizer.frequency,
-                    },
-                }
-            )
-        else:
-            optimizers_and_schedulers.append(encoder_opt)
-
-        # 2. Task head parameters
-        for name, head in self.task_heads.items():
-            config = self.task_configs_map[name]
-
-            # If the task has a specific optimizer config, use it
-            if config.optimizer:
-                task_opt = self._create_optimizer(list(head.parameters()), config.optimizer)  # Ensure it's a list
-                task_sched = self._create_scheduler(task_opt, config.optimizer)
-
-                if task_sched:
-                    optimizers_and_schedulers.append(
-                        {
-                            "optimizer": task_opt,
-                            "lr_scheduler": {
-                                "scheduler": task_sched,
-                                "monitor": config.optimizer.monitor,
-                                "interval": config.optimizer.interval,
-                                "frequency": config.optimizer.frequency,
-                            },
-                        }
-                    )
-                else:
-                    optimizers_and_schedulers.append(task_opt)
+        if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas") and self.task_log_sigmas:
+            learnable_log_sigmas = [p for p in self.task_log_sigmas.parameters() if p.requires_grad]
+            if learnable_log_sigmas:
+                main_params_to_optimize.extend(learnable_log_sigmas)
+                logger.info(f"Added {len(learnable_log_sigmas)} task_log_sigmas parameters to the main optimizer.")
             else:
-                # Use default optimizer with task-specific settings
-                default_config = OptimizerConfig()  # Use default settings
-                task_opt = self._create_optimizer(list(head.parameters()), default_config)  # Ensure it's a list
-                task_sched = self._create_scheduler(task_opt, default_config)
+                logger.info(
+                    "No learnable task_log_sigmas parameters found to add to the main optimizer (all frozen or empty)."
+                )
+        elif self.enable_learnable_loss_balancer:  # task_log_sigmas might not exist or be empty
+            logger.info("Learnable task uncertainty is ON, but task_log_sigmas is not populated or has no parameters.")
 
-                if task_sched:
-                    optimizers_and_schedulers.append(
-                        {
-                            "optimizer": task_opt,
-                            "lr_scheduler": {
-                                "scheduler": task_sched,
-                                "monitor": default_config.monitor,
-                                "interval": default_config.interval,
-                                "frequency": default_config.frequency,
-                            },
-                        }
-                    )
-                else:
-                    optimizers_and_schedulers.append(task_opt)
+        # Filter main_params_to_optimize to ensure all require grad before creating optimizer
+        main_params_to_optimize_filtered = [p for p in main_params_to_optimize if p.requires_grad]
 
-        # 3. Self-supervised module parameters (if enabled)
-        if self.enable_self_supervised_training and hasattr(self, "ssl_module"):
-            ssl_opt = self._create_optimizer(
-                list(self.ssl_module.parameters()), self.shared_block_optimizer
-            )  # Ensure it's a list
-            ssl_sched = self._create_scheduler(ssl_opt, self.shared_block_optimizer)
+        if main_params_to_optimize_filtered:
+            encoder_opt = self._create_optimizer(main_params_to_optimize_filtered, self.shared_block_optimizer)
+            encoder_sched = self._create_scheduler(encoder_opt, self.shared_block_optimizer)
 
-            if ssl_sched:
+            if encoder_sched:
                 optimizers_and_schedulers.append(
                     {
-                        "optimizer": ssl_opt,
+                        "optimizer": encoder_opt,
                         "lr_scheduler": {
-                            "scheduler": ssl_sched,
+                            "scheduler": encoder_sched,
                             "monitor": self.shared_block_optimizer.monitor,
                             "interval": self.shared_block_optimizer.interval,
                             "frequency": self.shared_block_optimizer.frequency,
@@ -1327,6 +1318,70 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     }
                 )
             else:
-                optimizers_and_schedulers.append(ssl_opt)
+                optimizers_and_schedulers.append(encoder_opt)
+        else:
+            logger.info(
+                "No parameters requiring gradients for the main optimizer (encoder/log_sigmas). Skipping its creation."
+            )
+
+        # 2. Task head parameters
+        for name, head in self.task_heads.items():
+            head_params_to_optimize = [p for p in head.parameters() if p.requires_grad]
+            if not head_params_to_optimize:
+                logger.info(f"No parameters requiring gradients for task head '{name}'. Skipping optimizer creation.")
+                continue
+
+            config = self.task_configs_map[name]
+            task_optimizer_config = config.optimizer or OptimizerConfig()  # Use default if specific not provided
+
+            task_opt = self._create_optimizer(head_params_to_optimize, task_optimizer_config)
+            task_sched = self._create_scheduler(task_opt, task_optimizer_config)
+
+            if task_sched:
+                optimizers_and_schedulers.append(
+                    {
+                        "optimizer": task_opt,
+                        "lr_scheduler": {
+                            "scheduler": task_sched,
+                            "monitor": task_optimizer_config.monitor,
+                            "interval": task_optimizer_config.interval,
+                            "frequency": task_optimizer_config.frequency,
+                        },
+                    }
+                )
+            else:
+                optimizers_and_schedulers.append(task_opt)
+
+        # 3. Self-supervised module parameters (if enabled)
+        if self.enable_self_supervised_training and hasattr(self, "ssl_module"):
+            ssl_params_to_optimize = [p for p in self.ssl_module.parameters() if p.requires_grad]
+            if ssl_params_to_optimize:
+                # Assuming ssl_module uses shared_block_optimizer config as per original logic
+                ssl_opt = self._create_optimizer(ssl_params_to_optimize, self.shared_block_optimizer)
+                ssl_sched = self._create_scheduler(ssl_opt, self.shared_block_optimizer)
+
+                if ssl_sched:
+                    optimizers_and_schedulers.append(
+                        {
+                            "optimizer": ssl_opt,
+                            "lr_scheduler": {
+                                "scheduler": ssl_sched,
+                                "monitor": self.shared_block_optimizer.monitor,
+                                "interval": self.shared_block_optimizer.interval,
+                                "frequency": self.shared_block_optimizer.frequency,
+                            },
+                        }
+                    )
+                else:
+                    optimizers_and_schedulers.append(ssl_opt)
+            else:
+                logger.info("No parameters requiring gradients for SSL module. Skipping optimizer creation.")
+
+        if not optimizers_and_schedulers:
+            logger.warning(
+                "No optimizers were configured. This might be due to all parameters being frozen or an issue in parameter collection."
+            )
+            # Lightning requires at least one optimizer if the model has trainable parameters.
+            # If all parameters are frozen, this is fine. Otherwise, it's an issue.
 
         return optimizers_and_schedulers

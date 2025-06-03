@@ -26,25 +26,25 @@ model:
           patience: 10
           min_lr: 1.0e-05
 
-      # - name: Volume # Note: Duplicate task name, this might be an issue or intended for some reason.
-      #   type: REGRESSION
-      #   data_column: Volume # Assuming same column for this duplicate
-      #   dims: [64, 32, 1]
-      #   norm: true
-      #   residual: false
-      #   weight: 1.0
-      #   enabled: true
-      #   optimizer:
-      #     optimizer_type: AdamW
-      #     lr: 0.01
-      #     weight_decay: 0.01
-      #     eps: 1.0e-06
-      #     betas: [0.9, 0.999]
-      #     scheduler_type: ReduceLROnPlateau
-      #     mode: min
-      #     factor: 0.5
-      #     patience: 10
-      #     min_lr: 1.0e-05
+      - name: Volume # Note: Duplicate task name, this might be an issue or intended for some reason.
+        type: REGRESSION
+        data_column: Volume # Assuming same column for this duplicate
+        dims: [64, 32, 1]
+        norm: true
+        residual: false
+        weight: 1.0
+        enabled: true
+        optimizer:
+          optimizer_type: AdamW
+          lr: 0.01
+          weight_decay: 0.01
+          eps: 1.0e-06
+          betas: [0.9, 0.999]
+          scheduler_type: ReduceLROnPlateau
+          mode: min
+          factor: 0.5
+          patience: 10
+          min_lr: 1.0e-05
 
     shared_block_optimizer:
       optimizer_type: AdamW
@@ -116,6 +116,6 @@ trainer:
     - class_path: lightning.pytorch.callbacks.EarlyStopping
       init_args:
         monitor: val_final_loss
-        patience: 25
+        patience: 20
         mode: min
         verbose: true
