@@ -20,7 +20,7 @@
 
 # --- Configuration ---
 # Path to the generated model configuration file
-CONFIG_FILE="samples/generated_configs/generated_model_config.yaml"
+CONFIG_FILE="samples/generated_configs/fit_config.yaml"
 
 # Directory to store logs for this specific run
 LOG_DIR_BASE="samples/example_logs/basic_run"
@@ -29,7 +29,7 @@ LOG_DIR="${LOG_DIR_BASE}/${EXPERIMENT_NAME}"
 
 # --- Script Execution ---
 echo "--------------------------------------------------"
-echo "Starting Basic Training Run"
+echo "Starting training"
 echo "--------------------------------------------------"
 echo "Using Config File: ${CONFIG_FILE}"
 echo "Logging to: ${LOG_DIR}"
@@ -44,35 +44,49 @@ fi
 # Create log directory
 mkdir -p "$LOG_DIR"
 
-# Execute the training script
-# The `fit` subcommand is standard for PyTorch Lightning CLI.
-# We override logger.save_dir and callbacks[0].dirpath (ModelCheckpoint)
-# to ensure logs and checkpoints for this example run are stored in a specific location.
-# Note: The exact index for ModelCheckpoint in callbacks might vary if base_model.yaml changes.
-# We also set trainer.logger.name to an empty string so that version_X is created directly under LOG_DIR.
-# The YAML now handles pathing based on trainer.default_root_dir.
-# We pass the fully resolved LOG_DIR (which includes the timestamped experiment name)
-# directly as the default_root_dir for the trainer.
-# We also explicitly set the save_dir for each logger to ensure they use the $LOG_DIR.
+# Set environment variables for logging
 export LOG_DIR="$LOG_DIR"
-fm-trainer fit \
-    --config "$CONFIG_FILE" \
+fm-trainer fit --config "$CONFIG_FILE"
     # --trainer.default_root_dir "$LOG_DIR" 
     # --trainer.logger.1.init_args.save_dir "$LOG_DIR"
 
-# 训练完成后执行测试
-fm-trainer test \
-    --config "$CONFIG_FILE" \
+CONFIG_FILE="samples/generated_configs/test_config.yaml"
+# --- Script Execution ---
+echo "--------------------------------------------------"
+echo "Starting testing"
+echo "--------------------------------------------------"
+echo "Using Config File: ${CONFIG_FILE}"
+echo "Logging to: ${LOG_DIR}"
+
+fm-trainer test --config "$CONFIG_FILE"
     # --trainer.default_root_dir "$LOG_DIR" 
     # --trainer.logger.1.init_args.save_dir "$LOG_DIR"
 
-# The trainer.default_root_dir in the YAML is a static fallback.
-# The CLI argument --trainer.default_root_dir="$LOG_DIR" overrides it.
-# The CLI arguments for logger save_dir will also override any YAML interpolation.
-# Loggers and ModelCheckpoint will then use these resolved paths.
+
+CONFIG_FILE="samples/generated_configs/predict_config.yaml"
+# --- Script Execution ---
+echo "--------------------------------------------------"
+echo "Starting prediction"
+echo "--------------------------------------------------"
+echo "Using Config File: ${CONFIG_FILE}"
+echo "Logging to: ${LOG_DIR}"
+
+CKPT_DIR="$LOG_DIR/fit/checkpoints"
+LATEST_CKPT=$(ls -t $CKPT_DIR/model-*-val_final_loss*.ckpt 2>/dev/null | head -1)
+
+if [ -z "$LATEST_CKPT" ]; then
+    echo "No checkpoint found, using last.ckpt"
+    LATEST_CKPT="$CKPT_DIR/last.ckpt"
+fi
+
+echo "Using checkpoint: $LATEST_CKPT"
+fm-trainer predict --config "$CONFIG_FILE" --ckpt_path "$LATEST_CKPT"
+    # --trainer.default_root_dir "$LOG_DIR" \
+    # --trainer.logger.1.init_args.save_dir "$LOG_DIR"
+
 
 echo "--------------------------------------------------"
-echo "Basic Training Run Command Executed."
+echo "All tasks completed."
 echo "Check logs and results in: ${LOG_DIR}"
 echo "--------------------------------------------------"
 

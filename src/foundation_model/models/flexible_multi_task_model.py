@@ -22,7 +22,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from loguru import logger  # Replaced logging with loguru
-from torch.optim.lr_scheduler import _LRScheduler
+from torch.optim.lr_scheduler import LRScheduler  # Changed from _LRScheduler
 
 from foundation_model.configs.model_config import (
     ClassificationTaskConfig,
@@ -156,8 +156,15 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if not task_configs:
             raise ValueError("At least one task configuration must be provided")
 
+        if with_structure:
+            if struct_block_dims is None:
+                raise ValueError("struct_block_dims must be provided when with_structure is True")
+            if len(struct_block_dims) < 2:
+                raise ValueError("struct_block_dims must have at least 2 elements when with_structure is True")
+
         # Store configuration parameters
         self.shared_block_dims = shared_block_dims
+        self.deposit_dim = self.shared_block_dims[-1]  # Define deposit_dim consistently
         self.task_configs = task_configs
         self.task_configs_map = {cfg.name: cfg for cfg in self.task_configs}
 
@@ -247,20 +254,18 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     def _init_foundation_encoder(self):
         """Initialize the foundation encoder."""
-        # Get deposit dimension from first task config
-        deposit_dim = next(
-            (c.dims[0] for c in self.task_configs if hasattr(c, "dims")),
-            self.shared_block_dims[-1],  # Default to latent dimension
-        )
+        # deposit_dim is now self.deposit_dim, defined in __init__
 
         # Initialize appropriate encoder based on structure usage
         if self.with_structure:
+            # Validation for struct_block_dims already done in __init__
+            assert self.struct_block_dims is not None  # for type checker
             self.encoder = MultiModalFoundationEncoder(
                 formula_input_dim=self.shared_block_dims[0],
                 formula_hidden_dims=self.shared_block_dims[1:],
                 structure_input_dim=self.struct_block_dims[0],
                 structure_hidden_dims=self.struct_block_dims[1:],
-                deposit_dim=deposit_dim,
+                deposit_dim=self.deposit_dim,
                 norm=self.norm_shared,
                 residual=self.residual_shared,
             )
@@ -274,7 +279,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             self.encoder = FoundationEncoder(
                 input_dim=self.shared_block_dims[0],
                 hidden_dims=self.shared_block_dims[1:],
-                deposit_dim=deposit_dim,
+                deposit_dim=self.deposit_dim,
                 norm=self.norm_shared,
                 residual=self.residual_shared,
             )
@@ -302,7 +307,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 task_heads_dict[config_item.name] = ClassificationHead(config=config_item)
             elif config_item.type == TaskType.SEQUENCE:
                 assert isinstance(config_item, SequenceTaskConfig)
-                task_heads_dict[config_item.name] = create_sequence_head(config=config_item)
+                task_heads_dict[config_item.name] = create_sequence_head(
+                    d_in=self.deposit_dim, name=config_item.name, config=config_item
+                )
         return task_heads_dict
 
     def _init_task_heads(self):
@@ -318,10 +325,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     def _init_self_supervised_module(self):
         """Initialize self-supervised training module if enabled."""
-        structure_dim = self.struct_block_dims[0] if self.with_structure else None
+        structure_dim = None
+        if self.with_structure:
+            # Validation for struct_block_dims already done in __init__
+            assert self.struct_block_dims is not None  # for type checker
+            structure_dim = self.struct_block_dims[0]
 
         self.ssl_module = SelfSupervisedModule(
-            latent_dim=self.shared_block_dims[-1],
+            latent_dim=self.shared_block_dims[-1],  # This is also self.deposit_dim
             formula_dim=self.shared_block_dims[0],
             structure_dim=structure_dim,
             mask_ratio=self.mask_ratio,
@@ -529,10 +540,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # 4a. Masked Feature Modeling (MFM)
             if self.w.get("mfm", 0) > 0:
                 # Pass the encoder function that handles masking internally
-                encoder_fn = self.encoder.encode_masked
+                # Using lambda to make the callable nature more explicit for type checker
+                encoder_fn_lambda = lambda x_masked, is_struct: self.encoder.encode_masked(x_masked, is_struct)
                 # Compute MFM loss using the potentially dropped structure input
                 mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
-                    encoder_fn, x_formula, x_struct_for_processing
+                    encoder_fn_lambda, x_formula, x_struct_for_processing
                 )
                 # Log MFM specific raw losses (e.g., formula_mfm, struct_mfm if applicable)
                 for k, v_loss in mfm_logs.items():
@@ -646,6 +658,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 static_weight = self.w.get(name, 1.0)
                 final_task_loss_component = static_weight * raw_loss_t
                 supervised_loss_contribution += final_task_loss_component
+                # Reverting log key to original pattern
                 train_logs[f"train_{name}_final_loss_contrib"] = final_task_loss_component.detach()
 
         train_logs["train_final_supervised_loss"] = supervised_loss_contribution.detach()
@@ -664,9 +677,20 @@ class FlexibleMultiTaskModel(L.LightningModule):
             self.manual_backward(total_loss)
             for opt in optimizers:
                 opt.step()
+
+            # Handle scheduler steps
+            # This logic assumes that ReduceLROnPlateau schedulers are intended to be stepped with the current total_loss,
+            # and other schedulers are stepped without arguments (e.g., StepLR, CosineAnnealingLR after each optimizer step).
+            # For more complex scenarios (e.g. ReduceLROnPlateau monitoring val_loss), Lightning's automatic handling
+            # or more specific logic in configure_optimizers and training_step would be needed.
             for scheduler in lr_schedulers:
-                if scheduler is not None:  # Add check for None scheduler
-                    scheduler.step(total_loss)
+                if scheduler is not None:
+                    if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                        # Ensure the metric being monitored by ReduceLROnPlateau is indeed total_loss
+                        # or adjust this call accordingly.
+                        scheduler.step(total_loss.detach())  # Pass the metric
+                    else:
+                        scheduler.step()  # For other schedulers like StepLR, CosineAnnealingLR
         else:
             logger.warning(
                 f"total_loss does not require grad and has no grad_fn at batch_idx {batch_idx}. "
@@ -743,9 +767,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
             # 3a. Masked Feature Modeling (MFM)
             if self.w.get("mfm", 0) > 0:
-                encoder_fn = self.encoder.encode_masked
+                # Using lambda to make the callable nature more explicit for type checker
+                encoder_fn_lambda = lambda x_masked, is_struct: self.encoder.encode_masked(x_masked, is_struct)
                 mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
-                    encoder_fn, x_formula, x_struct_for_processing
+                    encoder_fn_lambda, x_formula, x_struct_for_processing
                 )
                 for k, v_loss in mfm_logs.items():
                     val_logs[f"val_raw_{k}"] = v_loss.detach()
@@ -866,6 +891,195 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         return None  # As per Lightning best practices when using self.log_dict
 
+    def test_step(self, batch, batch_idx):
+        """
+        Test step implementation. Performs computations similar to validation_step
+        (including SSL if enabled) but without modality dropout or gradient updates.
+        Logs all relevant unweighted losses with "test_" prefix.
+
+        Parameters
+        ----------
+        batch : tuple
+            A tuple containing (x, y_dict_batch, task_masks_batch, task_sequence_data_batch)
+        batch_idx : int
+            Index of the current batch
+
+        Returns
+        -------
+        None
+            This method logs metrics using self.log_dict() and does not return a value.
+        """
+        # 1. Unpack batch data
+        x, y_dict_batch, task_masks_batch, task_sequence_data_batch = batch
+        test_logs = {}  # For detailed logging
+
+        # 2. Determine input modalities based on configuration and batch data
+        x_formula = None
+        original_x_struct = None  # Structure input from the batch
+        if self.with_structure and isinstance(x, (list, tuple)):
+            x_formula, original_x_struct = x
+            if x_formula is None:
+                raise ValueError("Formula input (x_formula) cannot be None in multi-modal mode during testing.")
+        elif not self.with_structure and isinstance(x, torch.Tensor):
+            x_formula = x
+        elif self.with_structure and isinstance(x, torch.Tensor):
+            x_formula = x
+        else:
+            raise TypeError(
+                f"Unexpected input type/combination during testing. with_structure={self.with_structure}, type(x)={type(x)}"
+            )
+
+        # Initialize accumulators for test losses
+        sum_test_raw_loss = torch.tensor(0.0, device=x_formula.device if x_formula is not None else "cpu")
+        final_test_loss = torch.tensor(
+            0.0, device=x_formula.device if x_formula is not None else "cpu"
+        )  # This will be test_final_loss
+
+        # For testing, x_struct_for_processing is always the original_x_struct (no dropout)
+        x_struct_for_processing = original_x_struct
+
+        # --- Self-Supervised Learning (SSL) Calculations (if enabled) ---
+        test_ssl_loss_contribution = torch.tensor(0.0, device=final_test_loss.device)
+        test_sum_ssl_raw_loss = torch.tensor(0.0, device=final_test_loss.device)
+
+        if self.enable_self_supervised_training:
+            # Get SSL-specific embeddings using the (non-dropped) structure input
+            if self.with_structure:
+                h_formula_ssl, h_structure_ssl, _, _ = self.encoder(x_formula, x_struct_for_processing)
+            else:
+                # When not using structure, FoundationEncoder takes only x_formula
+                # and returns (latent, task_representation)
+                h_formula_ssl, _ = self.encoder(x_formula)  # x_struct_for_processing is None or not used
+                h_structure_ssl = None
+
+            # 3a. Masked Feature Modeling (MFM)
+            if self.w.get("mfm", 0) > 0:
+                # Using lambda to make the callable nature more explicit for type checker
+                encoder_fn_lambda = lambda x_masked, is_struct: self.encoder.encode_masked(x_masked, is_struct)
+                mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
+                    encoder_fn_lambda, x_formula, x_struct_for_processing
+                )
+                for k, v_loss in mfm_logs.items():
+                    test_logs[f"test_raw_{k}"] = v_loss.detach()
+
+                static_weight_mfm = self.w.get("mfm", 1.0)
+                weighted_mfm_loss = static_weight_mfm * mfm_loss
+                test_ssl_loss_contribution += weighted_mfm_loss.detach()
+                test_sum_ssl_raw_loss += mfm_loss.detach()
+                test_logs["test_mfm_raw_loss"] = mfm_loss.detach()
+                test_logs["test_mfm_final_loss_contrib"] = weighted_mfm_loss.detach()
+
+            if self.with_structure and h_structure_ssl is not None and self.w.get("contrastive", 0) > 0:
+                contrastive_loss = self.ssl_module.compute_contrastive_loss(h_formula_ssl, h_structure_ssl)
+                static_weight_contrastive = self.w.get("contrastive", 1.0)
+                weighted_contrastive_loss = static_weight_contrastive * contrastive_loss
+                test_ssl_loss_contribution += weighted_contrastive_loss.detach()
+                test_sum_ssl_raw_loss += contrastive_loss.detach()
+                test_logs["test_contrastive_raw_loss"] = contrastive_loss.detach()
+                test_logs["test_contrastive_final_loss_contrib"] = weighted_contrastive_loss.detach()
+            elif self.with_structure and self.w.get("contrastive", 0) > 0:
+                test_logs["test_contrastive_raw_loss"] = 0.0
+                test_logs["test_contrastive_final_loss_contrib"] = 0.0
+
+            if (
+                self.with_structure
+                and h_structure_ssl is not None
+                and original_x_struct is not None
+                and self.w.get("cross_recon", 0) > 0
+            ):
+                cross_recon_loss = self.ssl_module.compute_cross_reconstruction_loss(
+                    h_formula_ssl, h_structure_ssl, x_formula, original_x_struct
+                )
+                static_weight_cross_recon = self.w.get("cross_recon", 1.0)
+                weighted_cross_recon_loss = static_weight_cross_recon * cross_recon_loss
+                test_ssl_loss_contribution += weighted_cross_recon_loss.detach()
+                test_sum_ssl_raw_loss += cross_recon_loss.detach()
+                test_logs["test_cross_recon_raw_loss"] = cross_recon_loss.detach()
+                test_logs["test_cross_recon_final_loss_contrib"] = weighted_cross_recon_loss.detach()
+            elif self.with_structure and self.w.get("cross_recon", 0) > 0:
+                test_logs["test_cross_recon_raw_loss"] = 0.0
+                test_logs["test_cross_recon_final_loss_contrib"] = 0.0
+
+        if self.enable_self_supervised_training:
+            test_logs["test_sum_ssl_raw_loss"] = test_sum_ssl_raw_loss
+            test_logs["test_final_ssl_loss"] = test_ssl_loss_contribution.detach()
+            sum_test_raw_loss += test_sum_ssl_raw_loss  # Add to total raw sum
+            final_test_loss += test_ssl_loss_contribution  # Add to total final sum
+
+        # --- Supervised Task Calculations ---
+        test_supervised_loss_contribution = torch.tensor(0.0, device=final_test_loss.device)
+        test_sum_supervised_raw_loss = torch.tensor(0.0, device=final_test_loss.device)
+
+        # 4. Prepare input for the standard forward pass
+        if self.with_structure:
+            forward_input = (x_formula, x_struct_for_processing)
+        else:
+            forward_input = x_formula
+
+        # 5. Get predictions from the forward method
+        preds = self(forward_input, task_sequence_data_batch)  # Pass task_sequence_data_batch dictionary
+
+        # 6. Calculate supervised task losses
+        raw_test_supervised_losses = {}
+        for name, pred_tensor in preds.items():
+            if name not in y_dict_batch or not self.task_configs_map[name].enabled:
+                continue
+
+            head = self.task_heads[name]
+            target = y_dict_batch[name]
+            sample_mask = task_masks_batch.get(name)
+            if sample_mask is None:
+                logger.warning(f"Mask not found for task {name} in test_step. Assuming all valid.")
+                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+
+            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_test_supervised_losses[name] = raw_loss_t
+            test_sum_supervised_raw_loss += raw_loss_t.detach()
+            test_logs[f"test_{name}_raw_loss"] = raw_loss_t.detach()
+
+        test_logs["test_sum_supervised_raw_loss"] = test_sum_supervised_raw_loss
+        sum_test_raw_loss += test_sum_supervised_raw_loss  # Add to total raw sum
+
+        # Apply uncertainty weighting for supervised tasks
+        for name, raw_loss_t in raw_test_supervised_losses.items():
+            if name in self.task_log_sigmas:  # This task uses learnable uncertainty
+                current_log_sigma_t = self.task_log_sigmas[name]  # Use learned value
+                static_weight = self.w.get(name, 1.0)
+
+                precision_factor_t = torch.exp(-2 * current_log_sigma_t)
+
+                task_loss_data_term = static_weight * 0.5 * precision_factor_t * raw_loss_t
+                task_loss_reg_term = current_log_sigma_t
+                final_task_loss_component = task_loss_data_term + task_loss_reg_term
+
+                test_supervised_loss_contribution += final_task_loss_component.detach()
+
+                test_logs[f"test_{name}_sigma_t"] = torch.exp(current_log_sigma_t).detach()
+                test_logs[f"test_{name}_final_loss_contrib"] = final_task_loss_component.detach()
+            else:  # Should not happen
+                logger.warning(
+                    f"Task {name} found in test predictions but not in task_log_sigmas. Using static weight only."
+                )
+                static_weight = self.w.get(name, 1.0)
+                final_task_loss_component = static_weight * raw_loss_t
+                test_supervised_loss_contribution += final_task_loss_component.detach()
+                test_logs[f"test_{name}_final_loss_contrib"] = final_task_loss_component.detach()
+
+        test_logs["test_final_supervised_loss"] = test_supervised_loss_contribution.detach()
+        final_test_loss += test_supervised_loss_contribution  # Add to total final sum
+
+        # 7. Log metrics
+        test_logs["test_sum_raw_loss"] = sum_test_raw_loss  # Total raw loss (supervised + SSL)
+
+        # Log detailed metrics without progress bar
+        self.log_dict(test_logs, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+        # Log the main test loss with progress bar (this is the one for callbacks)
+        self.log(
+            "test_final_loss", final_test_loss.detach(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
+        )
+
+        return None  # As per Lightning best practices when using self.log_dict
+
     def predict_step(
         self,
         batch,
@@ -959,7 +1173,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         for task_name, raw_pred_tensor in tasks_to_iterate:
             head = self.task_heads[task_name]
             # The head.predict() method now handles snake_case prefixing
-            processed_pred_dict = head.predict(raw_pred_tensor, additional=additional_output)
+            processed_pred_dict = head.predict(raw_pred_tensor, additional=additional_output)  # type: ignore
             final_predictions.update(processed_pred_dict)
 
         return final_predictions
@@ -1002,7 +1216,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         else:
             raise ValueError(f"Unsupported optimizer type: {config.optimizer_type}")
 
-    def _create_scheduler(self, optimizer: torch.optim.Optimizer, config: OptimizerConfig) -> _LRScheduler | None:
+    def _create_scheduler(self, optimizer: torch.optim.Optimizer, config: OptimizerConfig) -> LRScheduler | None:
         """Create a learning rate scheduler based on the configuration."""
         if config.scheduler_type == "ReduceLROnPlateau":
             return optim.lr_scheduler.ReduceLROnPlateau(
@@ -1025,9 +1239,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # 1. Encoder parameters
         if self.with_structure:
-            encoder_params = list(self.encoder.parameters())
+            encoder_params = list(self.encoder.parameters())  # Ensure it's a list
         else:
-            encoder_params = list(self.encoder.parameters())
+            encoder_params = list(self.encoder.parameters())  # Ensure it's a list
 
         encoder_opt = self._create_optimizer(encoder_params, self.shared_block_optimizer)
         encoder_sched = self._create_scheduler(encoder_opt, self.shared_block_optimizer)
@@ -1053,7 +1267,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
             # If the task has a specific optimizer config, use it
             if config.optimizer:
-                task_opt = self._create_optimizer(head.parameters(), config.optimizer)
+                task_opt = self._create_optimizer(list(head.parameters()), config.optimizer)  # Ensure it's a list
                 task_sched = self._create_scheduler(task_opt, config.optimizer)
 
                 if task_sched:
@@ -1073,7 +1287,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             else:
                 # Use default optimizer with task-specific settings
                 default_config = OptimizerConfig()  # Use default settings
-                task_opt = self._create_optimizer(head.parameters(), default_config)
+                task_opt = self._create_optimizer(list(head.parameters()), default_config)  # Ensure it's a list
                 task_sched = self._create_scheduler(task_opt, default_config)
 
                 if task_sched:
@@ -1093,7 +1307,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # 3. Self-supervised module parameters (if enabled)
         if self.enable_self_supervised_training and hasattr(self, "ssl_module"):
-            ssl_opt = self._create_optimizer(self.ssl_module.parameters(), self.shared_block_optimizer)
+            ssl_opt = self._create_optimizer(
+                list(self.ssl_module.parameters()), self.shared_block_optimizer
+            )  # Ensure it's a list
             ssl_sched = self._create_scheduler(ssl_opt, self.shared_block_optimizer)
 
             if ssl_sched:

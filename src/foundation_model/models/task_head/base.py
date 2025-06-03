@@ -12,6 +12,8 @@ from typing import Dict  # For type hinting
 import torch
 import torch.nn as nn
 
+from foundation_model.configs.model_config import BaseTaskConfig, SequenceTaskConfig
+
 
 # Helper function to convert camelCase or PascalCase to snake_case
 def _to_snake_case(name: str) -> str:
@@ -33,7 +35,7 @@ class BaseTaskHead(nn.Module, ABC):
         Configuration object for the task head, containing at least `d_in` and `name`.
     """
 
-    def __init__(self, config: object):  # TODO: Replace object with a more specific TaskConfig base type if available
+    def __init__(self, config: BaseTaskConfig):
         super().__init__()
         self.config = config
 
@@ -151,7 +153,7 @@ class SequenceBaseHead(BaseTaskHead, ABC):
         Configuration object for the sequence task head.
     """
 
-    def __init__(self, config: object):  # TODO: Replace object with a more specific TaskConfig base type
+    def __init__(self, config: SequenceTaskConfig):  # TODO: Replace object with a more specific TaskConfig base type
         super().__init__(config)
 
     @abstractmethod

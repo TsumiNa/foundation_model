@@ -139,37 +139,20 @@ data:
     test_random_seed: 24
 
 trainer:
-  default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}
+  default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/test
   max_epochs: 100
   # devices: auto
   accelerator: auto
   devices: 1
   enable_progress_bar: true
   fast_dev_run: false
-  # precision: 16-mixed
-  # accumulate_grad_batches: 1
   log_every_n_steps: 50
   logger:
     - class_path: lightning.pytorch.loggers.CSVLogger
       init_args:
-        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}
+        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/test
         name: csv_logs
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
       init_args:
-        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}
+        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/test
         name: tensorboard_logs
-  callbacks:
-    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
-      init_args:
-        filename: model-{epoch:02d}-{val_final_loss:.4f}
-        monitor: val_final_loss
-        mode: min
-        save_top_k: 3
-        save_last: true
-        verbose: true
-    - class_path: lightning.pytorch.callbacks.EarlyStopping
-      init_args:
-        monitor: val_final_loss
-        patience: 25
-        mode: min
-        verbose: true

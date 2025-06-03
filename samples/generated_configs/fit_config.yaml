@@ -1,0 +1,174 @@
+# experiment_name: base_experiment # This can be overridden by CLI or defaults if not set
+# log_dir: results/logs/${experiment_name} # Replaced by trainer.default_root_dir
+seed_everything: 42
+model:
+  class_path: foundation_model.models.FlexibleMultiTaskModel
+  init_args:
+    shared_block_dims: [580, 256, 128, 64]
+    task_configs:
+      - name: Density
+        type: REGRESSION
+        data_column: Density
+        dims: [64, 32, 1]
+        norm: true
+        residual: false
+        weight: 1.0
+        enabled: true
+        optimizer:
+          optimizer_type: AdamW
+          lr: 0.01
+          weight_decay: 0.01
+          eps: 1.0e-06
+          betas: [0.9, 0.999]
+          scheduler_type: ReduceLROnPlateau
+          mode: min
+          factor: 0.5
+          patience: 10
+          min_lr: 1.0e-05
+
+      - name: Volume # Note: Duplicate task name, this might be an issue or intended for some reason.
+        type: REGRESSION
+        data_column: Volume # Assuming same column for this duplicate
+        dims: [64, 32, 1]
+        norm: true
+        residual: false
+        weight: 1.0
+        enabled: true
+        optimizer:
+          optimizer_type: AdamW
+          lr: 0.01
+          weight_decay: 0.01
+          eps: 1.0e-06
+          betas: [0.9, 0.999]
+          scheduler_type: ReduceLROnPlateau
+          mode: min
+          factor: 0.5
+          patience: 10
+          min_lr: 1.0e-05
+      # - name: regression_3
+      #   type: REGRESSION
+      #   dims: [64, 32, 1]
+      #   norm: true
+      #   residual: false
+      #   weight: 1.0
+      #   enabled: true
+      #   optimizer:
+      #     optimizer_type: AdamW
+      #     lr: 0.001
+      #     weight_decay: 0.01
+      #     eps: 1.0e-06
+      #     betas: [0.9, 0.999]
+      #     scheduler_type: ReduceLROnPlateau
+      #     mode: min
+      #     factor: 0.5
+      #     patience: 10
+      #     min_lr: 1.0e-05
+      # - name: regression_4
+      #   type: REGRESSION
+      #   dims: [64, 32, 1]
+      #   norm: true
+      #   residual: false
+      #   weight: 1.0
+      #   enabled: true
+      #     type: CLASSIFICATION
+      #     dims: [64, 32, 2]
+      #     num_classes: 2
+      #     norm: true
+      #     residual: false
+      #     weight: 0.5
+      #     enabled: true
+      #     optimizer:
+      #       optimizer_type: AdamW
+      #       lr: 0.002
+      #       scheduler_type: StepLR
+      #       patience: 30
+      #       factor: 0.1
+      #       monitor: val_classification_A_loss
+      # - name: classification_a
+      #   type: CLASSIFICATION
+      #   data_column: classification_a
+      #   dims: [64, 32, 3]
+      #   num_classes: 3
+      #   norm: true
+      #   residual: false
+      #   weight: 0.5
+      #   enabled: true
+      #   optimizer:
+      #     optimizer_type: AdamW
+      #     lr: 0.002
+      #     scheduler_type: StepLR
+      #     patience: 30
+      #     factor: 0.1
+    shared_block_optimizer:
+      optimizer_type: AdamW
+      lr: 0.001
+      weight_decay: 0.01
+      eps: 1.0e-06
+      betas: [0.9, 0.999]
+      freeze_parameters: false # Control encoder freezing here
+      scheduler_type: ReduceLROnPlateau
+      mode: min
+      factor: 0.1
+      patience: 20
+      min_lr: 1.0e-06
+      monitor: val_final_loss
+    with_structure: false
+    modality_dropout_p: 0.3
+    norm_shared: true
+    residual_shared: true
+    enable_self_supervised_training: false
+    mask_ratio: 0.15
+    temperature: 0.07
+    loss_weights:
+      mfm: 1.0
+      contrastive: 1.0
+      cross_recon: 1.0
+    # lora_rank and lora_alpha are per-task configurations
+
+data:
+  class_path: foundation_model.data.CompoundDataModule
+  init_args:
+    formula_desc_source: /data/foundation_model/data/qc_ac_te_mp_dos_kmd1d_desc_20250529.pd.xz
+    attributes_source: /data/foundation_model/data/qc_ac_te_mp_dos_norm_reformat_20250529.pd.xz
+    task_configs: ${model.init_args.task_configs}
+    batch_size: 256
+    num_workers: 0
+    val_split: 0.1
+    test_split: 0.1
+    train_random_seed: 42
+    test_random_seed: 24
+
+trainer:
+  default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit
+  max_epochs: 10
+  # devices: auto
+  accelerator: auto
+  devices: 1
+  enable_progress_bar: true
+  fast_dev_run: false
+  log_every_n_steps: 50
+  logger:
+    - class_path: lightning.pytorch.loggers.CSVLogger
+      init_args:
+        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit
+        name: csv_logs
+    - class_path: lightning.pytorch.loggers.TensorBoardLogger
+      init_args:
+        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit
+        name: tensorboard_logs
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit/checkpoints
+        filename: model-{epoch:02d}-{val_final_loss:.4f}-{step}
+        monitor: val_final_loss
+        mode: min
+        save_top_k: 3
+        save_last: true
+        verbose: true
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: val_final_loss
+        patience: 25
+        mode: min
+        verbose: true
