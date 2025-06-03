@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from numpy import ndarray
 
 from foundation_model.configs.model_config import RegressionTaskConfig
 from foundation_model.models.components.lora_adapter import LoRAAdapter
@@ -59,15 +60,19 @@ class RegressionHead(BaseTaskHead):
 
         # Apply LoRA to the final layer if requested
         if lora_enabled and lora_rank > 0:  # Check enabled flag and rank
-            # Assuming self.net is a Sequential module and self.net[-1] is the output Linear layer
-            # or a module directly containing it.
-            if isinstance(self.net[-1], nn.Linear):
-                self.net[-1] = LoRAAdapter(self.net[-1], r=lora_rank, alpha=lora_alpha, freeze_base=lora_freeze_base)
-            elif hasattr(self.net[-1], "layer") and isinstance(
-                self.net[-1].layer, nn.Linear
-            ):  # If it's a sub-block with a 'layer'
-                self.net[-1].layer = LoRAAdapter(
-                    self.net[-1].layer, r=lora_rank, alpha=lora_alpha, freeze_base=lora_freeze_base
+            # Access the output layer of LinearBlock using its attribute (assumed to be 'output_layer')
+            if hasattr(self.net, "output_layer") and isinstance(self.net.output_layer, nn.Linear):
+                self.net.output_layer = LoRAAdapter(
+                    self.net.output_layer, r=lora_rank, alpha=lora_alpha, freeze_base=lora_freeze_base
+                )
+            elif (
+                hasattr(self.net, "output_layer")
+                and isinstance(self.net.output_layer, nn.Module)
+                and hasattr(self.net.output_layer, "layer")
+                and isinstance(self.net.output_layer.layer, nn.Linear)
+            ):
+                self.net.output_layer.layer = LoRAAdapter(
+                    self.net.output_layer.layer, r=lora_rank, alpha=lora_alpha, freeze_base=lora_freeze_base
                 )
             # else:
             # Consider logging a warning if LoRA couldn't be applied as expected
@@ -130,7 +135,7 @@ class RegressionHead(BaseTaskHead):
 
         return total_loss, per_dim_loss
 
-    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, torch.Tensor]:
+    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, ndarray]:
         """
         Core prediction logic for regression.
 
@@ -147,4 +152,4 @@ class RegressionHead(BaseTaskHead):
         dict[str, torch.Tensor]
             A dictionary containing the prediction: {"value": x}.
         """
-        return {"value": x}
+        return {"value": x.cpu().numpy()}

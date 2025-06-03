@@ -9,6 +9,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+from numpy import ndarray
 
 from foundation_model.configs.model_config import SequenceTaskConfig
 from foundation_model.models.task_head.base import SequenceBaseHead
@@ -65,7 +66,7 @@ class SequenceHeadFixedVec(SequenceBaseHead):
         """
         return self.net(h)  # (B, seq_len)
 
-    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, torch.Tensor]:
+    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, ndarray]:
         """
         Core prediction logic for fixed vector sequence head.
 
@@ -83,4 +84,4 @@ class SequenceHeadFixedVec(SequenceBaseHead):
             A dictionary containing the prediction: {"prediction": x}.
         """
         # For fixed vector, the raw output is the prediction
-        return {"prediction": x}
+        return {"prediction": x.cpu().numpy()}

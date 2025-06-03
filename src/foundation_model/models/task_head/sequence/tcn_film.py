@@ -4,6 +4,7 @@ Dilated Temporal Convolutional Network with FiLM modulation for sequence predict
 
 import torch
 import torch.nn as nn
+from numpy import ndarray
 
 from foundation_model.configs.model_config import SequenceTaskConfig
 from foundation_model.models.task_head.base import SequenceBaseHead
@@ -120,7 +121,7 @@ class SequenceHeadTCNFiLM(SequenceBaseHead):
         y = self.out(fused).squeeze(-1)  # Shape: (B, L)
         return y
 
-    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, torch.Tensor]:
+    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, ndarray]:
         """
         Core prediction logic for TCN-FiLM sequence head.
 
@@ -138,4 +139,4 @@ class SequenceHeadTCNFiLM(SequenceBaseHead):
             A dictionary containing the prediction: {"prediction": x}.
         """
         # For TCN-FiLM sequence head, the raw output is the prediction
-        return {"prediction": x}
+        return {"prediction": x.cpu().numpy()}

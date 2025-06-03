@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from numpy import ndarray
 
 from foundation_model.configs.model_config import ClassificationTaskConfig  # Changed import
 from foundation_model.models.components.lora_adapter import LoRAAdapter
@@ -177,7 +178,7 @@ class ClassificationHead(BaseTaskHead):
 
         return total_loss, per_class_loss
 
-    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, torch.Tensor]:
+    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, ndarray]:
         """
         Core prediction logic for classification.
 
@@ -200,6 +201,6 @@ class ClassificationHead(BaseTaskHead):
         label = torch.argmax(proba, dim=-1)
 
         if additional:
-            return {"label": label, "proba": proba}
+            return {"label": label.cpu().numpy(), "proba": proba.cpu().numpy()}
         else:
-            return {"label": label}
+            return {"label": label.cpu().numpy()}

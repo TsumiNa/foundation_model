@@ -11,6 +11,7 @@ from typing import Dict  # For type hinting
 
 import torch
 import torch.nn as nn
+from numpy import ndarray
 
 from foundation_model.configs.model_config import BaseTaskConfig, SequenceTaskConfig
 
@@ -92,7 +93,7 @@ class BaseTaskHead(nn.Module, ABC):
         pass
 
     @abstractmethod
-    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> Dict[str, torch.Tensor]:
+    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> Dict[str, ndarray]:
         """
         Core prediction logic implemented by subclasses.
 
@@ -115,7 +116,7 @@ class BaseTaskHead(nn.Module, ABC):
         """
         pass
 
-    def predict(self, x: torch.Tensor, additional: bool = False) -> Dict[str, torch.Tensor]:
+    def predict(self, x: torch.Tensor, additional: bool = False) -> Dict[str, ndarray]:
         """
         Generates predictions with task-specific post-processing and formatted keys.
 

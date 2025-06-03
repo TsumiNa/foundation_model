@@ -7,6 +7,7 @@ RNN-based sequence head for the FlexibleMultiTaskModel.
 
 import torch
 import torch.nn as nn
+from numpy import ndarray
 
 from foundation_model.configs.model_config import SequenceTaskConfig
 from foundation_model.models.task_head.base import SequenceBaseHead
@@ -70,7 +71,7 @@ class SequenceHeadRNN(SequenceBaseHead):
         output_sequence = self.out(fused).squeeze(-1)  # Shape: (B, L)
         return output_sequence
 
-    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, torch.Tensor]:
+    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, ndarray]:
         """
         Core prediction logic for RNN sequence head.
 
@@ -88,4 +89,4 @@ class SequenceHeadRNN(SequenceBaseHead):
             A dictionary containing the prediction: {"prediction": x}.
         """
         # For RNN sequence head, the raw output is the prediction
-        return {"prediction": x}
+        return {"prediction": x.cpu().numpy()}
