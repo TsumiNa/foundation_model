@@ -209,7 +209,7 @@ class PredictionDataFrameWriter(BasePredictionWriter):
         # Save to CSV
         csv_path = self.output_path / "predictions.csv"
         try:
-            df.to_csv(csv_path, index=False)
+            df.to_csv(csv_path, index=True)
             logger.info(f"Predictions saved to {csv_path}")
         except Exception as e:
             logger.error(f"Error saving predictions to CSV {csv_path}: {e}")

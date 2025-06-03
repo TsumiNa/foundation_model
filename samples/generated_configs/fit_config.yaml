@@ -26,27 +26,9 @@ model:
           patience: 10
           min_lr: 1.0e-05
 
-      - name: Volume # Note: Duplicate task name, this might be an issue or intended for some reason.
-        type: REGRESSION
-        data_column: Volume # Assuming same column for this duplicate
-        dims: [64, 32, 1]
-        norm: true
-        residual: false
-        weight: 1.0
-        enabled: true
-        optimizer:
-          optimizer_type: AdamW
-          lr: 0.01
-          weight_decay: 0.01
-          eps: 1.0e-06
-          betas: [0.9, 0.999]
-          scheduler_type: ReduceLROnPlateau
-          mode: min
-          factor: 0.5
-          patience: 10
-          min_lr: 1.0e-05
-      # - name: regression_3
+      # - name: Volume # Note: Duplicate task name, this might be an issue or intended for some reason.
       #   type: REGRESSION
+      #   data_column: Volume # Assuming same column for this duplicate
       #   dims: [64, 32, 1]
       #   norm: true
       #   residual: false
@@ -54,7 +36,7 @@ model:
       #   enabled: true
       #   optimizer:
       #     optimizer_type: AdamW
-      #     lr: 0.001
+      #     lr: 0.01
       #     weight_decay: 0.01
       #     eps: 1.0e-06
       #     betas: [0.9, 0.999]
@@ -63,42 +45,7 @@ model:
       #     factor: 0.5
       #     patience: 10
       #     min_lr: 1.0e-05
-      # - name: regression_4
-      #   type: REGRESSION
-      #   dims: [64, 32, 1]
-      #   norm: true
-      #   residual: false
-      #   weight: 1.0
-      #   enabled: true
-      #     type: CLASSIFICATION
-      #     dims: [64, 32, 2]
-      #     num_classes: 2
-      #     norm: true
-      #     residual: false
-      #     weight: 0.5
-      #     enabled: true
-      #     optimizer:
-      #       optimizer_type: AdamW
-      #       lr: 0.002
-      #       scheduler_type: StepLR
-      #       patience: 30
-      #       factor: 0.1
-      #       monitor: val_classification_A_loss
-      # - name: classification_a
-      #   type: CLASSIFICATION
-      #   data_column: classification_a
-      #   dims: [64, 32, 3]
-      #   num_classes: 3
-      #   norm: true
-      #   residual: false
-      #   weight: 0.5
-      #   enabled: true
-      #   optimizer:
-      #     optimizer_type: AdamW
-      #     lr: 0.002
-      #     scheduler_type: StepLR
-      #     patience: 30
-      #     factor: 0.1
+
     shared_block_optimizer:
       optimizer_type: AdamW
       lr: 0.001
@@ -140,7 +87,7 @@ data:
 
 trainer:
   default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit
-  max_epochs: 10
+  max_epochs: 100
   # devices: auto
   accelerator: auto
   devices: 1
