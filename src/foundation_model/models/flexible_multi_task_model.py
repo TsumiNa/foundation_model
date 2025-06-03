@@ -34,10 +34,10 @@ from foundation_model.configs.model_config import (
 
 from .components.foundation_encoder import FoundationEncoder, MultiModalFoundationEncoder
 from .components.self_supervised import SelfSupervisedModule
+from .task_head.base import SequenceBaseHead
 from .task_head.classification import ClassificationHead
 from .task_head.regression import RegressionHead
 from .task_head.sequence import create_sequence_head
-from .task_head.sequence.base import SequenceBaseHead
 
 
 class FlexibleMultiTaskModel(L.LightningModule):
@@ -593,7 +593,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # --- Supervised Task Calculations ---
         supervised_loss_contribution = torch.tensor(0.0, device=total_loss.device)
-        sum_supervised_raw_loss = torch.tensor(0.0, device=total_loss.device)
 
         # 5. Prepare input for the standard forward pass
         # Use the structure input *after* potential modality dropout for consistent forward pass
@@ -620,10 +619,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
             raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
             raw_supervised_losses[name] = raw_loss_t
-            sum_supervised_raw_loss += raw_loss_t.detach()
             train_logs[f"train_{name}_raw_loss"] = raw_loss_t.detach()
-
-        train_logs["train_sum_supervised_raw_loss"] = sum_supervised_raw_loss
 
         # Apply uncertainty weighting for supervised tasks
         for name, raw_loss_t in raw_supervised_losses.items():

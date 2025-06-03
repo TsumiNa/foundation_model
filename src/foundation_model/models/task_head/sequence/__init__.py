@@ -3,8 +3,8 @@ Sequence task heads for the FlexibleMultiTaskModel.
 """
 
 from foundation_model.configs.model_config import SequenceTaskConfig
+from foundation_model.models.task_head.base import SequenceBaseHead
 
-from .base import SequenceBaseHead
 from .fixed_vec import SequenceHeadFixedVec
 from .rnn import SequenceHeadRNN
 from .tcn_film import SequenceHeadTCNFiLM
@@ -36,26 +36,12 @@ def create_sequence_head(d_in: int, name: str, config: SequenceTaskConfig) -> Se
     subtype = config.subtype.lower()
 
     if subtype == "rnn":
-        return SequenceHeadRNN(
-            d_in=d_in,
-            name=name,
-            hidden=config.hidden,
-            cell=config.cell,
-        )
+        return SequenceHeadRNN(config=config)
     elif subtype == "vec":
         if config.seq_len is None:
             raise ValueError("seq_len must be provided for 'vec' sequence head")
-        return SequenceHeadFixedVec(
-            d_in=d_in,
-            name=name,
-            seq_len=config.seq_len,
-        )
+        return SequenceHeadFixedVec(config=config)
     elif subtype == "tcn":
-        return SequenceHeadTCNFiLM(
-            d_in=d_in,
-            name=name,
-            hidden=config.hidden,
-            n_layers=config.n_tcn_layers,
-        )
+        return SequenceHeadTCNFiLM(config=config)
     else:
         raise ValueError(f"Unsupported sequence head type: {subtype}")

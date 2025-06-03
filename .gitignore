@@ -37,6 +37,7 @@ lightning_logs/
 !/data/scripts/
 !/data/scripts/**
 /data/scripts/.ipynb_checkpoints
+/samples/example_logs
 
 # IDE
 .idea/
