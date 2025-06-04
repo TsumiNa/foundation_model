@@ -4,14 +4,15 @@ seed_everything: 42
 model:
   class_path: foundation_model.models.FlexibleMultiTaskModel
   init_args:
-    shared_block_dims: [580, 256, 128, 64]
+    enable_learnable_loss_balancer: true
+    shared_block_dims: [580, 256, 128]
     task_configs:
-      - name: Density
+      - name: density
         type: REGRESSION
         data_column: Density
-        dims: [64, 32, 1]
+        dims: [128, 64, 32, 1]
         norm: true
-        residual: false
+        residual: true
         weight: 1.0
         enabled: true
         optimizer:
@@ -26,12 +27,32 @@ model:
           patience: 10
           min_lr: 1.0e-05
 
-      - name: Volume # Note: Duplicate task name, this might be an issue or intended for some reason.
+      - name: formation_energy # Note: Duplicate task name, this might be an issue or intended for some reason.
+        type: REGRESSION
+        data_column: Formation energy per atom # Assuming same column for this duplicate
+        dims: [128, 64, 32, 1]
+        norm: true
+        residual: true
+        weight: 1.0
+        enabled: true
+        optimizer:
+          optimizer_type: AdamW
+          lr: 0.01
+          weight_decay: 0.01
+          eps: 1.0e-06
+          betas: [0.9, 0.999]
+          scheduler_type: ReduceLROnPlateau
+          mode: min
+          factor: 0.5
+          patience: 10
+          min_lr: 1.0e-05
+
+      - name: volume # Note: Duplicate task name, this might be an issue or intended for some reason.
         type: REGRESSION
         data_column: Volume # Assuming same column for this duplicate
-        dims: [64, 32, 1]
+        dims: [128, 64, 32, 1]
         norm: true
-        residual: false
+        residual: true
         weight: 1.0
         enabled: true
         optimizer:
@@ -87,7 +108,7 @@ data:
 
 trainer:
   default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit
-  max_epochs: 100
+  max_epochs: 5
   # devices: auto
   accelerator: auto
   devices: 1

@@ -760,7 +760,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
             )
 
         # Initialize accumulators for validation losses
-        sum_val_raw_loss = torch.tensor(0.0, device=x_formula.device if x_formula is not None else "cpu")
         final_val_loss = torch.tensor(
             0.0, device=x_formula.device if x_formula is not None else "cpu"
         )  # This will be val_final_loss
@@ -833,8 +832,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if self.enable_self_supervised_training:
             val_logs["val_sum_ssl_raw_loss"] = val_sum_ssl_raw_loss
             val_logs["val_final_ssl_loss"] = val_ssl_loss_contribution.detach()
-            sum_val_raw_loss += val_sum_ssl_raw_loss  # Add to total raw sum
-            final_val_loss += val_ssl_loss_contribution  # Add to total final sum
+            _temp_final_val_loss = final_val_loss + val_ssl_loss_contribution  # Add to total final sum
+            final_val_loss = _temp_final_val_loss
 
         # --- Supervised Task Calculations ---
         val_supervised_loss_contribution = torch.tensor(0.0, device=final_val_loss.device)
@@ -868,7 +867,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
             val_logs[f"val_{name}_raw_loss"] = raw_loss_t.detach()
 
         val_logs["val_sum_supervised_raw_loss"] = val_sum_supervised_raw_loss
-        sum_val_raw_loss += val_sum_supervised_raw_loss  # Add to total raw sum
 
         # Apply uncertainty weighting for supervised tasks
         for name, raw_loss_t in raw_val_supervised_losses.items():
@@ -901,14 +899,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 val_logs[f"val_{name}_final_loss_contrib"] = final_task_loss_component.detach()
                 # Log sigma as 1 (log_sigma as 0) if learnable uncertainty is off for this task,
                 # or if it was intended to be learnable but missing from task_log_sigmas.
-                # This ensures val_{name}_sigma_t is always logged if the task itself is processed.
-                val_logs[f"val_{name}_sigma_t"] = 1.0
+            # This ensures val_{name}_sigma_t is always logged if the task itself is processed.
+            val_logs[f"val_{name}_sigma_t"] = 1.0
 
         val_logs["val_final_supervised_loss"] = val_supervised_loss_contribution.detach()
-        final_val_loss += val_supervised_loss_contribution  # Add to total final sum
+        _temp_final_val_loss_sup = final_val_loss + val_supervised_loss_contribution  # Add to total final sum
+        final_val_loss = _temp_final_val_loss_sup
 
         # 7. Log metrics
-        val_logs["val_sum_raw_loss"] = sum_val_raw_loss  # Total raw loss (supervised + SSL)
 
         # Log detailed metrics without progress bar
         self.log_dict(val_logs, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
@@ -956,7 +954,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
             )
 
         # Initialize accumulators for test losses
-        sum_test_raw_loss = torch.tensor(0.0, device=x_formula.device if x_formula is not None else "cpu")
         final_test_loss = torch.tensor(
             0.0, device=x_formula.device if x_formula is not None else "cpu"
         )  # This will be test_final_loss
@@ -1029,8 +1026,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if self.enable_self_supervised_training:
             test_logs["test_sum_ssl_raw_loss"] = test_sum_ssl_raw_loss
             test_logs["test_final_ssl_loss"] = test_ssl_loss_contribution.detach()
-            sum_test_raw_loss += test_sum_ssl_raw_loss  # Add to total raw sum
-            final_test_loss += test_ssl_loss_contribution  # Add to total final sum
+            _temp_final_test_loss = final_test_loss + test_ssl_loss_contribution  # Add to total final sum
+            final_test_loss = _temp_final_test_loss
 
         # --- Supervised Task Calculations ---
         test_supervised_loss_contribution = torch.tensor(0.0, device=final_test_loss.device)
@@ -1064,7 +1061,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
             test_logs[f"test_{name}_raw_loss"] = raw_loss_t.detach()
 
         test_logs["test_sum_supervised_raw_loss"] = test_sum_supervised_raw_loss
-        sum_test_raw_loss += test_sum_supervised_raw_loss  # Add to total raw sum
 
         # Apply uncertainty weighting for supervised tasks
         for name, raw_loss_t in raw_test_supervised_losses.items():
@@ -1099,10 +1095,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 test_logs[f"test_{name}_sigma_t"] = 1.0
 
         test_logs["test_final_supervised_loss"] = test_supervised_loss_contribution.detach()
-        final_test_loss += test_supervised_loss_contribution  # Add to total final sum
+        _temp_final_test_loss_sup = final_test_loss + test_supervised_loss_contribution  # Add to total final sum
+        final_test_loss = _temp_final_test_loss_sup
 
         # 7. Log metrics
-        test_logs["test_sum_raw_loss"] = sum_test_raw_loss  # Total raw loss (supervised + SSL)
 
         # Log detailed metrics without progress bar
         self.log_dict(test_logs, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)

@@ -58,6 +58,14 @@ echo "--------------------------------------------------"
 echo "Using Config File: ${CONFIG_FILE}"
 echo "Logging to: ${LOG_DIR}"
 
+CKPT_DIR="$LOG_DIR/fit/checkpoints"
+LATEST_CKPT=$(ls -t $CKPT_DIR/model-*-val_final_loss*.ckpt 2>/dev/null | head -1)
+
+if [ -z "$LATEST_CKPT" ]; then
+    echo "No checkpoint found, using last.ckpt"
+    LATEST_CKPT="$CKPT_DIR/last.ckpt"
+fi
+
 fm-trainer test --config "$CONFIG_FILE"
     # --trainer.default_root_dir "$LOG_DIR" 
     # --trainer.logger.1.init_args.save_dir "$LOG_DIR"
@@ -70,14 +78,6 @@ echo "Starting prediction"
 echo "--------------------------------------------------"
 echo "Using Config File: ${CONFIG_FILE}"
 echo "Logging to: ${LOG_DIR}"
-
-CKPT_DIR="$LOG_DIR/fit/checkpoints"
-LATEST_CKPT=$(ls -t $CKPT_DIR/model-*-val_final_loss*.ckpt 2>/dev/null | head -1)
-
-if [ -z "$LATEST_CKPT" ]; then
-    echo "No checkpoint found, using last.ckpt"
-    LATEST_CKPT="$CKPT_DIR/last.ckpt"
-fi
 
 echo "Using checkpoint: $LATEST_CKPT"
 fm-trainer predict --config "$CONFIG_FILE" --ckpt_path "$LATEST_CKPT"
