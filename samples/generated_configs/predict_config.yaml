@@ -9,7 +9,7 @@ model:
     task_configs:
       - name: density
         type: REGRESSION
-        data_column: Density
+        data_column: Density (normalized)
         dims: [128, 64, 32, 1]
         norm: true
         residual: false
@@ -24,12 +24,12 @@ model:
           scheduler_type: ReduceLROnPlateau
           mode: min
           factor: 0.5
-          patience: 50
-          min_lr: 1.0e-03
+          patience: 10
+          min_lr: 1.0e-05
 
       - name: formation_energy # Note: Duplicate task name, this might be an issue or intended for some reason.
         type: REGRESSION
-        data_column: Formation energy per atom # Assuming same column for this duplicate
+        data_column: Formation energy per atom (normalized) # Assuming same column for this duplicate
         dims: [128, 64, 32, 1]
         norm: true
         residual: false
@@ -44,28 +44,69 @@ model:
           scheduler_type: ReduceLROnPlateau
           mode: min
           factor: 0.5
-          patience: 50
-          min_lr: 1.0e-03
+          patience: 10
+          min_lr: 1.0e-05
 
       - name: volume # Note: Duplicate task name, this might be an issue or intended for some reason.
         type: REGRESSION
-        data_column: Volume # Assuming same column for this duplicate
+        data_column: Volume (normalized) # Assuming same column for this duplicate
         dims: [128, 64, 32, 1]
         norm: true
         residual: false
         weight: 1.0
-        enabled: false
+        enabled: true
         optimizer:
           optimizer_type: AdamW
-          lr: 0.1
+          lr: 0.01
           weight_decay: 0.01
           eps: 1.0e-06
           betas: [0.9, 0.999]
           scheduler_type: ReduceLROnPlateau
           mode: min
           factor: 0.5
-          patience: 50
-          min_lr: 1.0e-03
+          patience: 10
+          min_lr: 1.0e-05
+
+      - name: dielectric_constant # Note: Duplicate task name, this might be an issue or intended for some reason.
+        type: REGRESSION
+        data_column: Dielectric constant (normalized) # Assuming same column for this duplicate
+        dims: [128, 64, 32, 1]
+        norm: true
+        residual: false
+        weight: 1.0
+        enabled: true
+        optimizer:
+          optimizer_type: AdamW
+          lr: 0.01
+          weight_decay: 0.01
+          eps: 1.0e-06
+          betas: [0.9, 0.999]
+          scheduler_type: ReduceLROnPlateau
+          mode: min
+          factor: 0.5
+          patience: 10
+          min_lr: 1.0e-05
+
+      - name: hypermaterial_type # Note: Duplicate task name, this might be an issue or intended for some reason.
+        type: CLASSIFICATION
+        data_column: hypermaterial_type_label # Assuming same column for this duplicate
+        dims: [128, 64, 32, 5]
+        num_classes: 5
+        norm: true
+        residual: false
+        weight: 1.0
+        enabled: true
+        optimizer:
+          optimizer_type: AdamW
+          lr: 0.01
+          weight_decay: 0.01
+          eps: 1.0e-06
+          betas: [0.9, 0.999]
+          scheduler_type: ReduceLROnPlateau
+          mode: min
+          factor: 0.5
+          patience: 10
+          min_lr: 1.0e-05
 
     shared_block_optimizer:
       optimizer_type: AdamW
