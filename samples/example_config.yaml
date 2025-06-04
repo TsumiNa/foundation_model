@@ -20,7 +20,7 @@ model:
       # The input_dim_formula (first element) should match the
       # feature dimension of your formula_desc_source.
     norm_shared: True
-    residual_shared: False
+    residual_shared: false
 
     # --- Task Configurations ---
     # These tasks will be passed to both the model and the datamodule.

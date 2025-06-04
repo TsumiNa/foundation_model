@@ -5,14 +5,14 @@ model:
   class_path: foundation_model.models.FlexibleMultiTaskModel
   init_args:
     enable_learnable_loss_balancer: true
-    shared_block_dims: [580, 256, 128]
+    shared_block_dims: [290, 128]
     task_configs:
       - name: density
         type: REGRESSION
         data_column: Density
         dims: [128, 64, 32, 1]
         norm: true
-        residual: true
+        residual: false
         weight: 1.0
         enabled: true
         optimizer:
@@ -32,7 +32,7 @@ model:
         data_column: Formation energy per atom # Assuming same column for this duplicate
         dims: [128, 64, 32, 1]
         norm: true
-        residual: true
+        residual: false
         weight: 1.0
         enabled: true
         optimizer:
@@ -52,24 +52,24 @@ model:
         data_column: Volume # Assuming same column for this duplicate
         dims: [128, 64, 32, 1]
         norm: true
-        residual: true
+        residual: false
         weight: 1.0
-        enabled: true
+        enabled: false
         optimizer:
           optimizer_type: AdamW
-          lr: 0.01
+          lr: 0.1
           weight_decay: 0.01
           eps: 1.0e-06
           betas: [0.9, 0.999]
           scheduler_type: ReduceLROnPlateau
           mode: min
           factor: 0.5
-          patience: 10
-          min_lr: 1.0e-05
+          patience: 50
+          min_lr: 1.0e-03
 
     shared_block_optimizer:
       optimizer_type: AdamW
-      lr: 0.001
+      lr: 0.1
       weight_decay: 0.01
       eps: 1.0e-06
       betas: [0.9, 0.999]
@@ -77,13 +77,13 @@ model:
       scheduler_type: ReduceLROnPlateau
       mode: min
       factor: 0.1
-      patience: 20
-      min_lr: 1.0e-06
+      patience: 50
+      min_lr: 1.0e-03
       monitor: val_final_loss
     with_structure: false
     modality_dropout_p: 0.3
     norm_shared: true
-    residual_shared: true
+    residual_shared: false
     enable_self_supervised_training: false
     mask_ratio: 0.15
     temperature: 0.07
@@ -96,7 +96,8 @@ model:
 data:
   class_path: foundation_model.data.CompoundDataModule
   init_args:
-    formula_desc_source: /data/foundation_model/data/qc_ac_te_mp_dos_kmd1d_desc_20250529.pd.xz
+    # formula_desc_source: /data/foundation_model/data/qc_ac_te_mp_dos_kmd1d_desc_20250529.pd.xz
+    formula_desc_source: /data/foundation_model/data/qc_ac_te_mp_dos_composition_desc_trans_20250529.pd.xz
     attributes_source: /data/foundation_model/data/qc_ac_te_mp_dos_norm_reformat_20250529.pd.xz
     task_configs: ${model.init_args.task_configs}
     batch_size: 256
@@ -108,7 +109,7 @@ data:
 
 trainer:
   default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit
-  max_epochs: 5
+  max_epochs: 50
   # devices: auto
   accelerator: auto
   devices: 1

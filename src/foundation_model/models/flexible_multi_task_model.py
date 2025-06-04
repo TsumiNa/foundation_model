@@ -897,10 +897,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 final_task_loss_component = static_weight * raw_loss_t
                 val_supervised_loss_contribution += final_task_loss_component.detach()
                 val_logs[f"val_{name}_final_loss_contrib"] = final_task_loss_component.detach()
-                # Log sigma as 1 (log_sigma as 0) if learnable uncertainty is off for this task,
-                # or if it was intended to be learnable but missing from task_log_sigmas.
-            # This ensures val_{name}_sigma_t is always logged if the task itself is processed.
-            val_logs[f"val_{name}_sigma_t"] = 1.0
 
         val_logs["val_final_supervised_loss"] = val_supervised_loss_contribution.detach()
         _temp_final_val_loss_sup = final_val_loss + val_supervised_loss_contribution  # Add to total final sum
@@ -1091,8 +1087,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 final_task_loss_component = static_weight * raw_loss_t
                 test_supervised_loss_contribution += final_task_loss_component.detach()
                 test_logs[f"test_{name}_final_loss_contrib"] = final_task_loss_component.detach()
-                # Log sigma as 1 (log_sigma as 0)
-                test_logs[f"test_{name}_sigma_t"] = 1.0
 
         test_logs["test_final_supervised_loss"] = test_supervised_loss_contribution.detach()
         _temp_final_test_loss_sup = final_test_loss + test_supervised_loss_contribution  # Add to total final sum
