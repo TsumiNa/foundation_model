@@ -1108,7 +1108,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         batch,
         batch_idx,
         dataloader_idx=0,
-        additional_output: bool = False,
+        additional_output: bool = True,
         tasks_to_predict: Optional[List[str]] = None,
     ) -> dict[str, torch.Tensor]:
         """
