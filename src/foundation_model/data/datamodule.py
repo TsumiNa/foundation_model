@@ -42,12 +42,12 @@ class CompoundDataModule(L.LightningDataModule):
         Parameters
         ----------
         formula_desc_source : Union[pd.DataFrame, np.ndarray, str]
-            Formula descriptors (DataFrame, NumPy array, or path to pickle/CSV). Its index is the master reference.
+            Formula descriptors (DataFrame, NumPy array, or path to pickle/CSV/parquet). Its index is the master reference.
         task_configs : List
             List of task configurations.
         attributes_source : Optional[Union[pd.DataFrame, str]], optional
             Source for task target attributes, sequence data, temperature data, and 'split' column.
-            Can be a DataFrame, NumPy array, or a path to a pickle/CSV file.
+            Can be a DataFrame, NumPy array, or a path to a pickle/CSV/parquet file.
             Defaults to None. If None, the DataModule can only be used for prediction with non-sequence tasks,
             as sequence tasks typically require input columns (e.g., for series or temperatures) from this source.
             If provided, it will be aligned with `formula_desc_source`.
@@ -110,7 +110,7 @@ class CompoundDataModule(L.LightningDataModule):
 
         # --- Load Data ---
         logger.info("--- Loading Data ---")
-        source_to_load = str(formula_desc_source) if isinstance(formula_desc_source, Path_fr) else formula_desc_source
+        source_to_load = str(formula_desc_source) if isinstance(formula_desc_source, Path_fr) else formula_desc_source  # type: ignore
         self.formula_df = self._load_data(source_to_load, "formula_desc")
         if self.formula_df is None or self.formula_df.empty:
             raise ValueError("formula_desc_source must be successfully loaded and cannot be empty.")
@@ -129,7 +129,7 @@ class CompoundDataModule(L.LightningDataModule):
         self.attributes_df = None
         if attributes_source is not None:
             source_to_load_attrs = (
-                str(attributes_source) if isinstance(attributes_source, Path_fr) else attributes_source
+                str(attributes_source) if isinstance(attributes_source, Path_fr) else attributes_source  # type: ignore
             )
             self.attributes_df = self._load_data(source_to_load_attrs, "attributes")
             if self.attributes_df is None or self.attributes_df.empty:
@@ -201,7 +201,7 @@ class CompoundDataModule(L.LightningDataModule):
             logger.info("Attempting to load and align structure_desc as with_structure is True.")
             if structure_desc_source is not None:
                 source_to_load_struct = (
-                    str(structure_desc_source) if isinstance(structure_desc_source, Path_fr) else structure_desc_source
+                    str(structure_desc_source) if isinstance(structure_desc_source, Path_fr) else structure_desc_source  # type: ignore
                 )
                 loaded_structure_df = self._load_data(source_to_load_struct, "structure_desc")
                 if loaded_structure_df is not None and not loaded_structure_df.empty:
@@ -265,11 +265,13 @@ class CompoundDataModule(L.LightningDataModule):
                     df = joblib.load(source)
                 elif source.endswith((".pd", ".pd.z", ".pd.xz")):
                     df = pd.read_pickle(source)
+                elif source.endswith(".pd.parquet"):
+                    df = pd.read_parquet(source)
                 elif source.endswith(".csv"):
                     df = pd.read_csv(source, index_col=0)  # Assuming first column as index
                 else:
                     logger.error(
-                        f"Unsupported file type for '{name}': {source}. Must be .pkl, .pd, .pd.z, .pd.xz, or .csv."
+                        f"Unsupported file type for '{name}': {source}. Must be .pkl, .pd, .pd.z, .pd.xz, .pd.parquet, or .csv."
                     )
                     raise ValueError(f"Unsupported file type for {name}: {source}.")
             elif isinstance(source, pd.DataFrame):
@@ -404,7 +406,6 @@ class CompoundDataModule(L.LightningDataModule):
         )
 
         # Determine if structure data should be used for dataset instances
-        current_structure_df_for_dataset = self.structure_df if self.actual_with_structure else None
         logger.info(
             f"Passing use_structure_for_this_dataset={self.actual_with_structure} to CompoundDataset instances."
         )
@@ -415,7 +416,14 @@ class CompoundDataModule(L.LightningDataModule):
                 return self.attributes_df.loc[indices]
             # If attributes_df is None, create a minimal DataFrame with just the index
             # CompoundDataset is expected to handle this for non-sequence tasks by using placeholders.
-            return pd.DataFrame(index=self.formula_df.loc[indices].index)
+            if self.formula_df is not None:
+                return pd.DataFrame(index=self.formula_df.loc[indices].index)
+            return pd.DataFrame()
+
+        def get_structure_for_dataset(indices):
+            if self.actual_with_structure and self.structure_df is not None and not indices.empty:
+                return self.structure_df.loc[indices]
+            return None
 
         if stage == "fit" or stage is None:
             logger.info("--- Creating 'fit' stage datasets (train/val) ---")
@@ -425,9 +433,7 @@ class CompoundDataModule(L.LightningDataModule):
                     formula_desc=self.formula_df.loc[self.train_idx],
                     attributes=get_attributes_for_dataset(self.train_idx),
                     task_configs=self.task_configs,
-                    structure_desc=current_structure_df_for_dataset.loc[self.train_idx]
-                    if current_structure_df_for_dataset is not None and not self.train_idx.empty
-                    else None,
+                    structure_desc=get_structure_for_dataset(self.train_idx),
                     use_structure_for_this_dataset=self.actual_with_structure,
                     task_masking_ratios=self.task_masking_ratios,
                     is_predict_set=False,
@@ -443,9 +449,7 @@ class CompoundDataModule(L.LightningDataModule):
                     formula_desc=self.formula_df.loc[self.val_idx],
                     attributes=get_attributes_for_dataset(self.val_idx),
                     task_configs=self.task_configs,
-                    structure_desc=current_structure_df_for_dataset.loc[self.val_idx]
-                    if current_structure_df_for_dataset is not None and not self.val_idx.empty
-                    else None,
+                    structure_desc=get_structure_for_dataset(self.val_idx),
                     use_structure_for_this_dataset=self.actual_with_structure,
                     task_masking_ratios=None,  # No masking for validation
                     is_predict_set=False,
@@ -463,9 +467,7 @@ class CompoundDataModule(L.LightningDataModule):
                     formula_desc=self.formula_df.loc[self.test_idx],
                     attributes=get_attributes_for_dataset(self.test_idx),
                     task_configs=self.task_configs,
-                    structure_desc=current_structure_df_for_dataset.loc[self.test_idx]
-                    if current_structure_df_for_dataset is not None and not self.test_idx.empty
-                    else None,
+                    structure_desc=get_structure_for_dataset(self.test_idx),
                     use_structure_for_this_dataset=self.actual_with_structure,
                     task_masking_ratios=None,  # No masking for test
                     is_predict_set=False,  # Typically False for test, model might output targets for metrics
@@ -502,9 +504,7 @@ class CompoundDataModule(L.LightningDataModule):
                     formula_desc=self.formula_df.loc[self.predict_idx],
                     attributes=get_attributes_for_dataset(self.predict_idx),
                     task_configs=self.task_configs,
-                    structure_desc=current_structure_df_for_dataset.loc[self.predict_idx]
-                    if current_structure_df_for_dataset is not None and not self.predict_idx.empty
-                    else None,
+                    structure_desc=get_structure_for_dataset(self.predict_idx),
                     use_structure_for_this_dataset=self.actual_with_structure,
                     task_masking_ratios=None,  # No masking for predict
                     is_predict_set=True,
