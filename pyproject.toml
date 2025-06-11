@@ -73,9 +73,11 @@ skip-magic-trailing-comma = false
 [dependency-groups]
 dev = [
     "ipykernel>=6.29.5",
+    "pymatgen>=2025.5.28",
     "pytest>=8.3.5",
     "pytest-benchmark>=5.1.0",
     "pytest-mock>=3.14.0",
+    "scikit-learn>=1.7.0",
 ]
 
 
