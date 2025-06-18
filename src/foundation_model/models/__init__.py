@@ -1,9 +1,7 @@
 # Copyright 2025 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Foundation model implementation and related modules.
-"""
+import torch
 
 from foundation_model.models.model_config import (
     BaseTaskConfig,
@@ -25,3 +23,5 @@ __all__ = [
     "ExtendRegressionTaskConfig",
     "OptimizerConfig",
 ]
+
+torch.set_float32_matmul_precision("medium")  # 推荐选项
