@@ -78,7 +78,7 @@ class ExtendRegressionHead(BaseTaskHead):
         # Build network components using LinearBlock
         # f_x: x -> ... -> 1 (direct effect of x)
         self.f_x = LinearBlock(
-            config.x_dim[:-1],
+            config.x_dim,
             normalization=config.norm,
             residual=config.residual,
             dim_output_layer=1,
@@ -86,7 +86,7 @@ class ExtendRegressionHead(BaseTaskHead):
 
         # f_t: t_encoded -> ... -> 1 (direct effect of t)
         self.f_t = LinearBlock(
-            [t_input_dim] + config.t_dim[1:-1],
+            [t_input_dim] + config.t_dim,
             normalization=config.norm,
             residual=config.residual,
             dim_output_layer=1,
@@ -94,7 +94,7 @@ class ExtendRegressionHead(BaseTaskHead):
 
         # g_x: x -> ... -> interaction_dim (for interaction with t)
         self.g_x = LinearBlock(
-            config.x_dim[:-1],
+            config.x_dim,
             normalization=config.norm,
             residual=config.residual,
             dim_output_layer=config.interaction_dim,
@@ -102,7 +102,7 @@ class ExtendRegressionHead(BaseTaskHead):
 
         # g_t: t_encoded -> ... -> interaction_dim (for interaction with x)
         self.g_t = LinearBlock(
-            [t_input_dim] + config.t_dim[1:-1],
+            [t_input_dim] + config.t_dim,
             normalization=config.norm,
             residual=config.residual,
             dim_output_layer=config.interaction_dim,

@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 from numpy import ndarray
 
-from foundation_model.models.model_config import BaseTaskConfig, ExtendRegressionTaskConfig
+from foundation_model.models.model_config import BaseTaskConfig
 
 
 # Helper function to convert camelCase or PascalCase to snake_case
@@ -142,76 +142,3 @@ class BaseTaskHead(nn.Module, ABC):
         snake_name = _to_snake_case(self.config.name)
         prefixed_results = {f"{snake_name}_{key}": value for key, value in core_results.items()}
         return prefixed_results
-
-
-class SequenceBaseHead(BaseTaskHead, ABC):
-    """
-    Abstract base class for sequence task heads.
-
-    Parameters
-    ----------
-    config : object # Should be a specific SequenceTaskConfig dataclass instance
-        Configuration object for the sequence task head.
-    """
-
-    def __init__(
-        self, config: ExtendRegressionTaskConfig
-    ):  # TODO: Replace object with a more specific TaskConfig base type
-        super().__init__(config)
-
-    @abstractmethod
-    def forward(self, h: torch.Tensor, temps: torch.Tensor) -> torch.Tensor:  # Raw output
-        """
-        Forward pass through the sequence head.
-
-        Parameters
-        ----------
-        h : torch.Tensor
-            Task-specific representation tensor from the deposit layer.
-        temps : torch.Tensor
-            Temperature or sequence points tensor.
-
-        Returns
-        -------
-        torch.Tensor
-            Predicted sequence values.
-        """
-        pass
-
-    def compute_loss(
-        self,
-        pred: torch.Tensor,
-        target: torch.Tensor,
-        mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Compute sequence-specific loss.
-
-        Parameters
-        ----------
-        pred : torch.Tensor
-            Predicted sequence values, shape (B, L).
-        target : torch.Tensor
-            Target sequence values, shape (B, L).
-        mask : torch.Tensor, optional
-            Binary mask for valid values, shape (B, L).
-
-        Returns
-        -------
-        Tuple[torch.Tensor, torch.Tensor]
-            (total_loss, per_step_loss) where total_loss is a scalar tensor
-            and per_step_loss contains loss per sequence step.
-        """
-        if mask is None:
-            mask = torch.ones_like(target)
-
-        # Apply mask to both predictions and targets
-        losses = torch.nn.functional.mse_loss(pred, target, reduction="none") * mask
-
-        # Compute per-step losses (average over batch)
-        per_step_loss = torch.nan_to_num(losses.sum(0) / mask.sum(0), nan=0.0, posinf=0.0, neginf=0.0)
-
-        # Compute total loss (sum over all steps, average over valid points)
-        total_loss = losses.sum() / mask.sum().clamp_min(1.0)
-
-        return total_loss, per_step_loss

@@ -34,7 +34,6 @@ from foundation_model.models.model_config import (
 
 from .components.foundation_encoder import FoundationEncoder, MultiModalFoundationEncoder
 from .components.self_supervised import SelfSupervisedModule
-from .task_head.base import SequenceBaseHead
 from .task_head.classification import ClassificationHead
 from .task_head.extend_regression import ExtendRegressionHead
 from .task_head.regression import RegressionHead
@@ -357,7 +356,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """Track which types of tasks are enabled."""
         self.has_regression = any(tc.type == TaskType.REGRESSION for tc in self.task_configs if tc.enabled)
         self.has_classification = any(tc.type == TaskType.CLASSIFICATION for tc in self.task_configs if tc.enabled)
-        self.has_sequence = any(tc.type == TaskType.SEQUENCE for tc in self.task_configs if tc.enabled)
+        self.has_extend_regression = any(tc.type == TaskType.ExtendRegression for tc in self.task_configs if tc.enabled)
 
     def _init_weights(self):
         """Initialize model weights and apply freezing based on optimizer configs."""
@@ -449,14 +448,18 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Apply task heads - all task heads use h_task (deposit layer output)
         outputs = {}
         for name, head in self.task_heads.items():
-            if isinstance(head, SequenceBaseHead):
-                # Get specific sequence data for this sequence head
+            if isinstance(head, ExtendRegressionHead):
+                # Get specific sequence data for this ExtendRegression head
                 task_sequence_input = task_sequence_data_batch.get(name) if task_sequence_data_batch else None
                 if task_sequence_input is not None:
-                    outputs[name] = head(h_task, task_sequence_input)
-                # else: # Decide how to handle if a sequence task head doesn't get its temps
-                # Could raise error, or head itself might have default behavior
-                # For now, assume temps are provided if head is sequence type
+                    # DOSDataset-style expansion: expand h_task and t for ExtendRegressionHead
+                    expanded_h_task, expanded_t = self._expand_for_extend_regression(h_task, task_sequence_input)
+                    outputs[name] = head(expanded_h_task, t=expanded_t)
+                else:
+                    # For ExtendRegressionHead, t parameter is required
+                    raise ValueError(
+                        f"ExtendRegressionHead '{name}' requires t parameter but task_sequence_data_batch is missing or doesn't contain '{name}'"
+                    )
             else:
                 outputs[name] = head(h_task)
 
@@ -1373,3 +1376,61 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # If all parameters are frozen, this is fine. Otherwise, it's an issue.
 
         return optimizers_and_schedulers
+
+    def _expand_for_extend_regression(
+        self, h_task: torch.Tensor, t_sequence: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Expand h_task and t_sequence for ExtendRegressionHead processing.
+
+        This method implements DOSDataset-style expansion where:
+        - h_task (B, D) is replicated for each t value in the sequence
+        - t_sequence (B, L) is flattened to individual scalar values
+
+        Parameters
+        ----------
+        h_task : torch.Tensor
+            Task representations from deposit layer, shape (B, D)
+        t_sequence : torch.Tensor
+            Sequence of t values, shape (B, L)
+
+        Returns
+        -------
+        tuple[torch.Tensor, torch.Tensor]
+            (expanded_h_task, expanded_t) where:
+            - expanded_h_task: shape (N,) where N = sum of valid t values across batch
+            - expanded_t: shape (N,) where N = sum of valid t values across batch
+        """
+        batch_size, seq_len = t_sequence.shape
+        device = h_task.device
+
+        expanded_h_list = []
+        expanded_t_list = []
+
+        for batch_idx in range(batch_size):
+            # Get the t sequence for this sample
+            t_sample = t_sequence[batch_idx]  # Shape: (L,)
+            h_sample = h_task[batch_idx]  # Shape: (D,)
+
+            # Find valid (non-zero) t values - assuming padding is 0
+            # This handles variable length sequences
+            valid_mask = t_sample != 0.0
+            valid_t = t_sample[valid_mask]  # Shape: (valid_length,)
+
+            if len(valid_t) > 0:
+                # Replicate h_sample for each valid t value
+                h_replicated = h_sample.unsqueeze(0).repeat(len(valid_t), 1)  # Shape: (valid_length, D)
+
+                expanded_h_list.append(h_replicated)
+                expanded_t_list.append(valid_t)
+
+        if expanded_h_list:
+            # Concatenate all expanded samples
+            expanded_h_task = torch.cat(expanded_h_list, dim=0)  # Shape: (total_valid_points, D)
+            expanded_t = torch.cat(expanded_t_list, dim=0)  # Shape: (total_valid_points,)
+        else:
+            # Handle case where no valid t values found
+            expanded_h_task = torch.empty(0, h_task.shape[1], device=device, dtype=h_task.dtype)
+            expanded_t = torch.empty(0, device=device, dtype=t_sequence.dtype)
+
+        return expanded_h_task, expanded_t
