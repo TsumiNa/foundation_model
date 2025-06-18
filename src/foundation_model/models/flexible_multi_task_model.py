@@ -637,9 +637,25 @@ class FlexibleMultiTaskModel(L.LightningModule):
             head = self.task_heads[name]
             target = y_dict_batch[name]
             sample_mask = task_masks_batch.get(name)
-            if sample_mask is None:
-                logger.warning(f"Mask not found for task {name} in training_step. Assuming all valid.")
-                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+
+            # Handle ExtendRegression tasks with List[Tensor] format
+            if isinstance(head, ExtendRegressionHead):
+                # For ExtendRegression, target and mask are in List[Tensor] format
+                # We need to concatenate them to match the flattened prediction format
+                if isinstance(target, list):
+                    target = torch.cat(target, dim=0)
+                if sample_mask is not None and isinstance(sample_mask, list):
+                    sample_mask = torch.cat(sample_mask, dim=0)
+                elif sample_mask is None:
+                    logger.warning(
+                        f"Mask not found for ExtendRegression task {name} in training_step. Assuming all valid."
+                    )
+                    sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+            else:
+                # For other tasks, use normal tensor format
+                if sample_mask is None:
+                    logger.warning(f"Mask not found for task {name} in training_step. Assuming all valid.")
+                    sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
             raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
             raw_supervised_losses[name] = raw_loss_t
@@ -858,9 +874,25 @@ class FlexibleMultiTaskModel(L.LightningModule):
             head = self.task_heads[name]
             target = y_dict_batch[name]
             sample_mask = task_masks_batch.get(name)
-            if sample_mask is None:
-                logger.warning(f"Mask not found for task {name} in validation_step. Assuming all valid.")
-                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+
+            # Handle ExtendRegression tasks with List[Tensor] format
+            if isinstance(head, ExtendRegressionHead):
+                # For ExtendRegression, target and mask are in List[Tensor] format
+                # We need to concatenate them to match the flattened prediction format
+                if isinstance(target, list):
+                    target = torch.cat(target, dim=0)
+                if sample_mask is not None and isinstance(sample_mask, list):
+                    sample_mask = torch.cat(sample_mask, dim=0)
+                elif sample_mask is None:
+                    logger.warning(
+                        f"Mask not found for ExtendRegression task {name} in validation_step. Assuming all valid."
+                    )
+                    sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+            else:
+                # For other tasks, use normal tensor format
+                if sample_mask is None:
+                    logger.warning(f"Mask not found for task {name} in validation_step. Assuming all valid.")
+                    sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
             raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
             raw_val_supervised_losses[name] = raw_loss_t
@@ -1048,9 +1080,23 @@ class FlexibleMultiTaskModel(L.LightningModule):
             head = self.task_heads[name]
             target = y_dict_batch[name]
             sample_mask = task_masks_batch.get(name)
-            if sample_mask is None:
-                logger.warning(f"Mask not found for task {name} in test_step. Assuming all valid.")
-                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+
+            # Handle ExtendRegression tasks with List[Tensor] format
+            if isinstance(head, ExtendRegressionHead):
+                # For ExtendRegression, target and mask are in List[Tensor] format
+                # We need to concatenate them to match the flattened prediction format
+                if isinstance(target, list):
+                    target = torch.cat(target, dim=0)
+                if sample_mask is not None and isinstance(sample_mask, list):
+                    sample_mask = torch.cat(sample_mask, dim=0)
+                elif sample_mask is None:
+                    logger.warning(f"Mask not found for ExtendRegression task {name} in test_step. Assuming all valid.")
+                    sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+            else:
+                # For other tasks, use normal tensor format
+                if sample_mask is None:
+                    logger.warning(f"Mask not found for task {name} in test_step. Assuming all valid.")
+                    sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
             raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
             raw_test_supervised_losses[name] = raw_loss_t
@@ -1378,51 +1424,82 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return optimizers_and_schedulers
 
     def _expand_for_extend_regression(
-        self, h_task: torch.Tensor, t_sequence: torch.Tensor
+        self, h_task: torch.Tensor, t_sequence: List[torch.Tensor] | torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Expand h_task and t_sequence for ExtendRegressionHead processing.
 
-        This method implements DOSDataset-style expansion where:
-        - h_task (B, D) is replicated for each t value in the sequence
-        - t_sequence (B, L) is flattened to individual scalar values
+        This method implements an improved expansion algorithm that handles both
+        List[Tensor] format (from custom collate) and Tensor format (backwards compatibility).
+        Each sample can have variable-length sequences without padding waste.
 
         Parameters
         ----------
         h_task : torch.Tensor
             Task representations from deposit layer, shape (B, D)
-        t_sequence : torch.Tensor
-            Sequence of t values, shape (B, L)
+        t_sequence : List[torch.Tensor] | torch.Tensor
+            Sequence of t values. Can be:
+            - List[torch.Tensor]: Each element is a 1D tensor of variable length
+            - torch.Tensor: Legacy format, shape (B, L) with padding
 
         Returns
         -------
         tuple[torch.Tensor, torch.Tensor]
             (expanded_h_task, expanded_t) where:
-            - expanded_h_task: shape (N,) where N = sum of valid t values across batch
-            - expanded_t: shape (N,) where N = sum of valid t values across batch
+            - expanded_h_task: shape (N, D) where N = sum of sequence lengths across batch
+            - expanded_t: shape (N,) where N = sum of sequence lengths across batch
         """
-        batch_size, seq_len = t_sequence.shape
         device = h_task.device
+        batch_size = h_task.shape[0]
 
         expanded_h_list = []
         expanded_t_list = []
 
-        for batch_idx in range(batch_size):
-            # Get the t sequence for this sample
-            t_sample = t_sequence[batch_idx]  # Shape: (L,)
-            h_sample = h_task[batch_idx]  # Shape: (D,)
+        if isinstance(t_sequence, list):
+            # Handle List[Tensor] format from custom collate function
+            if len(t_sequence) != batch_size:
+                raise ValueError(
+                    f"Mismatch between batch_size ({batch_size}) and t_sequence list length ({len(t_sequence)})"
+                )
 
-            # Find valid (non-zero) t values - assuming padding is 0
-            # This handles variable length sequences
-            valid_mask = t_sample != 0.0
-            valid_t = t_sample[valid_mask]  # Shape: (valid_length,)
+            for batch_idx in range(batch_size):
+                t_sample = t_sequence[batch_idx]  # Shape: (seq_len,) - variable length
+                h_sample = h_task[batch_idx]  # Shape: (D,)
 
-            if len(valid_t) > 0:
-                # Replicate h_sample for each valid t value
-                h_replicated = h_sample.unsqueeze(0).repeat(len(valid_t), 1)  # Shape: (valid_length, D)
+                # Remove any zero-padding if present (though List format shouldn't have padding)
+                if t_sample.numel() > 0:
+                    valid_mask = t_sample != 0.0
+                    valid_t = t_sample[valid_mask] if valid_mask.any() else t_sample
 
-                expanded_h_list.append(h_replicated)
-                expanded_t_list.append(valid_t)
+                    if len(valid_t) > 0:
+                        # Replicate h_sample for each valid t value
+                        h_replicated = h_sample.unsqueeze(0).repeat(len(valid_t), 1)  # Shape: (valid_length, D)
+
+                        expanded_h_list.append(h_replicated)
+                        expanded_t_list.append(valid_t)
+        else:
+            # Handle legacy Tensor format for backwards compatibility
+            if t_sequence.dim() != 2 or t_sequence.shape[0] != batch_size:
+                raise ValueError(f"Expected t_sequence tensor to have shape (B, L), got {t_sequence.shape}")
+
+            seq_len = t_sequence.shape[1]
+
+            for batch_idx in range(batch_size):
+                # Get the t sequence for this sample
+                t_sample = t_sequence[batch_idx]  # Shape: (L,)
+                h_sample = h_task[batch_idx]  # Shape: (D,)
+
+                # Find valid (non-zero) t values - assuming padding is 0
+                # This handles variable length sequences
+                valid_mask = t_sample != 0.0
+                valid_t = t_sample[valid_mask]  # Shape: (valid_length,)
+
+                if len(valid_t) > 0:
+                    # Replicate h_sample for each valid t value
+                    h_replicated = h_sample.unsqueeze(0).repeat(len(valid_t), 1)  # Shape: (valid_length, D)
+
+                    expanded_h_list.append(h_replicated)
+                    expanded_t_list.append(valid_t)
 
         if expanded_h_list:
             # Concatenate all expanded samples
@@ -1431,6 +1508,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
         else:
             # Handle case where no valid t values found
             expanded_h_task = torch.empty(0, h_task.shape[1], device=device, dtype=h_task.dtype)
-            expanded_t = torch.empty(0, device=device, dtype=t_sequence.dtype)
+            expanded_t = torch.empty(
+                0, device=device, dtype=t_sequence[0].dtype if isinstance(t_sequence, list) else t_sequence.dtype
+            )
 
         return expanded_h_task, expanded_t

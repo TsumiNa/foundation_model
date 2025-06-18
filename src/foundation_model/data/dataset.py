@@ -167,7 +167,7 @@ class CompoundDataset(Dataset):
             logger.info(f"[{self.dataset_name}] Final x_struct shape: {self.x_struct.shape}")
 
         self.y_dict: Dict[str, torch.Tensor] = {}
-        self.temps_dict: Dict[str, torch.Tensor] = {}  # For steps data of sequence tasks
+        self.sequence_data_dict: Dict[str, torch.Tensor] = {}  # For t-parameter sequences of ExtendRegression tasks
         self.task_masks_dict: Dict[str, torch.Tensor] = {}
         self.enabled_task_names: List[str] = []
 
@@ -244,57 +244,52 @@ class CompoundDataset(Dataset):
                 f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
             )
 
-            # --- Steps Data Loading (temps_dict for SEQUENCE tasks) using cfg.steps_column ---
+            # --- T-parameter Data Loading (sequence_data_dict for ExtendRegression tasks) using cfg.t_column ---
             if isinstance(cfg, ExtendRegressionTaskConfig):
-                steps_col_for_task = cfg.steps_column
-                expected_steps_len = self.y_dict[task_name].shape[1]  # Should match sequence length from y_dict
+                t_col_for_task = cfg.t_column
+                expected_t_len = self.y_dict[task_name].shape[1]  # Should match sequence length from y_dict
 
-                if steps_col_for_task and steps_col_for_task in attributes.columns:
+                if t_col_for_task and t_col_for_task in attributes.columns:
                     logger.debug(
-                        f"[{self.dataset_name}] Task '{task_name}': Loading steps from column '{steps_col_for_task}'."
+                        f"[{self.dataset_name}] Task '{task_name}': Loading t-parameters from column '{t_col_for_task}'."
                     )
-                    raw_steps_data = attributes[steps_col_for_task]
-                    current_task_steps_list = []
-                    for element in raw_steps_data:
-                        parsed_step = _parse_structured_element(
-                            element, task_name, steps_col_for_task, self.dataset_name, (expected_steps_len,)
+                    raw_t_data = attributes[t_col_for_task]
+                    current_task_t_list = []
+                    for element in raw_t_data:
+                        parsed_t = _parse_structured_element(
+                            element, task_name, t_col_for_task, self.dataset_name, (expected_t_len,)
                         )
-                        current_task_steps_list.append(parsed_step)
+                        current_task_t_list.append(parsed_t)
 
                     try:
-                        processed_steps_np = np.stack(current_task_steps_list)
+                        processed_t_np = np.stack(current_task_t_list)
                     except ValueError as e:
                         logger.error(
-                            f"[{self.dataset_name}] Task '{task_name}', steps column '{steps_col_for_task}': Error stacking parsed steps data - {e}. Using NaN placeholder."
+                            f"[{self.dataset_name}] Task '{task_name}', t-parameter column '{t_col_for_task}': Error stacking parsed t-parameter data - {e}. Using NaN placeholder."
                         )
-                        processed_steps_np = np.full((num_samples, expected_steps_len), np.nan)
+                        processed_t_np = np.full((num_samples, expected_t_len), np.nan)
 
-                elif steps_col_for_task:  # Specified in config but not found in attributes
+                elif t_col_for_task:  # Specified in config but not found in attributes
                     logger.error(
-                        f"[{self.dataset_name}] Task '{task_name}': Steps column '{steps_col_for_task}' "
+                        f"[{self.dataset_name}] Task '{task_name}': T-parameter column '{t_col_for_task}' "
                         f"is specified in config but not found in attributes DataFrame. This is required."
                     )
                     raise ValueError(
-                        f"Steps column '{steps_col_for_task}' for task '{task_name}' not found in attributes data."
+                        f"T-parameter column '{t_col_for_task}' for task '{task_name}' not found in attributes data."
                     )
-                else:  # steps_column not specified
+                else:  # t_column not specified
                     logger.info(
-                        f"[{self.dataset_name}] Task '{task_name}': No steps_column specified. "
-                        f"Using zero placeholder for steps (temps_dict)."
+                        f"[{self.dataset_name}] Task '{task_name}': No t_column specified. "
+                        f"Using zero placeholder for t-parameters (sequence_data_dict)."
                     )
-                    processed_steps_np = np.zeros(
-                        (num_samples, expected_steps_len)
-                    )  # Default to zeros if not specified
+                    processed_t_np = np.zeros((num_samples, expected_t_len))  # Default to zeros if not specified
 
-                # Ensure steps are [N, L, 1] for compatibility with some models
-                if processed_steps_np.ndim == 2:
-                    processed_steps_np = np.expand_dims(processed_steps_np, axis=-1)
-
-                self.temps_dict[task_name] = torch.tensor(
-                    np.nan_to_num(processed_steps_np, nan=0.0), dtype=torch.float32
+                # Store t-parameter data without extra dimension expansion
+                self.sequence_data_dict[task_name] = torch.tensor(
+                    np.nan_to_num(processed_t_np, nan=0.0), dtype=torch.float32
                 )
                 logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': temps_dict shape {self.temps_dict[task_name].shape}"
+                    f"[{self.dataset_name}] Task '{task_name}': sequence_data_dict shape {self.sequence_data_dict[task_name].shape}"
                 )
 
             # --- Task Masking (final_mask_np) ---
@@ -351,11 +346,13 @@ class CompoundDataset(Dataset):
         sample_task_masks_dict = {
             name: self.task_masks_dict[name][idx] for name in self.enabled_task_names if name in self.task_masks_dict
         }
-        sample_temps_dict = {  # This is effectively steps_dict now
-            name: self.temps_dict[name][idx] for name in self.enabled_task_names if name in self.temps_dict
+        sample_sequence_data_dict = {  # T-parameter sequences for ExtendRegression tasks
+            name: self.sequence_data_dict[name][idx]
+            for name in self.enabled_task_names
+            if name in self.sequence_data_dict
         }
 
-        return model_input_x, sample_y_dict, sample_task_masks_dict, sample_temps_dict
+        return model_input_x, sample_y_dict, sample_task_masks_dict, sample_sequence_data_dict
 
     @property
     def attribute_names(self) -> List[str]:

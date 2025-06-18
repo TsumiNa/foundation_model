@@ -7,6 +7,7 @@ import joblib
 import lightning as L
 import numpy as np
 import pandas as pd
+import torch
 from jsonargparse.typing import Path_fr
 from loguru import logger
 from sklearn.model_selection import train_test_split  # For data splitting
@@ -16,9 +17,80 @@ from foundation_model.models.model_config import (
     ClassificationTaskConfig,
     ExtendRegressionTaskConfig,
     RegressionTaskConfig,
+    TaskType,
 )
 
 from .dataset import CompoundDataset
+
+
+def create_collate_fn_with_task_info(task_configs):
+    """
+    Creates a custom collate function that handles ExtendRegression tasks properly.
+
+    ExtendRegression tasks need List[Tensor] format for both targets and t-parameters
+    to support variable-length sequences without padding waste.
+
+    Parameters
+    ----------
+    task_configs : List
+        List of task configuration objects
+
+    Returns
+    -------
+    callable
+        Custom collate function for DataLoader
+    """
+    extend_regression_tasks = {
+        cfg.name for cfg in task_configs if cfg.type == TaskType.ExtendRegression and cfg.enabled
+    }
+
+    def custom_collate_fn(batch):
+        """
+        Custom collate function for batching data.
+
+        Parameters
+        ----------
+        batch : List[Tuple]
+            List of (model_input_x, sample_y_dict, sample_task_masks_dict, sample_sequence_data_dict)
+
+        Returns
+        -------
+        Tuple
+            (batched_input, batched_y_dict, batched_mask_dict, batched_sequence_data_dict)
+        """
+        model_inputs, y_dicts, mask_dicts, sequence_data_dicts = zip(*batch)
+
+        # Handle model inputs (formula/structure features)
+        if isinstance(model_inputs[0], tuple):
+            # Structure data is present
+            formulas, structures = zip(*model_inputs)
+            batched_input = (torch.stack(formulas), torch.stack(structures))
+        else:
+            # Only formula data
+            batched_input = torch.stack(model_inputs)
+
+        # Handle targets and masks based on task type
+        batched_y_dict = {}
+        batched_mask_dict = {}
+
+        for key in y_dicts[0].keys():
+            if key in extend_regression_tasks:
+                # ExtendRegression: Keep List[Tensor] format for variable-length sequences
+                batched_y_dict[key] = [d[key] for d in y_dicts]
+                batched_mask_dict[key] = [d[key] for d in mask_dicts]
+            else:
+                # Other tasks: Normal stacking
+                batched_y_dict[key] = torch.stack([d[key] for d in y_dicts])
+                batched_mask_dict[key] = torch.stack([d[key] for d in mask_dicts])
+
+        # Handle sequence data (t-parameters) - always List[Tensor] format
+        batched_sequence_data_dict = {}
+        for key in sequence_data_dicts[0].keys():
+            batched_sequence_data_dict[key] = [d[key] for d in sequence_data_dicts]
+
+        return batched_input, batched_y_dict, batched_mask_dict, batched_sequence_data_dict
+
+    return custom_collate_fn
 
 
 class CompoundDataModule(L.LightningDataModule):
@@ -182,15 +254,15 @@ class CompoundDataModule(L.LightningDataModule):
                 "attributes_source is None. Proceeding without attributes_df. This is only supported if no sequence tasks require it."
             )
             # Validate that no task requires attributes_df if it's None,
-            # especially if a SEQUENCE task specifies a steps_column.
+            # especially if an ExtendRegression task specifies a t_column.
             for cfg in self.task_configs:
-                if cfg.enabled and isinstance(cfg, ExtendRegressionTaskConfig) and cfg.steps_column:
+                if cfg.enabled and isinstance(cfg, ExtendRegressionTaskConfig) and cfg.t_column:
                     logger.error(
-                        f"Task '{cfg.name}' is a SEQUENCE task that specifies a 'steps_column' ('{cfg.steps_column}'), "
-                        f"but attributes_source is None. attributes_source is required to load this steps data."
+                        f"Task '{cfg.name}' is an ExtendRegression task that specifies a 't_column' ('{cfg.t_column}'), "
+                        f"but attributes_source is None. attributes_source is required to load this t-parameter data."
                     )
                     raise ValueError(
-                        f"attributes_source cannot be None when SEQUENCE task '{cfg.name}' requires a steps_column ('{cfg.steps_column}')."
+                        f"attributes_source cannot be None when ExtendRegression task '{cfg.name}' requires a t_column ('{cfg.t_column}')."
                     )
             # If we reach here, attributes_source is None, and no enabled SequenceTaskConfig requires a steps_column.
             # Other tasks (or sequence tasks without a steps_column) will have their data_column handled by CompoundDataset
@@ -526,12 +598,17 @@ class CompoundDataModule(L.LightningDataModule):
         if len(self.train_dataset) == 0:
             logger.warning("train_dataloader: Train dataset is empty (length 0). Returning None.")
             return None
+
+        # Create custom collate function for ExtendRegression tasks
+        collate_fn = create_collate_fn_with_task_info(self.task_configs)
+
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            pin_memory=True,  # Added for potential speedup
+            pin_memory=True,
+            collate_fn=collate_fn,
         )
 
     def val_dataloader(self):
@@ -541,12 +618,17 @@ class CompoundDataModule(L.LightningDataModule):
         if len(self.val_dataset) == 0:
             logger.info("val_dataloader: Validation dataset is empty (length 0). Returning None.")
             return None
+
+        # Create custom collate function for ExtendRegression tasks
+        collate_fn = create_collate_fn_with_task_info(self.task_configs)
+
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
+            collate_fn=collate_fn,
         )
 
     def test_dataloader(self):
@@ -556,12 +638,17 @@ class CompoundDataModule(L.LightningDataModule):
         if len(self.test_dataset) == 0:
             logger.info("test_dataloader: Test dataset is empty (length 0). Returning None.")
             return None
+
+        # Create custom collate function for ExtendRegression tasks
+        collate_fn = create_collate_fn_with_task_info(self.task_configs)
+
         return DataLoader(
             self.test_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
+            collate_fn=collate_fn,
         )
 
     def predict_dataloader(self):
@@ -571,10 +658,15 @@ class CompoundDataModule(L.LightningDataModule):
         if len(self.predict_dataset) == 0:
             logger.info("predict_dataloader: Predict dataset is empty (length 0). Returning None.")
             return None
+
+        # Create custom collate function for ExtendRegression tasks
+        collate_fn = create_collate_fn_with_task_info(self.task_configs)
+
         return DataLoader(
             self.predict_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
+            collate_fn=collate_fn,
         )

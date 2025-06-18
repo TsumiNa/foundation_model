@@ -1,10 +1,6 @@
 # Copyright 2025 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Extended regression task head for handling both x and t inputs with interaction terms.
-"""
-
 import math
 from typing import Optional, Tuple
 
@@ -21,7 +17,7 @@ from .base import BaseTaskHead
 
 class FourierFeatures(nn.Module):
     """
-    Encode scalar t into Fourier features
+    Encode scalar t into Fourier features using random Fourier features.
     """
 
     def __init__(self, input_dim: int, mapping_size: int, scale: float = 10.0):
@@ -42,110 +38,108 @@ class FourierFeatures(nn.Module):
 
 class ExtendRegressionHead(BaseTaskHead):
     """
-    Extended regression task head for predicting continuous values with x and t inputs.
+    Extended regression head for handling variable-length sequences of (t, target) pairs.
 
-    This head handles both x (feature) and t (temporal/scalar) inputs, computing:
-    y = f_x(x) + f_t(t) + interaction(g_x(x), g_t(t))
+    Uses a decomposition approach: y = f_x(x) + f_t(t) + g_x(x) * g_t(t)
+    where f_x, f_t, g_x, g_t are implemented using LinearBlock networks.
 
     Parameters
     ----------
     config : ExtendRegressionTaskConfig
-        Configuration object containing parameters like x_dim, t_dim, interaction_dim,
-        t_encoding_method, normalization, and residual connections.
+        Configuration object containing network dimensions, normalization settings,
+        and other parameters.
     """
 
     def __init__(self, config: ExtendRegressionTaskConfig):
         super().__init__(config)
 
-        # Calculate t_embedding_dim and t encoding configuration
+        # Store configuration parameters
+        self.t_encoding_method = config.t_encoding_method
+
+        # Calculate t_embedding_dim from t_dim[0]
         t_embedding_dim = config.t_dim[0]
 
-        if config.t_encoding_method == "fourier":
-            mapping_size = math.ceil(t_embedding_dim / 2)
-            self.t_encoder = FourierFeatures(input_dim=1, mapping_size=mapping_size)
-            t_input_dim = mapping_size * 2
-        elif config.t_encoding_method == "fc":
-            t_input_dim = t_embedding_dim
-            self.t_encoder = LinearBlock(
-                [1] + config.t_dim[:-1],
-                normalization=config.norm,
-                residual=config.residual,
-                dim_output_layer=t_embedding_dim,
-            )
-        else:
-            raise ValueError(f"Unknown t_encoding_method: {config.t_encoding_method}")
+        # Initialize t encoder based on encoding method
+        if self.t_encoding_method == "fourier":
+            # Calculate t_input_dim for Fourier encoding
+            # If t_embedding_dim is odd, round up to ensure sufficient features
+            if t_embedding_dim % 2 == 1:
+                t_input_dim = math.ceil(t_embedding_dim / 2)
+            else:
+                t_input_dim = t_embedding_dim // 2
 
-        # Build network components using LinearBlock
-        # f_x: x -> ... -> 1 (direct effect of x)
+            self.t_encoder = FourierFeatures(input_dim=1, mapping_size=t_input_dim)
+            encoded_t_dim = t_input_dim * 2  # Fourier features: sin + cos
+
+        elif self.t_encoding_method == "fc":
+            # For FC encoding, t_input_dim equals t_embedding_dim
+            self.t_encoder = nn.Sequential(nn.Linear(1, t_embedding_dim), nn.ReLU())
+            encoded_t_dim = t_embedding_dim
+        else:
+            raise ValueError(f"Unsupported t_encoding_method: {self.t_encoding_method}. Must be 'fourier' or 'fc'.")
+
+        # Initialize networks using LinearBlock
+        # f_x: processes material features x
         self.f_x = LinearBlock(
             config.x_dim,
             normalization=config.norm,
             residual=config.residual,
-            dim_output_layer=1,
+            dim_output_layer=1,  # Output scalar value
         )
 
-        # f_t: t_encoded -> ... -> 1 (direct effect of t)
+        # f_t: processes encoded t features
         self.f_t = LinearBlock(
-            [t_input_dim] + config.t_dim,
+            [encoded_t_dim] + config.t_dim[1:],
             normalization=config.norm,
             residual=config.residual,
-            dim_output_layer=1,
+            dim_output_layer=1,  # Output scalar value
         )
 
-        # g_x: x -> ... -> interaction_dim (for interaction with t)
+        # g_x: processes material features for interaction
         self.g_x = LinearBlock(
-            config.x_dim,
-            normalization=config.norm,
-            residual=config.residual,
-            dim_output_layer=config.interaction_dim,
+            config.x_dim[:-1] + [config.interaction_dim], normalization=config.norm, residual=config.residual
         )
 
-        # g_t: t_encoded -> ... -> interaction_dim (for interaction with x)
+        # g_t: processes encoded t features for interaction
         self.g_t = LinearBlock(
-            [t_input_dim] + config.t_dim,
+            [encoded_t_dim] + config.t_dim[1:-1] + [config.interaction_dim],
             normalization=config.norm,
             residual=config.residual,
-            dim_output_layer=config.interaction_dim,
         )
 
-    def forward(self, x: torch.Tensor, t: Optional[torch.Tensor] = None, **kwargs) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the extended regression head.
 
         Parameters
         ----------
         x : torch.Tensor
-            Input feature tensor, shape (B, x_dim).
-        t : torch.Tensor, optional
-            Temporal/scalar input tensor, shape (B,) or (B, 1).
-        **kwargs : dict
-            Additional arguments (not used).
+            Material features, shape (N, x_dim[0])
+        t : torch.Tensor
+            Parameter values (e.g., energy, temperature), shape (N,) or (N, 1)
 
         Returns
         -------
         torch.Tensor
-            Predicted regression values, shape (B, 1).
+            Predicted values, shape (N, 1)
         """
-        if t is None:
-            raise ValueError("t parameter is required for ExtendRegressionHead")
-
-        # Ensure t has correct dimension for encoding
+        # Ensure t has correct dimension
         if t.dim() == 1:
             t = t.unsqueeze(1)
 
-        # Encode t according to the selected method
+        # Encode t using the configured encoding method
         t_encoded = self.t_encoder(t)
 
-        # Compute model output components
-        fx_out = self.f_x(x)  # Direct effect of x
-        ft_out = self.f_t(t_encoded)  # Direct effect of t
-        gx_out = self.g_x(x)  # x component for interaction
-        gt_out = self.g_t(t_encoded)  # t component for interaction
+        # Compute model output using decomposition
+        fx_out = self.f_x(x)  # (N, 1)
+        ft_out = self.f_t(t_encoded)  # (N, 1)
+        gx_out = self.g_x(x)  # (N, interaction_dim)
+        gt_out = self.g_t(t_encoded)  # (N, interaction_dim)
 
         # Compute interaction term
-        interaction = (gx_out * gt_out).sum(dim=1, keepdim=True)
+        interaction = (gx_out * gt_out).sum(dim=1, keepdim=True)  # (N, 1)
 
-        # Final output: additive decomposition
+        # Final output: additive decomposition + interaction
         y_hat = fx_out + ft_out + interaction
         return y_hat
 
@@ -161,11 +155,11 @@ class ExtendRegressionHead(BaseTaskHead):
         Parameters
         ----------
         pred : torch.Tensor
-            Predicted values, shape (B, output_dim).
+            Predicted values, shape (N, 1) or (N,)
         target : torch.Tensor
-            Target values, shape (B, output_dim).
+            Target values, shape (N, 1) or (N,)
         mask : torch.Tensor, optional
-            Binary mask indicating valid targets, shape (B, output_dim).
+            Binary mask indicating valid targets, shape (N, 1) or (N,).
             If None, all targets are considered valid.
 
         Returns
@@ -174,19 +168,28 @@ class ExtendRegressionHead(BaseTaskHead):
             (total_loss, per_dim_loss) where total_loss is a scalar tensor
             and per_dim_loss contains loss per output dimension.
         """
+        # Ensure consistent shapes
+        if pred.dim() == 2 and pred.shape[1] == 1:
+            pred = pred.squeeze(1)
+        if target.dim() == 2 and target.shape[1] == 1:
+            target = target.squeeze(1)
+
         if mask is None:
             mask = torch.ones_like(target)
+        elif mask.dim() == 2 and mask.shape[1] == 1:
+            mask = mask.squeeze(1)
 
         # Apply mask to both predictions and targets
         losses = F.mse_loss(pred, target, reduction="none") * mask
 
         # Compute per-dimension losses (average over batch)
-        per_dim_loss = torch.nan_to_num(losses.sum(0) / mask.sum(0), nan=0.0, posinf=0.0, neginf=0.0)
+        # For extended regression, there's only one dimension
+        per_dim_loss = torch.nan_to_num(losses.sum() / mask.sum().clamp_min(1.0), nan=0.0, posinf=0.0, neginf=0.0)
 
-        # Compute total loss (sum over all dimensions, average over valid points)
-        total_loss = losses.sum() / mask.sum().clamp_min(1.0)
+        # Compute total loss
+        total_loss = per_dim_loss
 
-        return total_loss, per_dim_loss
+        return total_loss, per_dim_loss.unsqueeze(0)
 
     def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, ndarray]:
         """
@@ -198,7 +201,7 @@ class ExtendRegressionHead(BaseTaskHead):
             Raw output from the forward pass (regression values).
         additional : bool, optional
             If True, return additional prediction information. Currently unused
-            for regression, but kept for interface consistency. Defaults to False.
+            for extended regression, but kept for interface consistency. Defaults to False.
 
         Returns
         -------

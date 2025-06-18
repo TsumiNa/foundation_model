@@ -90,26 +90,28 @@ class ClassificationTaskConfig(BaseTaskConfig):
 
 
 @dataclass
-class RegressionBlock:
-    dims: List[int] = field(default_factory=lambda: [256, 128, 64])  # positional argument
-    num_classes: int = field(default=2, kw_only=True)  # positional argument
-    norm: bool = True  # New positional argument with default
-    residual: bool = False  # New positional argument with default
-
-
-@dataclass
 class ExtendRegressionTaskConfig(BaseTaskConfig):
     """
-    Configuration for extended regression tasks that handle both x and t inputs.
+    Configuration for extended regression tasks that handle variable-length sequences.
 
-    This configuration supports regression tasks with temporal or scalar dependencies,
-    allowing different encoding methods for the t (temporal/scalar) input.
+    This configuration supports tasks like DOS prediction, temperature-dependent properties,
+    time series analysis, etc., where each sample has a sequence of (t, target) pairs.
+
+    Attributes:
+        x_dim: List of layer dimensions for f_x and g_x networks
+        t_dim: List of layer dimensions for f_t and g_t networks
+        interaction_dim: Dimension for interaction term between g_x and g_t
+        t_encoding_method: Method for encoding t-parameters ("fourier" or "fc")
+        t_column: Column name in attributes DataFrame containing t-parameter sequences
+        norm: Whether to use normalization in LinearBlocks
+        residual: Whether to use residual connections in LinearBlocks
     """
 
     x_dim: List[int] = field(default_factory=lambda: [256, 128, 64])
     t_dim: List[int] = field(default_factory=lambda: [256, 128, 64])
     interaction_dim: int = 32
-    t_encoding_method: Literal["fourier", "fc"] = "fourier"  # Encoding method for t input
+    t_encoding_method: Literal["fourier", "fc"] = "fourier"  # Encoding method for t-parameters
+    t_column: str = ""  # Column name containing t-parameter sequences (e.g., energy, temperature, time)
     type: TaskType = TaskType.ExtendRegression
-    norm: bool = True  # New positional argument with default
-    residual: bool = False  # New positional argument with default
+    norm: bool = True
+    residual: bool = False
