@@ -12,13 +12,12 @@ Task heads for the FlexibleMultiTaskModel.
 # For example:
 from .base import BaseTaskHead
 from .classification import ClassificationHead
+from .extend_regression import ExtendRegressionHead
 from .regression import RegressionHead
-from .sequence import SequenceBaseHead, create_sequence_head  # and specific sequence head types if needed
 
 __all__ = [
     "BaseTaskHead",
     "ClassificationHead",
     "RegressionHead",
-    "SequenceBaseHead",
-    "create_sequence_head",
+    "ExtendRegressionHead",
 ]

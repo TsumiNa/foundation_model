@@ -36,8 +36,8 @@ from .components.foundation_encoder import FoundationEncoder, MultiModalFoundati
 from .components.self_supervised import SelfSupervisedModule
 from .task_head.base import SequenceBaseHead
 from .task_head.classification import ClassificationHead
+from .task_head.extend_regression import ExtendRegressionHead
 from .task_head.regression import RegressionHead
-from .task_head.sequence import create_sequence_head
 
 
 class FlexibleMultiTaskModel(L.LightningModule):
@@ -316,11 +316,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
             elif config_item.type == TaskType.CLASSIFICATION:
                 assert isinstance(config_item, ClassificationTaskConfig)
                 task_heads_dict[config_item.name] = ClassificationHead(config=config_item)
-            elif config_item.type == TaskType.SEQUENCE:
+            elif config_item.type == TaskType.ExtendRegression:
                 assert isinstance(config_item, ExtendRegressionTaskConfig)
-                task_heads_dict[config_item.name] = create_sequence_head(
-                    d_in=self.deposit_dim, name=config_item.name, config=config_item
-                )
+                task_heads_dict[config_item.name] = ExtendRegressionHead(config=config_item)
         return task_heads_dict
 
     def _init_task_heads(self):

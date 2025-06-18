@@ -90,21 +90,26 @@ class ClassificationTaskConfig(BaseTaskConfig):
 
 
 @dataclass
-class ExtendRegressionTaskConfig(RegressionTaskConfig):
+class RegressionBlock:
+    dims: List[int] = field(default_factory=lambda: [256, 128, 64])  # positional argument
+    num_classes: int = field(default=2, kw_only=True)  # positional argument
+    norm: bool = True  # New positional argument with default
+    residual: bool = False  # New positional argument with default
+
+
+@dataclass
+class ExtendRegressionTaskConfig(BaseTaskConfig):
     """
-    ExtendRegressionTaskConfig is a subclass of RegressionTaskConfig.
+    Configuration for extended regression tasks that handle both x and t inputs.
 
-    This class is intended to extend or customize the configuration for regression tasks.
-    Currently, it does not add any new attributes or methods, but serves as a placeholder
-    for future extensions or overrides specific to regression task configurations.
-
-    Inheritance:
-        RegressionTaskConfig: The base configuration class for regression tasks.
-
-    Usage:
-        Use ExtendRegressionTaskConfig when you need to create a specialized configuration
-        for regression tasks that may require additional parameters or custom behavior
-        in the future.
+    This configuration supports regression tasks with temporal or scalar dependencies,
+    allowing different encoding methods for the t (temporal/scalar) input.
     """
 
-    pass
+    x_dim: List[int] = field(default_factory=lambda: [256, 128, 64])
+    t_dim: List[int] = field(default_factory=lambda: [256, 128, 64])
+    interaction_dim: int = 32
+    t_encoding_method: Literal["fourier", "fc"] = "fourier"  # Encoding method for t input
+    type: TaskType = TaskType.ExtendRegression
+    norm: bool = True  # New positional argument with default
+    residual: bool = False  # New positional argument with default

@@ -1,21 +1,22 @@
 # Copyright 2025 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-import math
-from typing import Tuple
+"""
+Extended regression task head for handling both x and t inputs with interaction terms.
+"""
 
-import pandas as pd
+import math
+from typing import Optional, Tuple
+
 import torch
 import torch.nn as nn
-from lightning import LightningModule
-from torch.utils.data import Dataset
+import torch.nn.functional as F
+from numpy import ndarray
 
-torch.set_float32_matmul_precision("medium")  # Recommended option
+from foundation_model.models.fc_layers import LinearBlock
+from foundation_model.models.model_config import ExtendRegressionTaskConfig
 
-
-# ==============================================================================
-# Helper modules and base class
-# ==============================================================================
+from .base import BaseTaskHead
 
 
 class FourierFeatures(nn.Module):
@@ -39,137 +40,169 @@ class FourierFeatures(nn.Module):
         return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
 
 
-class BaseModel(LightningModule):
+class ExtendRegressionHead(BaseTaskHead):
     """
-    Base model class with common training and optimization logic
+    Extended regression task head for predicting continuous values with x and t inputs.
+
+    This head handles both x (feature) and t (temporal/scalar) inputs, computing:
+    y = f_x(x) + f_t(t) + interaction(g_x(x), g_t(t))
+
+    Parameters
+    ----------
+    config : ExtendRegressionTaskConfig
+        Configuration object containing parameters like x_dim, t_dim, interaction_dim,
+        t_encoding_method, normalization, and residual connections.
     """
 
-    def __init__(self, learning_rate=1e-3):
-        super().__init__()
-        self.save_hyperparameters()
-        self.loss_fn = nn.MSELoss()
+    def __init__(self, config: ExtendRegressionTaskConfig):
+        super().__init__(config)
 
-    def training_step(self, batch, batch_idx):
-        x, t, y = batch
-        y_hat = self.forward(x, t)
-        loss = self.loss_fn(y_hat, y)
-        self.log("train/loss", loss, prog_bar=True, on_step=True, on_epoch=True)
-        return loss
+        # Calculate t_embedding_dim and t encoding configuration
+        t_embedding_dim = config.t_dim[0]
 
-    def validation_step(self, batch, batch_idx):
-        x, t, y = batch
-        y_hat = self.forward(x, t)
-        loss = self.loss_fn(y_hat, y)
-        self.log("val/loss", loss, prog_bar=True)
-
-    def test_step(self, batch, batch_idx):
-        x, t, y = batch
-        y_hat = self.forward(x, t)
-        loss = self.loss_fn(y_hat, y)
-        self.log("test/loss", loss, prog_bar=True)
-        return loss
-
-    def predict_step(self, batch, batch_idx, dataloader_idx=0):
-        x, t, y = batch
-        y_hat = self.forward(x, t)
-        # v is the ground truth y
-        return t, y, y_hat
-
-    def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
-
-
-# ==============================================================================
-# DecompositionModel
-# ==============================================================================
-
-
-class FourierDecompositionModel(BaseModel):
-    def __init__(
-        self,
-        x_dim: int,
-        hidden_dim: int,
-        interaction_dim: int,
-        t_encoding_method: str = "fourier",  # 'fourier', 'fc', or 'none'
-        fourier_mapping_size: int = 32,
-        t_embedding_dim: int = 64,
-        learning_rate: float = 1e-3,
-    ):
-        super().__init__(learning_rate)
-        self.save_hyperparameters()  # Save all hyperparameters
-
-        # --- Dynamically define t encoder and input dimension ---
-        self.t_encoder = None
-        t_input_dim = 1
-
-        if t_encoding_method == "fourier":
-            self.t_encoder = FourierFeatures(input_dim=1, mapping_size=fourier_mapping_size)
-            t_input_dim = fourier_mapping_size * 2
-            print(f"Using Fourier feature encoding for t, encoded dimension: {t_input_dim}")
-        elif t_encoding_method == "fc":
-            self.t_encoder = nn.Sequential(nn.Linear(1, t_embedding_dim), nn.ReLU())
+        if config.t_encoding_method == "fourier":
+            mapping_size = math.ceil(t_embedding_dim / 2)
+            self.t_encoder = FourierFeatures(input_dim=1, mapping_size=mapping_size)
+            t_input_dim = mapping_size * 2
+        elif config.t_encoding_method == "fc":
             t_input_dim = t_embedding_dim
-            print(f"Using learnable FC layer encoding for t, encoded dimension: {t_input_dim}")
-        elif t_encoding_method == "none":
-            print("No encoding for t, using t directly.")
+            self.t_encoder = LinearBlock(
+                [1] + config.t_dim[:-1],
+                normalization=config.norm,
+                residual=config.residual,
+                dim_output_layer=t_embedding_dim,
+            )
         else:
-            raise ValueError("t_encoding_method must be 'fourier', 'fc', or 'none'")
+            raise ValueError(f"Unknown t_encoding_method: {config.t_encoding_method}")
 
-        # --- Define the rest of the model ---
-        # f_x(X) part
-        self.f_x = nn.Sequential(nn.Linear(x_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1))
+        # Build network components using LinearBlock
+        # f_x: x -> ... -> 1 (direct effect of x)
+        self.f_x = LinearBlock(
+            config.x_dim[:-1],
+            normalization=config.norm,
+            residual=config.residual,
+            dim_output_layer=1,
+        )
 
-        # f_t and g_t parts, their input dimension is determined above
-        self.f_t = nn.Sequential(nn.Linear(t_input_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1))
-        self.g_x = nn.Sequential(nn.Linear(x_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, interaction_dim))
-        self.g_t = nn.Sequential(nn.Linear(t_input_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, interaction_dim))
+        # f_t: t_encoded -> ... -> 1 (direct effect of t)
+        self.f_t = LinearBlock(
+            [t_input_dim] + config.t_dim[1:-1],
+            normalization=config.norm,
+            residual=config.residual,
+            dim_output_layer=1,
+        )
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        # Ensure t has correct dimension
+        # g_x: x -> ... -> interaction_dim (for interaction with t)
+        self.g_x = LinearBlock(
+            config.x_dim[:-1],
+            normalization=config.norm,
+            residual=config.residual,
+            dim_output_layer=config.interaction_dim,
+        )
+
+        # g_t: t_encoded -> ... -> interaction_dim (for interaction with x)
+        self.g_t = LinearBlock(
+            [t_input_dim] + config.t_dim[1:-1],
+            normalization=config.norm,
+            residual=config.residual,
+            dim_output_layer=config.interaction_dim,
+        )
+
+    def forward(self, x: torch.Tensor, t: Optional[torch.Tensor] = None, **kwargs) -> torch.Tensor:
+        """
+        Forward pass of the extended regression head.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input feature tensor, shape (B, x_dim).
+        t : torch.Tensor, optional
+            Temporal/scalar input tensor, shape (B,) or (B, 1).
+        **kwargs : dict
+            Additional arguments (not used).
+
+        Returns
+        -------
+        torch.Tensor
+            Predicted regression values, shape (B, 1).
+        """
+        if t is None:
+            raise ValueError("t parameter is required for ExtendRegressionHead")
+
+        # Ensure t has correct dimension for encoding
         if t.dim() == 1:
             t = t.unsqueeze(1)
 
-        # --- Encode t according to the selected method ---
-        if self.t_encoder is not None:
-            t_encoded = self.t_encoder(t)
-        else:
-            t_encoded = t  # 'none' mode
+        # Encode t according to the selected method
+        t_encoded = self.t_encoder(t)
 
-        # --- Compute model output ---
-        fx_out = self.f_x(x)
-        ft_out = self.f_t(t_encoded)
-        gx_out = self.g_x(x)
-        gt_out = self.g_t(t_encoded)
+        # Compute model output components
+        fx_out = self.f_x(x)  # Direct effect of x
+        ft_out = self.f_t(t_encoded)  # Direct effect of t
+        gx_out = self.g_x(x)  # x component for interaction
+        gt_out = self.g_t(t_encoded)  # t component for interaction
 
+        # Compute interaction term
         interaction = (gx_out * gt_out).sum(dim=1, keepdim=True)
 
+        # Final output: additive decomposition
         y_hat = fx_out + ft_out + interaction
         return y_hat
 
+    def compute_loss(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute masked MSE loss for extended regression.
 
-class DOSDataset(Dataset):
-    """
-    Expand desc(DataFrame), dos_energy(Series of list), dos(Series of list) into (D_j, t^j_i, v^j_i) samples
-    """
+        Parameters
+        ----------
+        pred : torch.Tensor
+            Predicted values, shape (B, output_dim).
+        target : torch.Tensor
+            Target values, shape (B, output_dim).
+        mask : torch.Tensor, optional
+            Binary mask indicating valid targets, shape (B, output_dim).
+            If None, all targets are considered valid.
 
-    def __init__(self, desc: pd.DataFrame, dos_energy: pd.Series, dos: pd.Series):
-        super().__init__()
-        self.samples = []
-        # Iterate over all samples
-        for idx in desc.index.intersection(dos.index).intersection(dos_energy.index):
-            D_j = torch.tensor(desc.loc[idx].values, dtype=torch.float32)
-            t_list = dos_energy.loc[idx]
-            v_list = dos.loc[idx]
-            # Ensure lengths are consistent
-            if len(t_list) != len(v_list):
-                continue
-            for t_i, v_i in zip(t_list, v_list):
-                t_tensor = torch.tensor([t_i], dtype=torch.float32)  # (1,)
-                v_tensor = torch.tensor([v_i], dtype=torch.float32)  # (1,)
-                self.samples.append((D_j, t_tensor, v_tensor))
+        Returns
+        -------
+        Tuple[torch.Tensor, torch.Tensor]
+            (total_loss, per_dim_loss) where total_loss is a scalar tensor
+            and per_dim_loss contains loss per output dimension.
+        """
+        if mask is None:
+            mask = torch.ones_like(target)
 
-    def __len__(self) -> int:
-        return len(self.samples)
+        # Apply mask to both predictions and targets
+        losses = F.mse_loss(pred, target, reduction="none") * mask
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        return self.samples[idx]
+        # Compute per-dimension losses (average over batch)
+        per_dim_loss = torch.nan_to_num(losses.sum(0) / mask.sum(0), nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Compute total loss (sum over all dimensions, average over valid points)
+        total_loss = losses.sum() / mask.sum().clamp_min(1.0)
+
+        return total_loss, per_dim_loss
+
+    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, ndarray]:
+        """
+        Core prediction logic for extended regression.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Raw output from the forward pass (regression values).
+        additional : bool, optional
+            If True, return additional prediction information. Currently unused
+            for regression, but kept for interface consistency. Defaults to False.
+
+        Returns
+        -------
+        dict[str, ndarray]
+            A dictionary containing the prediction: {"value": x}.
+        """
+        return {"value": x.detach().cpu().numpy()}
