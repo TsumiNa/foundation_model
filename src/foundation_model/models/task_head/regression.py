@@ -152,4 +152,4 @@ class RegressionHead(BaseTaskHead):
         dict[str, torch.Tensor]
             A dictionary containing the prediction: {"value": x}.
         """
-        return {"value": x.cpu().numpy()}
+        return {"value": x.detach().cpu().numpy()}

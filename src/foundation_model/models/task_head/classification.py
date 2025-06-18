@@ -201,6 +201,6 @@ class ClassificationHead(BaseTaskHead):
         label = torch.argmax(proba, dim=-1)
 
         if additional:
-            return {"label": label.cpu().numpy(), "proba": proba.cpu().numpy()}
+            return {"label": label.detach().cpu().numpy(), "proba": proba.detach().cpu().numpy()}
         else:
-            return {"label": label.cpu().numpy()}
+            return {"label": label.detach().cpu().numpy()}

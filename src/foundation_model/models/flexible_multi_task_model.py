@@ -1223,9 +1223,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         tasks_to_iterate = []
         if tasks_to_predict is None:
             # Predict all tasks present in raw_preds that have a corresponding head
-            tasks_to_iterate = [
-                (name, tensor.detach()) for name, tensor in raw_preds.items() if name in self.task_heads
-            ]
+            tasks_to_iterate = [(name, tensor) for name, tensor in raw_preds.items() if name in self.task_heads]
         else:
             # Predict only specified tasks, after validation
             for task_name in tasks_to_predict:
