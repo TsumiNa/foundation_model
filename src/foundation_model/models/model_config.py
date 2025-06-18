@@ -109,7 +109,6 @@ class ExtendRegressionTaskConfig(BaseTaskConfig):
 
     x_dim: List[int] = field(default_factory=lambda: [256, 128, 64])
     t_dim: List[int] = field(default_factory=lambda: [256, 128, 64])
-    interaction_dim: int = 32
     t_encoding_method: Literal["fourier", "fc"] = "fourier"  # Encoding method for t-parameters
     t_column: str = ""  # Column name containing t-parameter sequences (e.g., energy, temperature, time)
     type: TaskType = TaskType.ExtendRegression

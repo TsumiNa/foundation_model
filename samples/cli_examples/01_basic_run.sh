@@ -13,14 +13,14 @@
 #    python samples/helper_tools/config_generator.py \
 #      --attributes_csv samples/fake_data/attributes.csv \
 #      --formula_features_csv samples/fake_data/formula_features.csv \
-#      --output_config samples/generated_configs/generated_model_config.yaml
+#      --output_config samples/configs/test_t_depends/generated_model_config.yaml
 #
 # Ensure your Python environment with necessary dependencies (PyTorch, Lightning, etc.)
 # and the foundation_model package are active.
 
 # --- Configuration ---
 # Path to the generated model configuration file
-CONFIG_FILE="samples/generated_configs/fit_config.yaml"
+CONFIG_FILE="samples/configs/test_t_depends/fit_config.yaml"
 
 # Directory to store logs for this specific run
 LOG_DIR_BASE="samples/example_logs/basic_run"
@@ -77,7 +77,7 @@ export LOG_DIR="$LOG_DIR"
 
 for stage in "${STAGES[@]}"; do
     if [ "$stage" = "fit" ]; then
-        CONFIG_FILE="samples/generated_configs/fit_config.yaml"
+        CONFIG_FILE="samples/configs/test_t_depends/fit_config.yaml"
         echo "--------------------------------------------------"
         echo "Starting training"
         echo "--------------------------------------------------"
@@ -108,7 +108,7 @@ for stage in "${STAGES[@]}"; do
     fi
 
     if [ "$stage" = "test" ]; then
-        CONFIG_FILE="samples/generated_configs/test_config.yaml"
+        CONFIG_FILE="samples/configs/test_t_depends/test_config.yaml"
         echo "--------------------------------------------------"
         echo "Starting testing"
         echo "--------------------------------------------------"
@@ -120,7 +120,7 @@ for stage in "${STAGES[@]}"; do
     fi
 
     if [ "$stage" = "predict" ]; then
-        CONFIG_FILE="samples/generated_configs/predict_config.yaml"
+        CONFIG_FILE="samples/configs/test_t_depends/predict_config.yaml"
         echo "--------------------------------------------------"
         echo "Starting prediction"
         echo "--------------------------------------------------"

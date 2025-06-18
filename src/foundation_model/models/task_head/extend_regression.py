@@ -96,13 +96,11 @@ class ExtendRegressionHead(BaseTaskHead):
         )
 
         # g_x: processes material features for interaction
-        self.g_x = LinearBlock(
-            config.x_dim[:-1] + [config.interaction_dim], normalization=config.norm, residual=config.residual
-        )
+        self.g_x = LinearBlock(config.x_dim, normalization=config.norm, residual=config.residual)
 
         # g_t: processes encoded t features for interaction
         self.g_t = LinearBlock(
-            [encoded_t_dim] + config.t_dim[1:-1] + [config.interaction_dim],
+            [encoded_t_dim] + config.t_dim[1:],
             normalization=config.norm,
             residual=config.residual,
         )
