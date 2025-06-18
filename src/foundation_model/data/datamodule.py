@@ -12,7 +12,11 @@ from loguru import logger
 from sklearn.model_selection import train_test_split  # For data splitting
 from torch.utils.data import DataLoader
 
-from foundation_model.configs.model_config import ClassificationTaskConfig, RegressionTaskConfig, SequenceTaskConfig
+from foundation_model.models.model_config import (
+    ClassificationTaskConfig,
+    ExtendRegressionTaskConfig,
+    RegressionTaskConfig,
+)
 
 from .dataset import CompoundDataset
 
@@ -21,7 +25,7 @@ class CompoundDataModule(L.LightningDataModule):
     def __init__(
         self,
         formula_desc_source: Union[pd.DataFrame, Path_fr],  # type: ignore
-        task_configs: List[Union[RegressionTaskConfig, ClassificationTaskConfig, SequenceTaskConfig]],
+        task_configs: List[Union[RegressionTaskConfig, ClassificationTaskConfig, ExtendRegressionTaskConfig]],
         attributes_source: Optional[Union[pd.DataFrame, Path_fr]] = None,  # type: ignore
         structure_desc_source: Optional[Union[pd.DataFrame, Path_fr]] = None,  # type: ignore
         with_structure: bool = False,
@@ -180,7 +184,7 @@ class CompoundDataModule(L.LightningDataModule):
             # Validate that no task requires attributes_df if it's None,
             # especially if a SEQUENCE task specifies a steps_column.
             for cfg in self.task_configs:
-                if cfg.enabled and isinstance(cfg, SequenceTaskConfig) and cfg.steps_column:
+                if cfg.enabled and isinstance(cfg, ExtendRegressionTaskConfig) and cfg.steps_column:
                     logger.error(
                         f"Task '{cfg.name}' is a SEQUENCE task that specifies a 'steps_column' ('{cfg.steps_column}'), "
                         f"but attributes_source is None. attributes_source is required to load this steps data."

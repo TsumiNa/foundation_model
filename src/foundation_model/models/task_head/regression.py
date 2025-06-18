@@ -9,9 +9,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from numpy import ndarray
 
-from foundation_model.configs.model_config import RegressionTaskConfig
 from foundation_model.models.components.lora_adapter import LoRAAdapter
 from foundation_model.models.fc_layers import LinearBlock
+from foundation_model.models.model_config import RegressionTaskConfig
 
 from .base import BaseTaskHead
 

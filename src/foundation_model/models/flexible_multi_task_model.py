@@ -24,11 +24,11 @@ import torch.optim as optim
 from loguru import logger  # Replaced logging with loguru
 from torch.optim.lr_scheduler import LRScheduler  # Changed from _LRScheduler
 
-from foundation_model.configs.model_config import (
+from foundation_model.models.model_config import (
     ClassificationTaskConfig,
+    ExtendRegressionTaskConfig,
     OptimizerConfig,
     RegressionTaskConfig,
-    SequenceTaskConfig,
     TaskType,
 )
 
@@ -132,7 +132,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
     def __init__(
         self,
         shared_block_dims: list[int],
-        task_configs: list[RegressionTaskConfig | ClassificationTaskConfig | SequenceTaskConfig],
+        task_configs: list[RegressionTaskConfig | ClassificationTaskConfig | ExtendRegressionTaskConfig],
         *,
         # Normalization/residual options
         norm_shared: bool = True,
@@ -317,7 +317,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 assert isinstance(config_item, ClassificationTaskConfig)
                 task_heads_dict[config_item.name] = ClassificationHead(config=config_item)
             elif config_item.type == TaskType.SEQUENCE:
-                assert isinstance(config_item, SequenceTaskConfig)
+                assert isinstance(config_item, ExtendRegressionTaskConfig)
                 task_heads_dict[config_item.name] = create_sequence_head(
                     d_in=self.deposit_dim, name=config_item.name, config=config_item
                 )

@@ -7,13 +7,13 @@ import pandas as pd
 import pytest
 from loguru import logger as loguru_logger  # ADDED for loguru bridge
 
-from foundation_model.configs.model_config import (
+from foundation_model.data.datamodule import CompoundDataModule
+from foundation_model.models.model_config import (
     ClassificationTaskConfig,
+    ExtendRegressionTaskConfig,
     RegressionTaskConfig,
-    SequenceTaskConfig,
     TaskType,
 )
-from foundation_model.data.datamodule import CompoundDataModule
 
 
 # --- Fixtures ---
@@ -76,7 +76,7 @@ def sample_task_configs_dm():
         RegressionTaskConfig(
             name="task1", type=TaskType.REGRESSION, data_column="task1_regression_value", dims=[None, 1]
         ),
-        SequenceTaskConfig(
+        ExtendRegressionTaskConfig(
             name="task2",
             type=TaskType.SEQUENCE,
             data_column="task2_sequence_series",
@@ -224,7 +224,7 @@ def test_datamodule_init_attributes_none_with_sequence_no_steps_ok(base_formula_
         RegressionTaskConfig(
             name="task1", type=TaskType.REGRESSION, data_column="task1_regression_value", dims=[None, 1]
         ),
-        SequenceTaskConfig(
+        ExtendRegressionTaskConfig(
             name="task2", type=TaskType.SEQUENCE, data_column="task2_sequence_series", steps_column="", seq_len=5
         ),  # steps_column is empty
         ClassificationTaskConfig(

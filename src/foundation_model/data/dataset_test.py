@@ -5,12 +5,12 @@ import pandas as pd
 import pytest
 import torch
 
-from foundation_model.configs.model_config import (
+from foundation_model.data.dataset import CompoundDataset
+from foundation_model.models.model_config import (
+    ExtendRegressionTaskConfig,
     RegressionTaskConfig,
-    SequenceTaskConfig,
     TaskType,
 )
-from foundation_model.data.dataset import CompoundDataset
 
 # --- Fixtures ---
 
@@ -63,7 +63,7 @@ def sample_task_configs():
     """Returns a list of sample TaskConfig objects."""
     return [
         RegressionTaskConfig(name="task_reg", type=TaskType.REGRESSION, data_column="task_reg_regression_value"),
-        SequenceTaskConfig(
+        ExtendRegressionTaskConfig(
             name="task_seq",
             type=TaskType.SEQUENCE,
             data_column="task_seq_sequence_series",
@@ -516,7 +516,7 @@ def test_sequence_task_no_steps_column_specified(sample_formula_desc_df, sample_
 
     task_configs_no_steps_spec = [
         RegressionTaskConfig(name="task_reg", type=TaskType.REGRESSION, data_column="task_reg_regression_value"),
-        SequenceTaskConfig(
+        ExtendRegressionTaskConfig(
             name="task_seq", type=TaskType.SEQUENCE, data_column="task_seq_sequence_series", steps_column="", seq_len=3
         ),  # steps_column is empty
     ]

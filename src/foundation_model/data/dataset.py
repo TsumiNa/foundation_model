@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import Dataset
 
 # Import SequenceTaskConfig to check its instance and access steps_column
-from ..configs.model_config import SequenceTaskConfig, TaskType
+from foundation_model.models.model_config import ExtendRegressionTaskConfig, TaskType
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +245,7 @@ class CompoundDataset(Dataset):
             )
 
             # --- Steps Data Loading (temps_dict for SEQUENCE tasks) using cfg.steps_column ---
-            if isinstance(cfg, SequenceTaskConfig):
+            if isinstance(cfg, ExtendRegressionTaskConfig):
                 steps_col_for_task = cfg.steps_column
                 expected_steps_len = self.y_dict[task_name].shape[1]  # Should match sequence length from y_dict
 

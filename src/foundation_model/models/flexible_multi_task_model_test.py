@@ -16,14 +16,14 @@ import torch
 import torch.nn as nn
 from lightning.pytorch.loggers import CSVLogger
 
-from foundation_model.configs.model_config import (
+from foundation_model.data.datamodule import CompoundDataModule
+from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
+from foundation_model.models.model_config import (
     ClassificationTaskConfig,
     OptimizerConfig,
     RegressionTaskConfig,
     TaskType,
 )
-from foundation_model.data.datamodule import CompoundDataModule
-from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
 from foundation_model.models.task_head.classification import ClassificationHead
 from foundation_model.models.task_head.regression import RegressionHead
 

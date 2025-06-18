@@ -5,12 +5,12 @@
 Foundation model implementation and related modules.
 """
 
-from foundation_model.configs.model_config import (
+from foundation_model.models.model_config import (
     BaseTaskConfig,
     ClassificationTaskConfig,
+    ExtendRegressionTaskConfig,
     OptimizerConfig,
     RegressionTaskConfig,
-    SequenceTaskConfig,
     TaskType,
 )
 
@@ -22,6 +22,6 @@ __all__ = [
     "TaskType",
     "RegressionTaskConfig",
     "ClassificationTaskConfig",
-    "SequenceTaskConfig",
+    "ExtendRegressionTaskConfig",
     "OptimizerConfig",
 ]

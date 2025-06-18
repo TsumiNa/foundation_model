@@ -89,7 +89,7 @@ class ClassificationTaskConfig(BaseTaskConfig):
 
 
 @dataclass
-class SequenceTaskConfig(BaseTaskConfig):
+class ExtendRegressionTaskConfig(BaseTaskConfig):
     """Configuration for sequence prediction tasks."""
 
     subtype: str = field(default="rnn", kw_only=True)  # positional argument

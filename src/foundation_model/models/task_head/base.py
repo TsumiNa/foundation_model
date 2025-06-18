@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 from numpy import ndarray
 
-from foundation_model.configs.model_config import BaseTaskConfig, SequenceTaskConfig
+from foundation_model.models.model_config import BaseTaskConfig, ExtendRegressionTaskConfig
 
 
 # Helper function to convert camelCase or PascalCase to snake_case
@@ -154,7 +154,9 @@ class SequenceBaseHead(BaseTaskHead, ABC):
         Configuration object for the sequence task head.
     """
 
-    def __init__(self, config: SequenceTaskConfig):  # TODO: Replace object with a more specific TaskConfig base type
+    def __init__(
+        self, config: ExtendRegressionTaskConfig
+    ):  # TODO: Replace object with a more specific TaskConfig base type
         super().__init__(config)
 
     @abstractmethod
