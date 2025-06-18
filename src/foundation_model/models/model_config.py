@@ -15,6 +15,7 @@ class TaskType(str, Enum):  # Inherit from str
 
     REGRESSION = "REGRESSION"
     CLASSIFICATION = "CLASSIFICATION"
+    ExtendRegression = "ExtendRegression"
     SEQUENCE = "SEQUENCE"
 
 
@@ -89,22 +90,21 @@ class ClassificationTaskConfig(BaseTaskConfig):
 
 
 @dataclass
-class ExtendRegressionTaskConfig(BaseTaskConfig):
-    """Configuration for sequence prediction tasks."""
+class ExtendRegressionTaskConfig(RegressionTaskConfig):
+    """
+    ExtendRegressionTaskConfig is a subclass of RegressionTaskConfig.
 
-    subtype: str = field(default="rnn", kw_only=True)  # positional argument
-    d_in: int = field(default=64, kw_only=True)  # positional argument
-    type: TaskType = TaskType.SEQUENCE  # Overrides Base.type, provides default, remains positional
+    This class is intended to extend or customize the configuration for regression tasks.
+    Currently, it does not add any new attributes or methods, but serves as a placeholder
+    for future extensions or overrides specific to regression task configurations.
 
-    # Common parameters - these become positional with defaults
-    hidden: int = 128  # Hidden dimension size
-    steps_column: str = ""  # Column name in attributes_df for sequence steps/x-axis
+    Inheritance:
+        RegressionTaskConfig: The base configuration class for regression tasks.
 
-    # RNN-specific parameters
-    cell: str = "gru"  # Cell type for RNN (gru or lstm)
+    Usage:
+        Use ExtendRegressionTaskConfig when you need to create a specialized configuration
+        for regression tasks that may require additional parameters or custom behavior
+        in the future.
+    """
 
-    # Fixed vector-specific parameters
-    seq_len: Optional[int] = None  # Sequence length for fixed vector output
-
-    # TCN-specific parameters
-    n_tcn_layers: int = 4  # Number of TCN layers
+    pass

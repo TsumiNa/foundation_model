@@ -10,17 +10,17 @@ import torch.nn as nn
 from lightning import LightningModule
 from torch.utils.data import Dataset
 
-torch.set_float32_matmul_precision("medium")  # 推荐选项
+torch.set_float32_matmul_precision("medium")  # Recommended option
 
 
 # ==============================================================================
-# 依赖的辅助模块和基类
+# Helper modules and base class
 # ==============================================================================
 
 
 class FourierFeatures(nn.Module):
     """
-    将标量t编码为傅里叶特征
+    Encode scalar t into Fourier features
     """
 
     def __init__(self, input_dim: int, mapping_size: int, scale: float = 10.0):
@@ -32,16 +32,16 @@ class FourierFeatures(nn.Module):
     def forward(self, t: torch.Tensor) -> torch.Tensor:
         if t.dim() == 1:
             t = t.unsqueeze(1)
-        # 确保 t 是 float 类型
+        # Ensure t is float type
         t = t.float()
-        # 核心操作: (batch_size, 1) @ (1, mapping_size) -> (batch_size, mapping_size)
+        # Core operation: (batch_size, 1) @ (1, mapping_size) -> (batch_size, mapping_size)
         x_proj = 2 * math.pi * t @ self.B
         return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
 
 
 class BaseModel(LightningModule):
     """
-    模型基类，包含通用的训练和优化逻辑
+    Base model class with common training and optimization logic
     """
 
     def __init__(self, learning_rate=1e-3):
@@ -72,58 +72,11 @@ class BaseModel(LightningModule):
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         x, t, y = batch
         y_hat = self.forward(x, t)
-        # v 代表真值y
+        # v is the ground truth y
         return t, y, y_hat
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
-
-
-# ==============================================================================
-# FourierMLPModel
-# ==============================================================================
-
-
-class FourierMLPModel(BaseModel):
-    def __init__(
-        self, x_dim: int, hidden_dim: int, num_layers: int, fourier_mapping_size: int, learning_rate: float = 1e-3
-    ):
-        super().__init__(learning_rate)
-        self.save_hyperparameters()  # 保存所有超参数
-
-        # 1. 创建t的傅里叶编码器
-        self.fourier_encoder = FourierFeatures(input_dim=1, mapping_size=fourier_mapping_size)
-
-        # 傅里叶特征的输出维度是 mapping_size * 2
-        fourier_output_dim = fourier_mapping_size * 2
-
-        # 2. 计算拼接后送入MLP的总维度
-        total_input_dim = x_dim + fourier_output_dim
-
-        # 3. 动态构建MLP层
-        layers = []
-        # 输入层
-        layers.append(nn.Linear(total_input_dim, hidden_dim))
-        layers.append(nn.ReLU())
-        # 隐藏层
-        for _ in range(num_layers - 1):
-            layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.ReLU())
-        # 输出层
-        layers.append(nn.Linear(hidden_dim, 1))
-
-        self.mlp = nn.Sequential(*layers)
-
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        # a. 对 t 进行编码
-        t_encoded = self.fourier_encoder(t)
-
-        # b. 拼接 X 和编码后的 t
-        combined_input = torch.cat([x, t_encoded], dim=-1)
-
-        # c. 通过 MLP 进行预测
-        y_hat = self.mlp(combined_input)
-        return y_hat
 
 
 # ==============================================================================
@@ -143,46 +96,46 @@ class FourierDecompositionModel(BaseModel):
         learning_rate: float = 1e-3,
     ):
         super().__init__(learning_rate)
-        self.save_hyperparameters()  # 保存所有超参数
+        self.save_hyperparameters()  # Save all hyperparameters
 
-        # --- 动态定义 t 的编码器和输入维度 ---
+        # --- Dynamically define t encoder and input dimension ---
         self.t_encoder = None
         t_input_dim = 1
 
         if t_encoding_method == "fourier":
             self.t_encoder = FourierFeatures(input_dim=1, mapping_size=fourier_mapping_size)
             t_input_dim = fourier_mapping_size * 2
-            print(f"使用傅里叶特征编码t，编码后维度: {t_input_dim}")
+            print(f"Using Fourier feature encoding for t, encoded dimension: {t_input_dim}")
         elif t_encoding_method == "fc":
             self.t_encoder = nn.Sequential(nn.Linear(1, t_embedding_dim), nn.ReLU())
             t_input_dim = t_embedding_dim
-            print(f"使用可学习的FC层编码t，编码后维度: {t_input_dim}")
+            print(f"Using learnable FC layer encoding for t, encoded dimension: {t_input_dim}")
         elif t_encoding_method == "none":
-            print("不使用任何编码，直接输入t。")
+            print("No encoding for t, using t directly.")
         else:
-            raise ValueError("t_encoding_method 必须是 'fourier', 'fc', 或 'none'")
+            raise ValueError("t_encoding_method must be 'fourier', 'fc', or 'none'")
 
-        # --- 定义模型的其余部分 ---
-        # f_x(X) 部分
+        # --- Define the rest of the model ---
+        # f_x(X) part
         self.f_x = nn.Sequential(nn.Linear(x_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1))
 
-        # f_t 和 g_t 部分，它们的输入维度由上面的逻辑决定
+        # f_t and g_t parts, their input dimension is determined above
         self.f_t = nn.Sequential(nn.Linear(t_input_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1))
         self.g_x = nn.Sequential(nn.Linear(x_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, interaction_dim))
         self.g_t = nn.Sequential(nn.Linear(t_input_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, interaction_dim))
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        # 确保 t 的维度正确
+        # Ensure t has correct dimension
         if t.dim() == 1:
             t = t.unsqueeze(1)
 
-        # --- 根据所选方法对 t 进行编码 ---
+        # --- Encode t according to the selected method ---
         if self.t_encoder is not None:
             t_encoded = self.t_encoder(t)
         else:
-            t_encoded = t  # 'none' 模式
+            t_encoded = t  # 'none' mode
 
-        # --- 计算模型输出 ---
+        # --- Compute model output ---
         fx_out = self.f_x(x)
         ft_out = self.f_t(t_encoded)
         gx_out = self.g_x(x)
@@ -196,18 +149,18 @@ class FourierDecompositionModel(BaseModel):
 
 class DOSDataset(Dataset):
     """
-    将 desc(DataFrame), dos_energy(Series of list), dos(Series of list) 展开为 (D_j, t^j_i, v^j_i) 样本
+    Expand desc(DataFrame), dos_energy(Series of list), dos(Series of list) into (D_j, t^j_i, v^j_i) samples
     """
 
     def __init__(self, desc: pd.DataFrame, dos_energy: pd.Series, dos: pd.Series):
         super().__init__()
         self.samples = []
-        # 遍历所有样本
+        # Iterate over all samples
         for idx in desc.index.intersection(dos.index).intersection(dos_energy.index):
             D_j = torch.tensor(desc.loc[idx].values, dtype=torch.float32)
             t_list = dos_energy.loc[idx]
             v_list = dos.loc[idx]
-            # 保证长度一致
+            # Ensure lengths are consistent
             if len(t_list) != len(v_list):
                 continue
             for t_i, v_i in zip(t_list, v_list):
