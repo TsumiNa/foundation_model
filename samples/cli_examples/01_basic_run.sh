@@ -20,7 +20,8 @@
 
 # --- Configuration ---
 # Path to the generated model configuration file
-CONFIG_FILE="samples/configs/test_t_depends/fit_config.yaml"
+# CONFIG_FILE="samples/configs/test_t_depends/fit_config.yaml"
+CONFIG_FILE="samples/configs/test_1/fit_config.yaml"
 
 # Directory to store logs for this specific run
 LOG_DIR_BASE="samples/example_logs/basic_run"
