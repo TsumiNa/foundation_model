@@ -83,7 +83,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         Widths of shared MLP layers (foundation encoder). The first element is the input dimension,
         and the last element is the latent representation dimension.
         Example: [128, 256, 512, 256] represents a 3-layer MLP with input dimension 128 and latent dimension 256.
-    task_configs : list[RegressionTaskConfig | ClassificationTaskConfig | SequenceTaskConfig]
+    task_configs : list[RegressionTaskConfig | ClassificationTaskConfig | ExtendRegressionTaskConfig]
         List of task configurations, each defining a prediction task. Each configuration must specify
         task type, name, dimensions, etc. Regression and classification task heads receive the deposit
         layer output, while sequence task heads receive both deposit layer output and sequence points.
