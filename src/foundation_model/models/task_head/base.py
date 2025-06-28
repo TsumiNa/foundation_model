@@ -7,7 +7,7 @@ Base task head interface for the FlexibleMultiTaskModel.
 
 import re  # For snake_case conversion
 from abc import ABC, abstractmethod
-from typing import Dict  # For type hinting
+from typing import Dict, Optional  # For type hinting
 
 import torch
 import torch.nn as nn
@@ -47,7 +47,7 @@ class BaseTaskHead(nn.Module, ABC):
         self.name = config.name
 
     @abstractmethod
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:  # Raw output from the network
+    def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:  # Raw output from the network
         """
         Forward pass through the task head, returning raw model outputs (e.g., logits).
 
@@ -70,30 +70,29 @@ class BaseTaskHead(nn.Module, ABC):
         self,
         pred: torch.Tensor,
         target: torch.Tensor,
-        mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """
-        Compute task-specific loss.
+        Compute loss for the task.
 
         Parameters
         ----------
         pred : torch.Tensor
-            Predicted values.
+            Predicted values from the model.
         target : torch.Tensor
-            Target values.
+            Ground truth target values.
         mask : torch.Tensor, optional
-            Binary mask for valid values.
+            Binary mask indicating valid samples. If None, all samples are considered valid.
 
         Returns
         -------
-        Tuple[torch.Tensor, torch.Tensor]
-            (total_loss, per_dim_loss) where total_loss is a scalar tensor
-            and per_dim_loss contains loss per dimension or class (unweighted).
+        torch.Tensor
+            Total loss as a scalar tensor.
         """
         pass
 
     @abstractmethod
-    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> Dict[str, ndarray]:
+    def _predict_impl(self, x: torch.Tensor) -> Dict[str, ndarray]:
         """
         Core prediction logic implemented by subclasses.
 
@@ -104,9 +103,6 @@ class BaseTaskHead(nn.Module, ABC):
         ----------
         x : torch.Tensor
             Raw output from the forward pass of this task head.
-        additional : bool, optional
-            If True, return additional prediction information (e.g., probabilities
-            for classification tasks). Defaults to False.
 
         Returns
         -------
@@ -116,7 +112,7 @@ class BaseTaskHead(nn.Module, ABC):
         """
         pass
 
-    def predict(self, x: torch.Tensor, additional: bool = False) -> Dict[str, ndarray]:
+    def predict(self, x: torch.Tensor) -> Dict[str, ndarray]:
         """
         Generates predictions with task-specific post-processing and formatted keys.
 
@@ -128,9 +124,6 @@ class BaseTaskHead(nn.Module, ABC):
         ----------
         x : torch.Tensor
             Raw output from the forward pass of this task head.
-        additional : bool, optional
-            If True, request additional prediction information from `_predict_impl`.
-            Defaults to False.
 
         Returns
         -------
@@ -138,7 +131,7 @@ class BaseTaskHead(nn.Module, ABC):
             A dictionary where keys are prefixed with the snake_case task name
             (e.g., "task_name_labels", "task_name_probabilities").
         """
-        core_results = self._predict_impl(x, additional)
+        core_results = self._predict_impl(x)
         snake_name = _to_snake_case(self.config.name)
         prefixed_results = {f"{snake_name}_{key}": value for key, value in core_results.items()}
         return prefixed_results

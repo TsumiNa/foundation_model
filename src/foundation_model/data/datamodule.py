@@ -51,14 +51,14 @@ def create_collate_fn_with_task_info(task_configs):
         Parameters
         ----------
         batch : List[Tuple]
-            List of (model_input_x, sample_y_dict, sample_task_masks_dict, sample_sequence_data_dict)
+            List of (model_input_x, sample_y_dict, sample_task_masks_dict, sample_t_sequences_dict)
 
         Returns
         -------
         Tuple
-            (batched_input, batched_y_dict, batched_mask_dict, batched_sequence_data_dict)
+            (batched_input, batched_y_dict, batched_mask_dict, batched_t_sequences_dict)
         """
-        model_inputs, y_dicts, mask_dicts, sequence_data_dicts = zip(*batch)
+        model_inputs, y_dicts, mask_dicts, t_sequences_dicts = zip(*batch)
 
         # Handle model inputs (formula/structure features)
         if isinstance(model_inputs[0], tuple):
@@ -84,11 +84,11 @@ def create_collate_fn_with_task_info(task_configs):
                 batched_mask_dict[key] = torch.stack([d[key] for d in mask_dicts])
 
         # Handle sequence data (t-parameters) - always List[Tensor] format
-        batched_sequence_data_dict = {}
-        for key in sequence_data_dicts[0].keys():
-            batched_sequence_data_dict[key] = [d[key] for d in sequence_data_dicts]
+        batched_t_sequences_dict = {}
+        for key in t_sequences_dicts[0].keys():
+            batched_t_sequences_dict[key] = [d[key] for d in t_sequences_dicts]
 
-        return batched_input, batched_y_dict, batched_mask_dict, batched_sequence_data_dict
+        return batched_input, batched_y_dict, batched_mask_dict, batched_t_sequences_dict
 
     return custom_collate_fn
 
@@ -256,16 +256,18 @@ class CompoundDataModule(L.LightningDataModule):
             # Validate that no task requires attributes_df if it's None,
             # especially if an ExtendRegression task specifies a t_column.
             for cfg in self.task_configs:
-                if cfg.enabled and isinstance(cfg, ExtendRegressionTaskConfig) and cfg.t_column:
-                    logger.error(
-                        f"Task '{cfg.name}' is an ExtendRegression task that specifies a 't_column' ('{cfg.t_column}'), "
-                        f"but attributes_source is None. attributes_source is required to load this t-parameter data."
-                    )
-                    raise ValueError(
-                        f"attributes_source cannot be None when ExtendRegression task '{cfg.name}' requires a t_column ('{cfg.t_column}')."
-                    )
-            # If we reach here, attributes_source is None, and no enabled SequenceTaskConfig requires a steps_column.
-            # Other tasks (or sequence tasks without a steps_column) will have their data_column handled by CompoundDataset
+                if cfg.enabled and cfg.type == TaskType.ExtendRegression:
+                    # Type check and cast to access ExtendRegression-specific attributes
+                    if isinstance(cfg, ExtendRegressionTaskConfig) and hasattr(cfg, "t_column") and cfg.t_column:
+                        logger.error(
+                            f"Task '{cfg.name}' is an ExtendRegression task that specifies a 't_column' ('{cfg.t_column}'), "
+                            f"but attributes_source is None. attributes_source is required to load this t-parameter data."
+                        )
+                        raise ValueError(
+                            f"attributes_source cannot be None when ExtendRegression task '{cfg.name}' requires a t_column ('{cfg.t_column}')."
+                        )
+            # If we reach here, attributes_source is None, and no enabled ExtendRegressionTaskConfig requires a t_column.
+            # Other tasks (or ExtendRegression tasks without a t_column) will have their data_column handled by CompoundDataset
             # (likely resulting in placeholders if data_column was specified).
             # self.attributes_df remains None. self.formula_df uses the original master_index.
             logger.info(f"formula_df (master) length: {len(master_index)}")
@@ -371,7 +373,7 @@ class CompoundDataModule(L.LightningDataModule):
             logger.error(f"Unexpected error loading '{name}' data from {source}: {e}", exc_info=True)
             return None
 
-    def setup(self, stage: str = None):
+    def setup(self, stage: Optional[str] = None):
         """Prepare datasets for different stages (fit, test, predict)."""
         logger.info(f"--- Setting up DataModule for stage: {stage} ---")
         if self.formula_df is None:  # attributes_df can now be None

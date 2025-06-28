@@ -14,13 +14,15 @@ Tensor shape legend (used across all docstrings):
 * **D** - latent / embedding feature dimension
 """
 
-from typing import Any, List, Optional  # Added List, Optional
+from typing import List, Optional  # Added List, Optional
 
 import lightning as L
+import numpy as np
 import pandas as pd  # Added
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from loguru import logger  # Replaced logging with loguru
 from torch.optim.lr_scheduler import LRScheduler  # Changed from _LRScheduler
 
@@ -56,7 +58,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
        Supports various types of prediction tasks:
        - Regression tasks: Predict continuous value attributes
        - Classification tasks: Predict discrete categories
-       - Sequence tasks: Predict time-series data (e.g., temperature curves)
+       - ExtendRegression tasks: Predict variable-length sequences (e.g., DOS, temperature-dependent properties)
 
     4. Structure Fusion (optional):
        When with_structure=True, can fuse information from different modalities (e.g., formula and structure).
@@ -86,7 +88,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
     task_configs : list[RegressionTaskConfig | ClassificationTaskConfig | ExtendRegressionTaskConfig]
         List of task configurations, each defining a prediction task. Each configuration must specify
         task type, name, dimensions, etc. Regression and classification task heads receive the deposit
-        layer output, while sequence task heads receive both deposit layer output and sequence points.
+        layer output, while ExtendRegression task heads receive both deposit layer output and sequence points.
     norm_shared : bool
         Whether to apply layer normalization in shared layers.
     residual_shared : bool
@@ -413,7 +415,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
     def forward(
         self,
         x: torch.Tensor | tuple[torch.Tensor, torch.Tensor | None],
-        task_sequence_data_batch: dict[str, torch.Tensor] | None = None,  # Renamed from temps_batch
+        t_sequences: dict[str, torch.Tensor] | None = None,  # Renamed from temps_batch
     ) -> dict[str, torch.Tensor]:
         """
         Forward pass through the model.
@@ -423,10 +425,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         x : torch.Tensor | tuple[torch.Tensor, torch.Tensor | None]
             Input tensor(s). If structure fusion is enabled, this should be a tuple
             of (formula_tensor, structure_tensor).
-        task_sequence_data_batch : dict[str, torch.Tensor] | None, optional
-            A dictionary where keys are sequence task names and values are the
+        t_sequences : dict[str, torch.Tensor] | None, optional
+            A dictionary where keys are ExtendRegression task names and values are the
             corresponding sequence input data (e.g., temperature points, time steps)
-            for the batch. Required if sequence tasks are present. Defaults to None.
+            for the batch. Required if ExtendRegression tasks are present. Defaults to None.
 
         Returns
         -------
@@ -450,7 +452,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         for name, head in self.task_heads.items():
             if isinstance(head, ExtendRegressionHead):
                 # Get specific sequence data for this ExtendRegression head
-                task_sequence_input = task_sequence_data_batch.get(name) if task_sequence_data_batch else None
+                task_sequence_input = t_sequences.get(name) if t_sequences else None
                 if task_sequence_input is not None:
                     # DOSDataset-style expansion: expand h_task and t for ExtendRegressionHead
                     expanded_h_task, expanded_t = self._expand_for_extend_regression(h_task, task_sequence_input)
@@ -458,7 +460,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 else:
                     # For ExtendRegressionHead, t parameter is required
                     raise ValueError(
-                        f"ExtendRegressionHead '{name}' requires t parameter but task_sequence_data_batch is missing or doesn't contain '{name}'"
+                        f"ExtendRegressionHead '{name}' requires t parameter but t_sequences is missing or doesn't contain '{name}'"
                     )
             else:
                 outputs[name] = head(h_task)
@@ -657,7 +659,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     logger.warning(f"Mask not found for task {name} in training_step. Assuming all valid.")
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
-            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
             raw_supervised_losses[name] = raw_loss_t
             train_logs[f"train_{name}_raw_loss"] = raw_loss_t.detach()
 
@@ -894,7 +896,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     logger.warning(f"Mask not found for task {name} in validation_step. Assuming all valid.")
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
-            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
             raw_val_supervised_losses[name] = raw_loss_t
             val_sum_supervised_raw_loss += raw_loss_t.detach()
             val_logs[f"val_{name}_raw_loss"] = raw_loss_t.detach()
@@ -1098,7 +1100,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     logger.warning(f"Mask not found for task {name} in test_step. Assuming all valid.")
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
-            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
             raw_test_supervised_losses[name] = raw_loss_t
             test_sum_supervised_raw_loss += raw_loss_t.detach()
             test_logs[f"test_{name}_raw_loss"] = raw_loss_t.detach()
@@ -1155,7 +1157,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         batch,
         batch_idx,
         dataloader_idx=0,
-        additional_output: bool = True,
         tasks_to_predict: Optional[List[str]] = None,
     ) -> dict[str, torch.Tensor]:
         """
@@ -1177,9 +1178,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Index of the current batch.
         dataloader_idx : int, optional
             Index of the dataloader (if multiple).
-        additional_output : bool, optional
-            If True, task heads will return additional prediction information
-            (e.g., probabilities for classification). Defaults to False.
         tasks_to_predict : list[str] | None, optional
             A list of task names to predict. If None (default), predicts all enabled tasks.
             If a task in the list is not found or not enabled, a warning is logged and it's skipped.
@@ -1205,6 +1203,22 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # Sequence input data is now a dictionary
         task_sequence_data_batch = batch[3] if len(batch) > 3 else {}  # Default to empty dict if not provided
+
+        # Store original sequence lengths for ExtendRegression tasks before forward pass
+        extend_regression_sequence_lengths = {}
+        for task_name, sequence_data in task_sequence_data_batch.items():
+            if task_name in self.task_heads and isinstance(self.task_heads[task_name], ExtendRegressionHead):
+                if isinstance(sequence_data, list):
+                    # List[Tensor] format - store length of each tensor
+                    extend_regression_sequence_lengths[task_name] = [len(seq) for seq in sequence_data]
+                elif isinstance(sequence_data, torch.Tensor):
+                    # Legacy tensor format - count non-zero elements per sample
+                    batch_size = sequence_data.shape[0]
+                    lengths = []
+                    for i in range(batch_size):
+                        valid_mask = sequence_data[i] != 0.0
+                        lengths.append(int(valid_mask.sum().item()))
+                    extend_regression_sequence_lengths[task_name] = lengths
 
         # 2. Prepare input for the raw forward pass, always treating structure as None for predict_step
         if self.with_structure:
@@ -1243,7 +1257,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
         for task_name, raw_pred_tensor in tasks_to_iterate:
             head = self.task_heads[task_name]
             # The head.predict() method now handles snake_case prefixing
-            processed_pred_dict = head.predict(raw_pred_tensor, additional=additional_output)  # type: ignore
+            processed_pred_dict = head.predict(raw_pred_tensor)  # type: ignore
+
+            # For ExtendRegression tasks, reshape flattened predictions back to List[Tensor] format
+            if isinstance(head, ExtendRegressionHead) and task_name in extend_regression_sequence_lengths:
+                sequence_lengths = extend_regression_sequence_lengths[task_name]
+                processed_pred_dict = self._reshape_extend_regression_predictions(processed_pred_dict, sequence_lengths)
+
             final_predictions.update(processed_pred_dict)
 
         return final_predictions
@@ -1310,7 +1330,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         else:
             raise ValueError(f"Unsupported scheduler type: {config.scheduler_type}")
 
-    def configure_optimizers(self) -> list[dict[str, Any] | torch.optim.Optimizer]:
+    def configure_optimizers(self) -> OptimizerLRScheduler:
         """Configure optimizers for all parameter groups."""
         optimizers_and_schedulers = []
 
@@ -1511,3 +1531,68 @@ class FlexibleMultiTaskModel(L.LightningModule):
             )
 
         return expanded_h_task, expanded_t
+
+    def _reshape_extend_regression_predictions(
+        self, processed_pred_dict: dict[str, np.ndarray], sequence_lengths: List[int]
+    ) -> dict[str, List[np.ndarray]]:
+        """
+        Reshape flattened ExtendRegression predictions back to List[numpy.ndarray] format.
+
+        This method takes the flattened predictions from an ExtendRegressionHead and
+        reshapes them back to the original List[numpy.ndarray] format that matches the input
+        structure, ensuring batch consistency with other task types and compatibility
+        with PredictionDataFrameWriter.
+
+        Parameters
+        ----------
+        processed_pred_dict : dict[str, np.ndarray]
+            Dictionary containing flattened predictions from ExtendRegressionHead.predict().
+            Keys are typically prefixed with snake_case task name (e.g., "task_name_value").
+            Values are already numpy arrays.
+        sequence_lengths : List[int]
+            List of original sequence lengths for each sample in the batch.
+            Length of this list equals the batch size.
+
+        Returns
+        -------
+        dict[str, List[np.ndarray]]
+            Dictionary with the same keys as input, but values are reshaped to List[numpy.ndarray]
+            format where each array corresponds to one sample's predictions.
+        """
+        reshaped_dict = {}
+
+        for key, flattened_value in processed_pred_dict.items():
+            # Handle both numpy arrays and potential torch tensors for backward compatibility
+            if isinstance(flattened_value, np.ndarray):
+                flattened_array = flattened_value
+            else:
+                # Fallback for torch tensors (should not happen with ExtendRegression)
+                flattened_array = flattened_value.detach().cpu().numpy()
+
+            # Split the flattened array back into individual sample predictions
+            reshaped_list = []
+            start_idx = 0
+
+            for seq_len in sequence_lengths:
+                if seq_len > 0:
+                    # Extract predictions for this sample
+                    end_idx = start_idx + seq_len
+                    sample_predictions = flattened_array[start_idx:end_idx]
+
+                    # Squeeze to remove unnecessary dimensions (e.g., (N, 1) -> (N,))
+                    # This ensures CSV output shows [1.23, 4.56] instead of [[1.23], [4.56]]
+                    if sample_predictions.ndim == 2 and sample_predictions.shape[1] == 1:
+                        sample_predictions = sample_predictions.squeeze(axis=1)
+
+                    # Keep as numpy array for compatibility with PredictionDataFrameWriter
+                    reshaped_list.append(sample_predictions)
+
+                    start_idx = end_idx
+                else:
+                    # Handle empty sequences (though this should be rare)
+                    empty_array = np.empty(0, dtype=flattened_array.dtype)
+                    reshaped_list.append(empty_array)
+
+            reshaped_dict[key] = reshaped_list
+
+        return reshaped_dict
