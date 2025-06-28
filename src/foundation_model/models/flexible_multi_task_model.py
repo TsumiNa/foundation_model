@@ -1533,7 +1533,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return expanded_h_task, expanded_t
 
     def _reshape_extend_regression_predictions(
-        self, processed_pred_dict: dict[str, torch.Tensor], sequence_lengths: List[int]
+        self, processed_pred_dict: dict[str, np.ndarray], sequence_lengths: List[int]
     ) -> dict[str, List[np.ndarray]]:
         """
         Reshape flattened ExtendRegression predictions back to List[numpy.ndarray] format.
@@ -1545,9 +1545,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         Parameters
         ----------
-        processed_pred_dict : dict[str, torch.Tensor]
+        processed_pred_dict : dict[str, np.ndarray]
             Dictionary containing flattened predictions from ExtendRegressionHead.predict().
             Keys are typically prefixed with snake_case task name (e.g., "task_name_value").
+            Values are already numpy arrays.
         sequence_lengths : List[int]
             List of original sequence lengths for each sample in the batch.
             Length of this list equals the batch size.
@@ -1560,9 +1561,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """
         reshaped_dict = {}
 
-        for key, flattened_tensor in processed_pred_dict.items():
-            # Convert tensor to numpy array for easier manipulation
-            flattened_array = flattened_tensor.detach().cpu().numpy()
+        for key, flattened_value in processed_pred_dict.items():
+            # Handle both numpy arrays and potential torch tensors for backward compatibility
+            if isinstance(flattened_value, np.ndarray):
+                flattened_array = flattened_value
+            else:
+                # Fallback for torch tensors (should not happen with ExtendRegression)
+                flattened_array = flattened_value.detach().cpu().numpy()
 
             # Split the flattened array back into individual sample predictions
             reshaped_list = []
