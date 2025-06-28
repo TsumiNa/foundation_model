@@ -222,6 +222,14 @@ class PredictionDataFrameWriter(BasePredictionWriter):
         except Exception as e:
             logger.error(f"Error saving predictions to Pickle {pickle_path}: {e}")
 
+        # Save to Parquet
+        parquet_path = self.output_path / "predictions.pd.parquet"
+        try:
+            df.to_parquet(parquet_path, index=True)
+            logger.info(f"Predictions saved to {parquet_path}")
+        except Exception as e:
+            logger.error(f"Error saving predictions to Parquet {parquet_path}: {e}")
+
     # write_on_batch_end is not needed when write_interval="epoch"
     # as Lightning accumulates predictions automatically.
     def write_on_batch_end(

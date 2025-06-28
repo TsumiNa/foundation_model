@@ -1579,6 +1579,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     end_idx = start_idx + seq_len
                     sample_predictions = flattened_array[start_idx:end_idx]
 
+                    # Squeeze to remove unnecessary dimensions (e.g., (N, 1) -> (N,))
+                    # This ensures CSV output shows [1.23, 4.56] instead of [[1.23], [4.56]]
+                    if sample_predictions.ndim == 2 and sample_predictions.shape[1] == 1:
+                        sample_predictions = sample_predictions.squeeze(axis=1)
+
                     # Keep as numpy array for compatibility with PredictionDataFrameWriter
                     reshaped_list.append(sample_predictions)
 
