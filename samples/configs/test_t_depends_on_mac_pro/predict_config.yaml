@@ -135,6 +135,7 @@ model:
         t_column: DOS energy
         x_dim: [128, 64, 32]
         t_dim: [128, 64, 32]
+        t_encoding_method: fc
         norm: true
         residual: false
         weight: 1.0
