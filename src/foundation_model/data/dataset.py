@@ -7,8 +7,7 @@ import torch
 from loguru import logger
 from torch.utils.data import Dataset
 
-# Import SequenceTaskConfig to check its instance and access steps_column
-from foundation_model.models.model_config import ExtendRegressionTaskConfig, TaskType
+from foundation_model.models.model_config import TaskType
 
 
 # Helper function to parse elements that might be scalars, lists, or string representations of lists
@@ -165,7 +164,7 @@ class CompoundDataset(Dataset):
             logger.info(f"[{self.dataset_name}] Final x_struct shape: {self.x_struct.shape}")
 
         self.y_dict: Dict[str, torch.Tensor] = {}
-        self.sequence_data_dict: Dict[str, torch.Tensor] = {}  # For t-parameter sequences of ExtendRegression tasks
+        self.t_sequences_dict: Dict[str, torch.Tensor] = {}  # For t-parameter sequences of ExtendRegression tasks
         self.task_masks_dict: Dict[str, torch.Tensor] = {}
         self.enabled_task_names: List[str] = []
 
@@ -194,12 +193,6 @@ class CompoundDataset(Dataset):
                 expected_data_dim = 1
             elif task_type == TaskType.CLASSIFICATION:  # Target is class index, so dim is 1
                 expected_data_dim = 1
-            elif task_type == TaskType.SEQUENCE:
-                # For sequence, data_column provides the sequence itself.
-                # Expected dim is sequence length.
-                expected_data_dim = getattr(cfg, "seq_len", None) or (
-                    cfg.dims[-1] if hasattr(cfg, "dims") and cfg.dims and len(cfg.dims) > 1 else 1
-                )
 
             # Strict validation for data_column
             if not data_col_for_task:  # Not specified
@@ -239,15 +232,15 @@ class CompoundDataset(Dataset):
                 self.y_dict[task_name] = torch.tensor(
                     np.nan_to_num(processed_values_np, nan=-1).astype(np.int64), dtype=torch.long
                 )
-            else:  # REGRESSION or SEQUENCE
+            else:  # REGRESSION or ExtendRegression
                 self.y_dict[task_name] = torch.tensor(np.nan_to_num(processed_values_np, nan=0.0), dtype=torch.float32)
 
             logger.debug(
                 f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
             )
 
-            # --- T-parameter Data Loading (sequence_data_dict for ExtendRegression tasks) using cfg.t_column ---
-            if isinstance(cfg, ExtendRegressionTaskConfig):
+            # --- T-parameter Data Loading (t_sequences_dict for ExtendRegression tasks) using cfg.t_column ---
+            if task_type == TaskType.ExtendRegression:
                 t_col_for_task = cfg.t_column
                 expected_t_len = self.y_dict[task_name].shape[1]  # Should match sequence length from y_dict
 
@@ -286,11 +279,11 @@ class CompoundDataset(Dataset):
                         )
 
                 # Store t-parameter data without extra dimension expansion
-                self.sequence_data_dict[task_name] = torch.tensor(
+                self.t_sequences_dict[task_name] = torch.tensor(
                     np.nan_to_num(processed_t_np, nan=0.0), dtype=torch.float32
                 )
                 logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': sequence_data_dict shape {self.sequence_data_dict[task_name].shape}"
+                    f"[{self.dataset_name}] Task '{task_name}': t_sequences_dict shape {self.t_sequences_dict[task_name].shape}"
                 )
 
             # --- Task Masking (final_mask_np) ---
@@ -347,13 +340,11 @@ class CompoundDataset(Dataset):
         sample_task_masks_dict = {
             name: self.task_masks_dict[name][idx] for name in self.enabled_task_names if name in self.task_masks_dict
         }
-        sample_sequence_data_dict = {  # T-parameter sequences for ExtendRegression tasks
-            name: self.sequence_data_dict[name][idx]
-            for name in self.enabled_task_names
-            if name in self.sequence_data_dict
+        sample_t_sequences_dict = {  # T-parameter sequences for ExtendRegression tasks
+            name: self.t_sequences_dict[name][idx] for name in self.enabled_task_names if name in self.t_sequences_dict
         }
 
-        return model_input_x, sample_y_dict, sample_task_masks_dict, sample_sequence_data_dict
+        return model_input_x, sample_y_dict, sample_task_masks_dict, sample_t_sequences_dict
 
     @property
     def attribute_names(self) -> List[str]:

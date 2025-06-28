@@ -256,14 +256,16 @@ class CompoundDataModule(L.LightningDataModule):
             # Validate that no task requires attributes_df if it's None,
             # especially if an ExtendRegression task specifies a t_column.
             for cfg in self.task_configs:
-                if cfg.enabled and isinstance(cfg, ExtendRegressionTaskConfig) and cfg.t_column:
-                    logger.error(
-                        f"Task '{cfg.name}' is an ExtendRegression task that specifies a 't_column' ('{cfg.t_column}'), "
-                        f"but attributes_source is None. attributes_source is required to load this t-parameter data."
-                    )
-                    raise ValueError(
-                        f"attributes_source cannot be None when ExtendRegression task '{cfg.name}' requires a t_column ('{cfg.t_column}')."
-                    )
+                if cfg.enabled and cfg.type == TaskType.ExtendRegression:
+                    # Type check and cast to access ExtendRegression-specific attributes
+                    if isinstance(cfg, ExtendRegressionTaskConfig) and hasattr(cfg, "t_column") and cfg.t_column:
+                        logger.error(
+                            f"Task '{cfg.name}' is an ExtendRegression task that specifies a 't_column' ('{cfg.t_column}'), "
+                            f"but attributes_source is None. attributes_source is required to load this t-parameter data."
+                        )
+                        raise ValueError(
+                            f"attributes_source cannot be None when ExtendRegression task '{cfg.name}' requires a t_column ('{cfg.t_column}')."
+                        )
             # If we reach here, attributes_source is None, and no enabled SequenceTaskConfig requires a steps_column.
             # Other tasks (or sequence tasks without a steps_column) will have their data_column handled by CompoundDataset
             # (likely resulting in placeholders if data_column was specified).
@@ -371,7 +373,7 @@ class CompoundDataModule(L.LightningDataModule):
             logger.error(f"Unexpected error loading '{name}' data from {source}: {e}", exc_info=True)
             return None
 
-    def setup(self, stage: str = None):
+    def setup(self, stage: Optional[str] = None):
         """Prepare datasets for different stages (fit, test, predict)."""
         logger.info(f"--- Setting up DataModule for stage: {stage} ---")
         if self.formula_df is None:  # attributes_df can now be None

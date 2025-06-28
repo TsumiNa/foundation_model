@@ -60,6 +60,8 @@ class ExtendRegressionHead(BaseTaskHead):
         t_embedding_dim = config.t_dim[0]
 
         # Initialize t encoder based on encoding method
+        self.t_encoder: nn.Module  # Accept both FourierFeatures and Sequential
+
         if self.t_encoding_method == "fourier":
             # Calculate t_input_dim for Fourier encoding
             # If t_embedding_dim is odd, round up to ensure sufficient features
@@ -73,7 +75,7 @@ class ExtendRegressionHead(BaseTaskHead):
 
         elif self.t_encoding_method == "fc":
             # For FC encoding, t_input_dim equals t_embedding_dim
-            self.t_encoder = nn.Sequential(nn.Linear(1, t_embedding_dim), nn.ReLU())
+            self.t_encoder = nn.Sequential(nn.Linear(1, t_embedding_dim), nn.LeakyReLU(0.1))
             encoded_t_dim = t_embedding_dim
         else:
             raise ValueError(f"Unsupported t_encoding_method: {self.t_encoding_method}. Must be 'fourier' or 'fc'.")
@@ -105,14 +107,14 @@ class ExtendRegressionHead(BaseTaskHead):
             residual=config.residual,
         )
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor, **_) -> torch.Tensor:
         """
         Forward pass of the extended regression head.
 
         Parameters
         ----------
         x : torch.Tensor
-            Material features, shape (N, x_dim[0])
+            Material features, shape (N, x_dim[å0])
         t : torch.Tensor
             Parameter values (e.g., energy, temperature), shape (N,) or (N, 1)
 

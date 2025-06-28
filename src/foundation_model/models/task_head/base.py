@@ -47,7 +47,7 @@ class BaseTaskHead(nn.Module, ABC):
         self.name = config.name
 
     @abstractmethod
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:  # Raw output from the network
+    def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:  # Raw output from the network
         """
         Forward pass through the task head, returning raw model outputs (e.g., logits).
 

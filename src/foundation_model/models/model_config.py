@@ -16,7 +16,6 @@ class TaskType(str, Enum):  # Inherit from str
     REGRESSION = "REGRESSION"
     CLASSIFICATION = "CLASSIFICATION"
     ExtendRegression = "ExtendRegression"
-    SEQUENCE = "SEQUENCE"
 
 
 @dataclass
