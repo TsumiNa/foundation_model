@@ -2,7 +2,7 @@
 Regression task head for the FlexibleMultiTaskModel.
 """
 
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -101,7 +101,7 @@ class RegressionHead(BaseTaskHead):
         pred: torch.Tensor,
         target: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """
         Compute masked MSE loss for regression.
 
@@ -117,9 +117,8 @@ class RegressionHead(BaseTaskHead):
 
         Returns
         -------
-        Tuple[torch.Tensor, torch.Tensor]
-            (total_loss, per_dim_loss) where total_loss is a scalar tensor
-            and per_dim_loss contains loss per output dimension.
+        torch.Tensor
+            Total loss as a scalar tensor.
         """
         if mask is None:
             mask = torch.ones_like(target)
@@ -127,13 +126,10 @@ class RegressionHead(BaseTaskHead):
         # Apply mask to both predictions and targets
         losses = F.mse_loss(pred, target, reduction="none") * mask
 
-        # Compute per-dimension losses (average over batch)
-        per_dim_loss = torch.nan_to_num(losses.sum(0) / mask.sum(0), nan=0.0, posinf=0.0, neginf=0.0)
-
         # Compute total loss (sum over all dimensions, average over valid points)
         total_loss = losses.sum() / mask.sum().clamp_min(1.0)
 
-        return total_loss, per_dim_loss
+        return total_loss
 
     def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, ndarray]:
         """

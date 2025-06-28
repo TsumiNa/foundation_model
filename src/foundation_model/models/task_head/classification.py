@@ -2,7 +2,7 @@
 Classification task head for the FlexibleMultiTaskModel.
 """
 
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -100,7 +100,7 @@ class ClassificationHead(BaseTaskHead):
         pred: torch.Tensor,
         target: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """
         Compute cross-entropy loss for classification.
 
@@ -116,9 +116,8 @@ class ClassificationHead(BaseTaskHead):
 
         Returns
         -------
-        Tuple[torch.Tensor, torch.Tensor]
-            (total_loss, per_class_loss) where total_loss is a scalar tensor
-            and per_class_loss contains loss per class.
+        torch.Tensor
+            Total loss as a scalar tensor.
         """
         # pred is (B, C), target is (B, 1) from dataloader, mask is (B, 1) from dataloader
 
@@ -176,7 +175,7 @@ class ClassificationHead(BaseTaskHead):
         # 5. Total loss
         total_loss = masked_losses.sum() / mask_1d.sum().clamp_min(1.0)
 
-        return total_loss, per_class_loss
+        return total_loss
 
     def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, ndarray]:
         """

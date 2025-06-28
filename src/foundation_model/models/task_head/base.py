@@ -7,7 +7,7 @@ Base task head interface for the FlexibleMultiTaskModel.
 
 import re  # For snake_case conversion
 from abc import ABC, abstractmethod
-from typing import Dict  # For type hinting
+from typing import Dict, Optional  # For type hinting
 
 import torch
 import torch.nn as nn
@@ -70,25 +70,24 @@ class BaseTaskHead(nn.Module, ABC):
         self,
         pred: torch.Tensor,
         target: torch.Tensor,
-        mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """
-        Compute task-specific loss.
+        Compute loss for the task.
 
         Parameters
         ----------
         pred : torch.Tensor
-            Predicted values.
+            Predicted values from the model.
         target : torch.Tensor
-            Target values.
+            Ground truth target values.
         mask : torch.Tensor, optional
-            Binary mask for valid values.
+            Binary mask indicating valid samples. If None, all samples are considered valid.
 
         Returns
         -------
-        Tuple[torch.Tensor, torch.Tensor]
-            (total_loss, per_dim_loss) where total_loss is a scalar tensor
-            and per_dim_loss contains loss per dimension or class (unweighted).
+        torch.Tensor
+            Total loss as a scalar tensor.
         """
         pass
 
