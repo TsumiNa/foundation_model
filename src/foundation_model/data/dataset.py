@@ -183,18 +183,6 @@ class CompoundDataset(Dataset):
 
             # --- Primary Data Loading (y_dict) using cfg.data_column ---
             data_col_for_task = cfg.data_column
-            current_task_values_list = []
-            current_task_mask_list = []
-
-            expected_data_dim = 1  # Default for scalar
-            if task_type == TaskType.REGRESSION:
-                # For regression targets, the expected dimension is typically 1 (a single scalar value).
-                # If the data_column contains multiple values (e.g., a list for multi-output regression),
-                # _parse_structured_element and np.stack should handle creating an (N, M) array.
-                # cfg.dims is for the model head architecture, not for target data shape.
-                expected_data_dim = 1
-            elif task_type == TaskType.CLASSIFICATION:  # Target is class index, so dim is 1
-                expected_data_dim = 1
 
             # Strict validation for data_column
             if not data_col_for_task:  # Not specified
@@ -208,11 +196,47 @@ class CompoundDataset(Dataset):
                 raise ValueError(
                     f"Data column '{data_col_for_task}' for task '{task_name}' not found in attributes data."
                 )
-            else:  # Column exists, load data
+
+            # Process data differently based on task type
+            logger.debug(f"[{self.dataset_name}] Task '{task_name}': Loading data from column '{data_col_for_task}'.")
+            raw_column_data = attributes[data_col_for_task]
+
+            if task_type == TaskType.ExtendRegression:
+                # For ExtendRegression, handle variable-length sequences without stacking
+                current_task_values_list = []
+                current_task_mask_list = []
+
+                for element in raw_column_data:
+                    parsed_val = _parse_structured_element(
+                        element,
+                        task_name,
+                        data_col_for_task,
+                        self.dataset_name,
+                        (1,),  # Use (1,) as default for variable-length
+                    )
+                    current_task_values_list.append(parsed_val)
+                    current_task_mask_list.append(not np.all(np.isnan(parsed_val)))
+
+                # Store as List[Tensor] to support variable-length sequences
+                self.y_dict[task_name] = [
+                    torch.tensor(np.nan_to_num(seq, nan=0.0), dtype=torch.float32) for seq in current_task_values_list
+                ]
+                base_mask_np = np.array(current_task_mask_list, dtype=bool)
                 logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': Loading data from column '{data_col_for_task}'."
+                    f"[{self.dataset_name}] Task '{task_name}': y_dict stored as List[Tensor] with {len(self.y_dict[task_name])} sequences, base_mask valid count: {np.sum(base_mask_np)}"
                 )
-                raw_column_data = attributes[data_col_for_task]
+            else:
+                # For REGRESSION and CLASSIFICATION, use traditional stacking approach
+                current_task_values_list = []
+                current_task_mask_list = []
+                expected_data_dim = 1  # Default for scalar
+
+                if task_type == TaskType.REGRESSION:
+                    # For regression targets, the expected dimension is typically 1 (a single scalar value).
+                    expected_data_dim = 1
+                elif task_type == TaskType.CLASSIFICATION:  # Target is class index, so dim is 1
+                    expected_data_dim = 1
+
                 for element in raw_column_data:
                     parsed_val = _parse_structured_element(
                         element, task_name, data_col_for_task, self.dataset_name, (expected_data_dim,)
@@ -228,28 +252,22 @@ class CompoundDataset(Dataset):
                     )
                     raise ValueError(f"Error processing data column '{data_col_for_task}' for task '{task_name}': {e}")
 
-            base_mask_np = np.array(current_task_mask_list, dtype=bool)
+                base_mask_np = np.array(current_task_mask_list, dtype=bool)
 
-            if task_type == TaskType.CLASSIFICATION:
-                self.y_dict[task_name] = torch.tensor(
-                    np.nan_to_num(processed_values_np, nan=-1).astype(np.int64), dtype=torch.long
-                )
-                logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
-                )
-            elif task_type == TaskType.ExtendRegression:
-                # For ExtendRegression, store as List[Tensor] to support variable-length sequences
-                self.y_dict[task_name] = [
-                    torch.tensor(np.nan_to_num(seq, nan=0.0), dtype=torch.float32) for seq in current_task_values_list
-                ]
-                logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': y_dict stored as List[Tensor] with {len(self.y_dict[task_name])} sequences, base_mask valid count: {np.sum(base_mask_np)}"
-                )
-            else:  # REGRESSION
-                self.y_dict[task_name] = torch.tensor(np.nan_to_num(processed_values_np, nan=0.0), dtype=torch.float32)
-                logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
-                )
+                if task_type == TaskType.CLASSIFICATION:
+                    self.y_dict[task_name] = torch.tensor(
+                        np.nan_to_num(processed_values_np, nan=-1).astype(np.int64), dtype=torch.long
+                    )
+                    logger.debug(
+                        f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
+                    )
+                else:  # REGRESSION
+                    self.y_dict[task_name] = torch.tensor(
+                        np.nan_to_num(processed_values_np, nan=0.0), dtype=torch.float32
+                    )
+                    logger.debug(
+                        f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
+                    )
 
             # --- T-parameter Data Loading (t_sequences_dict for ExtendRegression tasks) using cfg.t_column ---
             if task_type == TaskType.ExtendRegression:

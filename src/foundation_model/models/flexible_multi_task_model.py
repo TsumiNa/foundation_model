@@ -413,7 +413,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
     def forward(
         self,
         x: torch.Tensor | tuple[torch.Tensor, torch.Tensor | None],
-        task_sequence_data_batch: dict[str, torch.Tensor] | None = None,  # Renamed from temps_batch
+        t_sequences: dict[str, torch.Tensor] | None = None,  # Renamed from temps_batch
     ) -> dict[str, torch.Tensor]:
         """
         Forward pass through the model.
@@ -423,7 +423,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         x : torch.Tensor | tuple[torch.Tensor, torch.Tensor | None]
             Input tensor(s). If structure fusion is enabled, this should be a tuple
             of (formula_tensor, structure_tensor).
-        task_sequence_data_batch : dict[str, torch.Tensor] | None, optional
+        t_sequences : dict[str, torch.Tensor] | None, optional
             A dictionary where keys are ExtendRegression task names and values are the
             corresponding sequence input data (e.g., temperature points, time steps)
             for the batch. Required if ExtendRegression tasks are present. Defaults to None.
@@ -450,7 +450,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         for name, head in self.task_heads.items():
             if isinstance(head, ExtendRegressionHead):
                 # Get specific sequence data for this ExtendRegression head
-                task_sequence_input = task_sequence_data_batch.get(name) if task_sequence_data_batch else None
+                task_sequence_input = t_sequences.get(name) if t_sequences else None
                 if task_sequence_input is not None:
                     # DOSDataset-style expansion: expand h_task and t for ExtendRegressionHead
                     expanded_h_task, expanded_t = self._expand_for_extend_regression(h_task, task_sequence_input)
@@ -458,7 +458,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 else:
                     # For ExtendRegressionHead, t parameter is required
                     raise ValueError(
-                        f"ExtendRegressionHead '{name}' requires t parameter but task_sequence_data_batch is missing or doesn't contain '{name}'"
+                        f"ExtendRegressionHead '{name}' requires t parameter but t_sequences is missing or doesn't contain '{name}'"
                     )
             else:
                 outputs[name] = head(h_task)

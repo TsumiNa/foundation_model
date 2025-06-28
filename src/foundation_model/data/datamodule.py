@@ -51,14 +51,14 @@ def create_collate_fn_with_task_info(task_configs):
         Parameters
         ----------
         batch : List[Tuple]
-            List of (model_input_x, sample_y_dict, sample_task_masks_dict, sample_sequence_data_dict)
+            List of (model_input_x, sample_y_dict, sample_task_masks_dict, sample_t_sequences_dict)
 
         Returns
         -------
         Tuple
-            (batched_input, batched_y_dict, batched_mask_dict, batched_sequence_data_dict)
+            (batched_input, batched_y_dict, batched_mask_dict, batched_t_sequences_dict)
         """
-        model_inputs, y_dicts, mask_dicts, sequence_data_dicts = zip(*batch)
+        model_inputs, y_dicts, mask_dicts, t_sequences_dicts = zip(*batch)
 
         # Handle model inputs (formula/structure features)
         if isinstance(model_inputs[0], tuple):
@@ -84,11 +84,11 @@ def create_collate_fn_with_task_info(task_configs):
                 batched_mask_dict[key] = torch.stack([d[key] for d in mask_dicts])
 
         # Handle sequence data (t-parameters) - always List[Tensor] format
-        batched_sequence_data_dict = {}
-        for key in sequence_data_dicts[0].keys():
-            batched_sequence_data_dict[key] = [d[key] for d in sequence_data_dicts]
+        batched_t_sequences_dict = {}
+        for key in t_sequences_dicts[0].keys():
+            batched_t_sequences_dict[key] = [d[key] for d in t_sequences_dicts]
 
-        return batched_input, batched_y_dict, batched_mask_dict, batched_sequence_data_dict
+        return batched_input, batched_y_dict, batched_mask_dict, batched_t_sequences_dict
 
     return custom_collate_fn
 
