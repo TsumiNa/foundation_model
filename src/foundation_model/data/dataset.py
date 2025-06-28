@@ -1,16 +1,14 @@
 import ast  # For safely evaluating string representations of lists/arrays
-import logging
 from typing import Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
 import torch
+from loguru import logger
 from torch.utils.data import Dataset
 
 # Import SequenceTaskConfig to check its instance and access steps_column
 from foundation_model.models.model_config import ExtendRegressionTaskConfig, TaskType
-
-logger = logging.getLogger(__name__)
 
 
 # Helper function to parse elements that might be scalars, lists, or string representations of lists
@@ -203,7 +201,19 @@ class CompoundDataset(Dataset):
                     cfg.dims[-1] if hasattr(cfg, "dims") and cfg.dims and len(cfg.dims) > 1 else 1
                 )
 
-            if data_col_for_task and data_col_for_task in attributes.columns:
+            # Strict validation for data_column
+            if not data_col_for_task:  # Not specified
+                logger.error(f"[{self.dataset_name}] Task '{task_name}': data_column is not specified in config.")
+                raise ValueError(f"data_column for task '{task_name}' must be specified.")
+            elif data_col_for_task not in attributes.columns:  # Specified but not found
+                logger.error(
+                    f"[{self.dataset_name}] Task '{task_name}': data_column '{data_col_for_task}' "
+                    f"is specified in config but not found in attributes DataFrame."
+                )
+                raise ValueError(
+                    f"Data column '{data_col_for_task}' for task '{task_name}' not found in attributes data."
+                )
+            else:  # Column exists, load data
                 logger.debug(
                     f"[{self.dataset_name}] Task '{task_name}': Loading data from column '{data_col_for_task}'."
                 )
@@ -219,17 +229,9 @@ class CompoundDataset(Dataset):
                     processed_values_np = np.stack(current_task_values_list)
                 except ValueError as e:  # Stacking failed, likely inconsistent shapes
                     logger.error(
-                        f"[{self.dataset_name}] Task '{task_name}', column '{data_col_for_task}': Error stacking parsed data - {e}. Check data consistency. Using NaN placeholder."
+                        f"[{self.dataset_name}] Task '{task_name}', column '{data_col_for_task}': Error stacking parsed data - {e}. Check data consistency."
                     )
-                    processed_values_np = np.full((num_samples, expected_data_dim), np.nan)
-                    current_task_mask_list = [False] * num_samples  # All masked due to error
-
-            else:
-                logger.warning(
-                    f"[{self.dataset_name}] Task '{task_name}': data_column '{data_col_for_task}' not specified or not found in attributes. Using placeholder."
-                )
-                processed_values_np = np.full((num_samples, expected_data_dim), np.nan)
-                current_task_mask_list = [False] * num_samples
+                    raise ValueError(f"Error processing data column '{data_col_for_task}' for task '{task_name}': {e}")
 
             base_mask_np = np.array(current_task_mask_list, dtype=bool)
 
@@ -249,7 +251,19 @@ class CompoundDataset(Dataset):
                 t_col_for_task = cfg.t_column
                 expected_t_len = self.y_dict[task_name].shape[1]  # Should match sequence length from y_dict
 
-                if t_col_for_task and t_col_for_task in attributes.columns:
+                # Strict validation for t_column
+                if not t_col_for_task:  # Not specified
+                    logger.error(f"[{self.dataset_name}] Task '{task_name}': t_column is not specified in config.")
+                    raise ValueError(f"t_column for ExtendRegression task '{task_name}' must be specified.")
+                elif t_col_for_task not in attributes.columns:  # Specified but not found
+                    logger.error(
+                        f"[{self.dataset_name}] Task '{task_name}': t_column '{t_col_for_task}' "
+                        f"is specified in config but not found in attributes DataFrame."
+                    )
+                    raise ValueError(
+                        f"T-parameter column '{t_col_for_task}' for task '{task_name}' not found in attributes data."
+                    )
+                else:  # Column exists, load data
                     logger.debug(
                         f"[{self.dataset_name}] Task '{task_name}': Loading t-parameters from column '{t_col_for_task}'."
                     )
@@ -265,24 +279,11 @@ class CompoundDataset(Dataset):
                         processed_t_np = np.stack(current_task_t_list)
                     except ValueError as e:
                         logger.error(
-                            f"[{self.dataset_name}] Task '{task_name}', t-parameter column '{t_col_for_task}': Error stacking parsed t-parameter data - {e}. Using NaN placeholder."
+                            f"[{self.dataset_name}] Task '{task_name}', t-parameter column '{t_col_for_task}': Error stacking parsed t-parameter data - {e}."
                         )
-                        processed_t_np = np.full((num_samples, expected_t_len), np.nan)
-
-                elif t_col_for_task:  # Specified in config but not found in attributes
-                    logger.error(
-                        f"[{self.dataset_name}] Task '{task_name}': T-parameter column '{t_col_for_task}' "
-                        f"is specified in config but not found in attributes DataFrame. This is required."
-                    )
-                    raise ValueError(
-                        f"T-parameter column '{t_col_for_task}' for task '{task_name}' not found in attributes data."
-                    )
-                else:  # t_column not specified
-                    logger.info(
-                        f"[{self.dataset_name}] Task '{task_name}': No t_column specified. "
-                        f"Using zero placeholder for t-parameters (sequence_data_dict)."
-                    )
-                    processed_t_np = np.zeros((num_samples, expected_t_len))  # Default to zeros if not specified
+                        raise ValueError(
+                            f"Error processing t-parameter column '{t_col_for_task}' for task '{task_name}': {e}"
+                        )
 
                 # Store t-parameter data without extra dimension expansion
                 self.sequence_data_dict[task_name] = torch.tensor(
