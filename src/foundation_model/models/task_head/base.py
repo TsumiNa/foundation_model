@@ -112,7 +112,7 @@ class BaseTaskHead(nn.Module, ABC):
         """
         pass
 
-    def predict(self, x: torch.Tensor, additional: bool = False) -> Dict[str, ndarray]:
+    def predict(self, x: torch.Tensor) -> Dict[str, ndarray]:
         """
         Generates predictions with task-specific post-processing and formatted keys.
 
@@ -124,9 +124,6 @@ class BaseTaskHead(nn.Module, ABC):
         ----------
         x : torch.Tensor
             Raw output from the forward pass of this task head.
-        additional : bool, optional
-            If True, request additional prediction information from `_predict_impl`.
-            Defaults to False.
 
         Returns
         -------
@@ -134,7 +131,7 @@ class BaseTaskHead(nn.Module, ABC):
             A dictionary where keys are prefixed with the snake_case task name
             (e.g., "task_name_labels", "task_name_probabilities").
         """
-        core_results = self._predict_impl(x, additional)
+        core_results = self._predict_impl(x)
         snake_name = _to_snake_case(self.config.name)
         prefixed_results = {f"{snake_name}_{key}": value for key, value in core_results.items()}
         return prefixed_results
