@@ -114,7 +114,7 @@ class ExtendRegressionHead(BaseTaskHead):
         Parameters
         ----------
         x : torch.Tensor
-            Material features, shape (N, x_dim[å0])
+            Material features, shape (N, x_dim))
         t : torch.Tensor
             Parameter values (e.g., energy, temperature), shape (N,) or (N, 1)
 
@@ -186,7 +186,7 @@ class ExtendRegressionHead(BaseTaskHead):
 
         return total_loss
 
-    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, ndarray]:
+    def _predict_impl(self, x: torch.Tensor) -> dict[str, ndarray]:
         """
         Core prediction logic for extended regression.
 

@@ -156,28 +156,12 @@ class ClassificationHead(BaseTaskHead):
         losses = F.cross_entropy(pred, final_target_for_loss, reduction="none", ignore_index=-1)  # losses is (B,)
         masked_losses = losses * mask_1d  # Apply 1D mask, result is (B,)
 
-        # 4. Compute per-class losses
-        per_class_loss = torch.zeros(self.num_classes, device=pred.device)
-        valid_mask_1d = mask_1d > 0  # boolean, shape (B,)
-
-        if valid_mask_1d.any():
-            target_valid = final_target_for_loss[valid_mask_1d]  # (N_valid,)
-            masked_losses_valid = masked_losses[valid_mask_1d]  # (N_valid,)
-
-            class_loss_sum = torch.zeros(self.num_classes, device=pred.device).scatter_add_(
-                0, target_valid, masked_losses_valid
-            )
-            class_count = torch.zeros(self.num_classes, device=pred.device).scatter_add_(
-                0, target_valid, torch.ones_like(target_valid, dtype=torch.float)
-            )
-            per_class_loss = torch.nan_to_num(class_loss_sum / class_count.clamp_min(1.0))
-
-        # 5. Total loss
+        # 4. Total loss
         total_loss = masked_losses.sum() / mask_1d.sum().clamp_min(1.0)
 
         return total_loss
 
-    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, ndarray]:
+    def _predict_impl(self, x: torch.Tensor) -> dict[str, ndarray]:
         """
         Core prediction logic for classification.
 
@@ -199,7 +183,4 @@ class ClassificationHead(BaseTaskHead):
         proba = F.softmax(x, dim=-1)
         label = torch.argmax(proba, dim=-1)
 
-        if additional:
-            return {"label": label.detach().cpu().numpy(), "proba": proba.detach().cpu().numpy()}
-        else:
-            return {"label": label.detach().cpu().numpy()}
+        return {"label": label.detach().cpu().numpy(), "proba": proba.detach().cpu().numpy()}

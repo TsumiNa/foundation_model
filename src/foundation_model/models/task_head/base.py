@@ -92,7 +92,7 @@ class BaseTaskHead(nn.Module, ABC):
         pass
 
     @abstractmethod
-    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> Dict[str, ndarray]:
+    def _predict_impl(self, x: torch.Tensor) -> Dict[str, ndarray]:
         """
         Core prediction logic implemented by subclasses.
 
@@ -103,9 +103,6 @@ class BaseTaskHead(nn.Module, ABC):
         ----------
         x : torch.Tensor
             Raw output from the forward pass of this task head.
-        additional : bool, optional
-            If True, return additional prediction information (e.g., probabilities
-            for classification tasks). Defaults to False.
 
         Returns
         -------
