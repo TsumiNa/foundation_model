@@ -56,7 +56,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
        Supports various types of prediction tasks:
        - Regression tasks: Predict continuous value attributes
        - Classification tasks: Predict discrete categories
-       - Sequence tasks: Predict time-series data (e.g., temperature curves)
+       - ExtendRegression tasks: Predict variable-length sequences (e.g., DOS, temperature-dependent properties)
 
     4. Structure Fusion (optional):
        When with_structure=True, can fuse information from different modalities (e.g., formula and structure).
@@ -86,7 +86,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
     task_configs : list[RegressionTaskConfig | ClassificationTaskConfig | ExtendRegressionTaskConfig]
         List of task configurations, each defining a prediction task. Each configuration must specify
         task type, name, dimensions, etc. Regression and classification task heads receive the deposit
-        layer output, while sequence task heads receive both deposit layer output and sequence points.
+        layer output, while ExtendRegression task heads receive both deposit layer output and sequence points.
     norm_shared : bool
         Whether to apply layer normalization in shared layers.
     residual_shared : bool
@@ -424,9 +424,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Input tensor(s). If structure fusion is enabled, this should be a tuple
             of (formula_tensor, structure_tensor).
         task_sequence_data_batch : dict[str, torch.Tensor] | None, optional
-            A dictionary where keys are sequence task names and values are the
+            A dictionary where keys are ExtendRegression task names and values are the
             corresponding sequence input data (e.g., temperature points, time steps)
-            for the batch. Required if sequence tasks are present. Defaults to None.
+            for the batch. Required if ExtendRegression tasks are present. Defaults to None.
 
         Returns
         -------
@@ -657,7 +657,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     logger.warning(f"Mask not found for task {name} in training_step. Assuming all valid.")
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
-            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
             raw_supervised_losses[name] = raw_loss_t
             train_logs[f"train_{name}_raw_loss"] = raw_loss_t.detach()
 
@@ -894,7 +894,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     logger.warning(f"Mask not found for task {name} in validation_step. Assuming all valid.")
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
-            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
             raw_val_supervised_losses[name] = raw_loss_t
             val_sum_supervised_raw_loss += raw_loss_t.detach()
             val_logs[f"val_{name}_raw_loss"] = raw_loss_t.detach()
@@ -1098,7 +1098,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     logger.warning(f"Mask not found for task {name} in test_step. Assuming all valid.")
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
-            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
             raw_test_supervised_losses[name] = raw_loss_t
             test_sum_supervised_raw_loss += raw_loss_t.detach()
             test_logs[f"test_{name}_raw_loss"] = raw_loss_t.detach()

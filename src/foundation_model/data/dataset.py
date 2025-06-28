@@ -163,9 +163,11 @@ class CompoundDataset(Dataset):
         if self.x_struct is not None:
             logger.info(f"[{self.dataset_name}] Final x_struct shape: {self.x_struct.shape}")
 
-        self.y_dict: Dict[str, torch.Tensor] = {}
-        self.t_sequences_dict: Dict[str, torch.Tensor] = {}  # For t-parameter sequences of ExtendRegression tasks
-        self.task_masks_dict: Dict[str, torch.Tensor] = {}
+        self.y_dict: Dict[str, Union[torch.Tensor, List[torch.Tensor]]] = {}
+        self.t_sequences_dict: Dict[
+            str, Union[torch.Tensor, List[torch.Tensor]]
+        ] = {}  # For t-parameter sequences of ExtendRegression tasks
+        self.task_masks_dict: Dict[str, Union[torch.Tensor, List[torch.Tensor]]] = {}
         self.enabled_task_names: List[str] = []
 
         num_samples = len(self.x_formula)
@@ -232,17 +234,26 @@ class CompoundDataset(Dataset):
                 self.y_dict[task_name] = torch.tensor(
                     np.nan_to_num(processed_values_np, nan=-1).astype(np.int64), dtype=torch.long
                 )
-            else:  # REGRESSION or ExtendRegression
+                logger.debug(
+                    f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
+                )
+            elif task_type == TaskType.ExtendRegression:
+                # For ExtendRegression, store as List[Tensor] to support variable-length sequences
+                self.y_dict[task_name] = [
+                    torch.tensor(np.nan_to_num(seq, nan=0.0), dtype=torch.float32) for seq in current_task_values_list
+                ]
+                logger.debug(
+                    f"[{self.dataset_name}] Task '{task_name}': y_dict stored as List[Tensor] with {len(self.y_dict[task_name])} sequences, base_mask valid count: {np.sum(base_mask_np)}"
+                )
+            else:  # REGRESSION
                 self.y_dict[task_name] = torch.tensor(np.nan_to_num(processed_values_np, nan=0.0), dtype=torch.float32)
-
-            logger.debug(
-                f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
-            )
+                logger.debug(
+                    f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
+                )
 
             # --- T-parameter Data Loading (t_sequences_dict for ExtendRegression tasks) using cfg.t_column ---
             if task_type == TaskType.ExtendRegression:
                 t_col_for_task = cfg.t_column
-                expected_t_len = self.y_dict[task_name].shape[1]  # Should match sequence length from y_dict
 
                 # Strict validation for t_column
                 if not t_col_for_task:  # Not specified
@@ -263,27 +274,22 @@ class CompoundDataset(Dataset):
                     raw_t_data = attributes[t_col_for_task]
                     current_task_t_list = []
                     for element in raw_t_data:
+                        # For ExtendRegression, we expect variable-length sequences, so don't use expected_t_len
                         parsed_t = _parse_structured_element(
-                            element, task_name, t_col_for_task, self.dataset_name, (expected_t_len,)
+                            element,
+                            task_name,
+                            t_col_for_task,
+                            self.dataset_name,
+                            (1,),  # Use (1,) as default
                         )
                         current_task_t_list.append(parsed_t)
 
-                    try:
-                        processed_t_np = np.stack(current_task_t_list)
-                    except ValueError as e:
-                        logger.error(
-                            f"[{self.dataset_name}] Task '{task_name}', t-parameter column '{t_col_for_task}': Error stacking parsed t-parameter data - {e}."
-                        )
-                        raise ValueError(
-                            f"Error processing t-parameter column '{t_col_for_task}' for task '{task_name}': {e}"
-                        )
-
-                # Store t-parameter data without extra dimension expansion
-                self.t_sequences_dict[task_name] = torch.tensor(
-                    np.nan_to_num(processed_t_np, nan=0.0), dtype=torch.float32
-                )
+                # For ExtendRegression, store as List[Tensor] to support variable-length sequences
+                self.t_sequences_dict[task_name] = [
+                    torch.tensor(np.nan_to_num(seq, nan=0.0), dtype=torch.float32) for seq in current_task_t_list
+                ]
                 logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': t_sequences_dict shape {self.t_sequences_dict[task_name].shape}"
+                    f"[{self.dataset_name}] Task '{task_name}': t_sequences_dict stored as List[Tensor] with {len(self.t_sequences_dict[task_name])} sequences"
                 )
 
             # --- Task Masking (final_mask_np) ---
@@ -310,14 +316,28 @@ class CompoundDataset(Dataset):
                     # ... (logging for masking)
                 # ... (handle ratio_to_keep == 0.0 or >= 1.0)
 
-            if final_mask_np.ndim == 1:
-                final_mask_np = final_mask_np.reshape(-1, 1)
-            self.task_masks_dict[task_name] = torch.tensor(final_mask_np, dtype=torch.bool)
-            logger.debug(
-                f"[{self.dataset_name}] Task '{task_name}': final task_mask shape "
-                f"{self.task_masks_dict[task_name].shape}, final valid count: "
-                f"{torch.sum(self.task_masks_dict[task_name]).item()}"
-            )
+            if task_type == TaskType.ExtendRegression:
+                # For ExtendRegression, store masks as List[Tensor] to match y_dict format
+                self.task_masks_dict[task_name] = [
+                    torch.ones_like(seq, dtype=torch.bool)
+                    if final_mask_np[i]
+                    else torch.zeros_like(seq, dtype=torch.bool)
+                    for i, seq in enumerate(self.y_dict[task_name])
+                ]
+                total_valid_count = sum(mask.sum().item() for mask in self.task_masks_dict[task_name])
+                logger.debug(
+                    f"[{self.dataset_name}] Task '{task_name}': final task_mask stored as List[Tensor] with {len(self.task_masks_dict[task_name])} masks, total valid count: {total_valid_count}"
+                )
+            else:
+                # For other tasks, use normal tensor format
+                if final_mask_np.ndim == 1:
+                    final_mask_np = final_mask_np.reshape(-1, 1)
+                self.task_masks_dict[task_name] = torch.tensor(final_mask_np, dtype=torch.bool)
+                logger.debug(
+                    f"[{self.dataset_name}] Task '{task_name}': final task_mask shape "
+                    f"{self.task_masks_dict[task_name].shape}, final valid count: "
+                    f"{torch.sum(self.task_masks_dict[task_name]).item()}"
+                )
 
         logger.info(
             f"[{self.dataset_name}] CompoundDataset initialization complete. "

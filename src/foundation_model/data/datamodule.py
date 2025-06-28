@@ -266,8 +266,8 @@ class CompoundDataModule(L.LightningDataModule):
                         raise ValueError(
                             f"attributes_source cannot be None when ExtendRegression task '{cfg.name}' requires a t_column ('{cfg.t_column}')."
                         )
-            # If we reach here, attributes_source is None, and no enabled SequenceTaskConfig requires a steps_column.
-            # Other tasks (or sequence tasks without a steps_column) will have their data_column handled by CompoundDataset
+            # If we reach here, attributes_source is None, and no enabled ExtendRegressionTaskConfig requires a t_column.
+            # Other tasks (or ExtendRegression tasks without a t_column) will have their data_column handled by CompoundDataset
             # (likely resulting in placeholders if data_column was specified).
             # self.attributes_df remains None. self.formula_df uses the original master_index.
             logger.info(f"formula_df (master) length: {len(master_index)}")
