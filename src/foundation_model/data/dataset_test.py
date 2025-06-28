@@ -65,10 +65,9 @@ def sample_task_configs():
         RegressionTaskConfig(name="task_reg", type=TaskType.REGRESSION, data_column="task_reg_regression_value"),
         ExtendRegressionTaskConfig(
             name="task_seq",
-            type=TaskType.SEQUENCE,
+            type=TaskType.ExtendRegression,
             data_column="task_seq_sequence_series",
-            steps_column="task_seq_temps",
-            seq_len=3,
+            t_column="task_seq_temps",
         ),
         RegressionTaskConfig(
             name="task_another_reg", type=TaskType.REGRESSION, data_column="task_another_reg_regression_value"
@@ -98,7 +97,7 @@ def test_dataset_initialization_basic(sample_formula_desc_df, sample_attributes_
     assert dataset.x_struct is None
     assert "task_reg" in dataset.y_dict
     assert "task_seq" in dataset.y_dict
-    assert "task_seq" in dataset.temps_dict
+    assert "task_seq" in dataset.t_sequences_dict
     assert "task_another_reg" in dataset.y_dict
     assert "task_disabled" not in dataset.enabled_task_names  # Check disabled task
     assert "task_fully_missing_data_col" in dataset.y_dict  # Should have placeholder
@@ -158,50 +157,66 @@ def test_task_data_processing_regression(sample_formula_desc_df, sample_attribut
     assert torch.equal(dataset.task_masks_dict[task_name], expected_mask)
 
 
-def test_task_data_processing_sequence(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+def test_task_data_processing_sequence(sample_formula_desc_df, sample_attributes_df):
     """Verify y_dict, temps_dict, and masks for a sequence task."""
+    # Create a task config that only includes valid tasks for this test
+    valid_task_configs = [
+        RegressionTaskConfig(name="task_reg", type=TaskType.REGRESSION, data_column="task_reg_regression_value"),
+        ExtendRegressionTaskConfig(
+            name="task_seq",
+            type=TaskType.ExtendRegression,
+            data_column="task_seq_sequence_series",
+            t_column="task_seq_temps",
+        ),
+    ]
     dataset = CompoundDataset(
         formula_desc=sample_formula_desc_df,
         attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
+        task_configs=valid_task_configs,
         dataset_name="test_seq_processing",
     )
     task_name = "task_seq"
     assert task_name in dataset.y_dict
-    assert dataset.y_dict[task_name].shape == (5, 3)  # 5 samples, 3 sequence points
-    # Expected y (NaNs become 0)
-    expected_y_seq_vals = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.0, 0.0, 0.0], [0.7, 0.0, 0.9], [1.0, 1.1, 1.2]]
-    assert torch.allclose(dataset.y_dict[task_name], torch.tensor(expected_y_seq_vals, dtype=torch.float32))
+    # For ExtendRegression, y_dict stores List[Tensor]
+    assert isinstance(dataset.y_dict[task_name], list)
+    assert len(dataset.y_dict[task_name]) == 5  # 5 samples
+    # Check first sample
+    expected_y_first = torch.tensor([0.1, 0.2, 0.3], dtype=torch.float32)
+    assert torch.allclose(dataset.y_dict[task_name][0], expected_y_first)
+    # Check third sample (all NaN becomes 0)
+    expected_y_third = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
+    assert torch.allclose(dataset.y_dict[task_name][2], expected_y_third)
 
-    assert task_name in dataset.temps_dict
-    assert dataset.temps_dict[task_name].shape == (5, 3, 1)  # 5 samples, 3 seq, 1 chan
-    expected_temps = torch.tensor([[[10], [20], [30]]] * 5, dtype=torch.float32)  # Repeated for each sample
-    assert torch.allclose(dataset.temps_dict[task_name], expected_temps)
+    assert task_name in dataset.t_sequences_dict
+    # For ExtendRegression, t_sequences_dict stores List[Tensor], so check the first sample
+    assert len(dataset.t_sequences_dict[task_name]) == 5  # 5 samples
+    expected_temps = torch.tensor([10, 20, 30], dtype=torch.float32)  # Single sample
+    assert torch.allclose(dataset.t_sequences_dict[task_name][0], expected_temps)
 
     assert task_name in dataset.task_masks_dict
-    assert dataset.task_masks_dict[task_name].dtype == torch.bool
-    # Mask for sequence is True if NOT ALL points are NaN
-    expected_mask_seq = torch.tensor([[True], [True], [False], [True], [True]], dtype=torch.bool)
-    assert torch.equal(dataset.task_masks_dict[task_name], expected_mask_seq)
+    # For ExtendRegression, task_masks_dict also stores List[Tensor]
+    assert isinstance(dataset.task_masks_dict[task_name], list)
+    assert len(dataset.task_masks_dict[task_name]) == 5
+    # Check that first sample mask is all True (valid data)
+    assert torch.all(dataset.task_masks_dict[task_name][0])
+    # Check that third sample mask is all False (all NaN data)
+    assert torch.all(~dataset.task_masks_dict[task_name][2])
 
 
 def test_task_data_processing_missing_columns(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
     """Test behavior when expected attribute columns for a task are missing."""
-    dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        # sample_task_configs includes 'task_fully_missing_data_col'
-        task_configs=sample_task_configs,
-        dataset_name="test_missing_cols",
-    )
-    task_name = "task_fully_missing_data_col"
-    assert task_name in dataset.y_dict
-    assert dataset.y_dict[task_name].shape == (5, 1)  # Placeholder shape
-    assert torch.all(dataset.y_dict[task_name] == 0)  # Placeholder is zeros
-
-    assert task_name in dataset.task_masks_dict
-    assert dataset.task_masks_dict[task_name].shape == (5, 1)
-    assert torch.all(~dataset.task_masks_dict[task_name])  # All False mask
+    # This test should actually raise an error since we now require data_column to exist
+    with pytest.raises(
+        ValueError,
+        match="Data column 'non_existent_column' for task 'task_fully_missing_data_col' not found in attributes data.",
+    ):
+        CompoundDataset(
+            formula_desc=sample_formula_desc_df,
+            attributes=sample_attributes_df,
+            # sample_task_configs includes 'task_fully_missing_data_col'
+            task_configs=sample_task_configs,
+            dataset_name="test_missing_cols",
+        )
 
 
 def test_nan_masking(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
@@ -388,14 +403,16 @@ def test_input_dtypes_conversion(sample_attributes_df, sample_task_configs):
     # Check y_dict dtypes (regression and sequence should be float32)
     for task_name, y_tensor in dataset.y_dict.items():
         task_cfg = next(tc for tc in sample_task_configs if tc.name == task_name)  # type: ignore
-        if task_cfg.type == TaskType.REGRESSION or task_cfg.type == TaskType.SEQUENCE:
+        if task_cfg.type == TaskType.REGRESSION or task_cfg.type == TaskType.ExtendRegression:
             assert y_tensor.dtype == torch.float32, f"Task {task_name} y_dict dtype mismatch"
         elif task_cfg.type == TaskType.CLASSIFICATION:  # Added for completeness
             assert y_tensor.dtype == torch.long, f"Task {task_name} y_dict dtype mismatch for classification"
 
-    # Check temps_dict dtype (should be float32)
-    for task_name, temps_tensor in dataset.temps_dict.items():
-        assert temps_tensor.dtype == torch.float32, f"Task {task_name} temps_dict dtype mismatch"
+    # Check t_sequences_dict dtype (should be float32)
+    for task_name, temps_list in dataset.t_sequences_dict.items():
+        # For ExtendRegression, temps_list is List[Tensor]
+        assert isinstance(temps_list, list)
+        assert temps_list[0].dtype == torch.float32, f"Task {task_name} t_sequences_dict dtype mismatch"
 
 
 # TODO: Add more tests:
@@ -443,7 +460,7 @@ def test_empty_inputs_raise_error(sample_formula_desc_df, sample_attributes_df, 
     # if type checking is strict.
     with pytest.raises(TypeError, match="formula_desc must be pd.DataFrame or np.ndarray"):
         CompoundDataset(
-            formula_desc=None,
+            formula_desc=None,  # type: ignore
             attributes=non_empty_attributes_df,
             task_configs=non_empty_task_configs,
             dataset_name="test_none_formula",
@@ -482,9 +499,9 @@ def test_sequence_data_with_non_numeric(sample_formula_desc_df, sample_attribute
         task_configs=sample_task_configs,
         dataset_name="test_bad_temps_data",
     )
-    # Check that the problematic entry became [[10], [0], [30]]
+    # Check that the problematic entry became [10, 0, 30]
     assert torch.allclose(
-        dataset_bad_temps.temps_dict["task_seq"][0], torch.tensor([[10.0], [0.0], [30.0]], dtype=torch.float32)
+        dataset_bad_temps.t_sequences_dict["task_seq"][0], torch.tensor([10.0, 0.0, 30.0], dtype=torch.float32)
     )
     assert any(
         "Could not parse string element 'bad_temp'" in rec.message
@@ -493,49 +510,38 @@ def test_sequence_data_with_non_numeric(sample_formula_desc_df, sample_attribute
     )
 
 
-def test_missing_specified_steps_column_raises_error(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
-    """Test ValueError if a specified steps_column is missing for a sequence task."""
+def test_missing_specified_t_column_raises_error(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+    """Test ValueError if a specified t_column is missing for an ExtendRegression task."""
     attributes_no_temps = sample_attributes_df.drop(columns=["task_seq_temps"])
 
-    # sample_task_configs already has task_seq configured with steps_column="task_seq_temps"
+    # sample_task_configs already has task_seq configured with t_column="task_seq_temps"
 
     with pytest.raises(
-        ValueError, match="Steps column 'task_seq_temps' for task 'task_seq' not found in attributes data."
+        ValueError, match="T-parameter column 'task_seq_temps' for task 'task_seq' not found in attributes data."
     ):
         CompoundDataset(
             formula_desc=sample_formula_desc_df,
             attributes=attributes_no_temps,
             task_configs=sample_task_configs,
-            dataset_name="test_missing_specified_steps",
+            dataset_name="test_missing_specified_t_column",
         )
 
 
-def test_sequence_task_no_steps_column_specified(sample_formula_desc_df, sample_attributes_df, caplog):
-    """Test behavior when steps_column is not specified for a sequence task (uses placeholder)."""
+def test_extend_regression_task_no_t_column_specified(sample_formula_desc_df, sample_attributes_df, caplog):
+    """Test behavior when t_column is not specified for an ExtendRegression task (uses placeholder)."""
     caplog.set_level(logging.INFO)  # Set caplog level to INFO
 
-    task_configs_no_steps_spec = [
+    task_configs_no_t_spec = [
         RegressionTaskConfig(name="task_reg", type=TaskType.REGRESSION, data_column="task_reg_regression_value"),
         ExtendRegressionTaskConfig(
-            name="task_seq", type=TaskType.SEQUENCE, data_column="task_seq_sequence_series", steps_column="", seq_len=3
-        ),  # steps_column is empty
+            name="task_seq", type=TaskType.ExtendRegression, data_column="task_seq_sequence_series", t_column=""
+        ),  # t_column is empty
     ]
 
-    dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,  # attributes_df still has "task_seq_temps" but it won't be used
-        task_configs=task_configs_no_steps_spec,
-        dataset_name="test_no_steps_column_spec",
-    )
-
-    task_name = "task_seq"
-    assert task_name in dataset.temps_dict
-    expected_temps_shape = (len(sample_formula_desc_df), 3, 1)  # seq_len is 3
-    assert dataset.temps_dict[task_name].shape == expected_temps_shape
-    assert torch.all(dataset.temps_dict[task_name] == 0)  # Placeholder is zeros
-
-    expected_log_message = (
-        f"[{dataset.dataset_name}] Task '{task_name}': No steps_column specified. "
-        f"Using zero placeholder for steps (temps_dict)."
-    )
-    assert any(expected_log_message in record.message and record.levelname == "INFO" for record in caplog.records)
+    with pytest.raises(ValueError, match="t_column for ExtendRegression task 'task_seq' must be specified."):
+        CompoundDataset(
+            formula_desc=sample_formula_desc_df,
+            attributes=sample_attributes_df,  # attributes_df still has "task_seq_temps" but it won't be used
+            task_configs=task_configs_no_t_spec,
+            dataset_name="test_no_t_column_spec",
+        )

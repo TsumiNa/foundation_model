@@ -657,7 +657,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     logger.warning(f"Mask not found for task {name} in training_step. Assuming all valid.")
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
-            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
             raw_supervised_losses[name] = raw_loss_t
             train_logs[f"train_{name}_raw_loss"] = raw_loss_t.detach()
 
@@ -894,7 +894,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     logger.warning(f"Mask not found for task {name} in validation_step. Assuming all valid.")
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
-            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
             raw_val_supervised_losses[name] = raw_loss_t
             val_sum_supervised_raw_loss += raw_loss_t.detach()
             val_logs[f"val_{name}_raw_loss"] = raw_loss_t.detach()
@@ -1098,7 +1098,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     logger.warning(f"Mask not found for task {name} in test_step. Assuming all valid.")
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
-            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
             raw_test_supervised_losses[name] = raw_loss_t
             test_sum_supervised_raw_loss += raw_loss_t.detach()
             test_logs[f"test_{name}_raw_loss"] = raw_loss_t.detach()
