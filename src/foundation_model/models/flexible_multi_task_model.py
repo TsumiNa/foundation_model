@@ -17,6 +17,7 @@ Tensor shape legend (used across all docstrings):
 from typing import List, Optional  # Added List, Optional
 
 import lightning as L
+import numpy as np
 import pandas as pd  # Added
 import torch
 import torch.nn as nn
@@ -1533,13 +1534,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     def _reshape_extend_regression_predictions(
         self, processed_pred_dict: dict[str, torch.Tensor], sequence_lengths: List[int]
-    ) -> dict[str, List[torch.Tensor]]:
+    ) -> dict[str, List[np.ndarray]]:
         """
-        Reshape flattened ExtendRegression predictions back to List[Tensor] format.
+        Reshape flattened ExtendRegression predictions back to List[numpy.ndarray] format.
 
         This method takes the flattened predictions from an ExtendRegressionHead and
-        reshapes them back to the original List[Tensor] format that matches the input
-        structure, ensuring batch consistency with other task types.
+        reshapes them back to the original List[numpy.ndarray] format that matches the input
+        structure, ensuring batch consistency with other task types and compatibility
+        with PredictionDataFrameWriter.
 
         Parameters
         ----------
@@ -1552,9 +1554,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         Returns
         -------
-        dict[str, List[torch.Tensor]]
-            Dictionary with the same keys as input, but values are reshaped to List[Tensor]
-            format where each tensor corresponds to one sample's predictions.
+        dict[str, List[np.ndarray]]
+            Dictionary with the same keys as input, but values are reshaped to List[numpy.ndarray]
+            format where each array corresponds to one sample's predictions.
         """
         reshaped_dict = {}
 
@@ -1572,15 +1574,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     end_idx = start_idx + seq_len
                     sample_predictions = flattened_array[start_idx:end_idx]
 
-                    # Convert back to tensor and add to list
-                    sample_tensor = torch.from_numpy(sample_predictions)
-                    reshaped_list.append(sample_tensor)
+                    # Keep as numpy array for compatibility with PredictionDataFrameWriter
+                    reshaped_list.append(sample_predictions)
 
                     start_idx = end_idx
                 else:
                     # Handle empty sequences (though this should be rare)
-                    empty_tensor = torch.empty(0, dtype=flattened_tensor.dtype)
-                    reshaped_list.append(empty_tensor)
+                    empty_array = np.empty(0, dtype=flattened_array.dtype)
+                    reshaped_list.append(empty_array)
 
             reshaped_dict[key] = reshaped_list
 

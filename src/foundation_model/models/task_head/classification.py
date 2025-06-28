@@ -169,9 +169,6 @@ class ClassificationHead(BaseTaskHead):
         ----------
         x : torch.Tensor
             Raw logits from the forward pass.
-        additional : bool, optional
-            If True, return both labels and probabilities.
-            If False, return only labels. Defaults to False.
 
         Returns
         -------
