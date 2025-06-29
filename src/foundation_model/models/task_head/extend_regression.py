@@ -6,7 +6,6 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from numpy import ndarray
 
 from foundation_model.models.fc_layers import LinearBlock
@@ -52,6 +51,7 @@ class ExtendRegressionHead(BaseTaskHead):
 
     def __init__(self, config: ExtendRegressionTaskConfig):
         super().__init__(config)
+        self.loss_fn = nn.MSELoss()
 
         # Store configuration parameters
         self.t_encoding_method = config.t_encoding_method
@@ -179,7 +179,7 @@ class ExtendRegressionHead(BaseTaskHead):
             mask = mask.squeeze(1)
 
         # Apply mask to both predictions and targets
-        losses = F.mse_loss(pred, target, reduction="none") * mask
+        losses = self.loss_fn(pred, target) * mask
 
         # Compute total loss (average over all valid elements)
         total_loss = torch.nan_to_num(losses.sum() / mask.sum().clamp_min(1.0), nan=0.0, posinf=0.0, neginf=0.0)

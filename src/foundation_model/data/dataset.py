@@ -170,8 +170,6 @@ class CompoundDataset(Dataset):
         self.task_masks_dict: Dict[str, Union[torch.Tensor, List[torch.Tensor]]] = {}
         self.enabled_task_names: List[str] = []
 
-        num_samples = len(self.x_formula)
-
         for cfg in task_configs:
             if not hasattr(cfg, "enabled") or not cfg.enabled:
                 continue
