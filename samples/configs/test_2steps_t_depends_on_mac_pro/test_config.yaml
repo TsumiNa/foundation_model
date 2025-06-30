@@ -195,7 +195,7 @@ data:
     test_random_seed: 24
 
 trainer:
-  default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/test
+  default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}
   max_epochs: 100
   # devices: auto
   accelerator: auto
@@ -206,7 +206,7 @@ trainer:
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        dirpath: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit/checkpoints
+        dirpath: ${oc.env:LOG_DIR,results/logs/default_experiment}
         filename: model-{epoch:02d}-{val_final_loss:.4f}-{step}
         monitor: val_final_loss
         mode: min
@@ -220,9 +220,9 @@ trainer:
   logger:
     - class_path: lightning.pytorch.loggers.CSVLogger
       init_args:
-        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/test
+        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}
         name: csv_logs
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
       init_args:
-        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/test
+        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}
         name: tensorboard_logs

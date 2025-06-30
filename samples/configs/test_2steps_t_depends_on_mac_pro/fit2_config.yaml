@@ -140,7 +140,7 @@ model:
         norm: true
         residual: false
         weight: 1.0
-        enabled: false
+        enabled: true
         optimizer:
           optimizer_type: AdamW
           lr: 5.0e-4
@@ -159,7 +159,7 @@ model:
       weight_decay: 0.01
       eps: 1.0e-06
       betas: [0.9, 0.999]
-      freeze_parameters: false # Control encoder freezing here
+      freeze_parameters: true # Control encoder freezing here
       scheduler_type: ReduceLROnPlateau
       mode: min
       factor: 0.1
@@ -195,8 +195,8 @@ data:
     test_random_seed: 24
 
 trainer:
-  default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit
-  max_epochs: 100
+  default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}
+  max_epochs: 5
   # devices: auto
   accelerator: auto
   devices: 1
@@ -206,16 +206,16 @@ trainer:
   logger:
     - class_path: lightning.pytorch.loggers.CSVLogger
       init_args:
-        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit
+        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}
         name: csv_logs
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
       init_args:
-        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit
+        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}
         name: tensorboard_logs
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        dirpath: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit/checkpoints
+        dirpath: ${oc.env:CKPT_DIR,results/logs/default_experiment}
         filename: model-{epoch:02d}-{val_final_loss:.4f}-{step}
         monitor: val_final_loss
         mode: min
