@@ -14,7 +14,7 @@ Tensor shape legend (used across all docstrings):
 * **D** - latent / embedding feature dimension
 """
 
-from typing import List, Optional  # Added List, Optional
+from typing import List, Optional  # Added List, Optional, Any
 
 import lightning as L
 import numpy as np
@@ -26,16 +26,15 @@ from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from loguru import logger  # Replaced logging with loguru
 from torch.optim.lr_scheduler import LRScheduler  # Changed from _LRScheduler
 
-from foundation_model.models.model_config import (
+from .components.foundation_encoder import FoundationEncoder, MultiModalFoundationEncoder
+from .components.self_supervised import SelfSupervisedModule
+from .model_config import (
     ClassificationTaskConfig,
     ExtendRegressionTaskConfig,
     OptimizerConfig,
     RegressionTaskConfig,
     TaskType,
 )
-
-from .components.foundation_encoder import FoundationEncoder, MultiModalFoundationEncoder
-from .components.self_supervised import SelfSupervisedModule
 from .task_head.classification import ClassificationHead
 from .task_head.extend_regression import ExtendRegressionHead
 from .task_head.regression import RegressionHead
@@ -138,6 +137,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Normalization/residual options
         norm_shared: bool = True,
         residual_shared: bool = False,
+        # Freezing parameters
+        freeze_shared_encoder: bool = False,
+        # Whether to enable strict loading of the model state_dict
+        strict_loading: bool = True,
         # Optimization parameters
         shared_block_optimizer: OptimizerConfig | None = None,
         # Structure fusion options
@@ -156,6 +159,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # Store the new parameter
         self.enable_learnable_loss_balancer = enable_learnable_loss_balancer
+
+        # Store the strict loading parameter
+        self.strict_loading = strict_loading
 
         # Validate inputs
         if len(shared_block_dims) < 2:
@@ -179,6 +185,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Normalization/residual options
         self.norm_shared = norm_shared
         self.residual_shared = residual_shared
+
+        # Freezing parameters
+        self.freeze_shared_encoder = freeze_shared_encoder
 
         # Structure fusion parameters
         self.with_structure = with_structure
@@ -326,10 +335,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """Initialize task heads based on configurations."""
         self.task_heads = self._build_task_heads()
 
-        # Apply optimizer freeze_parameters to task heads
+        # Apply freeze_parameters to task heads
         for name, head in self.task_heads.items():
             config = self.task_configs_map[name]
-            if config.optimizer and config.optimizer.freeze_parameters:
+            if config.freeze_parameters:
                 for p in head.parameters():
                     p.requires_grad_(False)
 
@@ -361,9 +370,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.has_extend_regression = any(tc.type == TaskType.ExtendRegression for tc in self.task_configs if tc.enabled)
 
     def _init_weights(self):
-        """Initialize model weights and apply freezing based on optimizer configs."""
-        # Apply parameter freezing based on optimizer config
-        if self.shared_block_optimizer and self.shared_block_optimizer.freeze_parameters:
+        """Initialize model weights and apply freezing based on freeze_shared_encoder config."""
+        # Apply parameter freezing based on freeze_shared_encoder config
+        if self.freeze_shared_encoder:
             for p in self.shared.parameters():
                 p.requires_grad_(False)
             for p in self.deposit.parameters():
@@ -1596,3 +1605,223 @@ class FlexibleMultiTaskModel(L.LightningModule):
             reshaped_dict[key] = reshaped_list
 
         return reshaped_dict
+
+    def on_save_checkpoint(self, checkpoint):
+        """
+        Custom checkpoint saving that stores optimizer states as dict for better flexibility.
+
+        This method converts the default list-based optimizer states to a dictionary format
+        using meaningful keys (shared_encoder, task_{name}, ssl_module). This allows for
+        robust checkpoint loading even when task configurations change.
+
+        Special handling for task_log_sigmas:
+        - Records which task_log_sigmas were saved
+        - Allows for proper reconstruction during loading
+        """
+        super().on_save_checkpoint(checkpoint)
+
+        if "optimizer_states" not in checkpoint:
+            return
+
+        # Convert list format to dictionary format
+        optimizer_states_list = checkpoint["optimizer_states"]
+        lr_schedulers_list = checkpoint.get("lr_schedulers", [])
+
+        optimizer_states_dict = {}
+        lr_schedulers_dict = {}
+
+        # Record task_log_sigmas information for proper loading
+        task_log_sigmas_info = {}
+        if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas"):
+            task_log_sigmas_info = {
+                "enabled": True,
+                "task_names": list(self.task_log_sigmas.keys()),
+                "count": len(self.task_log_sigmas),
+            }
+        else:
+            task_log_sigmas_info = {"enabled": False, "task_names": [], "count": 0}
+
+        optimizer_index = 0
+
+        # 1. Main optimizer (shared_encoder + task_log_sigmas)
+        main_params = list(self.encoder.parameters())
+        if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas"):
+            main_params.extend(list(self.task_log_sigmas.parameters()))
+
+        main_params_trainable = [p for p in main_params if p.requires_grad]
+        if main_params_trainable and optimizer_index < len(optimizer_states_list):
+            optimizer_states_dict["shared_encoder"] = optimizer_states_list[optimizer_index]
+            if optimizer_index < len(lr_schedulers_list):
+                lr_schedulers_dict["shared_encoder"] = lr_schedulers_list[optimizer_index]
+            optimizer_index += 1
+
+        # 2. Task head optimizers
+        for name, head in self.task_heads.items():
+            head_params_trainable = [p for p in head.parameters() if p.requires_grad]
+            if head_params_trainable and optimizer_index < len(optimizer_states_list):
+                optimizer_states_dict[f"task_{name}"] = optimizer_states_list[optimizer_index]
+                if optimizer_index < len(lr_schedulers_list):
+                    lr_schedulers_dict[f"task_{name}"] = lr_schedulers_list[optimizer_index]
+                optimizer_index += 1
+
+        # 3. SSL module optimizer
+        if self.enable_self_supervised_training and hasattr(self, "ssl_module"):
+            ssl_params_trainable = [p for p in self.ssl_module.parameters() if p.requires_grad]
+            if ssl_params_trainable and optimizer_index < len(optimizer_states_list):
+                optimizer_states_dict["ssl_module"] = optimizer_states_list[optimizer_index]
+                if optimizer_index < len(lr_schedulers_list):
+                    lr_schedulers_dict["ssl_module"] = lr_schedulers_list[optimizer_index]
+
+        # Store both formats for compatibility
+        checkpoint["optimizer_states_dict"] = optimizer_states_dict
+        checkpoint["lr_schedulers_dict"] = lr_schedulers_dict
+        checkpoint["task_log_sigmas_info"] = task_log_sigmas_info
+
+        logger.info(f"Saved optimizer states in dict format: {list(optimizer_states_dict.keys())}")
+        logger.info(f"Saved task_log_sigmas info: {task_log_sigmas_info}")
+
+    def on_load_checkpoint(self, checkpoint):
+        """
+        Custom checkpoint loading that handles frozen parameters using dict-based optimizer states.
+
+        This method provides robust checkpoint loading by:
+        1. Using dict-based optimizer states when available (handles task changes)
+        2. Filtering out optimizer states for frozen components
+        3. Falling back to graceful loading when optimizer states don't match
+        """
+        # Priority 1: Use new dict format if available
+        if "optimizer_states_dict" in checkpoint:
+            self._load_checkpoint_from_dict(checkpoint)
+        # Priority 2: Use fallback logic for list format
+        elif "optimizer_states" in checkpoint:
+            self._load_checkpoint_with_fallback(checkpoint)
+
+        # Always call parent method to load model state
+        super().on_load_checkpoint(checkpoint)
+
+    def _load_checkpoint_from_dict(self, checkpoint):
+        """
+        Load checkpoint using dict-based optimizer states with special handling for task_log_sigmas.
+
+        This method handles the case where task_log_sigmas parameters may have changed between
+        saving and loading due to different task configurations.
+        """
+        optimizer_states_dict = checkpoint["optimizer_states_dict"]
+        lr_schedulers_dict = checkpoint.get("lr_schedulers_dict", {})
+        task_log_sigmas_info = checkpoint.get("task_log_sigmas_info", {"enabled": False, "task_names": [], "count": 0})
+
+        # Build required optimizer states list based on current configuration
+        optimizer_states_list = []
+        lr_schedulers_list = []
+
+        # 1. Main optimizer (only if not frozen)
+        if not self.freeze_shared_encoder:
+            main_params = list(self.encoder.parameters())
+
+            # Check task_log_sigmas compatibility
+            current_task_log_sigmas_names = []
+            if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas"):
+                current_task_log_sigmas_names = list(self.task_log_sigmas.keys())
+                main_params.extend(list(self.task_log_sigmas.parameters()))
+
+            saved_task_log_sigmas_names = task_log_sigmas_info.get("task_names", [])
+
+            # Check if task_log_sigmas configuration has changed
+            task_log_sigmas_changed = set(current_task_log_sigmas_names) != set(saved_task_log_sigmas_names) or len(
+                current_task_log_sigmas_names
+            ) != len(saved_task_log_sigmas_names)
+
+            main_params_trainable = [p for p in main_params if p.requires_grad]
+            if main_params_trainable and "shared_encoder" in optimizer_states_dict:
+                if task_log_sigmas_changed:
+                    logger.warning(
+                        f"task_log_sigmas configuration has changed: "
+                        f"saved={saved_task_log_sigmas_names}, current={current_task_log_sigmas_names}. "
+                        "Skipping main optimizer state loading to avoid parameter group mismatch."
+                    )
+                    # Skip loading this optimizer state due to task_log_sigmas mismatch
+                else:
+                    optimizer_states_list.append(optimizer_states_dict["shared_encoder"])
+                    if "shared_encoder" in lr_schedulers_dict:
+                        lr_schedulers_list.append(lr_schedulers_dict["shared_encoder"])
+                    logger.info("Loaded shared_encoder optimizer state from checkpoint")
+            elif main_params_trainable:
+                logger.warning("shared_encoder has trainable params but no optimizer state found in checkpoint")
+
+        # 2. Task head optimizers (only if not frozen)
+        for name, head in self.task_heads.items():
+            config = self.task_configs_map[name]
+            if not config.freeze_parameters:
+                head_params_trainable = [p for p in head.parameters() if p.requires_grad]
+                task_key = f"task_{name}"
+                if head_params_trainable and task_key in optimizer_states_dict:
+                    optimizer_states_list.append(optimizer_states_dict[task_key])
+                    if task_key in lr_schedulers_dict:
+                        lr_schedulers_list.append(lr_schedulers_dict[task_key])
+                    logger.info(f"Loaded {name} task optimizer state from checkpoint")
+                elif head_params_trainable:
+                    logger.warning(f"Task {name} has trainable params but no optimizer state found in checkpoint")
+
+        # 3. SSL module optimizer
+        if self.enable_self_supervised_training and hasattr(self, "ssl_module"):
+            ssl_params_trainable = [p for p in self.ssl_module.parameters() if p.requires_grad]
+            if ssl_params_trainable and "ssl_module" in optimizer_states_dict:
+                optimizer_states_list.append(optimizer_states_dict["ssl_module"])
+                if "ssl_module" in lr_schedulers_dict:
+                    lr_schedulers_list.append(lr_schedulers_dict["ssl_module"])
+                logger.info("Loaded ssl_module optimizer state from checkpoint")
+            elif ssl_params_trainable:
+                logger.warning("ssl_module has trainable params but no optimizer state found in checkpoint")
+
+        # Update checkpoint with filtered states
+        checkpoint["optimizer_states"] = optimizer_states_list
+        checkpoint["lr_schedulers"] = lr_schedulers_list
+
+        logger.info(f"Successfully loaded {len(optimizer_states_list)} optimizer states from dict format")
+
+    def _load_checkpoint_with_fallback(self, checkpoint):
+        """Load checkpoint with fallback logic for list-based optimizer states."""
+        try:
+            # Calculate expected number of optimizers based on current config
+            expected_optimizers = 0
+
+            # Count main optimizer
+            main_params = list(self.encoder.parameters())
+            if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas"):
+                main_params.extend(list(self.task_log_sigmas.parameters()))
+            main_params_trainable = [p for p in main_params if p.requires_grad]
+            if main_params_trainable and not self.freeze_shared_encoder:
+                expected_optimizers += 1
+
+            # Count task head optimizers
+            for name, head in self.task_heads.items():
+                config = self.task_configs_map[name]
+                head_params_trainable = [p for p in head.parameters() if p.requires_grad]
+                if head_params_trainable and not config.freeze_parameters:
+                    expected_optimizers += 1
+
+            # Count SSL optimizer
+            if self.enable_self_supervised_training and hasattr(self, "ssl_module"):
+                ssl_params_trainable = [p for p in self.ssl_module.parameters() if p.requires_grad]
+                if ssl_params_trainable:
+                    expected_optimizers += 1
+
+            actual_optimizers = len(checkpoint["optimizer_states"])
+
+            if expected_optimizers != actual_optimizers:
+                logger.warning(
+                    f"Optimizer count mismatch: expected {expected_optimizers}, "
+                    f"found {actual_optimizers} in checkpoint. "
+                    "This likely indicates frozen parameter configuration has changed. "
+                    "Removing optimizer states to avoid parameter group size mismatch."
+                )
+                # Remove optimizer states to avoid mismatch errors
+                checkpoint.pop("optimizer_states", None)
+                checkpoint.pop("lr_schedulers", None)
+            else:
+                logger.info(f"Optimizer count matches: {expected_optimizers}. Loading normally.")
+
+        except Exception as e:
+            logger.warning(f"Error during optimizer state validation: {e}. Removing optimizer states as fallback.")
+            checkpoint.pop("optimizer_states", None)
+            checkpoint.pop("lr_schedulers", None)

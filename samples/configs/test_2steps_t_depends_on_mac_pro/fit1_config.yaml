@@ -5,6 +5,7 @@ model:
   class_path: foundation_model.models.FlexibleMultiTaskModel
   init_args:
     enable_learnable_loss_balancer: true
+    strict_loading: true
     shared_block_dims: [290, 128]
     task_configs:
       - name: density
@@ -159,7 +160,6 @@ model:
       weight_decay: 0.01
       eps: 1.0e-06
       betas: [0.9, 0.999]
-      freeze_parameters: false # Control encoder freezing here
       scheduler_type: ReduceLROnPlateau
       mode: min
       factor: 0.1
@@ -167,6 +167,7 @@ model:
       min_lr: 1.0e-05
       monitor: val_final_loss
     with_structure: false
+    freeze_shared_encoder: false # Control encoder freezing here
     modality_dropout_p: 0.3
     norm_shared: true
     residual_shared: false
@@ -196,7 +197,7 @@ data:
 
 trainer:
   default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}
-  max_epochs: 5
+  max_epochs: 2
   # devices: auto
   accelerator: auto
   devices: 1
@@ -217,6 +218,7 @@ trainer:
       init_args:
         dirpath: ${oc.env:CKPT_DIR,results/logs/default_experiment}
         filename: model-{epoch:02d}-{val_final_loss:.4f}-{step}
+        save_weights_only: false
         monitor: val_final_loss
         mode: min
         save_top_k: 3

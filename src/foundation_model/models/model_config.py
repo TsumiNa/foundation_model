@@ -28,9 +28,6 @@ class OptimizerConfig:
     weight_decay: float = 1e-3  # Weight decay (L2 penalty)
     eps: float = 1e-6  # Term added to denominator for numerical stability
     betas: Tuple[float, float] = (0.9, 0.999)  # Coefficients for computing running averages of gradient
-    freeze_parameters: bool = (
-        False  # If True, parameters associated with this optimizer will be frozen (requires_grad=False)
-    )
 
     # Scheduler settings
     scheduler_type: Literal["ReduceLROnPlateau", "StepLR", "None"] = (
@@ -56,6 +53,7 @@ class BaseTaskConfig:
     # Default fields below are now keyword-only
     enabled: bool = field(default=True, kw_only=True)  # Whether the task is enabled
     weight: float = field(default=1.0, kw_only=True)  # Weight of the task in the loss function
+    freeze_parameters: bool = field(default=False, kw_only=True)  # Whether to freeze this task's parameters
 
     # LoRA configuration
     lora_enabled: bool = field(default=False, kw_only=True)  # Whether to enable LoRA adaptation
