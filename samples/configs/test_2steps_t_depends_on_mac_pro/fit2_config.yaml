@@ -140,10 +140,10 @@ model:
         norm: true
         residual: false
         weight: 1.0
-        enabled: true
+        enabled: false
         optimizer:
           optimizer_type: AdamW
-          lr: 1.0e-3
+          lr: 5.0e-4
           weight_decay: 0.01
           eps: 1.0e-06
           betas: [0.9, 0.999]
@@ -155,7 +155,7 @@ model:
 
     shared_block_optimizer:
       optimizer_type: AdamW
-      lr: 0.1
+      lr: 5.0e-4
       weight_decay: 0.01
       eps: 1.0e-06
       betas: [0.9, 0.999]
@@ -164,7 +164,7 @@ model:
       mode: min
       factor: 0.1
       patience: 50
-      min_lr: 1.0e-03
+      min_lr: 1.0e-05
       monitor: val_final_loss
     with_structure: false
     modality_dropout_p: 0.3
@@ -187,7 +187,7 @@ data:
     formula_desc_source: /Users/liuchang/projects/foundation_model/data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet
     attributes_source: /Users/liuchang/projects/foundation_model/data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet
     task_configs: ${model.init_args.task_configs}
-    batch_size: 256
+    batch_size: 64
     num_workers: 0
     val_split: 0.1
     test_split: 0.1
@@ -195,7 +195,7 @@ data:
     test_random_seed: 24
 
 trainer:
-  default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/test
+  default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit
   max_epochs: 100
   # devices: auto
   accelerator: auto
@@ -203,6 +203,15 @@ trainer:
   enable_progress_bar: true
   fast_dev_run: false
   log_every_n_steps: 50
+  logger:
+    - class_path: lightning.pytorch.loggers.CSVLogger
+      init_args:
+        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit
+        name: csv_logs
+    - class_path: lightning.pytorch.loggers.TensorBoardLogger
+      init_args:
+        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit
+        name: tensorboard_logs
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
@@ -210,19 +219,12 @@ trainer:
         filename: model-{epoch:02d}-{val_final_loss:.4f}-{step}
         monitor: val_final_loss
         mode: min
-        every_n_train_steps: 0
-        every_n_epochs: 1
-        train_time_interval: null
+        save_top_k: 3
+        save_last: true
+        verbose: true
     - class_path: lightning.pytorch.callbacks.EarlyStopping
       init_args:
         monitor: val_final_loss
+        patience: 20
         mode: min
-  logger:
-    - class_path: lightning.pytorch.loggers.CSVLogger
-      init_args:
-        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/test
-        name: csv_logs
-    - class_path: lightning.pytorch.loggers.TensorBoardLogger
-      init_args:
-        save_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/test
-        name: tensorboard_logs
+        verbose: true

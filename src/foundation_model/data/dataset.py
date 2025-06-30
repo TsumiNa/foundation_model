@@ -223,6 +223,47 @@ class CompoundDataset(Dataset):
                 logger.debug(
                     f"[{self.dataset_name}] Task '{task_name}': y_dict stored as List[Tensor] with {len(self.y_dict[task_name])} sequences, base_mask valid count: {np.sum(base_mask_np)}"
                 )
+
+                # --- T-parameter Data Loading (t_sequences_dict for ExtendRegression tasks) using cfg.t_column ---
+                t_col_for_task = cfg.t_column
+
+                # Strict validation for t_column
+                if not t_col_for_task:  # Not specified
+                    logger.error(f"[{self.dataset_name}] Task '{task_name}': t_column is not specified in config.")
+                    raise ValueError(f"t_column for ExtendRegression task '{task_name}' must be specified.")
+                elif t_col_for_task not in attributes.columns:  # Specified but not found
+                    logger.error(
+                        f"[{self.dataset_name}] Task '{task_name}': t_column '{t_col_for_task}' "
+                        f"is specified in config but not found in attributes DataFrame."
+                    )
+                    raise ValueError(
+                        f"T-parameter column '{t_col_for_task}' for task '{task_name}' not found in attributes data."
+                    )
+                else:  # Column exists, load data
+                    logger.debug(
+                        f"[{self.dataset_name}] Task '{task_name}': Loading t-parameters from column '{t_col_for_task}'."
+                    )
+                    raw_t_data = attributes[t_col_for_task]
+                    current_task_t_list = []
+                    for element in raw_t_data:
+                        # For ExtendRegression, we expect variable-length sequences, so don't use expected_t_len
+                        parsed_t = _parse_structured_element(
+                            element,
+                            task_name,
+                            t_col_for_task,
+                            self.dataset_name,
+                            (1,),  # Use (1,) as default
+                        )
+                        current_task_t_list.append(parsed_t)
+
+                # For ExtendRegression, store as List[Tensor] to support variable-length sequences
+                self.t_sequences_dict[task_name] = [
+                    torch.tensor(np.nan_to_num(seq, nan=0.0), dtype=torch.float32) for seq in current_task_t_list
+                ]
+                logger.debug(
+                    f"[{self.dataset_name}] Task '{task_name}': t_sequences_dict stored as List[Tensor] with {len(self.t_sequences_dict[task_name])} sequences"
+                )
+
             else:
                 # For REGRESSION and CLASSIFICATION, use traditional stacking approach
                 current_task_values_list = []
@@ -266,47 +307,6 @@ class CompoundDataset(Dataset):
                     logger.debug(
                         f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
                     )
-
-            # --- T-parameter Data Loading (t_sequences_dict for ExtendRegression tasks) using cfg.t_column ---
-            if task_type == TaskType.ExtendRegression:
-                t_col_for_task = cfg.t_column
-
-                # Strict validation for t_column
-                if not t_col_for_task:  # Not specified
-                    logger.error(f"[{self.dataset_name}] Task '{task_name}': t_column is not specified in config.")
-                    raise ValueError(f"t_column for ExtendRegression task '{task_name}' must be specified.")
-                elif t_col_for_task not in attributes.columns:  # Specified but not found
-                    logger.error(
-                        f"[{self.dataset_name}] Task '{task_name}': t_column '{t_col_for_task}' "
-                        f"is specified in config but not found in attributes DataFrame."
-                    )
-                    raise ValueError(
-                        f"T-parameter column '{t_col_for_task}' for task '{task_name}' not found in attributes data."
-                    )
-                else:  # Column exists, load data
-                    logger.debug(
-                        f"[{self.dataset_name}] Task '{task_name}': Loading t-parameters from column '{t_col_for_task}'."
-                    )
-                    raw_t_data = attributes[t_col_for_task]
-                    current_task_t_list = []
-                    for element in raw_t_data:
-                        # For ExtendRegression, we expect variable-length sequences, so don't use expected_t_len
-                        parsed_t = _parse_structured_element(
-                            element,
-                            task_name,
-                            t_col_for_task,
-                            self.dataset_name,
-                            (1,),  # Use (1,) as default
-                        )
-                        current_task_t_list.append(parsed_t)
-
-                # For ExtendRegression, store as List[Tensor] to support variable-length sequences
-                self.t_sequences_dict[task_name] = [
-                    torch.tensor(np.nan_to_num(seq, nan=0.0), dtype=torch.float32) for seq in current_task_t_list
-                ]
-                logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': t_sequences_dict stored as List[Tensor] with {len(self.t_sequences_dict[task_name])} sequences"
-                )
 
             # --- Task Masking (final_mask_np) ---
             final_mask_np = base_mask_np.copy()  # Start with NaN-based mask
