@@ -25,10 +25,11 @@ LOG_DIR_BASE="samples/example_logs/basic_run"
 EXPERIMENT_NAME="basic_experiment_$(date +%Y%m%d_%H%M%S)" # Unique experiment name
 LOG_DIR="${LOG_DIR_BASE}/${EXPERIMENT_NAME}"
 
-# 允许用户通过参数指定 LOG_DIR、执行阶段和配置目录
+# 允许用户通过参数指定 LOG_DIR、执行阶段、配置目录和checkpoint路径
 USER_LOG_DIR=""
 USER_STAGES="fit,test,predict"
 USER_CONFIG_DIR=""
+USER_CKPT_PATH=""
 
 while [[ $# -gt 0 ]]; do
     key="$1"
@@ -43,6 +44,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --config_dir)
             USER_CONFIG_DIR="$2"
+            shift; shift
+            ;;
+        --ckpt_path)
+            USER_CKPT_PATH="$2"
             shift; shift
             ;;
         *)
@@ -64,12 +69,60 @@ fi
 
 IFS=',' read -ra STAGES <<< "$USER_STAGES"
 
+# Save the base LOG_DIR for consistent reference throughout the script
+BASE_LOG_DIR="$LOG_DIR"
+
+# Helper function to ensure LOG_DIR is properly set
+ensure_log_dir() {
+    if [ -z "$LOG_DIR" ]; then
+        LOG_DIR="$BASE_LOG_DIR"
+        export LOG_DIR="$LOG_DIR"
+        echo "LOG_DIR was empty, restored to: $LOG_DIR"
+    fi
+}
+
+# Function to find the best checkpoint according to the specified logic
+find_best_checkpoint() {
+    local ckpt_dir="${LOG_DIR}/fit/checkpoints"
+    
+    # 1. 如果用户指定了checkpoint路径，直接使用
+    if [ -n "$USER_CKPT_PATH" ]; then
+        if [ -f "$USER_CKPT_PATH" ]; then
+            echo "$USER_CKPT_PATH"
+            return 0
+        else
+            echo "Error: User specified checkpoint not found: $USER_CKPT_PATH" >&2
+            return 1
+        fi
+    fi
+    
+    # 2. 从${LOG_DIR}/fit/checkpoints寻找最佳checkpoint
+    if [ -d "$ckpt_dir" ]; then
+        # 优先查找best checkpoint (按val_final_loss排序)
+        local best_ckpt=$(ls -t "$ckpt_dir"/model-*-val_final_loss*.ckpt 2>/dev/null | head -1)
+        if [ -n "$best_ckpt" ]; then
+            echo "$best_ckpt"
+            return 0
+        fi
+        
+        # 如果没有best checkpoint，查找last.ckpt
+        local last_ckpt="$ckpt_dir/last.ckpt"
+        if [ -f "$last_ckpt" ]; then
+            echo "$last_ckpt"
+            return 0
+        fi
+    fi
+    
+    # 3. 没有找到checkpoint
+    return 1
+}
 
 # Create log directory
 mkdir -p "$LOG_DIR"
 
 # Set environment variables for logging
 export LOG_DIR="$LOG_DIR"
+echo "Initial LOG_DIR set to: $LOG_DIR"
 
 for stage in "${STAGES[@]}"; do
     if [ "$stage" = "fit" ]; then
@@ -116,6 +169,10 @@ for stage in "${STAGES[@]}"; do
             if [ -n "$PREV_CKPT" ]; then
                 echo "Resuming from checkpoint: $PREV_CKPT"
                 fm-trainer fit --config "$CONFIG_FILE" --ckpt_path "$PREV_CKPT"
+            elif [ $i -eq 0 ] && [ -n "$USER_CKPT_PATH" ]; then
+                # 第一阶段且用户指定了checkpoint
+                echo "Starting first stage from user-specified checkpoint: $USER_CKPT_PATH"
+                fm-trainer fit --config "$CONFIG_FILE" --ckpt_path "$USER_CKPT_PATH"
             else
                 echo "Starting training from scratch"
                 fm-trainer fit --config "$CONFIG_FILE"
@@ -144,6 +201,9 @@ for stage in "${STAGES[@]}"; do
     fi
 
     if [ "$stage" = "test" ]; then
+        # 确保LOG_DIR正确设置
+        ensure_log_dir
+        
         CONFIG_FILE="$CONFIG_DIR/test_config.yaml"
         TEST_LOG_DIR="$LOG_DIR/test"
         mkdir -p "$TEST_LOG_DIR"
@@ -152,18 +212,29 @@ for stage in "${STAGES[@]}"; do
         echo "--------------------------------------------------"
         echo "Using Config File: ${CONFIG_FILE}"
         echo "Logging to: ${TEST_LOG_DIR}"
-        if [ -z "$FINAL_FIT_CKPT" ]; then
-            echo "Error: No checkpoint found from fit stage."
+        
+        # 查找checkpoint
+        CHECKPOINT=$(find_best_checkpoint)
+        if [ $? -ne 0 ]; then
+            echo "Error: No checkpoint found for test stage."
+            echo "Please ensure fit stage has been completed or specify --ckpt_path"
             exit 1
         fi
+        echo "Using checkpoint: $CHECKPOINT"
+        
         # 设置LOG_DIR环境变量在执行命令之前，确保配置文件能正确解析路径
         export LOG_DIR="$TEST_LOG_DIR"
         echo "LOG_DIR set to: $LOG_DIR"
-        fm-trainer test --config "$CONFIG_FILE" --ckpt_path "$FINAL_FIT_CKPT"
+        fm-trainer test --config "$CONFIG_FILE" --ckpt_path "$CHECKPOINT"
         unset LOG_DIR
+        # 恢复原始LOG_DIR
+        export LOG_DIR="$BASE_LOG_DIR"
     fi
 
     if [ "$stage" = "predict" ]; then
+        # 确保LOG_DIR正确设置
+        ensure_log_dir
+        
         CONFIG_FILE="$CONFIG_DIR/predict_config.yaml"
         PREDICT_LOG_DIR="$LOG_DIR/predict"
         mkdir -p "$PREDICT_LOG_DIR"
@@ -172,10 +243,16 @@ for stage in "${STAGES[@]}"; do
         echo "--------------------------------------------------"
         echo "Using Config File: ${CONFIG_FILE}"
         echo "Logging to: ${PREDICT_LOG_DIR}"
-        if [ -z "$FINAL_FIT_CKPT" ]; then
-            echo "Error: No checkpoint found from fit stage."
+        
+        # 查找checkpoint
+        CHECKPOINT=$(find_best_checkpoint)
+        if [ $? -ne 0 ]; then
+            echo "Error: No checkpoint found for predict stage."
+            echo "Please ensure fit stage has been completed or specify --ckpt_path"
             exit 1
         fi
+        echo "Using checkpoint: $CHECKPOINT"
+        
         # 删除已存在的 config.yaml，避免 LightningCLI 报错
         PREDICT_CONFIG_FILE="$PREDICT_LOG_DIR/config.yaml"
         if [ -f "$PREDICT_CONFIG_FILE" ]; then
@@ -185,8 +262,10 @@ for stage in "${STAGES[@]}"; do
         # 设置LOG_DIR环境变量在执行命令之前，确保配置文件中的回调能正确解析路径
         export LOG_DIR="$PREDICT_LOG_DIR"
         echo "LOG_DIR set to: $LOG_DIR"
-        fm-trainer predict --config "$CONFIG_FILE" --ckpt_path "$FINAL_FIT_CKPT"
+        fm-trainer predict --config "$CONFIG_FILE" --ckpt_path "$CHECKPOINT"
         unset LOG_DIR
+        # 恢复原始LOG_DIR
+        export LOG_DIR="$BASE_LOG_DIR"
     fi
 done
 

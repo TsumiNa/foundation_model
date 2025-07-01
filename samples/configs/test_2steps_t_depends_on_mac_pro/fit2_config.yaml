@@ -156,7 +156,7 @@ model:
 
     shared_block_optimizer:
       optimizer_type: AdamW
-      lr: 5.0e-4
+      lr: 1.0e-6
       weight_decay: 0.01
       eps: 1.0e-06
       betas: [0.9, 0.999]
@@ -197,7 +197,7 @@ data:
 
 trainer:
   default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}
-  max_epochs: 2
+  max_epochs: 250
   # devices: auto
   accelerator: auto
   devices: 1

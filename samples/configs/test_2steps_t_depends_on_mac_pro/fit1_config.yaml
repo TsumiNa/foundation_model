@@ -197,7 +197,7 @@ data:
 
 trainer:
   default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}
-  max_epochs: 2
+  max_epochs: 50
   # devices: auto
   accelerator: auto
   devices: 1
