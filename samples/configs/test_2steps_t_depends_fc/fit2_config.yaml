@@ -156,7 +156,7 @@ model:
 
     shared_block_optimizer:
       optimizer_type: AdamW
-      lr: 5.0e-4
+      lr: 1.0e-6
       weight_decay: 0.01
       eps: 1.0e-06
       betas: [0.9, 0.999]
@@ -183,10 +183,10 @@ model:
 data:
   class_path: foundation_model.data.CompoundDataModule
   init_args:
-    # formula_desc_source: /data/foundation_model/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet
-    # attributes_source: /data/foundation_model/data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet
-    formula_desc_source: /Users/liuchang/projects/foundation_model/data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet
-    attributes_source: /Users/liuchang/projects/foundation_model/data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet
+    formula_desc_source: /data/foundation_model/data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet
+    attributes_source: /data/foundation_model/data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet
+    # formula_desc_source: /Users/liuchang/projects/foundation_model/data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet
+    # attributes_source: /Users/liuchang/projects/foundation_model/data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet
     task_configs: ${model.init_args.task_configs}
     batch_size: 64
     num_workers: 0
@@ -197,10 +197,10 @@ data:
 
 trainer:
   default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}
-  max_epochs: 200
+  max_epochs: 300
   # devices: auto
   accelerator: auto
-  devices: 1
+  devices: 2
   enable_progress_bar: true
   fast_dev_run: false
   log_every_n_steps: 50
@@ -218,8 +218,8 @@ trainer:
       init_args:
         dirpath: ${oc.env:CKPT_DIR,results/logs/default_experiment}
         filename: model-{epoch:02d}-{val_final_loss:.4f}-{step}
-        save_weights_only: false
         monitor: val_final_loss
+        save_weights_only: false
         mode: min
         save_top_k: 3
         save_last: true
