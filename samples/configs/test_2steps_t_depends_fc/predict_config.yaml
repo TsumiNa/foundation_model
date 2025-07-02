@@ -199,7 +199,7 @@ trainer:
   max_epochs: 10
   # devices: auto
   accelerator: auto
-  devices: 2
+  devices: 1
   enable_progress_bar: true
   fast_dev_run: false
   logger: false

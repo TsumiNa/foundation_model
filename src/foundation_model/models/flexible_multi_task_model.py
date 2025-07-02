@@ -564,7 +564,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
             if self.w.get("mfm", 0) > 0:
                 # Pass the encoder function that handles masking internally
                 # Using lambda to make the callable nature more explicit for type checker
-                encoder_fn_lambda = lambda x_masked, is_struct: self.encoder.encode_masked(x_masked, is_struct)
+                def encoder_fn_lambda(x_masked, is_struct):
+                    return self.encoder.encode_masked(x_masked, is_struct)
+
                 # Compute MFM loss using the potentially dropped structure input
                 mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
                     encoder_fn_lambda, x_formula, x_struct_for_processing
@@ -812,7 +814,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # 3a. Masked Feature Modeling (MFM)
             if self.w.get("mfm", 0) > 0:
                 # Using lambda to make the callable nature more explicit for type checker
-                encoder_fn_lambda = lambda x_masked, is_struct: self.encoder.encode_masked(x_masked, is_struct)
+                def encoder_fn_lambda(x_masked, is_struct):
+                    return self.encoder.encode_masked(x_masked, is_struct)
+
                 mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
                     encoder_fn_lambda, x_formula, x_struct_for_processing
                 )
@@ -1018,7 +1022,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # 3a. Masked Feature Modeling (MFM)
             if self.w.get("mfm", 0) > 0:
                 # Using lambda to make the callable nature more explicit for type checker
-                encoder_fn_lambda = lambda x_masked, is_struct: self.encoder.encode_masked(x_masked, is_struct)
+                def encoder_fn_lambda(x_masked, is_struct):
+                    return self.encoder.encode_masked(x_masked, is_struct)
+
                 mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
                     encoder_fn_lambda, x_formula, x_struct_for_processing
                 )
@@ -1460,6 +1466,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         List[Tensor] format (from custom collate) and Tensor format (backwards compatibility).
         Each sample can have variable-length sequences without padding waste.
 
+        FIXED: Ensures every input sample produces at least one output prediction,
+        even for placeholder samples without real sequence data.
+
         Parameters
         ----------
         h_task : torch.Tensor
@@ -1493,23 +1502,39 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 t_sample = t_sequence[batch_idx]  # Shape: (seq_len,) - variable length
                 h_sample = h_task[batch_idx]  # Shape: (D,)
 
-                # Remove any zero-padding if present (though List format shouldn't have padding)
-                if t_sample.numel() > 0:
-                    valid_mask = t_sample != 0.0
-                    valid_t = t_sample[valid_mask] if valid_mask.any() else t_sample
+                # Check if this is a placeholder sample (length 1 with value 0.0)
+                is_placeholder = t_sample.numel() == 1 and t_sample.item() == 0.0
 
-                    if len(valid_t) > 0:
-                        # Replicate h_sample for each valid t value
-                        h_replicated = h_sample.unsqueeze(0).repeat(len(valid_t), 1)  # Shape: (valid_length, D)
+                if is_placeholder:
+                    # For placeholder samples, create a single prediction with default t=0.0
+                    h_replicated = h_sample.unsqueeze(0)  # Shape: (1, D)
+                    default_t = torch.tensor([0.0], device=device, dtype=t_sample.dtype)
 
-                        expanded_h_list.append(h_replicated)
-                        expanded_t_list.append(valid_t)
+                    expanded_h_list.append(h_replicated)
+                    expanded_t_list.append(default_t)
+                else:
+                    # For real samples, process normally
+                    if t_sample.numel() > 0:
+                        valid_mask = t_sample != 0.0
+                        valid_t = t_sample[valid_mask] if valid_mask.any() else t_sample
+
+                        if len(valid_t) > 0:
+                            # Replicate h_sample for each valid t value
+                            h_replicated = h_sample.unsqueeze(0).repeat(len(valid_t), 1)  # Shape: (valid_length, D)
+
+                            expanded_h_list.append(h_replicated)
+                            expanded_t_list.append(valid_t)
+                        else:
+                            # Fallback: create single prediction even if no valid t found
+                            h_replicated = h_sample.unsqueeze(0)  # Shape: (1, D)
+                            default_t = torch.tensor([0.0], device=device, dtype=t_sample.dtype)
+
+                            expanded_h_list.append(h_replicated)
+                            expanded_t_list.append(default_t)
         else:
             # Handle legacy Tensor format for backwards compatibility
             if t_sequence.dim() != 2 or t_sequence.shape[0] != batch_size:
                 raise ValueError(f"Expected t_sequence tensor to have shape (B, L), got {t_sequence.shape}")
-
-            seq_len = t_sequence.shape[1]
 
             for batch_idx in range(batch_size):
                 # Get the t sequence for this sample
@@ -1517,7 +1542,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 h_sample = h_task[batch_idx]  # Shape: (D,)
 
                 # Find valid (non-zero) t values - assuming padding is 0
-                # This handles variable length sequences
                 valid_mask = t_sample != 0.0
                 valid_t = t_sample[valid_mask]  # Shape: (valid_length,)
 
@@ -1527,13 +1551,23 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
                     expanded_h_list.append(h_replicated)
                     expanded_t_list.append(valid_t)
+                else:
+                    # Fallback: create single prediction even if no valid t found
+                    h_replicated = h_sample.unsqueeze(0)  # Shape: (1, D)
+                    default_t = torch.tensor([0.0], device=device, dtype=t_sample.dtype)
 
+                    expanded_h_list.append(h_replicated)
+                    expanded_t_list.append(default_t)
+
+        # At this point, expanded_h_list and expanded_t_list should never be empty
+        # because we ensure every sample produces at least one prediction
         if expanded_h_list:
             # Concatenate all expanded samples
             expanded_h_task = torch.cat(expanded_h_list, dim=0)  # Shape: (total_valid_points, D)
             expanded_t = torch.cat(expanded_t_list, dim=0)  # Shape: (total_valid_points,)
         else:
-            # Handle case where no valid t values found
+            # This should never happen with the new logic, but keep as safety fallback
+            logger.warning("No expanded samples found in _expand_for_extend_regression - this should not happen")
             expanded_h_task = torch.empty(0, h_task.shape[1], device=device, dtype=h_task.dtype)
             expanded_t = torch.empty(
                 0, device=device, dtype=t_sequence[0].dtype if isinstance(t_sequence, list) else t_sequence.dtype
