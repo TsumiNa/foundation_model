@@ -188,6 +188,7 @@ data:
     task_configs: ${model.init_args.task_configs}
     batch_size: 256
     num_workers: 0
+    predict_idx: "all" # Added to support string literals and list of strings for dataset selection
     val_split: 0.1
     test_split: 0.1
     train_random_seed: 42
