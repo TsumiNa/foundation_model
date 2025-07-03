@@ -136,8 +136,8 @@ model:
         t_column: DOS energy
         x_dim: [128, 32, 16]
         t_dim: [32, 16]
-        # t_encoding_method: fourier
-        t_encoding_method: fc
+        t_encoding_method: fourier
+        # t_encoding_method: fc
         norm: true
         residual: false
         weight: 1.0
@@ -197,10 +197,10 @@ data:
 
 trainer:
   default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}
-  max_epochs: 200
+  max_epochs: 300
   # devices: auto
   accelerator: auto
-  devices: 2
+  devices: [2, 3]
   enable_progress_bar: true
   fast_dev_run: false
   log_every_n_steps: 50

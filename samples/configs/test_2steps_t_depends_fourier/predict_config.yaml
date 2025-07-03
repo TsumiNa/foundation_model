@@ -210,7 +210,7 @@ trainer:
         write_interval: "epoch"
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        dirpath: ${oc.env:LOG_DIR,results/logs/default_experiment}
+        dirpath: ${oc.env:CKPT_DIR,results/logs/default_experiment}
         filename: model-{epoch:02d}-{val_final_loss:.4f}-{step}
         monitor: val_final_loss
         mode: min
