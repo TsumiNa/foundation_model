@@ -2,11 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import math
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from numpy import ndarray
 
 from foundation_model.models.fc_layers import LinearBlock
@@ -52,6 +51,7 @@ class ExtendRegressionHead(BaseTaskHead):
 
     def __init__(self, config: ExtendRegressionTaskConfig):
         super().__init__(config)
+        self.loss_fn = nn.MSELoss()
 
         # Store configuration parameters
         self.t_encoding_method = config.t_encoding_method
@@ -60,6 +60,8 @@ class ExtendRegressionHead(BaseTaskHead):
         t_embedding_dim = config.t_dim[0]
 
         # Initialize t encoder based on encoding method
+        self.t_encoder: nn.Module  # Accept both FourierFeatures and Sequential
+
         if self.t_encoding_method == "fourier":
             # Calculate t_input_dim for Fourier encoding
             # If t_embedding_dim is odd, round up to ensure sufficient features
@@ -73,7 +75,7 @@ class ExtendRegressionHead(BaseTaskHead):
 
         elif self.t_encoding_method == "fc":
             # For FC encoding, t_input_dim equals t_embedding_dim
-            self.t_encoder = nn.Sequential(nn.Linear(1, t_embedding_dim), nn.ReLU())
+            self.t_encoder = nn.Sequential(nn.Linear(1, t_embedding_dim), nn.LeakyReLU(0.1))
             encoded_t_dim = t_embedding_dim
         else:
             raise ValueError(f"Unsupported t_encoding_method: {self.t_encoding_method}. Must be 'fourier' or 'fc'.")
@@ -105,14 +107,14 @@ class ExtendRegressionHead(BaseTaskHead):
             residual=config.residual,
         )
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor, **_) -> torch.Tensor:
         """
         Forward pass of the extended regression head.
 
         Parameters
         ----------
         x : torch.Tensor
-            Material features, shape (N, x_dim[0])
+            Material features, shape (N, x_dim))
         t : torch.Tensor
             Parameter values (e.g., energy, temperature), shape (N,) or (N, 1)
 
@@ -146,7 +148,7 @@ class ExtendRegressionHead(BaseTaskHead):
         pred: torch.Tensor,
         target: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """
         Compute masked MSE loss for extended regression.
 
@@ -162,9 +164,8 @@ class ExtendRegressionHead(BaseTaskHead):
 
         Returns
         -------
-        Tuple[torch.Tensor, torch.Tensor]
-            (total_loss, per_dim_loss) where total_loss is a scalar tensor
-            and per_dim_loss contains loss per output dimension.
+        torch.Tensor
+            Total loss as a scalar tensor.
         """
         # Ensure consistent shapes
         if pred.dim() == 2 and pred.shape[1] == 1:
@@ -178,18 +179,14 @@ class ExtendRegressionHead(BaseTaskHead):
             mask = mask.squeeze(1)
 
         # Apply mask to both predictions and targets
-        losses = F.mse_loss(pred, target, reduction="none") * mask
+        losses = self.loss_fn(pred, target) * mask
 
-        # Compute per-dimension losses (average over batch)
-        # For extended regression, there's only one dimension
-        per_dim_loss = torch.nan_to_num(losses.sum() / mask.sum().clamp_min(1.0), nan=0.0, posinf=0.0, neginf=0.0)
+        # Compute total loss (average over all valid elements)
+        total_loss = torch.nan_to_num(losses.sum() / mask.sum().clamp_min(1.0), nan=0.0, posinf=0.0, neginf=0.0)
 
-        # Compute total loss
-        total_loss = per_dim_loss
+        return total_loss
 
-        return total_loss, per_dim_loss.unsqueeze(0)
-
-    def _predict_impl(self, x: torch.Tensor, additional: bool = False) -> dict[str, ndarray]:
+    def _predict_impl(self, x: torch.Tensor) -> dict[str, ndarray]:
         """
         Core prediction logic for extended regression.
 

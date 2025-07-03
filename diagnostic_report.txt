@@ -1,0 +1,40 @@
+================================================================================
+PREDICTION PIPELINE DIAGNOSTIC REPORT
+================================================================================
+
+1. SAMPLE COUNT TRACKING:
+   raw_data_loaded: 49034
+   datamodule_predict_idx_resolved: 48998
+   datamodule_predict_dataset_created: 48998
+   datamodule_formula_df: 48998
+   datamodule_attributes_df: 48998
+   datamodule_predict_dataloader_created: 48998
+   final_output_file: 24499
+
+2. DATA QUALITY STATISTICS:
+   total_samples: 49034
+   DOS energy_non_null: 10321
+   DOS density_non_null: 10321
+   DOS density (normalized)_non_null: 10321
+
+3. PROCESSING STATISTICS:
+   Dataset.__getitem__ calls: 0
+   Model.predict_step calls: 3
+   predict_step input samples: 768
+   predict_step output samples: 3072
+   _expand_for_extend_regression calls: 3
+   expand input samples: 768
+   expand output samples: 32761
+
+4. PROCESSING LOG:
+   [raw_data_loaded] Samples: 49034 | from /data/foundation_model/data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet
+   [datamodule_predict_idx_resolved] Samples: 48998 | predict_idx type: <class 'pandas.core.indexes.base.Index'>
+   [datamodule_predict_dataset_created] Samples: 48998
+   [datamodule_formula_df] Samples: 48998
+   [datamodule_attributes_df] Samples: 48998
+   [datamodule_predict_dataloader_created] Samples: 48998 | batch_size=256, num_batches=192
+   [final_output_file] Samples: 24499 | saved to samples/example_logs/basic_run/basic_experiment_20250702_003437/predict/predictions.csv
+
+5. POTENTIAL ISSUES:
+   ⚠️  Sample count mismatch: input=49034, output=24499
+================================================================================

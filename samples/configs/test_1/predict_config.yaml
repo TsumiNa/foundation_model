@@ -135,7 +135,6 @@ model:
       weight_decay: 0.01
       eps: 1.0e-06
       betas: [0.9, 0.999]
-      freeze_parameters: false # Control encoder freezing here
       scheduler_type: ReduceLROnPlateau
       mode: min
       factor: 0.1
@@ -183,3 +182,16 @@ trainer:
       init_args:
         output_path: ${oc.env:LOG_DIR,results/logs/default_experiment}/predict
         write_interval: "epoch"
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit/checkpoints
+        filename: model-{epoch:02d}-{val_final_loss:.4f}-{step}
+        monitor: val_final_loss
+        mode: min
+        every_n_train_steps: 0
+        every_n_epochs: 1
+        train_time_interval: null
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: val_final_loss
+        mode: min

@@ -10,7 +10,6 @@ from loguru import logger as loguru_logger  # ADDED for loguru bridge
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.model_config import (
     ClassificationTaskConfig,
-    ExtendRegressionTaskConfig,
     RegressionTaskConfig,
     TaskType,
 )
@@ -31,8 +30,6 @@ def formula_df_subset():  # 15 samples, s0-s14
 def attributes_df_full_match():  # 20 samples s0-s19, with split col
     data = {
         "task1_regression_value": np.random.rand(20),
-        "task2_sequence_series": [[np.random.rand() for _ in range(5)] for _ in range(20)],
-        "task2_temps": [[np.random.rand() for _ in range(5)] for _ in range(20)],
         "task_cls_classification_value": np.random.randint(0, 3, size=20),
         "split": ["train"] * 10 + ["val"] * 5 + ["test"] * 5,
     }
@@ -53,8 +50,6 @@ def attributes_df_partial_match():  # 18 samples, s2-s19, with split col
 def attributes_df_no_split_full_match():  # 20 samples, s0-s19, no split col
     data = {
         "task1_regression_value": np.random.rand(20),
-        "task2_sequence_series": [[np.random.rand() for _ in range(5)] for _ in range(20)],
-        "task2_temps": [[np.random.rand() for _ in range(5)] for _ in range(20)],
         "task_cls_classification_value": np.random.randint(0, 3, size=20),
     }
     return pd.DataFrame(data, index=[f"s{i}" for i in range(20)])
@@ -74,14 +69,7 @@ def structure_df_partial_match():  # 16 samples s0-s15
 def sample_task_configs_dm():
     return [
         RegressionTaskConfig(
-            name="task1", type=TaskType.REGRESSION, data_column="task1_regression_value", dims=[None, 1]
-        ),
-        ExtendRegressionTaskConfig(
-            name="task2",
-            type=TaskType.SEQUENCE,
-            data_column="task2_sequence_series",
-            steps_column="task2_temps",
-            seq_len=5,  # Explicitly state expected/data sequence length
+            name="task1", type=TaskType.REGRESSION, data_column="task1_regression_value", dims=[256, 128, 1]
         ),
         ClassificationTaskConfig(
             name="task_cls", type=TaskType.CLASSIFICATION, data_column="task_cls_classification_value", num_classes=3
@@ -93,7 +81,7 @@ def sample_task_configs_dm():
 def sample_task_configs_no_seq_dm():
     return [
         RegressionTaskConfig(
-            name="task1", type=TaskType.REGRESSION, data_column="task1_regression_value", dims=[None, 1]
+            name="task1", type=TaskType.REGRESSION, data_column="task1_regression_value", dims=[256, 128, 1]
         ),
         ClassificationTaskConfig(
             name="task_cls", type=TaskType.CLASSIFICATION, data_column="task_cls_classification_value", num_classes=3
@@ -201,42 +189,6 @@ def test_datamodule_init_attributes_none_non_sequence(base_formula_df, sample_ta
     assert dm.formula_df is not None
     assert dm.attributes_df is None
     assert len(dm.formula_df) == 20
-
-
-def test_datamodule_init_attributes_none_with_sequence_raises_error(base_formula_df, sample_task_configs_dm):
-    """Test ValueError if attributes_source=None but a sequence task requires a steps_column."""
-    # sample_task_configs_dm includes a SequenceTaskConfig for "task2" with steps_column="task2_temps"
-    with pytest.raises(
-        ValueError,
-        match="attributes_source cannot be None when SEQUENCE task 'task2' requires a steps_column \\('task2_temps'\\).",
-    ):
-        CompoundDataModule(
-            formula_desc_source=base_formula_df,
-            attributes_source=None,
-            task_configs=sample_task_configs_dm,
-        )
-
-
-def test_datamodule_init_attributes_none_with_sequence_no_steps_ok(base_formula_df, sample_task_configs_dm):
-    """Test that init is OK if attributes_source=None and sequence task does NOT specify steps_column."""
-    # Modify task2 config to not have a steps_column
-    modified_task_configs = [
-        RegressionTaskConfig(
-            name="task1", type=TaskType.REGRESSION, data_column="task1_regression_value", dims=[None, 1]
-        ),
-        ExtendRegressionTaskConfig(
-            name="task2", type=TaskType.SEQUENCE, data_column="task2_sequence_series", steps_column="", seq_len=5
-        ),  # steps_column is empty
-        ClassificationTaskConfig(
-            name="task_cls", type=TaskType.CLASSIFICATION, data_column="task_cls_classification_value", num_classes=3
-        ),
-    ]
-    dm = CompoundDataModule(  # Should not raise error
-        formula_desc_source=base_formula_df,
-        attributes_source=None,
-        task_configs=modified_task_configs,
-    )
-    assert dm.attributes_df is None
 
 
 def test_datamodule_setup_split_column(base_formula_df, attributes_df_full_match, sample_task_configs_dm):
@@ -437,17 +389,8 @@ def test_datamodule_load_data_from_paths(
     assert dm.formula_df is not None
     pd.testing.assert_frame_equal(dm.formula_df, base_formula_df, check_dtype=False)
     assert dm.attributes_df is not None
-    # Note: Reading CSV can alter dtypes, especially for list-like objects.
-    # A more robust check might involve converting specific columns or comparing element-wise.
-    # For now, let's assume the shape and basic content are what we care about.
-    pd.testing.assert_frame_equal(
-        dm.attributes_df.drop(columns=["task2_sequence_series", "task2_temps"]),
-        attributes_df_full_match.drop(columns=["task2_sequence_series", "task2_temps"]),
-        check_dtype=False,
-    )
-    # After loading from CSV, list-like entries become strings
-    assert dm.attributes_df["task2_sequence_series"].apply(lambda x: isinstance(x, str) or pd.isna(x)).all()
-    assert dm.attributes_df["task2_temps"].apply(lambda x: isinstance(x, str) or pd.isna(x)).all()
+    # Check that the loaded attributes_df matches the original
+    pd.testing.assert_frame_equal(dm.attributes_df, attributes_df_full_match, check_dtype=False)
 
 
 def test_datamodule_task_masking_ratios_propagation(base_formula_df, attributes_df_full_match, sample_task_configs_dm):
@@ -459,11 +402,15 @@ def test_datamodule_task_masking_ratios_propagation(base_formula_df, attributes_
         task_masking_ratios=mask_ratios,
     )
     dm.setup(stage="fit")
+    assert dm.train_dataset is not None
     assert dm.train_dataset.task_masking_ratios == mask_ratios
+    assert dm.val_dataset is not None
     assert dm.val_dataset.task_masking_ratios is None
     dm.setup(stage="test")
+    assert dm.test_dataset is not None
     assert dm.test_dataset.task_masking_ratios is None
     dm.setup(stage="predict")
+    assert dm.predict_dataset is not None
     assert dm.predict_dataset.task_masking_ratios is None
 
 

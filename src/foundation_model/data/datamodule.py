@@ -51,14 +51,14 @@ def create_collate_fn_with_task_info(task_configs):
         Parameters
         ----------
         batch : List[Tuple]
-            List of (model_input_x, sample_y_dict, sample_task_masks_dict, sample_sequence_data_dict)
+            List of (model_input_x, sample_y_dict, sample_task_masks_dict, sample_t_sequences_dict)
 
         Returns
         -------
         Tuple
-            (batched_input, batched_y_dict, batched_mask_dict, batched_sequence_data_dict)
+            (batched_input, batched_y_dict, batched_mask_dict, batched_t_sequences_dict)
         """
-        model_inputs, y_dicts, mask_dicts, sequence_data_dicts = zip(*batch)
+        model_inputs, y_dicts, mask_dicts, t_sequences_dicts = zip(*batch)
 
         # Handle model inputs (formula/structure features)
         if isinstance(model_inputs[0], tuple):
@@ -84,11 +84,11 @@ def create_collate_fn_with_task_info(task_configs):
                 batched_mask_dict[key] = torch.stack([d[key] for d in mask_dicts])
 
         # Handle sequence data (t-parameters) - always List[Tensor] format
-        batched_sequence_data_dict = {}
-        for key in sequence_data_dicts[0].keys():
-            batched_sequence_data_dict[key] = [d[key] for d in sequence_data_dicts]
+        batched_t_sequences_dict = {}
+        for key in t_sequences_dicts[0].keys():
+            batched_t_sequences_dict[key] = [d[key] for d in t_sequences_dicts]
 
-        return batched_input, batched_y_dict, batched_mask_dict, batched_sequence_data_dict
+        return batched_input, batched_y_dict, batched_mask_dict, batched_t_sequences_dict
 
     return custom_collate_fn
 
@@ -107,7 +107,7 @@ class CompoundDataModule(L.LightningDataModule):
         train_random_seed: int = 42,
         test_random_seed: int = 24,
         test_all: bool = False,
-        predict_idx: Optional[Union[pd.Index, np.ndarray, List]] = None,  # Reintroduced
+        predict_idx: Optional[Union[pd.Index, np.ndarray, List, str, List[str]]] = None,  # Extended functionality
         batch_size: int = 32,
         num_workers: int = 0,
     ):
@@ -146,11 +146,15 @@ class CompoundDataModule(L.LightningDataModule):
         test_all : bool, optional
             If True, all data (after alignment) is used for the test set. `train_idx` and `val_idx` will be empty.
             This overrides `test_split` and 'split' column logic if `attributes_source` is provided. Defaults to False.
-        predict_idx : Optional[Union[pd.Index, np.ndarray, List]], optional
-            Specific indices to use for the prediction set. These indices must be present in `formula_desc_source`.
+        predict_idx : Optional[Union[pd.Index, np.ndarray, List, str, List[str]]], optional
+            Specific indices to use for the prediction set. Can be:
+            - pd.Index, np.ndarray, List: Specific indices that must be present in `formula_desc_source`
+            - str: One of "test", "val", "train", "all" to use the corresponding dataset
+            - List[str]: Combination of datasets, e.g., ["train", "val"] to combine train and validation sets
             If provided, `setup(stage='predict')` will use these indices directly.
             If None (default), `predict_idx` will be derived during `setup(stage='predict')` from `test_idx` (if available and not empty)
             or otherwise from the full set of available indices from `formula_desc_source`.
+            Note: If a specified dataset (e.g., "test") doesn't exist or is empty, an error will be raised.
         batch_size : int, optional
             Batch size for dataloaders. Defaults to 32.
         num_workers : int, optional
@@ -168,9 +172,9 @@ class CompoundDataModule(L.LightningDataModule):
         self.train_random_seed = train_random_seed
         self.test_random_seed = test_random_seed
         self.test_all = test_all
-        self.init_predict_idx = (
-            pd.Index(predict_idx) if predict_idx is not None else None
-        )  # Store user-provided predict_idx
+        # Store user-provided predict_idx without converting to pd.Index yet
+        # We'll handle string/list conversion in setup() method
+        self.init_predict_idx = predict_idx
         self.batch_size = batch_size
         self.num_workers = num_workers
 
@@ -256,16 +260,18 @@ class CompoundDataModule(L.LightningDataModule):
             # Validate that no task requires attributes_df if it's None,
             # especially if an ExtendRegression task specifies a t_column.
             for cfg in self.task_configs:
-                if cfg.enabled and isinstance(cfg, ExtendRegressionTaskConfig) and cfg.t_column:
-                    logger.error(
-                        f"Task '{cfg.name}' is an ExtendRegression task that specifies a 't_column' ('{cfg.t_column}'), "
-                        f"but attributes_source is None. attributes_source is required to load this t-parameter data."
-                    )
-                    raise ValueError(
-                        f"attributes_source cannot be None when ExtendRegression task '{cfg.name}' requires a t_column ('{cfg.t_column}')."
-                    )
-            # If we reach here, attributes_source is None, and no enabled SequenceTaskConfig requires a steps_column.
-            # Other tasks (or sequence tasks without a steps_column) will have their data_column handled by CompoundDataset
+                if cfg.enabled and cfg.type == TaskType.ExtendRegression:
+                    # Type check and cast to access ExtendRegression-specific attributes
+                    if isinstance(cfg, ExtendRegressionTaskConfig) and hasattr(cfg, "t_column") and cfg.t_column:
+                        logger.error(
+                            f"Task '{cfg.name}' is an ExtendRegression task that specifies a 't_column' ('{cfg.t_column}'), "
+                            f"but attributes_source is None. attributes_source is required to load this t-parameter data."
+                        )
+                        raise ValueError(
+                            f"attributes_source cannot be None when ExtendRegression task '{cfg.name}' requires a t_column ('{cfg.t_column}')."
+                        )
+            # If we reach here, attributes_source is None, and no enabled ExtendRegressionTaskConfig requires a t_column.
+            # Other tasks (or ExtendRegression tasks without a t_column) will have their data_column handled by CompoundDataset
             # (likely resulting in placeholders if data_column was specified).
             # self.attributes_df remains None. self.formula_df uses the original master_index.
             logger.info(f"formula_df (master) length: {len(master_index)}")
@@ -327,6 +333,133 @@ class CompoundDataModule(L.LightningDataModule):
         # self.task_configs was already assigned
         logger.info(f"DataModule initialized with {len(self.task_configs)} task configurations.")
 
+    def _resolve_predict_idx(self, full_idx: pd.Index) -> pd.Index:
+        """
+        Resolve predict_idx based on its type and validate dataset existence.
+
+        # Added 2025/7/2: Extended predict_idx functionality to support string literals
+        # and list of strings for easier dataset selection (e.g., "test", ["train", "val"])
+
+        Parameters
+        ----------
+        full_idx : pd.Index
+            The full index of available data
+
+        Returns
+        -------
+        pd.Index
+            Resolved predict indices
+
+        Raises
+        ------
+        ValueError
+            If specified dataset doesn't exist or is empty
+        """
+        if self.init_predict_idx is None:
+            # Default behavior: use test_idx if available, otherwise full_idx
+            return self.test_idx if not self.test_idx.empty else full_idx
+
+        # Handle string literals
+        if isinstance(self.init_predict_idx, str):
+            dataset_name = self.init_predict_idx
+            if dataset_name == "all":
+                logger.info("predict_idx='all': Using all available data for prediction")
+                return full_idx
+            elif dataset_name == "test":
+                if self.test_idx.empty:
+                    logger.error(f"predict_idx='{dataset_name}' specified but test dataset is empty")
+                    raise ValueError(f"Test dataset is empty. Cannot use predict_idx='{dataset_name}'")
+                logger.info(
+                    f"predict_idx='{dataset_name}': Using test dataset for prediction ({len(self.test_idx)} samples)"
+                )
+                return self.test_idx
+            elif dataset_name == "val":
+                if self.val_idx.empty:
+                    logger.error(f"predict_idx='{dataset_name}' specified but validation dataset is empty")
+                    raise ValueError(f"Validation dataset is empty. Cannot use predict_idx='{dataset_name}'")
+                logger.info(
+                    f"predict_idx='{dataset_name}': Using validation dataset for prediction ({len(self.val_idx)} samples)"
+                )
+                return self.val_idx
+            elif dataset_name == "train":
+                if self.train_idx.empty:
+                    logger.error(f"predict_idx='{dataset_name}' specified but train dataset is empty")
+                    raise ValueError(f"Train dataset is empty. Cannot use predict_idx='{dataset_name}'")
+                logger.info(
+                    f"predict_idx='{dataset_name}': Using train dataset for prediction ({len(self.train_idx)} samples)"
+                )
+                return self.train_idx
+            else:
+                logger.error(
+                    f"Invalid predict_idx string: '{dataset_name}'. Must be one of 'test', 'val', 'train', 'all'"
+                )
+                raise ValueError(
+                    f"Invalid predict_idx string: '{dataset_name}'. Must be one of 'test', 'val', 'train', 'all'"
+                )
+
+        # Handle list of strings
+        elif isinstance(self.init_predict_idx, list) and all(isinstance(item, str) for item in self.init_predict_idx):
+            dataset_names = self.init_predict_idx
+            combined_idx = pd.Index([])
+
+            for dataset_name in dataset_names:
+                if dataset_name == "test":
+                    if self.test_idx.empty:
+                        logger.error(f"predict_idx contains '{dataset_name}' but test dataset is empty")
+                        raise ValueError(f"Test dataset is empty. Cannot use '{dataset_name}' in predict_idx")
+                    combined_idx = combined_idx.union(self.test_idx)
+                elif dataset_name == "val":
+                    if self.val_idx.empty:
+                        logger.error(f"predict_idx contains '{dataset_name}' but validation dataset is empty")
+                        raise ValueError(f"Validation dataset is empty. Cannot use '{dataset_name}' in predict_idx")
+                    combined_idx = combined_idx.union(self.val_idx)
+                elif dataset_name == "train":
+                    if self.train_idx.empty:
+                        logger.error(f"predict_idx contains '{dataset_name}' but train dataset is empty")
+                        raise ValueError(f"Train dataset is empty. Cannot use '{dataset_name}' in predict_idx")
+                    combined_idx = combined_idx.union(self.train_idx)
+                else:
+                    logger.error(
+                        f"Invalid dataset name in predict_idx list: '{dataset_name}'. Must be one of 'test', 'val', 'train'"
+                    )
+                    raise ValueError(
+                        f"Invalid dataset name in predict_idx list: '{dataset_name}'. Must be one of 'test', 'val', 'train'"
+                    )
+
+            logger.info(f"predict_idx={dataset_names}: Combined datasets for prediction ({len(combined_idx)} samples)")
+            return combined_idx
+
+        # Handle traditional types (pd.Index, np.ndarray, List of indices)
+        else:
+            # Convert to pd.Index for validation
+            if isinstance(self.init_predict_idx, np.ndarray):
+                predict_indices = pd.Index(self.init_predict_idx)
+            elif isinstance(self.init_predict_idx, list):
+                predict_indices = pd.Index(self.init_predict_idx)
+            elif isinstance(self.init_predict_idx, pd.Index):
+                predict_indices = self.init_predict_idx
+            else:
+                logger.error(f"Unsupported predict_idx type: {type(self.init_predict_idx)}")
+                raise ValueError(f"Unsupported predict_idx type: {type(self.init_predict_idx)}")
+
+            # Validate indices against formula_df
+            valid_predict_indices = predict_indices.intersection(self.formula_df.index)
+            if len(valid_predict_indices) != len(predict_indices):
+                logger.warning(
+                    f"User-provided predict_idx contains indices not found in the loaded formula_df. "
+                    f"Original: {len(predict_indices)}, Valid: {len(valid_predict_indices)}. Using valid subset."
+                )
+            if valid_predict_indices.empty:
+                logger.warning(
+                    "User-provided predict_idx resulted in an empty set after validation. Using default behavior."
+                )
+                return self.test_idx if not self.test_idx.empty else full_idx
+
+            logger.info(
+                f"predict_idx: Using user-provided indices for prediction ({len(valid_predict_indices)} samples)"
+            )
+            return valid_predict_indices
+
     def _load_data(self, source: Union[pd.DataFrame, str], name: str) -> Optional[pd.DataFrame]:
         """Helper to load data from various sources."""
         logger.debug(f"Attempting to load '{name}' from source type: {type(source)}")
@@ -371,7 +504,7 @@ class CompoundDataModule(L.LightningDataModule):
             logger.error(f"Unexpected error loading '{name}' data from {source}: {e}", exc_info=True)
             return None
 
-    def setup(self, stage: str = None):
+    def setup(self, stage: Optional[str] = None):
         """Prepare datasets for different stages (fit, test, predict)."""
         logger.info(f"--- Setting up DataModule for stage: {stage} ---")
         if self.formula_df is None:  # attributes_df can now be None
@@ -555,25 +688,8 @@ class CompoundDataModule(L.LightningDataModule):
 
         if stage == "predict":
             logger.info("--- Creating 'predict' stage dataset ---")
-            if self.init_predict_idx is not None:
-                # Validate user-provided predict_idx against the formula_df's master index
-                valid_predict_indices = self.init_predict_idx.intersection(self.formula_df.index)
-                if len(valid_predict_indices) != len(self.init_predict_idx):
-                    logger.warning(
-                        f"User-provided predict_idx contains indices not found in the loaded formula_df. "
-                        f"Original: {len(self.init_predict_idx)}, Valid: {len(valid_predict_indices)}. Using valid subset."
-                    )
-                self.predict_idx = valid_predict_indices
-                if self.predict_idx.empty:
-                    logger.warning(
-                        "User-provided predict_idx resulted in an empty set after validation. Predict_dataset will be None."
-                    )
-            else:  # init_predict_idx was None, derive from test_idx or full_idx
-                self.predict_idx = self.test_idx if not self.test_idx.empty else full_idx
-
-            logger.info(
-                f"Using predict_idx with {len(self.predict_idx)} samples (derived from {'user input, ' if self.init_predict_idx is not None else ''}test_idx or full_idx)."
-            )
+            # Use the new resolver method to handle all predict_idx types
+            self.predict_idx = self._resolve_predict_idx(full_idx)
 
             if not self.predict_idx.empty:
                 self.predict_dataset = CompoundDataset(

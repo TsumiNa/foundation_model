@@ -7,7 +7,7 @@ Callback to save model predictions as a pandas DataFrame.
 
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, List, Literal, Sequence
+from typing import Any, List, Literal, Optional, Sequence
 
 import lightning as L
 import numpy as np
@@ -173,6 +173,119 @@ class PredictionDataFrameWriter(BasePredictionWriter):
 
         return df
 
+    def _gather_distributed_predictions(
+        self,
+        trainer: "L.Trainer",  # type: ignore
+        predictions: Sequence[Any],
+        batch_indices: Sequence[Any],
+    ) -> List[Any]:
+        """
+        Gather predictions from all distributed processes using proper distributed communication.
+
+        This method uses PyTorch's distributed communication to gather predictions from all
+        processes and combine them on the main process (rank 0).
+
+        Parameters
+        ----------
+        trainer : L.Trainer
+            The PyTorch Lightning Trainer instance.
+        predictions : Sequence[Any]
+            Local predictions from this process.
+        batch_indices : Sequence[Any]
+            Local batch indices from this process.
+
+        Returns
+        -------
+        List[Any]
+            All predictions gathered from all processes (only valid on rank 0).
+        """
+        try:
+            import pickle
+
+            import torch.distributed as dist
+
+            # Convert predictions to a list for easier handling
+            local_predictions = list(predictions) if predictions else []
+
+            # Log information about local predictions
+            logger.info(
+                f"Process {trainer.global_rank}/{trainer.world_size} has {len(local_predictions)} prediction batches"
+            )
+
+            # Use PyTorch distributed to gather all predictions
+            if trainer.world_size > 1 and dist.is_initialized():
+                # Serialize local predictions for transmission
+                local_data = pickle.dumps(local_predictions)
+                local_size = len(local_data)
+
+                # Create tensor for the size of serialized data
+                size_tensor = torch.tensor([local_size], dtype=torch.long, device=trainer.strategy.root_device)
+
+                # Gather sizes from all processes
+                if trainer.is_global_zero:
+                    size_list = [torch.zeros_like(size_tensor) for _ in range(trainer.world_size)]
+                    dist.gather(size_tensor, size_list, dst=0)
+                    sizes = [s.item() for s in size_list]
+                    logger.info(f"Gathered data sizes from all processes: {sizes}")
+                else:
+                    dist.gather(size_tensor, dst=0)
+                    sizes = None
+
+                # Gather actual data
+                if trainer.is_global_zero and sizes is not None:
+                    # Prepare tensors to receive data from all processes
+                    max_size = max(sizes) if sizes else local_size
+                    gathered_data = []
+
+                    for rank in range(trainer.world_size):
+                        if rank == 0:
+                            # Main process uses its own data
+                            gathered_data.append(local_data)
+                        else:
+                            # Receive data from other processes
+                            data_tensor = torch.zeros(
+                                int(max_size), dtype=torch.uint8, device=trainer.strategy.root_device
+                            )
+                            dist.recv(data_tensor, src=rank)
+                            # Only use the actual data size, not the padded size
+                            actual_data = data_tensor[: int(sizes[rank])].cpu().numpy().tobytes()
+                            gathered_data.append(actual_data)
+
+                    # Deserialize all gathered data
+                    all_predictions = []
+                    for rank, data in enumerate(gathered_data):
+                        try:
+                            rank_predictions = pickle.loads(data)
+                            logger.info(f"Successfully deserialized {len(rank_predictions)} batches from rank {rank}")
+                            all_predictions.extend(rank_predictions)
+                        except Exception as e:
+                            logger.error(f"Failed to deserialize data from rank {rank}: {e}")
+
+                    logger.info(f"Total gathered predictions: {len(all_predictions)} batches from all processes")
+                    return all_predictions
+
+                else:
+                    # Non-main processes send their data
+                    # Pad data to max_size if necessary
+                    data_tensor = torch.zeros(local_size, dtype=torch.uint8, device=trainer.strategy.root_device)
+                    data_tensor[:local_size] = torch.frombuffer(local_data, dtype=torch.uint8)
+                    dist.send(data_tensor, dst=0)
+                    logger.info(f"Process {trainer.global_rank} sent {len(local_predictions)} batches to main process")
+                    return []
+            else:
+                # Single process or distributed not initialized
+                logger.info(f"Single process mode: processing {len(local_predictions)} prediction batches")
+                return local_predictions
+
+        except Exception as e:
+            logger.error(f"Error during distributed prediction gathering: {e}")
+            logger.warning("Falling back to local predictions only")
+            # Fallback to local predictions if anything fails
+            if trainer.is_global_zero:
+                return list(predictions) if predictions else []
+            else:
+                return []
+
     def write_on_epoch_end(
         self,
         trainer: "L.Trainer",  # type: ignore
@@ -182,6 +295,9 @@ class PredictionDataFrameWriter(BasePredictionWriter):
     ) -> None:
         """
         Called at the end of the prediction epoch to save all collected predictions.
+
+        This method now handles distributed/multi-GPU environments by gathering
+        predictions from all processes and ensuring only the main process writes files.
 
         Parameters
         ----------
@@ -195,16 +311,46 @@ class PredictionDataFrameWriter(BasePredictionWriter):
             A list of batch indices corresponding to the predictions.
         """
         if not predictions:
-            logger.info("No predictions to save.")
-            return
+            logger.info("No predictions to save on this process.")
+            # Even if this process has no predictions, we still need to participate
+            # in the distributed gathering if we're in a distributed environment
+            predictions = []
 
-        # `predictions` here is a list of what `predict_step` returned for each batch.
-        # If `predict_step` returns a dict, then `predictions` is List[dict].
-        df = self._process_predictions(predictions)  # type: ignore
+        # Process local predictions first
+        local_df = self._process_predictions(predictions)  # type: ignore
+
+        # Handle distributed environment
+        if trainer.world_size > 1:
+            logger.info(
+                f"Distributed environment detected. World size: {trainer.world_size}, Global rank: {trainer.global_rank}"
+            )
+
+            # Gather predictions from all processes
+            all_predictions = self._gather_distributed_predictions(trainer, predictions, batch_indices)
+
+            # Only the main process (rank 0) should process and save the final results
+            if trainer.is_global_zero:
+                if all_predictions:
+                    logger.info(f"Main process gathering {len(all_predictions)} prediction batches from all GPUs")
+                    df = self._process_predictions(all_predictions)
+                else:
+                    logger.warning("No predictions gathered from any process")
+                    df = pd.DataFrame()
+            else:
+                # Non-main processes should not save files
+                logger.info(
+                    f"Process {trainer.global_rank} finished prediction gathering, main process will handle file writing"
+                )
+                return
+        else:
+            # Single process/GPU environment
+            df = local_df
 
         if df.empty:
             logger.warning("Processed DataFrame is empty. No data saved.")
             return
+
+        logger.info(f"Final DataFrame shape: {df.shape}")
 
         # Save to CSV
         csv_path = self.output_path / "predictions.csv"
@@ -222,6 +368,14 @@ class PredictionDataFrameWriter(BasePredictionWriter):
         except Exception as e:
             logger.error(f"Error saving predictions to Pickle {pickle_path}: {e}")
 
+        # Save to Parquet
+        parquet_path = self.output_path / "predictions.pd.parquet"
+        try:
+            df.to_parquet(parquet_path, index=True)
+            logger.info(f"Predictions saved to {parquet_path}")
+        except Exception as e:
+            logger.error(f"Error saving predictions to Parquet {parquet_path}: {e}")
+
     # write_on_batch_end is not needed when write_interval="epoch"
     # as Lightning accumulates predictions automatically.
     def write_on_batch_end(
@@ -229,7 +383,7 @@ class PredictionDataFrameWriter(BasePredictionWriter):
         trainer: "L.Trainer",  # type: ignore
         pl_module: "L.LightningModule",  # type: ignore
         prediction: Any,
-        batch_indices: List[int],
+        batch_indices: Optional[Sequence[int]],
         batch: Any,
         batch_idx: int,
         dataloader_idx: int,

@@ -14,26 +14,27 @@ Tensor shape legend (used across all docstrings):
 * **D** - latent / embedding feature dimension
 """
 
-from typing import Any, List, Optional  # Added List, Optional
+from typing import List, Optional  # Added List, Optional, Any
 
 import lightning as L
+import numpy as np
 import pandas as pd  # Added
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from loguru import logger  # Replaced logging with loguru
 from torch.optim.lr_scheduler import LRScheduler  # Changed from _LRScheduler
 
-from foundation_model.models.model_config import (
+from .components.foundation_encoder import FoundationEncoder, MultiModalFoundationEncoder
+from .components.self_supervised import SelfSupervisedModule
+from .model_config import (
     ClassificationTaskConfig,
     ExtendRegressionTaskConfig,
     OptimizerConfig,
     RegressionTaskConfig,
     TaskType,
 )
-
-from .components.foundation_encoder import FoundationEncoder, MultiModalFoundationEncoder
-from .components.self_supervised import SelfSupervisedModule
 from .task_head.classification import ClassificationHead
 from .task_head.extend_regression import ExtendRegressionHead
 from .task_head.regression import RegressionHead
@@ -56,7 +57,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
        Supports various types of prediction tasks:
        - Regression tasks: Predict continuous value attributes
        - Classification tasks: Predict discrete categories
-       - Sequence tasks: Predict time-series data (e.g., temperature curves)
+       - ExtendRegression tasks: Predict variable-length sequences (e.g., DOS, temperature-dependent properties)
 
     4. Structure Fusion (optional):
        When with_structure=True, can fuse information from different modalities (e.g., formula and structure).
@@ -86,7 +87,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
     task_configs : list[RegressionTaskConfig | ClassificationTaskConfig | ExtendRegressionTaskConfig]
         List of task configurations, each defining a prediction task. Each configuration must specify
         task type, name, dimensions, etc. Regression and classification task heads receive the deposit
-        layer output, while sequence task heads receive both deposit layer output and sequence points.
+        layer output, while ExtendRegression task heads receive both deposit layer output and sequence points.
     norm_shared : bool
         Whether to apply layer normalization in shared layers.
     residual_shared : bool
@@ -136,6 +137,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Normalization/residual options
         norm_shared: bool = True,
         residual_shared: bool = False,
+        # Freezing parameters
+        freeze_shared_encoder: bool = False,
+        # Whether to enable strict loading of the model state_dict
+        strict_loading: bool = True,
         # Optimization parameters
         shared_block_optimizer: OptimizerConfig | None = None,
         # Structure fusion options
@@ -154,6 +159,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # Store the new parameter
         self.enable_learnable_loss_balancer = enable_learnable_loss_balancer
+
+        # Store the strict loading parameter
+        self.strict_loading = strict_loading
 
         # Validate inputs
         if len(shared_block_dims) < 2:
@@ -177,6 +185,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Normalization/residual options
         self.norm_shared = norm_shared
         self.residual_shared = residual_shared
+
+        # Freezing parameters
+        self.freeze_shared_encoder = freeze_shared_encoder
 
         # Structure fusion parameters
         self.with_structure = with_structure
@@ -324,10 +335,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """Initialize task heads based on configurations."""
         self.task_heads = self._build_task_heads()
 
-        # Apply optimizer freeze_parameters to task heads
+        # Apply freeze_parameters to task heads
         for name, head in self.task_heads.items():
             config = self.task_configs_map[name]
-            if config.optimizer and config.optimizer.freeze_parameters:
+            if config.freeze_parameters:
                 for p in head.parameters():
                     p.requires_grad_(False)
 
@@ -359,9 +370,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.has_extend_regression = any(tc.type == TaskType.ExtendRegression for tc in self.task_configs if tc.enabled)
 
     def _init_weights(self):
-        """Initialize model weights and apply freezing based on optimizer configs."""
-        # Apply parameter freezing based on optimizer config
-        if self.shared_block_optimizer and self.shared_block_optimizer.freeze_parameters:
+        """Initialize model weights and apply freezing based on freeze_shared_encoder config."""
+        # Apply parameter freezing based on freeze_shared_encoder config
+        if self.freeze_shared_encoder:
             for p in self.shared.parameters():
                 p.requires_grad_(False)
             for p in self.deposit.parameters():
@@ -413,7 +424,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
     def forward(
         self,
         x: torch.Tensor | tuple[torch.Tensor, torch.Tensor | None],
-        task_sequence_data_batch: dict[str, torch.Tensor] | None = None,  # Renamed from temps_batch
+        t_sequences: dict[str, torch.Tensor] | None = None,  # Renamed from temps_batch
     ) -> dict[str, torch.Tensor]:
         """
         Forward pass through the model.
@@ -423,10 +434,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         x : torch.Tensor | tuple[torch.Tensor, torch.Tensor | None]
             Input tensor(s). If structure fusion is enabled, this should be a tuple
             of (formula_tensor, structure_tensor).
-        task_sequence_data_batch : dict[str, torch.Tensor] | None, optional
-            A dictionary where keys are sequence task names and values are the
+        t_sequences : dict[str, torch.Tensor] | None, optional
+            A dictionary where keys are ExtendRegression task names and values are the
             corresponding sequence input data (e.g., temperature points, time steps)
-            for the batch. Required if sequence tasks are present. Defaults to None.
+            for the batch. Required if ExtendRegression tasks are present. Defaults to None.
 
         Returns
         -------
@@ -450,7 +461,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         for name, head in self.task_heads.items():
             if isinstance(head, ExtendRegressionHead):
                 # Get specific sequence data for this ExtendRegression head
-                task_sequence_input = task_sequence_data_batch.get(name) if task_sequence_data_batch else None
+                task_sequence_input = t_sequences.get(name) if t_sequences else None
                 if task_sequence_input is not None:
                     # DOSDataset-style expansion: expand h_task and t for ExtendRegressionHead
                     expanded_h_task, expanded_t = self._expand_for_extend_regression(h_task, task_sequence_input)
@@ -458,7 +469,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 else:
                     # For ExtendRegressionHead, t parameter is required
                     raise ValueError(
-                        f"ExtendRegressionHead '{name}' requires t parameter but task_sequence_data_batch is missing or doesn't contain '{name}'"
+                        f"ExtendRegressionHead '{name}' requires t parameter but t_sequences is missing or doesn't contain '{name}'"
                     )
             else:
                 outputs[name] = head(h_task)
@@ -553,7 +564,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
             if self.w.get("mfm", 0) > 0:
                 # Pass the encoder function that handles masking internally
                 # Using lambda to make the callable nature more explicit for type checker
-                encoder_fn_lambda = lambda x_masked, is_struct: self.encoder.encode_masked(x_masked, is_struct)
+                def encoder_fn_lambda(x_masked, is_struct):
+                    return self.encoder.encode_masked(x_masked, is_struct)
+
                 # Compute MFM loss using the potentially dropped structure input
                 mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
                     encoder_fn_lambda, x_formula, x_struct_for_processing
@@ -657,7 +670,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     logger.warning(f"Mask not found for task {name} in training_step. Assuming all valid.")
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
-            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
             raw_supervised_losses[name] = raw_loss_t
             train_logs[f"train_{name}_raw_loss"] = raw_loss_t.detach()
 
@@ -801,7 +814,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # 3a. Masked Feature Modeling (MFM)
             if self.w.get("mfm", 0) > 0:
                 # Using lambda to make the callable nature more explicit for type checker
-                encoder_fn_lambda = lambda x_masked, is_struct: self.encoder.encode_masked(x_masked, is_struct)
+                def encoder_fn_lambda(x_masked, is_struct):
+                    return self.encoder.encode_masked(x_masked, is_struct)
+
                 mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
                     encoder_fn_lambda, x_formula, x_struct_for_processing
                 )
@@ -894,7 +909,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     logger.warning(f"Mask not found for task {name} in validation_step. Assuming all valid.")
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
-            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
             raw_val_supervised_losses[name] = raw_loss_t
             val_sum_supervised_raw_loss += raw_loss_t.detach()
             val_logs[f"val_{name}_raw_loss"] = raw_loss_t.detach()
@@ -1007,7 +1022,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # 3a. Masked Feature Modeling (MFM)
             if self.w.get("mfm", 0) > 0:
                 # Using lambda to make the callable nature more explicit for type checker
-                encoder_fn_lambda = lambda x_masked, is_struct: self.encoder.encode_masked(x_masked, is_struct)
+                def encoder_fn_lambda(x_masked, is_struct):
+                    return self.encoder.encode_masked(x_masked, is_struct)
+
                 mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
                     encoder_fn_lambda, x_formula, x_struct_for_processing
                 )
@@ -1098,7 +1115,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     logger.warning(f"Mask not found for task {name} in test_step. Assuming all valid.")
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
-            raw_loss_t, _ = head.compute_loss(pred_tensor, target, sample_mask)
+            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
             raw_test_supervised_losses[name] = raw_loss_t
             test_sum_supervised_raw_loss += raw_loss_t.detach()
             test_logs[f"test_{name}_raw_loss"] = raw_loss_t.detach()
@@ -1155,7 +1172,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         batch,
         batch_idx,
         dataloader_idx=0,
-        additional_output: bool = True,
         tasks_to_predict: Optional[List[str]] = None,
     ) -> dict[str, torch.Tensor]:
         """
@@ -1177,9 +1193,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Index of the current batch.
         dataloader_idx : int, optional
             Index of the dataloader (if multiple).
-        additional_output : bool, optional
-            If True, task heads will return additional prediction information
-            (e.g., probabilities for classification). Defaults to False.
         tasks_to_predict : list[str] | None, optional
             A list of task names to predict. If None (default), predicts all enabled tasks.
             If a task in the list is not found or not enabled, a warning is logged and it's skipped.
@@ -1205,6 +1218,22 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # Sequence input data is now a dictionary
         task_sequence_data_batch = batch[3] if len(batch) > 3 else {}  # Default to empty dict if not provided
+
+        # Store original sequence lengths for ExtendRegression tasks before forward pass
+        extend_regression_sequence_lengths = {}
+        for task_name, sequence_data in task_sequence_data_batch.items():
+            if task_name in self.task_heads and isinstance(self.task_heads[task_name], ExtendRegressionHead):
+                if isinstance(sequence_data, list):
+                    # List[Tensor] format - store length of each tensor
+                    extend_regression_sequence_lengths[task_name] = [len(seq) for seq in sequence_data]
+                elif isinstance(sequence_data, torch.Tensor):
+                    # Legacy tensor format - count non-zero elements per sample
+                    batch_size = sequence_data.shape[0]
+                    lengths = []
+                    for i in range(batch_size):
+                        valid_mask = sequence_data[i] != 0.0
+                        lengths.append(int(valid_mask.sum().item()))
+                    extend_regression_sequence_lengths[task_name] = lengths
 
         # 2. Prepare input for the raw forward pass, always treating structure as None for predict_step
         if self.with_structure:
@@ -1243,7 +1272,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
         for task_name, raw_pred_tensor in tasks_to_iterate:
             head = self.task_heads[task_name]
             # The head.predict() method now handles snake_case prefixing
-            processed_pred_dict = head.predict(raw_pred_tensor, additional=additional_output)  # type: ignore
+            processed_pred_dict = head.predict(raw_pred_tensor)  # type: ignore
+
+            # For ExtendRegression tasks, reshape flattened predictions back to List[Tensor] format
+            if isinstance(head, ExtendRegressionHead) and task_name in extend_regression_sequence_lengths:
+                sequence_lengths = extend_regression_sequence_lengths[task_name]
+                processed_pred_dict = self._reshape_extend_regression_predictions(processed_pred_dict, sequence_lengths)
+
             final_predictions.update(processed_pred_dict)
 
         return final_predictions
@@ -1310,7 +1345,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         else:
             raise ValueError(f"Unsupported scheduler type: {config.scheduler_type}")
 
-    def configure_optimizers(self) -> list[dict[str, Any] | torch.optim.Optimizer]:
+    def configure_optimizers(self) -> OptimizerLRScheduler:
         """Configure optimizers for all parameter groups."""
         optimizers_and_schedulers = []
 
@@ -1431,6 +1466,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         List[Tensor] format (from custom collate) and Tensor format (backwards compatibility).
         Each sample can have variable-length sequences without padding waste.
 
+        FIXED: Ensures every input sample produces at least one output prediction,
+        even for placeholder samples without real sequence data.
+
         Parameters
         ----------
         h_task : torch.Tensor
@@ -1464,23 +1502,39 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 t_sample = t_sequence[batch_idx]  # Shape: (seq_len,) - variable length
                 h_sample = h_task[batch_idx]  # Shape: (D,)
 
-                # Remove any zero-padding if present (though List format shouldn't have padding)
-                if t_sample.numel() > 0:
-                    valid_mask = t_sample != 0.0
-                    valid_t = t_sample[valid_mask] if valid_mask.any() else t_sample
+                # Check if this is a placeholder sample (length 1 with value 0.0)
+                is_placeholder = t_sample.numel() == 1 and t_sample.item() == 0.0
 
-                    if len(valid_t) > 0:
-                        # Replicate h_sample for each valid t value
-                        h_replicated = h_sample.unsqueeze(0).repeat(len(valid_t), 1)  # Shape: (valid_length, D)
+                if is_placeholder:
+                    # For placeholder samples, create a single prediction with default t=0.0
+                    h_replicated = h_sample.unsqueeze(0)  # Shape: (1, D)
+                    default_t = torch.tensor([0.0], device=device, dtype=t_sample.dtype)
 
-                        expanded_h_list.append(h_replicated)
-                        expanded_t_list.append(valid_t)
+                    expanded_h_list.append(h_replicated)
+                    expanded_t_list.append(default_t)
+                else:
+                    # For real samples, process normally
+                    if t_sample.numel() > 0:
+                        valid_mask = t_sample != 0.0
+                        valid_t = t_sample[valid_mask] if valid_mask.any() else t_sample
+
+                        if len(valid_t) > 0:
+                            # Replicate h_sample for each valid t value
+                            h_replicated = h_sample.unsqueeze(0).repeat(len(valid_t), 1)  # Shape: (valid_length, D)
+
+                            expanded_h_list.append(h_replicated)
+                            expanded_t_list.append(valid_t)
+                        else:
+                            # Fallback: create single prediction even if no valid t found
+                            h_replicated = h_sample.unsqueeze(0)  # Shape: (1, D)
+                            default_t = torch.tensor([0.0], device=device, dtype=t_sample.dtype)
+
+                            expanded_h_list.append(h_replicated)
+                            expanded_t_list.append(default_t)
         else:
             # Handle legacy Tensor format for backwards compatibility
             if t_sequence.dim() != 2 or t_sequence.shape[0] != batch_size:
                 raise ValueError(f"Expected t_sequence tensor to have shape (B, L), got {t_sequence.shape}")
-
-            seq_len = t_sequence.shape[1]
 
             for batch_idx in range(batch_size):
                 # Get the t sequence for this sample
@@ -1488,7 +1542,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 h_sample = h_task[batch_idx]  # Shape: (D,)
 
                 # Find valid (non-zero) t values - assuming padding is 0
-                # This handles variable length sequences
                 valid_mask = t_sample != 0.0
                 valid_t = t_sample[valid_mask]  # Shape: (valid_length,)
 
@@ -1498,16 +1551,311 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
                     expanded_h_list.append(h_replicated)
                     expanded_t_list.append(valid_t)
+                else:
+                    # Fallback: create single prediction even if no valid t found
+                    h_replicated = h_sample.unsqueeze(0)  # Shape: (1, D)
+                    default_t = torch.tensor([0.0], device=device, dtype=t_sample.dtype)
 
+                    expanded_h_list.append(h_replicated)
+                    expanded_t_list.append(default_t)
+
+        # At this point, expanded_h_list and expanded_t_list should never be empty
+        # because we ensure every sample produces at least one prediction
         if expanded_h_list:
             # Concatenate all expanded samples
             expanded_h_task = torch.cat(expanded_h_list, dim=0)  # Shape: (total_valid_points, D)
             expanded_t = torch.cat(expanded_t_list, dim=0)  # Shape: (total_valid_points,)
         else:
-            # Handle case where no valid t values found
+            # This should never happen with the new logic, but keep as safety fallback
+            logger.warning("No expanded samples found in _expand_for_extend_regression - this should not happen")
             expanded_h_task = torch.empty(0, h_task.shape[1], device=device, dtype=h_task.dtype)
             expanded_t = torch.empty(
                 0, device=device, dtype=t_sequence[0].dtype if isinstance(t_sequence, list) else t_sequence.dtype
             )
 
         return expanded_h_task, expanded_t
+
+    def _reshape_extend_regression_predictions(
+        self, processed_pred_dict: dict[str, np.ndarray], sequence_lengths: List[int]
+    ) -> dict[str, List[np.ndarray]]:
+        """
+        Reshape flattened ExtendRegression predictions back to List[numpy.ndarray] format.
+
+        This method takes the flattened predictions from an ExtendRegressionHead and
+        reshapes them back to the original List[numpy.ndarray] format that matches the input
+        structure, ensuring batch consistency with other task types and compatibility
+        with PredictionDataFrameWriter.
+
+        Parameters
+        ----------
+        processed_pred_dict : dict[str, np.ndarray]
+            Dictionary containing flattened predictions from ExtendRegressionHead.predict().
+            Keys are typically prefixed with snake_case task name (e.g., "task_name_value").
+            Values are already numpy arrays.
+        sequence_lengths : List[int]
+            List of original sequence lengths for each sample in the batch.
+            Length of this list equals the batch size.
+
+        Returns
+        -------
+        dict[str, List[np.ndarray]]
+            Dictionary with the same keys as input, but values are reshaped to List[numpy.ndarray]
+            format where each array corresponds to one sample's predictions.
+        """
+        reshaped_dict = {}
+
+        for key, flattened_value in processed_pred_dict.items():
+            # Handle both numpy arrays and potential torch tensors for backward compatibility
+            if isinstance(flattened_value, np.ndarray):
+                flattened_array = flattened_value
+            else:
+                # Fallback for torch tensors (should not happen with ExtendRegression)
+                flattened_array = flattened_value.detach().cpu().numpy()
+
+            # Split the flattened array back into individual sample predictions
+            reshaped_list = []
+            start_idx = 0
+
+            for seq_len in sequence_lengths:
+                if seq_len > 0:
+                    # Extract predictions for this sample
+                    end_idx = start_idx + seq_len
+                    sample_predictions = flattened_array[start_idx:end_idx]
+
+                    # Squeeze to remove unnecessary dimensions (e.g., (N, 1) -> (N,))
+                    # This ensures CSV output shows [1.23, 4.56] instead of [[1.23], [4.56]]
+                    if sample_predictions.ndim == 2 and sample_predictions.shape[1] == 1:
+                        sample_predictions = sample_predictions.squeeze(axis=1)
+
+                    # Keep as numpy array for compatibility with PredictionDataFrameWriter
+                    reshaped_list.append(sample_predictions)
+
+                    start_idx = end_idx
+                else:
+                    # Handle empty sequences (though this should be rare)
+                    empty_array = np.empty(0, dtype=flattened_array.dtype)
+                    reshaped_list.append(empty_array)
+
+            reshaped_dict[key] = reshaped_list
+
+        return reshaped_dict
+
+    def on_save_checkpoint(self, checkpoint):
+        """
+        Custom checkpoint saving that stores optimizer states as dict for better flexibility.
+
+        This method converts the default list-based optimizer states to a dictionary format
+        using meaningful keys (shared_encoder, task_{name}, ssl_module). This allows for
+        robust checkpoint loading even when task configurations change.
+
+        Special handling for task_log_sigmas:
+        - Records which task_log_sigmas were saved
+        - Allows for proper reconstruction during loading
+        """
+        super().on_save_checkpoint(checkpoint)
+
+        if "optimizer_states" not in checkpoint:
+            return
+
+        # Convert list format to dictionary format
+        optimizer_states_list = checkpoint["optimizer_states"]
+        lr_schedulers_list = checkpoint.get("lr_schedulers", [])
+
+        optimizer_states_dict = {}
+        lr_schedulers_dict = {}
+
+        # Record task_log_sigmas information for proper loading
+        task_log_sigmas_info = {}
+        if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas"):
+            task_log_sigmas_info = {
+                "enabled": True,
+                "task_names": list(self.task_log_sigmas.keys()),
+                "count": len(self.task_log_sigmas),
+            }
+        else:
+            task_log_sigmas_info = {"enabled": False, "task_names": [], "count": 0}
+
+        optimizer_index = 0
+
+        # 1. Main optimizer (shared_encoder + task_log_sigmas)
+        main_params = list(self.encoder.parameters())
+        if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas"):
+            main_params.extend(list(self.task_log_sigmas.parameters()))
+
+        main_params_trainable = [p for p in main_params if p.requires_grad]
+        if main_params_trainable and optimizer_index < len(optimizer_states_list):
+            optimizer_states_dict["shared_encoder"] = optimizer_states_list[optimizer_index]
+            if optimizer_index < len(lr_schedulers_list):
+                lr_schedulers_dict["shared_encoder"] = lr_schedulers_list[optimizer_index]
+            optimizer_index += 1
+
+        # 2. Task head optimizers
+        for name, head in self.task_heads.items():
+            head_params_trainable = [p for p in head.parameters() if p.requires_grad]
+            if head_params_trainable and optimizer_index < len(optimizer_states_list):
+                optimizer_states_dict[f"task_{name}"] = optimizer_states_list[optimizer_index]
+                if optimizer_index < len(lr_schedulers_list):
+                    lr_schedulers_dict[f"task_{name}"] = lr_schedulers_list[optimizer_index]
+                optimizer_index += 1
+
+        # 3. SSL module optimizer
+        if self.enable_self_supervised_training and hasattr(self, "ssl_module"):
+            ssl_params_trainable = [p for p in self.ssl_module.parameters() if p.requires_grad]
+            if ssl_params_trainable and optimizer_index < len(optimizer_states_list):
+                optimizer_states_dict["ssl_module"] = optimizer_states_list[optimizer_index]
+                if optimizer_index < len(lr_schedulers_list):
+                    lr_schedulers_dict["ssl_module"] = lr_schedulers_list[optimizer_index]
+
+        # Store both formats for compatibility
+        checkpoint["optimizer_states_dict"] = optimizer_states_dict
+        checkpoint["lr_schedulers_dict"] = lr_schedulers_dict
+        checkpoint["task_log_sigmas_info"] = task_log_sigmas_info
+
+        logger.info(f"Saved optimizer states in dict format: {list(optimizer_states_dict.keys())}")
+        logger.info(f"Saved task_log_sigmas info: {task_log_sigmas_info}")
+
+    def on_load_checkpoint(self, checkpoint):
+        """
+        Custom checkpoint loading that handles frozen parameters using dict-based optimizer states.
+
+        This method provides robust checkpoint loading by:
+        1. Using dict-based optimizer states when available (handles task changes)
+        2. Filtering out optimizer states for frozen components
+        3. Falling back to graceful loading when optimizer states don't match
+        """
+        # Priority 1: Use new dict format if available
+        if "optimizer_states_dict" in checkpoint:
+            self._load_checkpoint_from_dict(checkpoint)
+        # Priority 2: Use fallback logic for list format
+        elif "optimizer_states" in checkpoint:
+            self._load_checkpoint_with_fallback(checkpoint)
+
+        # Always call parent method to load model state
+        super().on_load_checkpoint(checkpoint)
+
+    def _load_checkpoint_from_dict(self, checkpoint):
+        """
+        Load checkpoint using dict-based optimizer states with special handling for task_log_sigmas.
+
+        This method handles the case where task_log_sigmas parameters may have changed between
+        saving and loading due to different task configurations.
+        """
+        optimizer_states_dict = checkpoint["optimizer_states_dict"]
+        lr_schedulers_dict = checkpoint.get("lr_schedulers_dict", {})
+        task_log_sigmas_info = checkpoint.get("task_log_sigmas_info", {"enabled": False, "task_names": [], "count": 0})
+
+        # Build required optimizer states list based on current configuration
+        optimizer_states_list = []
+        lr_schedulers_list = []
+
+        # 1. Main optimizer (only if not frozen)
+        if not self.freeze_shared_encoder:
+            main_params = list(self.encoder.parameters())
+
+            # Check task_log_sigmas compatibility
+            current_task_log_sigmas_names = []
+            if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas"):
+                current_task_log_sigmas_names = list(self.task_log_sigmas.keys())
+                main_params.extend(list(self.task_log_sigmas.parameters()))
+
+            saved_task_log_sigmas_names = task_log_sigmas_info.get("task_names", [])
+
+            # Check if task_log_sigmas configuration has changed
+            task_log_sigmas_changed = set(current_task_log_sigmas_names) != set(saved_task_log_sigmas_names) or len(
+                current_task_log_sigmas_names
+            ) != len(saved_task_log_sigmas_names)
+
+            main_params_trainable = [p for p in main_params if p.requires_grad]
+            if main_params_trainable and "shared_encoder" in optimizer_states_dict:
+                if task_log_sigmas_changed:
+                    logger.warning(
+                        f"task_log_sigmas configuration has changed: "
+                        f"saved={saved_task_log_sigmas_names}, current={current_task_log_sigmas_names}. "
+                        "Skipping main optimizer state loading to avoid parameter group mismatch."
+                    )
+                    # Skip loading this optimizer state due to task_log_sigmas mismatch
+                else:
+                    optimizer_states_list.append(optimizer_states_dict["shared_encoder"])
+                    if "shared_encoder" in lr_schedulers_dict:
+                        lr_schedulers_list.append(lr_schedulers_dict["shared_encoder"])
+                    logger.info("Loaded shared_encoder optimizer state from checkpoint")
+            elif main_params_trainable:
+                logger.warning("shared_encoder has trainable params but no optimizer state found in checkpoint")
+
+        # 2. Task head optimizers (only if not frozen)
+        for name, head in self.task_heads.items():
+            config = self.task_configs_map[name]
+            if not config.freeze_parameters:
+                head_params_trainable = [p for p in head.parameters() if p.requires_grad]
+                task_key = f"task_{name}"
+                if head_params_trainable and task_key in optimizer_states_dict:
+                    optimizer_states_list.append(optimizer_states_dict[task_key])
+                    if task_key in lr_schedulers_dict:
+                        lr_schedulers_list.append(lr_schedulers_dict[task_key])
+                    logger.info(f"Loaded {name} task optimizer state from checkpoint")
+                elif head_params_trainable:
+                    logger.warning(f"Task {name} has trainable params but no optimizer state found in checkpoint")
+
+        # 3. SSL module optimizer
+        if self.enable_self_supervised_training and hasattr(self, "ssl_module"):
+            ssl_params_trainable = [p for p in self.ssl_module.parameters() if p.requires_grad]
+            if ssl_params_trainable and "ssl_module" in optimizer_states_dict:
+                optimizer_states_list.append(optimizer_states_dict["ssl_module"])
+                if "ssl_module" in lr_schedulers_dict:
+                    lr_schedulers_list.append(lr_schedulers_dict["ssl_module"])
+                logger.info("Loaded ssl_module optimizer state from checkpoint")
+            elif ssl_params_trainable:
+                logger.warning("ssl_module has trainable params but no optimizer state found in checkpoint")
+
+        # Update checkpoint with filtered states
+        checkpoint["optimizer_states"] = optimizer_states_list
+        checkpoint["lr_schedulers"] = lr_schedulers_list
+
+        logger.info(f"Successfully loaded {len(optimizer_states_list)} optimizer states from dict format")
+
+    def _load_checkpoint_with_fallback(self, checkpoint):
+        """Load checkpoint with fallback logic for list-based optimizer states."""
+        try:
+            # Calculate expected number of optimizers based on current config
+            expected_optimizers = 0
+
+            # Count main optimizer
+            main_params = list(self.encoder.parameters())
+            if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas"):
+                main_params.extend(list(self.task_log_sigmas.parameters()))
+            main_params_trainable = [p for p in main_params if p.requires_grad]
+            if main_params_trainable and not self.freeze_shared_encoder:
+                expected_optimizers += 1
+
+            # Count task head optimizers
+            for name, head in self.task_heads.items():
+                config = self.task_configs_map[name]
+                head_params_trainable = [p for p in head.parameters() if p.requires_grad]
+                if head_params_trainable and not config.freeze_parameters:
+                    expected_optimizers += 1
+
+            # Count SSL optimizer
+            if self.enable_self_supervised_training and hasattr(self, "ssl_module"):
+                ssl_params_trainable = [p for p in self.ssl_module.parameters() if p.requires_grad]
+                if ssl_params_trainable:
+                    expected_optimizers += 1
+
+            actual_optimizers = len(checkpoint["optimizer_states"])
+
+            if expected_optimizers != actual_optimizers:
+                logger.warning(
+                    f"Optimizer count mismatch: expected {expected_optimizers}, "
+                    f"found {actual_optimizers} in checkpoint. "
+                    "This likely indicates frozen parameter configuration has changed. "
+                    "Removing optimizer states to avoid parameter group size mismatch."
+                )
+                # Remove optimizer states to avoid mismatch errors
+                checkpoint.pop("optimizer_states", None)
+                checkpoint.pop("lr_schedulers", None)
+            else:
+                logger.info(f"Optimizer count matches: {expected_optimizers}. Loading normally.")
+
+        except Exception as e:
+            logger.warning(f"Error during optimizer state validation: {e}. Removing optimizer states as fallback.")
+            checkpoint.pop("optimizer_states", None)
+            checkpoint.pop("lr_schedulers", None)
