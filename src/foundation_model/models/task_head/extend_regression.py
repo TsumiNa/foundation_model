@@ -174,7 +174,7 @@ class ExtendRegressionHead(BaseTaskHead):
             target = target.squeeze(1)
 
         if mask is None:
-            mask = torch.ones_like(target)
+            mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
         elif mask.dim() == 2 and mask.shape[1] == 1:
             mask = mask.squeeze(1)
 

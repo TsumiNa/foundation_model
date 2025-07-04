@@ -110,6 +110,196 @@ def test_extend_regression_issue():
     print(f"DOS samples with placeholder data: {dos_samples_with_placeholder_data}")
     print(f"Percentage with placeholder data: {dos_samples_with_placeholder_data / total_samples_processed * 100:.1f}%")
 
+    # Now test sample_task_masks_dict
+    print("\n=== TESTING SAMPLE_TASK_MASKS_DICT ===")
+
+    total_mask_samples_processed = 0
+    dos_mask_valid_count = 0
+    dos_mask_invalid_count = 0
+    density_mask_valid_count = 0
+    density_mask_invalid_count = 0
+
+    for batch_idx, batch in enumerate(predict_dataloader):
+        if batch_idx >= 10:  # Only check first 10 batches
+            break
+
+        model_input_x, sample_y_dict, sample_task_masks_dict, sample_t_sequences_dict = batch
+
+        batch_size = len(sample_y_dict["dos"])
+        total_mask_samples_processed += batch_size
+
+        print(f"\nBatch {batch_idx} - Mask Analysis:")
+        print(f"  Batch size: {batch_size}")
+
+        # Test mask structure
+        print(f"  Available mask keys: {list(sample_task_masks_dict.keys())}")
+
+        # Test DOS masks (ExtendRegression - should be List[Tensor])
+        if "dos" in sample_task_masks_dict:
+            dos_masks = sample_task_masks_dict["dos"]
+            dos_y_data = sample_y_dict["dos"]
+
+            print(f"  DOS mask type: {type(dos_masks)}")
+            print(f"  DOS mask length: {len(dos_masks)}")
+
+            # Verify it's List[Tensor] format
+            if isinstance(dos_masks, list):
+                print("  ✓ DOS masks correctly use List[Tensor] format")
+
+                # Check each sample's mask
+                for i in range(min(batch_size, 3)):  # Check first 3 samples
+                    mask_tensor = dos_masks[i]
+                    y_tensor = dos_y_data[i]
+
+                    print(f"    Sample {i}:")
+                    print(f"      Mask shape: {mask_tensor.shape}, dtype: {mask_tensor.dtype}")
+                    print(f"      Y data shape: {y_tensor.shape}")
+
+                    # Verify shapes match
+                    if mask_tensor.shape == y_tensor.shape:
+                        print("      ✓ Mask and y_data shapes match")
+                    else:
+                        print("      ✗ Mask and y_data shapes don't match!")
+
+                    # Verify mask dtype is bool
+                    if mask_tensor.dtype == torch.bool:
+                        print("      ✓ Mask dtype is bool")
+                    else:
+                        print(f"      ✗ Mask dtype is {mask_tensor.dtype}, expected bool")
+
+                    # Check mask values logic
+                    mask_all_true = torch.all(mask_tensor).item()
+                    mask_all_false = torch.all(~mask_tensor).item()
+                    mask_valid_count = torch.sum(mask_tensor).item()
+
+                    # Check if this sample has placeholder data
+                    is_placeholder = len(y_tensor) == 1 and y_tensor[0].item() == 0.0
+
+                    print(
+                        f"      Y data length: {len(y_tensor)}, first value: {y_tensor[0].item() if len(y_tensor) > 0 else 'N/A'}"
+                    )
+                    print(f"      Is placeholder: {is_placeholder}")
+                    print(f"      Mask valid count: {mask_valid_count}/{len(mask_tensor)}")
+
+                    if is_placeholder:
+                        if mask_all_false:
+                            print("      ✓ Placeholder sample correctly has all-False mask")
+                            dos_mask_invalid_count += 1
+                        else:
+                            print("      ✗ Placeholder sample should have all-False mask but doesn't")
+                    else:
+                        if mask_all_true:
+                            print("      ✓ Valid sample correctly has all-True mask")
+                            dos_mask_valid_count += 1
+                        else:
+                            print(f"      ? Valid sample has partial mask: {mask_valid_count}/{len(mask_tensor)} True")
+                            # This might be due to random masking or other valid reasons
+                            dos_mask_valid_count += 1
+
+                # Count valid/invalid masks for this batch
+                for i in range(batch_size):
+                    mask_tensor = dos_masks[i]
+                    y_tensor = dos_y_data[i]
+                    is_placeholder = len(y_tensor) == 1 and y_tensor[0].item() == 0.0
+                    mask_has_valid = torch.any(mask_tensor).item()
+
+                    if not is_placeholder and mask_has_valid:
+                        if i >= 3:  # Only count those not already counted above
+                            dos_mask_valid_count += 1
+                    elif is_placeholder and not mask_has_valid:
+                        if i >= 3:  # Only count those not already counted above
+                            dos_mask_invalid_count += 1
+            else:
+                print(f"  ✗ DOS masks should be List[Tensor] but got {type(dos_masks)}")
+
+        # Test Density masks (Regression - should be Tensor)
+        if "density" in sample_task_masks_dict:
+            density_masks = sample_task_masks_dict["density"]
+            density_y_data = sample_y_dict["density"]
+
+            print(f"  Density mask type: {type(density_masks)}")
+            print(f"  Density mask shape: {density_masks.shape}")
+
+            # Verify it's Tensor format
+            if isinstance(density_masks, torch.Tensor):
+                print("  ✓ Density masks correctly use Tensor format")
+
+                # Verify shapes match
+                if density_masks.shape[0] == density_y_data.shape[0]:
+                    print("  ✓ Density mask and y_data batch sizes match")
+                else:
+                    print("  ✗ Density mask and y_data batch sizes don't match!")
+
+                # Verify mask dtype is bool
+                if density_masks.dtype == torch.bool:
+                    print("  ✓ Density mask dtype is bool")
+                else:
+                    print(f"  ✗ Density mask dtype is {density_masks.dtype}, expected bool")
+
+                # Count valid masks
+                valid_count = torch.sum(density_masks).item()
+                invalid_count = density_masks.shape[0] - valid_count
+
+                density_mask_valid_count += valid_count
+                density_mask_invalid_count += invalid_count
+
+                print(f"  Density mask stats: {valid_count} valid, {invalid_count} invalid")
+
+                # Check first few samples
+                for i in range(min(batch_size, 3)):
+                    mask_val = density_masks[i].item() if density_masks.dim() > 1 else density_masks[i].item()
+                    y_val = density_y_data[i].item() if hasattr(density_y_data[i], "item") else density_y_data[i]
+                    print(f"    Sample {i}: mask={mask_val}, y_data={y_val}")
+            else:
+                print(f"  ✗ Density masks should be Tensor but got {type(density_masks)}")
+
+    print("\n=== MASK TESTING SUMMARY ===")
+    print(f"Total samples processed: {total_mask_samples_processed}")
+    print("DOS mask summary:")
+    print(f"  Valid (non-placeholder): {dos_mask_valid_count}")
+    print(f"  Invalid (placeholder): {dos_mask_invalid_count}")
+    print(f"  Percentage with valid DOS masks: {dos_mask_valid_count / total_mask_samples_processed * 100:.1f}%")
+    print("Density mask summary:")
+    print(f"  Valid: {density_mask_valid_count}")
+    print(f"  Invalid: {density_mask_invalid_count}")
+    print(
+        f"  Percentage with valid Density masks: {density_mask_valid_count / total_mask_samples_processed * 100:.1f}%"
+    )
+
+    # Test mask consistency with data
+    print("\n=== MASK-DATA CONSISTENCY CHECK ===")
+    consistency_issues = 0
+
+    for batch_idx, batch in enumerate(predict_dataloader):
+        if batch_idx >= 5:  # Check first 5 batches for consistency
+            break
+
+        model_input_x, sample_y_dict, sample_task_masks_dict, sample_t_sequences_dict = batch
+
+        # Check DOS consistency
+        if "dos" in sample_task_masks_dict and "dos" in sample_y_dict:
+            dos_masks = sample_task_masks_dict["dos"]
+            dos_y_data = sample_y_dict["dos"]
+
+            for i, (mask, y_data) in enumerate(zip(dos_masks, dos_y_data)):
+                is_placeholder = len(y_data) == 1 and y_data[0].item() == 0.0
+                mask_indicates_invalid = torch.all(~mask).item()
+
+                # Consistency check: placeholder data should have all-False mask
+                if is_placeholder and not mask_indicates_invalid:
+                    print(
+                        f"  ✗ Consistency issue in batch {batch_idx}, sample {i}: placeholder data but mask not all-False"
+                    )
+                    consistency_issues += 1
+                elif not is_placeholder and mask_indicates_invalid:
+                    print(f"  ✗ Consistency issue in batch {batch_idx}, sample {i}: valid data but mask all-False")
+                    consistency_issues += 1
+
+    if consistency_issues == 0:
+        print("  ✓ No mask-data consistency issues found")
+    else:
+        print(f"  ✗ Found {consistency_issues} mask-data consistency issues")
+
     # Now test the model expansion logic
     print("\n=== TESTING MODEL EXPANSION LOGIC ===")
 

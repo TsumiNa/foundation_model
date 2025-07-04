@@ -4,7 +4,7 @@ seed_everything: 42
 model:
   class_path: foundation_model.models.FlexibleMultiTaskModel
   init_args:
-    enable_learnable_loss_balancer: true
+    enable_learnable_loss_balancer: false
     shared_block_dims: [290, 128]
     task_configs:
       - name: density
