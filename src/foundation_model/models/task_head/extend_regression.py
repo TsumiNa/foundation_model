@@ -6,6 +6,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from numpy import ndarray
 
 from foundation_model.models.fc_layers import LinearBlock
@@ -23,7 +24,8 @@ class FourierFeatures(nn.Module):
         super().__init__()
         self.input_dim = input_dim
         self.mapping_size = mapping_size
-        self.B = nn.Parameter(torch.randn((input_dim, mapping_size)) * scale, requires_grad=False)
+        # self.B = nn.Parameter(torch.randn((input_dim, mapping_size)) * scale, requires_grad=False)
+        self.register_buffer("B", torch.randn((input_dim, mapping_size)) * scale)
 
     def forward(self, t: torch.Tensor) -> torch.Tensor:
         if t.dim() == 1:
@@ -51,7 +53,6 @@ class ExtendRegressionHead(BaseTaskHead):
 
     def __init__(self, config: ExtendRegressionTaskConfig):
         super().__init__(config)
-        self.loss_fn = nn.MSELoss()
 
         # Store configuration parameters
         self.t_encoding_method = config.t_encoding_method
@@ -80,29 +81,34 @@ class ExtendRegressionHead(BaseTaskHead):
         else:
             raise ValueError(f"Unsupported t_encoding_method: {self.t_encoding_method}. Must be 'fourier' or 'fc'.")
 
+        config.t_dim[0] = encoded_t_dim
         # Initialize networks using LinearBlock
         # f_x: processes material features x
         self.f_x = LinearBlock(
-            config.x_dim,
+            config.x_dim + [1],
             normalization=config.norm,
             residual=config.residual,
-            dim_output_layer=1,  # Output scalar value
+            # dim_output_layer=1,  # Output scalar value
         )
 
         # f_t: processes encoded t features
         self.f_t = LinearBlock(
-            [encoded_t_dim] + config.t_dim[1:],
+            config.t_dim + [1],
             normalization=config.norm,
             residual=config.residual,
-            dim_output_layer=1,  # Output scalar value
+            # dim_output_layer=1,  # Output scalar value
         )
 
         # g_x: processes material features for interaction
-        self.g_x = LinearBlock(config.x_dim, normalization=config.norm, residual=config.residual)
+        self.g_x = LinearBlock(
+            config.x_dim,
+            normalization=config.norm,
+            residual=config.residual,
+        )
 
         # g_t: processes encoded t features for interaction
         self.g_t = LinearBlock(
-            [encoded_t_dim] + config.t_dim[1:],
+            config.t_dim,
             normalization=config.norm,
             residual=config.residual,
         )
@@ -179,7 +185,7 @@ class ExtendRegressionHead(BaseTaskHead):
             mask = mask.squeeze(1)
 
         # Apply mask to both predictions and targets
-        losses = self.loss_fn(pred, target) * mask
+        losses = F.mse_loss(pred, target, reduction="none") * mask
 
         # Compute total loss (average over all valid elements)
         total_loss = torch.nan_to_num(losses.sum() / mask.sum().clamp_min(1.0), nan=0.0, posinf=0.0, neginf=0.0)

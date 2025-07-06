@@ -4,7 +4,7 @@ seed_everything: 42
 model:
   class_path: foundation_model.models.FlexibleMultiTaskModel
   init_args:
-    enable_learnable_loss_balancer: false
+    enable_learnable_loss_balancer: true
     strict_loading: true
     shared_block_dims: [290, 128]
     task_configs:
@@ -134,11 +134,11 @@ model:
         type: ExtendRegression
         data_column: DOS density (normalized) # Assuming same column for this duplicate
         t_column: DOS energy
-        x_dim: [128, 32, 16]
-        t_dim: [32, 16]
+        x_dim: [128, 64]
+        t_dim: [128, 64]
         # t_encoding_method: fourier
         t_encoding_method: fc
-        norm: true
+        norm: false
         residual: false
         weight: 1.0
         enabled: true
