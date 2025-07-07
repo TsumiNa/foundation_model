@@ -18,7 +18,7 @@ model:
         enabled: true
         optimizer:
           optimizer_type: AdamW
-          lr: 0.01
+          lr: 5.0e-3
           weight_decay: 0.01
           eps: 1.0e-06
           betas: [0.9, 0.999]
@@ -38,7 +38,7 @@ model:
         enabled: true
         optimizer:
           optimizer_type: AdamW
-          lr: 0.01
+          lr: 5.0e-3
           weight_decay: 0.01
           eps: 1.0e-06
           betas: [0.9, 0.999]
@@ -58,7 +58,7 @@ model:
         enabled: true
         optimizer:
           optimizer_type: AdamW
-          lr: 0.01
+          lr: 5.0e-3
           weight_decay: 0.01
           eps: 1.0e-06
           betas: [0.9, 0.999]
@@ -134,17 +134,17 @@ model:
         type: ExtendRegression
         data_column: DOS density (normalized) # Assuming same column for this duplicate
         t_column: DOS energy
-        x_dim: [128, 32, 16]
-        t_dim: [32, 16]
+        x_dim: [128, 64]
+        t_dim: [128, 64]
         # t_encoding_method: fourier
         t_encoding_method: fc
-        norm: true
+        norm: false
         residual: false
         weight: 1.0
         enabled: true
         optimizer:
           optimizer_type: AdamW
-          lr: 5.0e-4
+          lr: 5.0e-3
           weight_decay: 0.01
           eps: 1.0e-06
           betas: [0.9, 0.999]
@@ -152,11 +152,11 @@ model:
           mode: min
           factor: 0.5
           patience: 50
-          min_lr: 1.0e-05
+          min_lr: 1.0e-04
 
     shared_block_optimizer:
       optimizer_type: AdamW
-      lr: 5.0e-4
+      lr: 5.0e-3
       weight_decay: 0.01
       eps: 1.0e-06
       betas: [0.9, 0.999]

@@ -424,7 +424,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
     def forward(
         self,
         x: torch.Tensor | tuple[torch.Tensor, torch.Tensor | None],
-        t_sequences: dict[str, torch.Tensor] | None = None,  # Renamed from temps_batch
+        t_sequences: dict[str, List[torch.Tensor] | torch.Tensor] | None = None,  # Renamed from temps_batch
     ) -> dict[str, torch.Tensor]:
         """
         Forward pass through the model.
@@ -1462,12 +1462,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """
         Expand h_task and t_sequence for ExtendRegressionHead processing.
 
-        This method implements an improved expansion algorithm that handles both
-        List[Tensor] format (from custom collate) and Tensor format (backwards compatibility).
-        Each sample can have variable-length sequences without padding waste.
+        This method does pure data expansion without any filtering or mask decisions.
+        It simply concatenates all sequence data and replicates features accordingly.
+        The responsibility of handling valid/invalid data lies with the mask processing
+        in the loss computation steps (training/validation/test).
 
-        FIXED: Ensures every input sample produces at least one output prediction,
-        even for placeholder samples without real sequence data.
+        FIXED: Removed harmful 0-value filtering that was incorrectly excluding
+        Energy=0 data points. Now performs simple expansion only.
 
         Parameters
         ----------
@@ -1485,9 +1486,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             - expanded_h_task: shape (N, D) where N = sum of sequence lengths across batch
             - expanded_t: shape (N,) where N = sum of sequence lengths across batch
         """
-        device = h_task.device
         batch_size = h_task.shape[0]
-
         expanded_h_list = []
         expanded_t_list = []
 
@@ -1502,72 +1501,35 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 t_sample = t_sequence[batch_idx]  # Shape: (seq_len,) - variable length
                 h_sample = h_task[batch_idx]  # Shape: (D,)
 
-                # Check if this is a placeholder sample (length 1 with value 0.0)
-                is_placeholder = t_sample.numel() == 1 and t_sample.item() == 0.0
-
-                if is_placeholder:
-                    # For placeholder samples, create a single prediction with default t=0.0
-                    h_replicated = h_sample.unsqueeze(0)  # Shape: (1, D)
-                    default_t = torch.tensor([0.0], device=device, dtype=t_sample.dtype)
-
+                # Simple expansion: replicate h_sample for each t value
+                seq_len = len(t_sample)
+                if seq_len > 0:
+                    h_replicated = h_sample.unsqueeze(0).repeat(seq_len, 1)  # Shape: (seq_len, D)
                     expanded_h_list.append(h_replicated)
-                    expanded_t_list.append(default_t)
-                else:
-                    # For real samples, process normally
-                    if t_sample.numel() > 0:
-                        valid_mask = t_sample != 0.0
-                        valid_t = t_sample[valid_mask] if valid_mask.any() else t_sample
-
-                        if len(valid_t) > 0:
-                            # Replicate h_sample for each valid t value
-                            h_replicated = h_sample.unsqueeze(0).repeat(len(valid_t), 1)  # Shape: (valid_length, D)
-
-                            expanded_h_list.append(h_replicated)
-                            expanded_t_list.append(valid_t)
-                        else:
-                            # Fallback: create single prediction even if no valid t found
-                            h_replicated = h_sample.unsqueeze(0)  # Shape: (1, D)
-                            default_t = torch.tensor([0.0], device=device, dtype=t_sample.dtype)
-
-                            expanded_h_list.append(h_replicated)
-                            expanded_t_list.append(default_t)
+                    expanded_t_list.append(t_sample)
         else:
             # Handle legacy Tensor format for backwards compatibility
             if t_sequence.dim() != 2 or t_sequence.shape[0] != batch_size:
                 raise ValueError(f"Expected t_sequence tensor to have shape (B, L), got {t_sequence.shape}")
 
             for batch_idx in range(batch_size):
-                # Get the t sequence for this sample
                 t_sample = t_sequence[batch_idx]  # Shape: (L,)
                 h_sample = h_task[batch_idx]  # Shape: (D,)
 
-                # Find valid (non-zero) t values - assuming padding is 0
-                valid_mask = t_sample != 0.0
-                valid_t = t_sample[valid_mask]  # Shape: (valid_length,)
-
-                if len(valid_t) > 0:
-                    # Replicate h_sample for each valid t value
-                    h_replicated = h_sample.unsqueeze(0).repeat(len(valid_t), 1)  # Shape: (valid_length, D)
-
+                # Simple expansion: replicate h_sample for each t value
+                seq_len = len(t_sample)
+                if seq_len > 0:
+                    h_replicated = h_sample.unsqueeze(0).repeat(seq_len, 1)  # Shape: (seq_len, D)
                     expanded_h_list.append(h_replicated)
-                    expanded_t_list.append(valid_t)
-                else:
-                    # Fallback: create single prediction even if no valid t found
-                    h_replicated = h_sample.unsqueeze(0)  # Shape: (1, D)
-                    default_t = torch.tensor([0.0], device=device, dtype=t_sample.dtype)
+                    expanded_t_list.append(t_sample)
 
-                    expanded_h_list.append(h_replicated)
-                    expanded_t_list.append(default_t)
-
-        # At this point, expanded_h_list and expanded_t_list should never be empty
-        # because we ensure every sample produces at least one prediction
+        # Concatenate all expanded samples
         if expanded_h_list:
-            # Concatenate all expanded samples
-            expanded_h_task = torch.cat(expanded_h_list, dim=0)  # Shape: (total_valid_points, D)
-            expanded_t = torch.cat(expanded_t_list, dim=0)  # Shape: (total_valid_points,)
+            expanded_h_task = torch.cat(expanded_h_list, dim=0)  # Shape: (total_points, D)
+            expanded_t = torch.cat(expanded_t_list, dim=0)  # Shape: (total_points,)
         else:
-            # This should never happen with the new logic, but keep as safety fallback
-            logger.warning("No expanded samples found in _expand_for_extend_regression - this should not happen")
+            # Handle empty case gracefully
+            device = h_task.device
             expanded_h_task = torch.empty(0, h_task.shape[1], device=device, dtype=h_task.dtype)
             expanded_t = torch.empty(
                 0, device=device, dtype=t_sequence[0].dtype if isinstance(t_sequence, list) else t_sequence.dtype
