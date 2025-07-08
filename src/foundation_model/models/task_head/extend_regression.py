@@ -154,7 +154,7 @@ class ExtendRegressionHead(BaseTaskHead):
         pred: torch.Tensor,
         target: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    ) -> Optional[torch.Tensor]:
         """
         Compute masked MSE loss for extended regression.
 
@@ -170,8 +170,8 @@ class ExtendRegressionHead(BaseTaskHead):
 
         Returns
         -------
-        torch.Tensor
-            Total loss as a scalar tensor.
+        torch.Tensor | None
+            Total loss as a scalar tensor, or None if no valid samples in the batch.
         """
         # Ensure consistent shapes
         if pred.dim() == 2 and pred.shape[1] == 1:
@@ -184,11 +184,17 @@ class ExtendRegressionHead(BaseTaskHead):
         elif mask.dim() == 2 and mask.shape[1] == 1:
             mask = mask.squeeze(1)
 
+        # Check if there are any valid samples
+        valid_count = mask.sum()
+        if valid_count == 0:
+            # No valid samples in this batch for this task
+            return None
+
         # Apply mask to both predictions and targets
         losses = F.mse_loss(pred, target, reduction="none") * mask
 
-        # Compute total loss (average over all valid elements)
-        total_loss = torch.nan_to_num(losses.sum() / mask.sum().clamp_min(1.0), nan=0.0, posinf=0.0, neginf=0.0)
+        # Compute total loss - simple division without defensive clamp or nan handling
+        total_loss = losses.sum() / valid_count
 
         return total_loss
 

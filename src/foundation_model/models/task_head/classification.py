@@ -100,7 +100,7 @@ class ClassificationHead(BaseTaskHead):
         pred: torch.Tensor,
         target: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    ) -> Optional[torch.Tensor]:
         """
         Compute cross-entropy loss for classification.
 
@@ -116,8 +116,8 @@ class ClassificationHead(BaseTaskHead):
 
         Returns
         -------
-        torch.Tensor
-            Total loss as a scalar tensor.
+        torch.Tensor | None
+            Total loss as a scalar tensor, or None if no valid samples in the batch.
         """
         # pred is (B, C), target is (B, 1) from dataloader, mask is (B, 1) from dataloader
 
@@ -152,14 +152,20 @@ class ClassificationHead(BaseTaskHead):
                 f"Pred shape: {pred.shape}, Processed mask shape: {mask_1d.shape}. Expected mask (B,)."
             )
 
-        # 3. Individual sample losses
+        # 3. Check if there are any valid samples
+        valid_count = mask_1d.sum()
+        if valid_count == 0:
+            # No valid samples in this batch for this task
+            return None
+
+        # 4. Individual sample losses
         # Use mask mechanism only (no ignore_index) for unified missing data handling
         # Missing data placeholders (-100) in targets won't affect loss due to mask filtering
         losses = F.cross_entropy(pred, final_target_for_loss, reduction="none")  # losses is (B,)
         masked_losses = losses * mask_1d  # Apply 1D mask, result is (B,)
 
-        # 4. Total loss
-        total_loss = masked_losses.sum() / mask_1d.sum().clamp_min(1.0)
+        # 5. Total loss - simple division without defensive clamp
+        total_loss = masked_losses.sum() / valid_count
 
         return total_loss
 

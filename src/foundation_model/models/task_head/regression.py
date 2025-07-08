@@ -101,7 +101,7 @@ class RegressionHead(BaseTaskHead):
         pred: torch.Tensor,
         target: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    ) -> Optional[torch.Tensor]:
         """
         Compute masked MSE loss for regression.
 
@@ -117,17 +117,23 @@ class RegressionHead(BaseTaskHead):
 
         Returns
         -------
-        torch.Tensor
-            Total loss as a scalar tensor.
+        torch.Tensor | None
+            Total loss as a scalar tensor, or None if no valid samples in the batch.
         """
         if mask is None:
             mask = torch.ones_like(target)
 
+        # Check if there are any valid samples
+        valid_count = mask.sum()
+        if valid_count == 0:
+            # No valid samples in this batch for this task
+            return None
+
         # Apply mask to both predictions and targets
         losses = F.mse_loss(pred, target, reduction="none") * mask
 
-        # Compute total loss (sum over all dimensions, average over valid points)
-        total_loss = losses.sum() / mask.sum().clamp_min(1.0)
+        # Compute total loss - simple division without defensive clamp
+        total_loss = losses.sum() / valid_count
 
         return total_loss
 

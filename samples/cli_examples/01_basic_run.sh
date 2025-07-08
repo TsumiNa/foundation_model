@@ -22,7 +22,7 @@
 
 # Directory to store logs for this specific run
 LOG_DIR_BASE="samples/example_logs/basic_run"
-EXPERIMENT_NAME="basic_experiment_$(date +%Y%m%d_%H%M%S)" # Unique experiment name
+EXPERIMENT_NAME="test_all_tasks_t_depends_fourier_$(date +%Y%m%d_%H%M%S)" # Unique experiment name
 LOG_DIR="${LOG_DIR_BASE}/${EXPERIMENT_NAME}"
 
 # 允许用户通过参数指定 LOG_DIR、执行阶段、配置目录和checkpoint路径

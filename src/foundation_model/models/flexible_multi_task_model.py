@@ -153,12 +153,15 @@ class FlexibleMultiTaskModel(L.LightningModule):
         mask_ratio: float = 0.15,
         temperature: float = 0.07,
         enable_learnable_loss_balancer: bool = True,  # New parameter
+        # Loss calculation behavior
+        allow_all_missing_in_batch: bool = True,  # New parameter for handling all-missing batches
     ):
         super().__init__()
         self.save_hyperparameters()
 
-        # Store the new parameter
+        # Store the new parameters
         self.enable_learnable_loss_balancer = enable_learnable_loss_balancer
+        self.allow_all_missing_in_batch = allow_all_missing_in_batch
 
         # Store the strict loading parameter
         self.strict_loading = strict_loading
@@ -671,8 +674,21 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
             raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
-            raw_supervised_losses[name] = raw_loss_t
-            train_logs[f"train_{name}_raw_loss"] = raw_loss_t.detach()
+
+            # Handle the case where all samples are missing for this task
+            if raw_loss_t is None:
+                if self.allow_all_missing_in_batch:
+                    logger.debug(f"Task '{name}' has no valid samples in this batch. Skipping loss calculation.")
+                    train_logs[f"train_{name}_all_missing"] = 1.0  # Record missing
+                    continue  # Skip this task
+                else:
+                    logger.error(f"Task '{name}' has no valid samples in batch, but allow_all_missing_in_batch=False")
+                    raise ValueError(f"All samples missing for task '{name}' in batch, training cannot proceed")
+            else:
+                # Normal case: record the loss
+                raw_supervised_losses[name] = raw_loss_t
+                train_logs[f"train_{name}_raw_loss"] = raw_loss_t.detach()
+                train_logs[f"train_{name}_all_missing"] = 0.0  # Record non-missing
 
         # Apply uncertainty weighting for supervised tasks
         for name, raw_loss_t in raw_supervised_losses.items():
@@ -910,9 +926,22 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
             raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
-            raw_val_supervised_losses[name] = raw_loss_t
-            val_sum_supervised_raw_loss += raw_loss_t.detach()
-            val_logs[f"val_{name}_raw_loss"] = raw_loss_t.detach()
+
+            # Handle the case where all samples are missing for this task
+            if raw_loss_t is None:
+                if self.allow_all_missing_in_batch:
+                    logger.debug(f"Task '{name}' has no valid samples in this batch. Skipping loss calculation.")
+                    val_logs[f"val_{name}_all_missing"] = 1.0  # Record missing
+                    continue  # Skip this task
+                else:
+                    logger.error(f"Task '{name}' has no valid samples in batch, but allow_all_missing_in_batch=False")
+                    raise ValueError(f"All samples missing for task '{name}' in batch, validation cannot proceed")
+            else:
+                # Normal case: record the loss
+                raw_val_supervised_losses[name] = raw_loss_t
+                val_sum_supervised_raw_loss += raw_loss_t.detach()
+                val_logs[f"val_{name}_raw_loss"] = raw_loss_t.detach()
+                val_logs[f"val_{name}_all_missing"] = 0.0  # Record non-missing
 
         val_logs["val_sum_supervised_raw_loss"] = val_sum_supervised_raw_loss
 
@@ -1116,9 +1145,22 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
 
             raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
-            raw_test_supervised_losses[name] = raw_loss_t
-            test_sum_supervised_raw_loss += raw_loss_t.detach()
-            test_logs[f"test_{name}_raw_loss"] = raw_loss_t.detach()
+
+            # Handle the case where all samples are missing for this task
+            if raw_loss_t is None:
+                if self.allow_all_missing_in_batch:
+                    logger.debug(f"Task '{name}' has no valid samples in this batch. Skipping loss calculation.")
+                    test_logs[f"test_{name}_all_missing"] = 1.0  # Record missing
+                    continue  # Skip this task
+                else:
+                    logger.error(f"Task '{name}' has no valid samples in batch, but allow_all_missing_in_batch=False")
+                    raise ValueError(f"All samples missing for task '{name}' in batch, test cannot proceed")
+            else:
+                # Normal case: record the loss
+                raw_test_supervised_losses[name] = raw_loss_t
+                test_sum_supervised_raw_loss += raw_loss_t.detach()
+                test_logs[f"test_{name}_raw_loss"] = raw_loss_t.detach()
+                test_logs[f"test_{name}_all_missing"] = 0.0  # Record non-missing
 
         test_logs["test_sum_supervised_raw_loss"] = test_sum_supervised_raw_loss
 
@@ -1673,8 +1715,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
         checkpoint["lr_schedulers_dict"] = lr_schedulers_dict
         checkpoint["task_log_sigmas_info"] = task_log_sigmas_info
 
-        logger.info(f"Saved optimizer states in dict format: {list(optimizer_states_dict.keys())}")
-        logger.info(f"Saved task_log_sigmas info: {task_log_sigmas_info}")
+        logger.debug(f"Saved optimizer states in dict format: {list(optimizer_states_dict.keys())}")
+        logger.debug(f"Saved task_log_sigmas info: {task_log_sigmas_info}")
 
     def on_load_checkpoint(self, checkpoint):
         """
