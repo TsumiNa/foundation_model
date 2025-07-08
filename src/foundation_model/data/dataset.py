@@ -294,8 +294,10 @@ class CompoundDataset(Dataset):
                 base_mask_np = np.array(current_task_mask_list, dtype=bool)
 
                 if task_type == TaskType.CLASSIFICATION:
+                    # Use -100 as placeholder for missing data (avoids conflict with real class labels 0,1,2,...)
+                    # Actual missing data handling is done via mask mechanism, not ignore_index
                     self.y_dict[task_name] = torch.tensor(
-                        np.nan_to_num(processed_values_np, nan=-1).astype(np.int64), dtype=torch.long
+                        np.nan_to_num(processed_values_np, nan=-100).astype(np.int64), dtype=torch.long
                     )
                     logger.debug(
                         f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"

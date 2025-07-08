@@ -153,7 +153,9 @@ class ClassificationHead(BaseTaskHead):
             )
 
         # 3. Individual sample losses
-        losses = F.cross_entropy(pred, final_target_for_loss, reduction="none", ignore_index=-1)  # losses is (B,)
+        # Use mask mechanism only (no ignore_index) for unified missing data handling
+        # Missing data placeholders (-100) in targets won't affect loss due to mask filtering
+        losses = F.cross_entropy(pred, final_target_for_loss, reduction="none")  # losses is (B,)
         masked_losses = losses * mask_1d  # Apply 1D mask, result is (B,)
 
         # 4. Total loss
