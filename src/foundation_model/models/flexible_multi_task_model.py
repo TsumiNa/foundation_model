@@ -27,7 +27,6 @@ from loguru import logger  # Replaced logging with loguru
 from torch.optim.lr_scheduler import LRScheduler  # Changed from _LRScheduler
 
 from .components.foundation_encoder import FoundationEncoder
-from .components.self_supervised import SelfSupervisedModule
 from .model_config import (
     ClassificationTaskConfig,
     KernelRegressionTaskConfig,
@@ -59,14 +58,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
        - Classification tasks: Predict discrete categories
        - KernelRegression tasks: Predict variable-length sequences (e.g., DOS, temperature-dependent properties)
 
-    4. Self-supervised Training (optional):
-       When enable_self_supervised_training=True, enables self-supervised learning objectives:
-       - Masked Feature Modeling (MFM): Similar to BERT's masked language modeling
-       - Contrastive Learning: Aligns representations from different modalities
-       - Cross-reconstruction: Reconstructs one modality from another
-
     Training Process:
-    - Each batch's loss includes task-specific losses and optional self-supervised learning losses
+    - Each batch's loss includes task-specific losses
     - Different components (shared encoder, task heads, etc.) can use different optimizer configurations
 
     Usage Scenarios:
@@ -91,21 +84,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
         Whether to use residual connections in shared layers.
     shared_block_optimizer : OptimizerConfig | None
         Optimizer configuration for the shared foundation encoder and deposit layer.
-    enable_self_supervised_training : bool
-        Whether to enable additional self-supervised training objectives (currently masked feature modeling).
-        When True, the masked feature modeling loss is added to task-specific losses to improve representations.
     loss_weights : dict[str, float] | None
         Weight coefficients dictionary for balancing different loss components in the total loss.
         Includes the following keys:
         - Task names: Weight for each task's loss, default 1.0
-        - "mfm": Weight for masked feature modeling loss, default 1.0
-        Example: {"band_gap": 1.0, "formation_energy": 0.5, "mfm": 0.2}
-    mask_ratio : float
-        Ratio of features to be randomly masked in masked feature modeling.
-        Typical value is 0.15. Only used when enable_self_supervised_training=True.
-    temperature : float
-        Temperature coefficient retained for backward compatibility with contrastive objectives.
-        Typically 0.07. Currently unused when only formula descriptors are provided.
+        Example: {"band_gap": 1.0, "formation_energy": 0.5}
     enable_learnable_loss_balancer : bool
         Whether to use learnable log_sigma_t parameters for each supervised task to weight their losses.
         Defaults to True. If False, only static loss_weights are used.
@@ -125,11 +108,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         strict_loading: bool = True,
         # Optimization parameters
         shared_block_optimizer: OptimizerConfig | None = None,
-        # Self-supervised training options
-        enable_self_supervised_training: bool = False,
         loss_weights: dict[str, float] | None = None,
-        mask_ratio: float = 0.15,
-        temperature: float = 0.07,
         enable_learnable_loss_balancer: bool = True,  # New parameter
         # Loss calculation behavior
         allow_all_missing_in_batch: bool = True,  # New parameter for handling all-missing batches
@@ -164,11 +143,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Freezing parameters
         self.freeze_shared_encoder = freeze_shared_encoder
 
-        # Self-supervised training parameters
-        self.enable_self_supervised_training = enable_self_supervised_training
-        self.mask_ratio = mask_ratio
-        self.temperature = temperature
-
         # Optimizer configurations
         self.shared_block_optimizer = shared_block_optimizer or OptimizerConfig(weight_decay=1e-2)
 
@@ -193,9 +167,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Initialize model components
         self._init_foundation_encoder()
         self._init_task_heads()
-        if enable_self_supervised_training:
-            self._init_self_supervised_module()
-
         # Track task types
         self._track_task_types()
 
@@ -228,16 +199,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """Initialize loss weights for different components."""
         # Start with default weights for all enabled tasks
         self.w = {cfg.name: 1.0 for cfg in self.task_configs if cfg.enabled}
-
-        # Add weights for self-supervised objectives if enabled
-        if self.enable_self_supervised_training:
-            self.w.update(
-                {
-                    "mfm": 1.0,  # Masked Feature Modeling
-                    "contrastive": 1.0,  # Contrastive Learning
-                    "cross_recon": 1.0,  # Cross-Reconstruction
-                }
-            )
 
         # Apply user-provided weights
         if loss_weights:
@@ -291,18 +252,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
             if config.freeze_parameters:
                 for p in head.parameters():
                     p.requires_grad_(False)
-
-    def _init_self_supervised_module(self):
-        """Initialize self-supervised training module if enabled."""
-        self.ssl_module = SelfSupervisedModule(
-            latent_dim=self.shared_block_dims[-1],  # This is also self.deposit_dim
-            formula_dim=self.shared_block_dims[0],
-            mask_ratio=self.mask_ratio,
-            temperature=self.temperature,
-        )
-
-        # Keep references to original components for backward compatibility
-        self.dec_formula = self.ssl_module.formula_decoder
 
     def _track_task_types(self):
         """Track which types of tasks are enabled."""
@@ -376,21 +325,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return outputs
 
     def training_step(self, batch, batch_idx):
-        """
-        Training step implementation with optional masked feature modeling self-supervision.
-
-        Parameters
-        ----------
-        batch : tuple
-            A tuple containing (x, y_dict_batch, task_masks_batch, task_sequence_data_batch)
-        batch_idx : int
-            Index of the current batch
-
-        Returns
-        -------
-        torch.Tensor
-            Total weighted loss for optimization.
-        """
+        """Training step implementation for supervised multi-task learning."""
         optimizers = self.optimizers()
         if not isinstance(optimizers, list):
             optimizers = [optimizers]
@@ -405,35 +340,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if not isinstance(x, torch.Tensor):
             raise TypeError(f"Expected tensor inputs in training_step, received {type(x)}")
 
-        train_logs = {}
-        total_loss = torch.zeros((), device=x.device)
-        ssl_loss_contribution = torch.zeros_like(total_loss)
-        sum_ssl_raw_loss = torch.zeros_like(total_loss)
-
-        if self.enable_self_supervised_training and self.w.get("mfm", 0) > 0:
-            def encoder_fn_masked(x_masked, _is_struct):
-                return self.encoder.encode_masked(x_masked)
-
-            mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
-                encoder_fn_masked,
-                x,
-                None,
-            )
-            for key, value in mfm_logs.items():
-                train_logs[f"train_raw_{key}"] = value.detach()
-
-            static_weight_mfm = self.w.get("mfm", 1.0)
-            weighted_mfm_loss = static_weight_mfm * mfm_loss
-            ssl_loss_contribution += weighted_mfm_loss
-            sum_ssl_raw_loss += mfm_loss.detach()
-            train_logs["train_mfm_raw_loss"] = mfm_loss.detach()
-            train_logs["train_mfm_final_loss_contrib"] = weighted_mfm_loss.detach()
-
-        if self.enable_self_supervised_training:
-            train_logs["train_sum_ssl_raw_loss"] = sum_ssl_raw_loss
-            train_logs["train_final_ssl_loss"] = ssl_loss_contribution.detach()
-
-        supervised_loss_contribution = torch.zeros_like(total_loss)
+        train_logs: dict[str, torch.Tensor] = {}
+        supervised_loss_contribution = torch.zeros((), device=x.device)
 
         preds = self(x, task_sequence_data_batch)
 
@@ -501,7 +409,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         train_logs["train_final_supervised_loss"] = supervised_loss_contribution.detach()
 
-        total_loss = supervised_loss_contribution + ssl_loss_contribution
+        total_loss = supervised_loss_contribution
 
         self.log_dict(train_logs, prog_bar=False, on_step=True, on_epoch=True, sync_dist=True)
         self.log("train_final_loss", total_loss.detach(), prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
@@ -551,33 +459,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         val_logs: dict[str, torch.Tensor] = {}
         final_val_loss = torch.zeros((), device=x.device)
-        val_ssl_loss_contribution = torch.zeros_like(final_val_loss)
-        val_sum_ssl_raw_loss = torch.zeros_like(final_val_loss)
-
-        if self.enable_self_supervised_training and self.w.get("mfm", 0) > 0:
-            def encoder_fn_masked(x_masked, _is_struct):
-                return self.encoder.encode_masked(x_masked)
-
-            mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
-                encoder_fn_masked,
-                x,
-                None,
-            )
-            for key, value in mfm_logs.items():
-                val_logs[f"val_raw_{key}"] = value.detach()
-
-            static_weight_mfm = self.w.get("mfm", 1.0)
-            weighted_mfm_loss = static_weight_mfm * mfm_loss
-            val_ssl_loss_contribution += weighted_mfm_loss.detach()
-            val_sum_ssl_raw_loss += mfm_loss.detach()
-            val_logs["val_mfm_raw_loss"] = mfm_loss.detach()
-            val_logs["val_mfm_final_loss_contrib"] = weighted_mfm_loss.detach()
-
-        if self.enable_self_supervised_training:
-            val_logs["val_sum_ssl_raw_loss"] = val_sum_ssl_raw_loss
-            val_logs["val_final_ssl_loss"] = val_ssl_loss_contribution
-            final_val_loss = final_val_loss + val_ssl_loss_contribution
-
         val_supervised_loss_contribution = torch.zeros_like(final_val_loss)
         val_sum_supervised_raw_loss = torch.zeros_like(final_val_loss)
 
@@ -674,33 +555,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         test_logs: dict[str, torch.Tensor] = {}
         final_test_loss = torch.zeros((), device=x.device)
-        test_ssl_loss_contribution = torch.zeros_like(final_test_loss)
-        test_sum_ssl_raw_loss = torch.zeros_like(final_test_loss)
-
-        if self.enable_self_supervised_training and self.w.get("mfm", 0) > 0:
-            def encoder_fn_masked(x_masked, _is_struct):
-                return self.encoder.encode_masked(x_masked)
-
-            mfm_loss, mfm_logs = self.ssl_module.compute_masked_feature_loss(
-                encoder_fn_masked,
-                x,
-                None,
-            )
-            for key, value in mfm_logs.items():
-                test_logs[f"test_raw_{key}"] = value.detach()
-
-            static_weight_mfm = self.w.get("mfm", 1.0)
-            weighted_mfm_loss = static_weight_mfm * mfm_loss
-            test_ssl_loss_contribution += weighted_mfm_loss.detach()
-            test_sum_ssl_raw_loss += mfm_loss.detach()
-            test_logs["test_mfm_raw_loss"] = mfm_loss.detach()
-            test_logs["test_mfm_final_loss_contrib"] = weighted_mfm_loss.detach()
-
-        if self.enable_self_supervised_training:
-            test_logs["test_sum_ssl_raw_loss"] = test_sum_ssl_raw_loss
-            test_logs["test_final_ssl_loss"] = test_ssl_loss_contribution
-            final_test_loss = final_test_loss + test_ssl_loss_contribution
-
         test_supervised_loss_contribution = torch.zeros_like(final_test_loss)
         test_sum_supervised_raw_loss = torch.zeros_like(final_test_loss)
 
@@ -987,31 +841,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
             else:
                 optimizers_and_schedulers.append(task_opt)
 
-        # 3. Self-supervised module parameters (if enabled)
-        if self.enable_self_supervised_training and hasattr(self, "ssl_module"):
-            ssl_params_to_optimize = [p for p in self.ssl_module.parameters() if p.requires_grad]
-            if ssl_params_to_optimize:
-                # Assuming ssl_module uses shared_block_optimizer config as per original logic
-                ssl_opt = self._create_optimizer(ssl_params_to_optimize, self.shared_block_optimizer)
-                ssl_sched = self._create_scheduler(ssl_opt, self.shared_block_optimizer)
-
-                if ssl_sched:
-                    optimizers_and_schedulers.append(
-                        {
-                            "optimizer": ssl_opt,
-                            "lr_scheduler": {
-                                "scheduler": ssl_sched,
-                                "monitor": self.shared_block_optimizer.monitor,
-                                "interval": self.shared_block_optimizer.interval,
-                                "frequency": self.shared_block_optimizer.frequency,
-                            },
-                        }
-                    )
-                else:
-                    optimizers_and_schedulers.append(ssl_opt)
-            else:
-                logger.info("No parameters requiring gradients for SSL module. Skipping optimizer creation.")
-
         if not optimizers_and_schedulers:
             logger.warning(
                 "No optimizers were configured. This might be due to all parameters being frozen or an issue in parameter collection."
@@ -1172,7 +1001,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         Custom checkpoint saving that stores optimizer states as dict for better flexibility.
 
         This method converts the default list-based optimizer states to a dictionary format
-        using meaningful keys (shared_encoder, task_{name}, ssl_module). This allows for
+        using meaningful keys (shared_encoder, task_{name}). This allows for
         robust checkpoint loading even when task configurations change.
 
         Special handling for task_log_sigmas:
@@ -1224,14 +1053,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 if optimizer_index < len(lr_schedulers_list):
                     lr_schedulers_dict[f"task_{name}"] = lr_schedulers_list[optimizer_index]
                 optimizer_index += 1
-
-        # 3. SSL module optimizer
-        if self.enable_self_supervised_training and hasattr(self, "ssl_module"):
-            ssl_params_trainable = [p for p in self.ssl_module.parameters() if p.requires_grad]
-            if ssl_params_trainable and optimizer_index < len(optimizer_states_list):
-                optimizer_states_dict["ssl_module"] = optimizer_states_list[optimizer_index]
-                if optimizer_index < len(lr_schedulers_list):
-                    lr_schedulers_dict["ssl_module"] = lr_schedulers_list[optimizer_index]
 
         # Store both formats for compatibility
         checkpoint["optimizer_states_dict"] = optimizer_states_dict
@@ -1323,17 +1144,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 elif head_params_trainable:
                     logger.warning(f"Task {name} has trainable params but no optimizer state found in checkpoint")
 
-        # 3. SSL module optimizer
-        if self.enable_self_supervised_training and hasattr(self, "ssl_module"):
-            ssl_params_trainable = [p for p in self.ssl_module.parameters() if p.requires_grad]
-            if ssl_params_trainable and "ssl_module" in optimizer_states_dict:
-                optimizer_states_list.append(optimizer_states_dict["ssl_module"])
-                if "ssl_module" in lr_schedulers_dict:
-                    lr_schedulers_list.append(lr_schedulers_dict["ssl_module"])
-                logger.info("Loaded ssl_module optimizer state from checkpoint")
-            elif ssl_params_trainable:
-                logger.warning("ssl_module has trainable params but no optimizer state found in checkpoint")
-
         # Update checkpoint with filtered states
         checkpoint["optimizer_states"] = optimizer_states_list
         checkpoint["lr_schedulers"] = lr_schedulers_list
@@ -1359,12 +1169,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 config = self.task_configs_map[name]
                 head_params_trainable = [p for p in head.parameters() if p.requires_grad]
                 if head_params_trainable and not config.freeze_parameters:
-                    expected_optimizers += 1
-
-            # Count SSL optimizer
-            if self.enable_self_supervised_training and hasattr(self, "ssl_module"):
-                ssl_params_trainable = [p for p in self.ssl_module.parameters() if p.requires_grad]
-                if ssl_params_trainable:
                     expected_optimizers += 1
 
             actual_optimizers = len(checkpoint["optimizer_states"])

@@ -72,11 +72,8 @@ model:
     # struct_block_dims: [128, 256, 256] # Example: [input_dim_structure, hidden1, output_latent_dim_must_match_model_latent]
 
     # --- Self-Supervised Learning (Optional) ---
-    enable_self_supervised_training: False
     # loss_weights: # Weights for different loss components if SSL is enabled
     #   mfm: 1.0
-    # mask_ratio: 0.15
-    # temperature: 0.07 # For contrastive loss
 
 data:
   class_path: foundation_model.data.datamodule.CompoundDataModule

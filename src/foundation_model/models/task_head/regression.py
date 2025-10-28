@@ -9,7 +9,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from numpy import ndarray
 
-from foundation_model.models.components.lora_adapter import LoRAAdapter
 from foundation_model.models.fc_layers import LinearBlock
 from foundation_model.models.model_config import RegressionTaskConfig
 
@@ -25,8 +24,7 @@ class RegressionHead(BaseTaskHead):
     config : RegressionTaskConfig
         Configuration object containing parameters like input dimension (`d_in`),
         task name (`name`), hidden dimensions (`dims`), normalization (`norm`),
-        residual connections (`residual`), LoRA rank (`lora_rank`), and
-        LoRA alpha (`lora_alpha`).
+        and residual connections (`residual`).
     """
 
     def __init__(self, config: RegressionTaskConfig):  # Changed signature
@@ -45,38 +43,12 @@ class RegressionHead(BaseTaskHead):
         norm = config.norm
         residual = config.residual
 
-        # LoRA specific attributes from config
-        lora_enabled = getattr(config, "lora_enabled", False)
-        lora_rank = getattr(config, "lora_rank", 0)
-        lora_alpha = getattr(config, "lora_alpha", 1.0)
-        lora_freeze_base = getattr(config, "lora_freeze_base", True)
-
         self.net = LinearBlock(
             [d_in] + head_internal_dims[:-1],  # Input to LinearBlock is d_in, hidden are head_internal_dims[:-1]
             normalization=norm,
             residual=residual,
             dim_output_layer=head_internal_dims[-1],  # Output layer size is the last element of head_internal_dims
         )
-
-        # Apply LoRA to the final layer if requested
-        if lora_enabled and lora_rank > 0:  # Check enabled flag and rank
-            # Access the output layer of LinearBlock using its attribute (assumed to be 'output_layer')
-            if hasattr(self.net, "output_layer") and isinstance(self.net.output_layer, nn.Linear):
-                self.net.output_layer = LoRAAdapter(
-                    self.net.output_layer, r=lora_rank, alpha=lora_alpha, freeze_base=lora_freeze_base
-                )
-            elif (
-                hasattr(self.net, "output_layer")
-                and isinstance(self.net.output_layer, nn.Module)
-                and hasattr(self.net.output_layer, "layer")
-                and isinstance(self.net.output_layer.layer, nn.Linear)
-            ):
-                self.net.output_layer.layer = LoRAAdapter(
-                    self.net.output_layer.layer, r=lora_rank, alpha=lora_alpha, freeze_base=lora_freeze_base
-                )
-            # else:
-            # Consider logging a warning if LoRA couldn't be applied as expected
-            # print(f"Warning: Could not apply LoRA to RegressionHead {config.name} as expected.")
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         """

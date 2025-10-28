@@ -193,7 +193,7 @@ This structure allows for flexible combination of shared representations with ta
 
 ## Loss Calculation and Weighting
 
-The `FlexibleMultiTaskModel` employs a sophisticated strategy for calculating and weighting losses from multiple tasks (supervised prediction tasks and self-supervised learning (SSL) objectives) to enable stable and effective multi-task learning. This section details the approach, including the use of learnable uncertainty weighting.
+The `FlexibleMultiTaskModel` employs a sophisticated strategy for calculating and weighting losses from multiple supervised tasks to enable stable and effective multi-task learning. This section details the approach, including the use of learnable uncertainty weighting.
 
 ### 1. Raw Task Losses
 Each individual task head (e.g., `RegressionHead`, `ClassificationHead`, `SequenceRNNHead`) computes its own "raw" loss ($\mathcal{L}_t$). This is typically a standard loss function appropriate for the task type:

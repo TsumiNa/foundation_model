@@ -94,7 +94,6 @@ def test_prediction_pipeline():
         model = FlexibleMultiTaskModel(
             shared_block_dims=[290, 128],
             task_configs=task_configs,
-            enable_self_supervised_training=False,
         )
         model.eval()
         print("   Model created successfully")

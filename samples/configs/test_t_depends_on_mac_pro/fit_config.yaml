@@ -165,12 +165,8 @@ model:
       patience: 50
       min_lr: 1.0e-05
       monitor: val_final_loss
-    modality_dropout_p: 0.3
     norm_shared: true
     residual_shared: false
-    enable_self_supervised_training: false
-    mask_ratio: 0.15
-    temperature: 0.07
     loss_weights:
       mfm: 1.0
       contrastive: 1.0

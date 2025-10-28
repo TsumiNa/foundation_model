@@ -73,10 +73,7 @@ def model_config_mixed_tasks():
         "norm_shared": True,
         "residual_shared": False,
         "shared_block_optimizer": OptimizerConfig(lr=1e-3, scheduler_type="None"),
-        "enable_self_supervised_training": False,
         "loss_weights": None,  # Default weights will be used
-        "mask_ratio": 0.15,  # Default, not used if SSL is false
-        "temperature": 0.07,  # Default, not used if SSL is false
     }
     return SimpleNamespace(**config_dict)
 
@@ -134,10 +131,7 @@ def test_model_initialization(model_config_mixed_tasks):
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
         shared_block_optimizer=config.shared_block_optimizer,
-        enable_self_supervised_training=config.enable_self_supervised_training,
         loss_weights=config.loss_weights,
-        mask_ratio=config.mask_ratio,
-        temperature=config.temperature,
     )
 
     assert model.encoder is not None, "Encoder should be initialized"
@@ -164,7 +158,6 @@ def test_model_initialization(model_config_mixed_tasks):
             )
         # No sequence tasks in this fixture
 
-    assert model.enable_self_supervised_training == config.enable_self_supervised_training
     assert not model.automatic_optimization, "automatic_optimization should be False for FlexibleMultiTaskModel"
 
 
@@ -177,10 +170,7 @@ def test_model_forward_pass(model_config_mixed_tasks, sample_batch_mixed_tasks):
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
         shared_block_optimizer=config.shared_block_optimizer,
-        enable_self_supervised_training=config.enable_self_supervised_training,
         loss_weights=config.loss_weights,
-        mask_ratio=config.mask_ratio,
-        temperature=config.temperature,
     )
     model.eval()  # Set model to evaluation mode
 
@@ -230,10 +220,7 @@ def test_model_training_step(model_config_mixed_tasks, sample_batch_mixed_tasks,
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
         shared_block_optimizer=config.shared_block_optimizer,
-        enable_self_supervised_training=config.enable_self_supervised_training,  # False for this config
         loss_weights=config.loss_weights,
-        mask_ratio=config.mask_ratio,
-        temperature=config.temperature,
     )
     model.train()  # Set model to training mode
 
@@ -318,10 +305,7 @@ def test_model_validation_step(model_config_mixed_tasks, sample_batch_mixed_task
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
         shared_block_optimizer=config.shared_block_optimizer,
-        enable_self_supervised_training=config.enable_self_supervised_training,  # False for this config
         loss_weights=config.loss_weights,
-        mask_ratio=config.mask_ratio,
-        temperature=config.temperature,
     )
     model.eval()  # Set model to evaluation mode
 
@@ -357,10 +341,7 @@ def test_model_predict_step_all_tasks(model_config_mixed_tasks, sample_batch_mix
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
         shared_block_optimizer=config.shared_block_optimizer,
-        enable_self_supervised_training=config.enable_self_supervised_training,
         loss_weights=config.loss_weights,
-        mask_ratio=config.mask_ratio,
-        temperature=config.temperature,
     )
     model.eval()  # Set model to evaluation mode
 
@@ -430,10 +411,7 @@ def test_model_configure_optimizers(model_config_mixed_tasks):
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
         shared_block_optimizer=config.shared_block_optimizer,
-        enable_self_supervised_training=config.enable_self_supervised_training,  # False in this fixture
         loss_weights=config.loss_weights,
-        mask_ratio=config.mask_ratio,
-        temperature=config.temperature,
     )
 
     optimizers_and_schedulers = model.configure_optimizers()
@@ -600,10 +578,7 @@ def test_trainer_integration_mixed_tasks(model_config_mixed_tasks, dummy_compoun
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
         shared_block_optimizer=config.shared_block_optimizer,
-        enable_self_supervised_training=config.enable_self_supervised_training,
         loss_weights=config.loss_weights,
-        mask_ratio=config.mask_ratio,
-        temperature=config.temperature,
     )
 
     # Using integer for version, and a slightly different name for clarity

@@ -1,5 +1,11 @@
 # Recent Updates
 
+### 2025-05-14
+- **Component cleanup**:
+  - Removed obsolete `GatedFusion` and `LoRAAdapter` modules from the components package.
+  - Simplified classification and regression heads to operate without LoRA adapters.
+  - Updated documentation to reflect the removal of gated fusion and LoRA features.
+
 ### 2025-05-13
 - **Documentation & Code Consistency**:
   - Verified and confirmed that Sequence Heads in `FlexibleMultiTaskModel` correctly receive `h_task` (output from the deposit layer) as per the implementation.
@@ -43,7 +49,7 @@
 - **Major Code Refactoring**:
   - Implemented a more modular architecture with separate components
   - Created a task head abstraction hierarchy for different task types
-  - Moved components to dedicated modules (StructureEncoder, LoRAAdapter, GatedFusion)
+  - Moved components to dedicated modules (StructureEncoder and adapter/fusion layers)
   - Added configuration system using Pydantic models
   - Added YAML-based configuration support
 - **Package Management**:
@@ -51,10 +57,8 @@
   - Added proper dependency specifications in pyproject.toml
 
 ### 2025‑05‑08
-- **Dual‑modality encoder** (formula + structure) with gated fusion.
+- **Dual‑modality encoder** (formula + structure) introduced.
 - New `--pretrain` flag enables contrastive, cross‑reconstruction, masked‑feature, and optional property‑supervision losses.
-- **Encoder control flags**
-  - `--freeze_encoder` freezes shared / structure encoders
-  - `--lora_rank` adds LoRA adapters for lightweight fine‑tuning
+- **Encoder control flag** `--freeze_encoder` freezes shared / structure encoders.
 - Added five selectable sequence heads: `rnn`, `vec`, `transformer` (Flash‑Attention), `tcn`, `hybrid`.
 - CLI accepts `--sequence_mode`, `--loss_weights` for custom recipes.

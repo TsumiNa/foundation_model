@@ -107,12 +107,12 @@ For detailed examples of different configurations (such as pre-training, fine-tu
 ## Features
 
 - Multi‑task learning for material property prediction  
-- **Dual‑modality support**: formula descriptors **+** optional structure descriptors with gated fusion  
+- **Dual‑modality support**: formula descriptors **+** optional structure descriptors  
 - **Pre‑training & downstream in one model**  
   - Pre‑train losses: contrastive, cross‑reconstruction, masked‑feature, property supervision  
   - `--pretrain` flag toggles extra losses; same architecture used for fine‑tune  
 - **Flexible sequence heads**: `rnn`, `vec`, `transformer`, `tcn`, `hybrid` (Flash‑Attention inside)  
-- **Encoder control**: `--freeze_encoder` to lock shared layers; add *LoRA* adapters with `--lora_rank`  
+- **Encoder control**: `--freeze_encoder` to lock shared layers  
 - Handles missing values via masking & modality dropout  
 - Comprehensive logging and visualization tools  
 - Configurable data splitting strategies  
@@ -120,7 +120,7 @@ For detailed examples of different configurations (such as pre-training, fine-tu
 
 ### Loss Weighting Strategy
 
-To effectively train the `FlexibleMultiTaskModel` on diverse tasks (supervised and self-supervised) which may have different loss scales and learning dynamics, a sophisticated loss weighting strategy is employed:
+To effectively train the `FlexibleMultiTaskModel` on diverse supervised tasks that may have different loss scales and learning dynamics, a sophisticated loss weighting strategy is employed:
 
 1.  **Supervised Tasks (e.g., Regression, Classification):**
     *   Each supervised task $t$ has its raw loss $\mathcal{L}_t$ (e.g., MSE, Cross-Entropy) calculated by its respective head.
@@ -264,16 +264,16 @@ To override a parameter, you specify its full path. For example:
 *   `--model.init_args.shared_block_optimizer.freeze_parameters=True`
 *   `--trainer.max_epochs=50`
 
-**Note on LoRA:** The method for configuring LoRA (Low-Rank Adaptation) is not fully detailed in the provided `FlexibleMultiTaskModel`'s `init_args` or `TaskConfig`. While `lora_adapter.py` exists, and some configurations mention LoRA as "per-task", the exact YAML structure or CLI arguments for enabling and configuring LoRA (e.g., setting `lora_rank`) need to be established within the model or task configurations. The examples below will note where LoRA would fit, assuming such a mechanism is in place or will be added.
+**Note:** Low-Rank Adaptation (LoRA) support has been removed from the codebase. Any legacy configuration keys such as `lora_rank` or `lora_enabled` are currently ignored by the model.
 
-##### Example 1 – Pre-train with masked feature modeling
+##### Example 1 – Supervised training run
 
-This example enables self-supervised pre-training (`enable_self_supervised_training`) using masked
-feature modeling on formula descriptors. Adjust `loss_weights` to emphasise the SSL objective during
-pre-training.
+This example runs standard supervised training. Adjust `loss_weights` if you need to emphasise
+specific tasks.
 
 ```bash
-python -m foundation_model.scripts.train --config path/to/your/config.yaml   --model.init_args.enable_self_supervised_training=True   --model.init_args.loss_weights '{"mfm": 1.0, "task_A": 0.0, "task_B": 0.0}'   --trainer.max_epochs 60
+python -m foundation_model.scripts.train --config path/to/your/config.yaml \
+  --trainer.max_epochs 60
 ```
 *Corresponding YAML snippet (`config.yaml`):*
 ```yaml
@@ -281,28 +281,21 @@ model:
   class_path: foundation_model.models.FlexibleMultiTaskModel
   init_args:
     # ... other shared_block_dims, task_configs ...
-    enable_self_supervised_training: true
-    loss_weights:
-      mfm: 1.0
-      # Set weights for your actual task names to 0 for pre-training focus
-      # example_task_1: 0.0
-      # example_task_2: 0.0
+    # loss_weights:
+    #   example_task_1: 1.0
 trainer:
   max_epochs: 60
 ```
 
-##### Example 2 – Fine-tune only heads (encoder frozen) with LoRA
+##### Example 2 – Fine-tune only heads (encoder frozen)
 
-This example demonstrates fine-tuning where the main encoder is frozen. This is achieved by setting `freeze_parameters: true` in the `shared_block_optimizer` configuration. LoRA adapters would ideally be configured here too. A sequence task (e.g., 'temp_curve') uses an RNN head.
+This example demonstrates fine-tuning where the main encoder is frozen. This is achieved by setting `freeze_parameters: true` in the `shared_block_optimizer` configuration. A sequence task (e.g., 'temp_curve') uses an RNN head.
 
 ```bash
-# Assumes config.yaml is set for fine-tuning (e.g., enable_self_supervised_training=False)
-# and includes a sequence task configured with subtype "rnn".
+# Assumes config.yaml is set for fine-tuning and includes a sequence task configured with subtype "rnn".
 
 python -m foundation_model.scripts.train --config path/to/your/config.yaml \
-  --model.init_args.shared_block_optimizer.freeze_parameters=True \
-  # --model.init_args.task_configs.0.lora_rank=8 # Hypothetical CLI for LoRA if per-task
-  # More robustly, configure LoRA and sequence subtypes in YAML.
+  --model.init_args.shared_block_optimizer.freeze_parameters=True
 ```
 *YAML snippet (`config.yaml`):*
 ```yaml
@@ -319,18 +312,14 @@ model:
       - name: "temp_curve" # Example sequence task
         type: "SEQUENCE"
         subtype: "rnn"
-        # lora_rank: 8 # Hypothetical LoRA config per task
-        # lora_alpha: 8 # Hypothetical LoRA config per task
         # ... other settings for temp_curve ...
-      # ... other tasks, potentially also with LoRA settings ...
-    # enable_self_supervised_training: false # Typically false for fine-tuning
+      # ... other tasks ...
 # ...
 ```
-**Note on LoRA for Example 2:** If LoRA is a global setting, it might be `model.init_args.lora_rank=8`. If it's per-task, the `task_configs` in YAML would need `lora_rank` fields. The exact mechanism needs to be defined in your project.
 
 ##### Example 3 – Full fine-tune, Transformer sequence head
 
-Full fine-tune: encoder is not frozen (`freeze_parameters: false`), LoRA is off. A sequence task uses a Transformer head, configured in YAML.
+Full fine-tune: encoder is not frozen (`freeze_parameters: false`). A sequence task uses a Transformer head, configured in YAML.
 
 ```bash
 # Assumes config.yaml is set for fine-tuning.
@@ -338,7 +327,6 @@ Full fine-tune: encoder is not frozen (`freeze_parameters: false`), LoRA is off.
 
 python -m foundation_model.scripts.train --config path/to/your/transformer_config.yaml \
   --model.init_args.shared_block_optimizer.freeze_parameters=False
-  # Ensure lora_rank is 0 or not set if it's a global/per-task parameter
 ```
 *YAML snippet (`transformer_config.yaml`):*
 ```yaml
@@ -361,13 +349,12 @@ model:
         # ... other transformer parameters (num_encoder_layers, dim_feedforward, etc.)
         # ... other settings for this task ...
       # ... other tasks ...
-    # lora_rank: 0 # If LoRA is a global model init_arg, ensure it's off
 # ...
 ```
 
-##### Example 4 – Partial fine-tune (encoder unlocked, LoRA off, specific sequence head)
+##### Example 4 – Partial fine-tune (encoder unlocked, specific sequence head)
 
-Similar to full fine-tune (encoder trainable, LoRA off). A sequence task uses a 'vector' head, configured in YAML.
+Similar to full fine-tune (encoder trainable). A sequence task uses a 'vector' head, configured in YAML.
 
 ```bash
 # Assumes config.yaml is set for fine-tuning.
@@ -395,10 +382,9 @@ model:
         seq_len: 256         # Desired output sequence length for the vector
         # ... other vec head parameters ...
       # ... other settings for this task ...
-    # lora_rank: 0 # If LoRA is a global model init_arg, ensure it's off
 # ...
 ```
-These examples should provide a more accurate reflection of how to use `train.py` with your `LightningCLI` setup. For features like LoRA, the documentation or model code might need updates to clarify its exact configuration method.
+These examples should provide a more accurate reflection of how to use `train.py` with your `LightningCLI` setup.
 
 ### Training with Local Data and YAML Configuration (Scaling Law Demo)
 
@@ -473,7 +459,6 @@ model:
     # norm_shared: true
     # residual_shared: false
     shared_block_optimizer: { lr: 0.001, scheduler_type: "None", freeze_parameters: false }
-    # enable_self_supervised_training: false
 
 # --- Data Module Configuration (for CompoundDataModule) ---
 data: # Renamed from datamodule for consistency with LightningCLI v2.0+ common practice

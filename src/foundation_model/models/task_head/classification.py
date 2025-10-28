@@ -9,7 +9,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from numpy import ndarray
 
-from foundation_model.models.components.lora_adapter import LoRAAdapter
 from foundation_model.models.fc_layers import LinearBlock
 from foundation_model.models.model_config import ClassificationTaskConfig  # Changed import
 
@@ -25,8 +24,7 @@ class ClassificationHead(BaseTaskHead):
     config : ClassificationTaskConfig
         Configuration object containing parameters like input dimension (`d_in`),
         task name (`name`), hidden dimensions (`dims`), number of classes (`num_classes`),
-        normalization (`norm`), residual connections (`residual`), LoRA rank (`lora_rank`),
-        and LoRA alpha (`lora_alpha`).
+        normalization (`norm`), and residual connections (`residual`).
     """
 
     def __init__(self, config: ClassificationTaskConfig):  # Changed signature
@@ -40,12 +38,6 @@ class ClassificationHead(BaseTaskHead):
         num_classes = config.num_classes
         norm = config.norm
         residual = config.residual
-
-        # LoRA specific attributes from config
-        lora_enabled = getattr(config, "lora_enabled", False)
-        lora_rank = getattr(config, "lora_rank", 0)
-        lora_alpha = getattr(config, "lora_alpha", 1.0)
-        lora_freeze_base = getattr(config, "lora_freeze_base", True)
 
         # Ensure at least 2 classes for classification
         if num_classes < 2:
@@ -66,12 +58,6 @@ class ClassificationHead(BaseTaskHead):
 
         # Separate output layer for classification
         self.output_layer = nn.Linear(last_hidden_dim, num_classes)
-
-        # Apply LoRA to the output layer if requested
-        if lora_enabled and lora_rank > 0:  # Check enabled flag and rank
-            self.output_layer = LoRAAdapter(
-                self.output_layer, r=lora_rank, alpha=lora_alpha, freeze_base=lora_freeze_base
-            )
 
         self.num_classes = num_classes
 
