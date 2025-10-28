@@ -62,7 +62,6 @@ def test_full_prediction_flow():
     model = FlexibleMultiTaskModel(
         shared_block_dims=[290, 128],
         task_configs=task_configs,
-        with_structure=False,
     )
 
     # Get predict dataloader

@@ -61,29 +61,14 @@ graph TD
 
     %% -------- Foundation Encoder --------
     subgraph FoundationEncoderModule["FoundationEncoder (self.encoder)"]
-        direction LR
+        direction TB
 
-        %% Formula path
-        subgraph FormulaPath["Formula Path"]
-            direction TB
-            F_Encoder["Formula Encoder (MLP)<br/>(self.encoder.formula_encoder)<br/>shared_block_dims"]
-        end
-
-        %% Structure path
-        subgraph StructurePath["Structure Path (if with_structure)"]
-            direction TB
-            S_Encoder["Structure Encoder (MLP)<br/>(self.encoder.structure_encoder)<br/>struct_block_dims"]
-        end
-        
-        Fusion["Gated Fusion<br/>(self.encoder.fusion)<br/>(D_latent, D_latent) → D_latent"]
+        FormulaEncoder["Formula Encoder (MLP)<br/>(self.encoder.shared)<br/>shared_block_dims"]
         DepositBlock["Deposit Block (Linear + Tanh)<br/>(self.encoder.deposit)<br/>D_latent → D_deposit"]
-        
-        X_formula --> F_Encoder
-        X_structure --> S_Encoder
-        F_Encoder -- "h_formula (B, D_latent)" --> Fusion
-        S_Encoder -- "h_structure (B, D_latent)" --> Fusion
-        F_Encoder -.-> H_Latent_Output_Point["h_latent / h_fused"]
-        Fusion      -- "h_fused (B, D_latent)" --> H_Latent_Output_Point
+
+        X_formula --> FormulaEncoder
+        FormulaEncoder -- "h_latent (B, D_latent)" --> DepositBlock
+        FormulaEncoder -.-> H_Latent_Output_Point["h_latent"]
         H_Latent_Output_Point --> DepositBlock
     end
 
@@ -152,35 +137,20 @@ graph TD
 ### 1. Input Layer
 The model can accept several types of inputs:
 -   **`x_formula`**: Tensor representing formula-based features (e.g., chemical composition, elemental descriptors). Shape: `(BatchSize, D_in_formula)`. This is the primary input.
--   **`x_structure`** (Optional): Tensor representing structural features (e.g., crystal structure descriptors, graph-based features). Shape: `(BatchSize, D_in_structure)`. Used when `with_structure=True`.
 -   **`task_sequence_data_batch`** (Optional): A dictionary where keys are sequence task names and values are tensors representing sequence input data (e.g., temperatures, time steps) for those tasks. Shape of each tensor: `(BatchSize, SequenceLength, NumFeaturesPerPoint)` (typically `(B,L,1)`).
 
 ### 2. Foundation Encoder (`self.encoder`)
-This is the core shared part of the model. Its internal structure depends on whether `with_structure` is enabled.
+This is the core shared part of the model. It processes formula descriptors through a feed-forward network and produces task-ready representations.
 
--   **If `with_structure=False` (Single Modality)**:
-    -   **`shared` (MLP Block)**: Processes `x_formula`.
-        -   Input: `x_formula` (Dimension `D_in_formula`, which is `shared_block_dims[0]`).
-        -   Hidden Layers: Defined by `shared_block_dims[1:-1]`.
-        -   Output: `h_latent` (Latent representation, dimension `shared_block_dims[-1]`).
-    -   **`deposit` (Linear + Tanh)**: Processes `h_latent`.
-        -   Input: `h_latent` (Dimension `shared_block_dims[-1]`).
-        -   Output: `h_task` (Task-specific input representation, dimension `D_deposit`). `D_deposit` is typically the input dimension expected by the first non-sequence task head.
+-   **`shared` (MLP Block)**: Processes `x_formula`.
+    -   Input: `x_formula` (Dimension `D_in_formula`, which is `shared_block_dims[0]`).
+    -   Hidden Layers: Defined by `shared_block_dims[1:-1]`.
+    -   Output: `h_latent` (Latent representation, dimension `shared_block_dims[-1]`).
+-   **`deposit` (Linear + Tanh)**: Processes `h_latent`.
+    -   Input: `h_latent` (Dimension `shared_block_dims[-1]`).
+    -   Output: `h_task` (Task-specific input representation, dimension `D_deposit`). `D_deposit` is typically the input dimension expected by the first non-sequence task head.
 
--   **If `with_structure=True` (Multi-Modal)**:
-    -   **`formula_encoder` (MLP Block)**: Same as the `shared` block above, processes `x_formula` to produce `h_formula` (Dimension `shared_block_dims[-1]`).
-    -   **`structure_encoder` (MLP Block)**: Processes `x_structure`.
-        -   Input: `x_structure` (Dimension `D_in_structure`, which is `struct_block_dims[0]`).
-        -   Hidden Layers: Defined by `struct_block_dims[1:-1]`.
-        -   Output: `h_structure` (Dimension `struct_block_dims[-1]`). **Note**: `struct_block_dims[-1]` must equal `shared_block_dims[-1]`.
-    -   **`fusion` (GatedFusion)**: Combines `h_formula` and `h_structure` using a gated mechanism.
-        -   Input: Concatenation of `h_formula` and `h_structure`.
-        -   Output: `h_fused` (Fused latent representation, dimension `shared_block_dims[-1]`).
-    -   **`deposit` (Linear + Tanh)**: Processes `h_fused`.
-        -   Input: `h_fused` (Dimension `shared_block_dims[-1]`).
-        -   Output: `h_task` (Task-specific input representation, dimension `D_deposit`).
-
-The output `h_task` (from the `deposit` layer) serves as the primary contextual input for ALL task heads (Attribute, Classification, and Sequence). The `h_latent` or `h_fused` representations are intermediate outputs within the `FoundationEncoder` before the `deposit` layer.
+The output `h_task` (from the `deposit` layer) serves as the primary contextual input for ALL task heads (Attribute, Classification, and Sequence). The `h_latent` representation is the intermediate output within the `FoundationEncoder` before the `deposit` layer.
 
 ### 3. Task Heads (`self.task_heads`)
 This is an `nn.ModuleDict` containing individual prediction heads for each configured task.

@@ -50,7 +50,6 @@ def load_base_template(template_path: Path) -> dict:
                 "shared_block_dims": [256, 512, 512],
                 "task_configs": [],
                 "shared_block_optimizer": {"optimizer_type": "AdamW", "lr": 0.001, "weight_decay": 0.01},
-                "with_structure": False,
             },
             "trainer": {
                 "class_path": "lightning.pytorch.Trainer",

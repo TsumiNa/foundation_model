@@ -95,7 +95,6 @@ def test_prediction_pipeline():
             shared_block_dims=[290, 128],
             task_configs=task_configs,
             enable_self_supervised_training=False,
-            with_structure=False,
         )
         model.eval()
         print("   Model created successfully")

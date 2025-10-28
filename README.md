@@ -261,49 +261,34 @@ It's recommended to start with a base YAML configuration (e.g., `samples/generat
 
 **Command-Line Overrides:**
 To override a parameter, you specify its full path. For example:
-*   `--model.init_args.with_structure=True`
 *   `--model.init_args.shared_block_optimizer.freeze_parameters=True`
 *   `--trainer.max_epochs=50`
 
 **Note on LoRA:** The method for configuring LoRA (Low-Rank Adaptation) is not fully detailed in the provided `FlexibleMultiTaskModel`'s `init_args` or `TaskConfig`. While `lora_adapter.py` exists, and some configurations mention LoRA as "per-task", the exact YAML structure or CLI arguments for enabling and configuring LoRA (e.g., setting `lora_rank`) need to be established within the model or task configurations. The examples below will note where LoRA would fit, assuming such a mechanism is in place or will be added.
 
-##### Example 1 – Pre-train with formula+structure
+##### Example 1 – Pre-train with masked feature modeling
 
-This example enables self-supervised pre-training (`enable_self_supervised_training`) using both formula and structure data (`with_structure`). It sets `loss_weights` to focus on SSL objectives.
+This example enables self-supervised pre-training (`enable_self_supervised_training`) using masked
+feature modeling on formula descriptors. Adjust `loss_weights` to emphasise the SSL objective during
+pre-training.
 
 ```bash
-# Ensure your config.yaml has correct paths for formula_desc_source, attributes_source,
-# and structure_desc_source (if using structure).
-
-python -m foundation_model.scripts.train --config path/to/your/config.yaml \
-  --model.init_args.enable_self_supervised_training=True \
-  --model.init_args.with_structure=True \
-  --model.init_args.loss_weights '{"mfm": 1.0, "contrastive": 1.0, "cross_recon": 1.0, "task_A": 0.0, "task_B": 0.0}' \
-  --trainer.max_epochs 60
+python -m foundation_model.scripts.train --config path/to/your/config.yaml   --model.init_args.enable_self_supervised_training=True   --model.init_args.loss_weights '{"mfm": 1.0, "task_A": 0.0, "task_B": 0.0}'   --trainer.max_epochs 60
 ```
 *Corresponding YAML snippet (`config.yaml`):*
 ```yaml
-# In your config.yaml
-# ...
 model:
   class_path: foundation_model.models.FlexibleMultiTaskModel
   init_args:
     # ... other shared_block_dims, task_configs ...
     enable_self_supervised_training: true
-    with_structure: true
-    # struct_block_dims: [128, 256, 512] # Configure if with_structure is true
     loss_weights:
       mfm: 1.0
-      contrastive: 1.0
-      cross_recon: 1.0
       # Set weights for your actual task names to 0 for pre-training focus
-      # example_task_1: 0.0 
+      # example_task_1: 0.0
       # example_task_2: 0.0
-    # ...
-# ...
 trainer:
   max_epochs: 60
-# ...
 ```
 
 ##### Example 2 – Fine-tune only heads (encoder frozen) with LoRA
@@ -488,7 +473,6 @@ model:
     # norm_shared: true
     # residual_shared: false
     shared_block_optimizer: { lr: 0.001, scheduler_type: "None", freeze_parameters: false }
-    # with_structure: false
     # enable_self_supervised_training: false
 
 # --- Data Module Configuration (for CompoundDataModule) ---

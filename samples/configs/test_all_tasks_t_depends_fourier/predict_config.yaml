@@ -434,7 +434,6 @@ model:
       patience: 50
       min_lr: 1.0e-03
       monitor: val_final_loss
-    with_structure: false
     modality_dropout_p: 0.3
     norm_shared: true
     residual_shared: false

@@ -91,20 +91,13 @@ class CompoundDataset(Dataset):
         formula_desc: Union[pd.DataFrame, np.ndarray],
         attributes: pd.DataFrame,  # Contains targets, series, temps, masks
         task_configs: List,  # List of task configuration objects
-        structure_desc: Optional[Union[pd.DataFrame, np.ndarray]] = None,
-        use_structure_for_this_dataset: bool = False,
         task_masking_ratios: Optional[Dict[str, float]] = None,
         is_predict_set: bool = False,
         dataset_name: str = "dataset",
     ):
         self.dataset_name = dataset_name
         logger.info(f"[{self.dataset_name}] Initializing CompoundDataset...")
-        logger.info(
-            f"[{self.dataset_name}] is_predict_set: {is_predict_set}, use_structure: {use_structure_for_this_dataset}"
-        )
-
         self.is_predict_set = is_predict_set
-        self.use_structure_for_this_dataset = use_structure_for_this_dataset
         self.task_masking_ratios = task_masking_ratios
 
         # --- Input Validation (remains largely the same) ---
@@ -120,12 +113,13 @@ class CompoundDataset(Dataset):
             logger.error(f"[{self.dataset_name}] attributes type error: {type(attributes)}")
             raise TypeError("attributes must be pd.DataFrame")
 
-        if len(attributes.index) == 0 and len(attributes.columns) == 0 and len(formula_desc) > 0:
-            logger.error(f"[{self.dataset_name}] attributes is a 0x0 DataFrame, but formula_desc has samples.")
-            raise ValueError("attributes DataFrame cannot be empty when formula_desc is not.")
-        if len(attributes.index) == 0 and len(attributes.columns) > 0 and len(formula_desc) > 0:
-            logger.error(f"[{self.dataset_name}] attributes has columns but 0 rows (empty index).")
-            raise ValueError("attributes DataFrame has columns but an empty index (no samples).")
+        if not self.is_predict_set:
+            if len(attributes.index) == 0 and len(attributes.columns) == 0 and len(formula_desc) > 0:
+                logger.error(f"[{self.dataset_name}] attributes is a 0x0 DataFrame, but formula_desc has samples.")
+                raise ValueError("attributes DataFrame cannot be empty when formula_desc is not.")
+            if len(attributes.index) == 0 and len(attributes.columns) > 0 and len(formula_desc) > 0:
+                logger.error(f"[{self.dataset_name}] attributes has columns but 0 rows (empty index).")
+                raise ValueError("attributes DataFrame has columns but an empty index (no samples).")
         if not task_configs:
             raise ValueError("task_configs list cannot be empty.")
 
@@ -135,34 +129,8 @@ class CompoundDataset(Dataset):
         else:  # np.ndarray
             self.x_formula = torch.tensor(formula_desc, dtype=torch.float32)
 
-        # Handle structure_desc
-        self.x_struct = None
-        if self.use_structure_for_this_dataset and structure_desc is not None:
-            # ... (validation and conversion for structure_desc remains the same) ...
-            if not isinstance(structure_desc, (pd.DataFrame, np.ndarray)):
-                raise TypeError("structure_desc must be pd.DataFrame or np.ndarray if provided")
-            if hasattr(structure_desc, "empty") and structure_desc.empty:
-                raise ValueError(
-                    "structure_desc cannot be an empty DataFrame if use_structure_for_this_dataset is True."
-                )
-            if isinstance(structure_desc, np.ndarray) and structure_desc.size == 0:
-                raise ValueError(
-                    "structure_desc cannot be an empty np.ndarray if use_structure_for_this_dataset is True."
-                )
-
-            if isinstance(structure_desc, pd.DataFrame):
-                self.x_struct = torch.tensor(structure_desc.values, dtype=torch.float32)
-            else:  # np.ndarray
-                self.x_struct = torch.tensor(structure_desc, dtype=torch.float32)
-            if len(self.x_formula) != len(self.x_struct):
-                raise ValueError("formula_desc and structure_desc must have the same number of samples.")
-        elif self.use_structure_for_this_dataset and structure_desc is None:
-            logger.warning(f"[{self.dataset_name}] use_structure_for_this_dataset is True, but structure_desc is None.")
-
+        self.x_struct: torch.Tensor | None = None
         logger.info(f"[{self.dataset_name}] Final x_formula shape: {self.x_formula.shape}")
-        if self.x_struct is not None:
-            logger.info(f"[{self.dataset_name}] Final x_struct shape: {self.x_struct.shape}")
-
         self.y_dict: Dict[str, Union[torch.Tensor, List[torch.Tensor]]] = {}
         self.t_sequences_dict: Dict[
             str, Union[torch.Tensor, List[torch.Tensor]]
@@ -187,17 +155,23 @@ class CompoundDataset(Dataset):
                 logger.error(f"[{self.dataset_name}] Task '{task_name}': data_column is not specified in config.")
                 raise ValueError(f"data_column for task '{task_name}' must be specified.")
             elif data_col_for_task not in attributes.columns:  # Specified but not found
-                logger.error(
-                    f"[{self.dataset_name}] Task '{task_name}': data_column '{data_col_for_task}' "
-                    f"is specified in config but not found in attributes DataFrame."
+                if self.is_predict_set:
+                    logger.debug(
+                        f"[{self.dataset_name}] Task '{task_name}': data_column '{data_col_for_task}' not found. "
+                        "Using placeholder values for predict-only dataset."
+                    )
+                else:
+                    logger.warning(
+                        f"[{self.dataset_name}] Task '{task_name}': data_column '{data_col_for_task}' not found. Using placeholder values."
+                    )
+                raw_column_data = pd.Series([np.nan] * len(attributes), index=attributes.index)
+            else:
+                logger.debug(
+                    f"[{self.dataset_name}] Task '{task_name}': Loading data from column '{data_col_for_task}'."
                 )
-                raise ValueError(
-                    f"Data column '{data_col_for_task}' for task '{task_name}' not found in attributes data."
-                )
+                raw_column_data = attributes[data_col_for_task]
 
             # Process data differently based on task type
-            logger.debug(f"[{self.dataset_name}] Task '{task_name}': Loading data from column '{data_col_for_task}'.")
-            raw_column_data = attributes[data_col_for_task]
 
             if task_type == TaskType.KERNEL_REGRESSION:
                 # For KernelRegression, handle variable-length sequences without stacking
@@ -366,23 +340,19 @@ class CompoundDataset(Dataset):
         return len(self.x_formula)
 
     def __getitem__(self, idx):
-        current_x_formula = self.x_formula[idx]
-        model_input_x: Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]
-
-        if self.use_structure_for_this_dataset and self.x_struct is not None:
-            model_input_x = (current_x_formula, self.x_struct[idx])
-        else:
-            model_input_x = current_x_formula
+        model_input_x = self.x_formula[idx]
 
         sample_y_dict = {name: self.y_dict[name][idx] for name in self.enabled_task_names if name in self.y_dict}
         sample_task_masks_dict = {
             name: self.task_masks_dict[name][idx] for name in self.enabled_task_names if name in self.task_masks_dict
         }
-        sample_t_sequences_dict = {  # T-parameter sequences for KernelRegression tasks
+        sample_t_sequences_dict = {
             name: self.t_sequences_dict[name][idx] for name in self.enabled_task_names if name in self.t_sequences_dict
         }
 
         return model_input_x, sample_y_dict, sample_task_masks_dict, sample_t_sequences_dict
+
+
 
     @property
     def attribute_names(self) -> List[str]:

@@ -56,16 +56,6 @@ def attributes_df_no_split_full_match():  # 20 samples, s0-s19, no split col
 
 
 @pytest.fixture
-def base_structure_df():  # 20 samples s0-s19
-    return pd.DataFrame({"s1": np.random.rand(20), "s2": np.random.rand(20)}, index=[f"s{i}" for i in range(20)])
-
-
-@pytest.fixture
-def structure_df_partial_match():  # 16 samples s0-s15
-    return pd.DataFrame({"s1": np.random.rand(16), "s2": np.random.rand(16)}, index=[f"s{i}" for i in range(16)])
-
-
-@pytest.fixture
 def sample_task_configs_dm():
     return [
         RegressionTaskConfig(
@@ -111,23 +101,6 @@ def test_datamodule_init_with_dfs(base_formula_df, attributes_df_full_match, sam
     assert dm.formula_df.index.equals(attributes_df_full_match.index)
 
 
-def test_datamodule_init_with_structure_dfs(
-    base_formula_df, attributes_df_full_match, base_structure_df, sample_task_configs_dm
-):
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=attributes_df_full_match,
-        structure_desc_source=base_structure_df,
-        task_configs=sample_task_configs_dm,
-        with_structure=True,
-    )
-    assert dm.structure_df is not None
-    assert dm.actual_with_structure
-    assert len(dm.formula_df) == 20
-    assert len(dm.structure_df) == 20
-    assert dm.formula_df.index.equals(dm.structure_df.index)
-
-
 def test_datamodule_alignment_formula_master(base_formula_df, attributes_df_partial_match, sample_task_configs_dm):
     """Test alignment when formula_df is master and attributes_df is partial."""
     # base_formula_df (s0-s19)
@@ -143,40 +116,6 @@ def test_datamodule_alignment_formula_master(base_formula_df, attributes_df_part
     assert dm.attributes_df.index.equals(expected_final_index)
     assert len(dm.formula_df) == 18
     assert len(dm.attributes_df) == 18
-
-
-def test_datamodule_alignment_structure_mismatch(
-    base_formula_df, attributes_df_full_match, structure_df_partial_match, sample_task_configs_dm, caplog
-):
-    """Test structure alignment failure when its index doesn't fully match the master_index."""
-
-    # --- Loguru to caplog bridge (local to this test) ---
-    class PropagateHandler(logging.Handler):
-        def emit(self, record):
-            logging.getLogger(record.name).handle(record)
-
-    handler_id = loguru_logger.add(PropagateHandler(), format="{message}", level="WARNING")
-    # --- End bridge ---
-
-    try:
-        # Master index (from formula_df & attributes_df_full_match) is s0-s19.
-        # structure_df_partial_match is s0-s15.
-        dm = CompoundDataModule(
-            formula_desc_source=base_formula_df.copy(),
-            attributes_source=attributes_df_full_match.copy(),
-            structure_desc_source=structure_df_partial_match.copy(),
-            task_configs=sample_task_configs_dm,
-            with_structure=True,
-        )
-        assert dm.structure_df is None
-        assert not dm.actual_with_structure
-        assert any(
-            "Structure data will NOT be used" in record.message
-            for record in caplog.records
-            if record.levelname == "WARNING"
-        )
-    finally:
-        loguru_logger.remove(handler_id)  # Clean up the handler
 
 
 def test_datamodule_init_attributes_none_non_sequence(base_formula_df, sample_task_configs_no_seq_dm):

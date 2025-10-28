@@ -166,7 +166,6 @@ model:
       patience: 50
       min_lr: 1.0e-05
       monitor: val_final_loss
-    with_structure: false
     freeze_shared_encoder: false # Control encoder freezing here
     modality_dropout_p: 0.3
     norm_shared: true

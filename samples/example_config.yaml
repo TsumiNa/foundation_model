@@ -69,17 +69,12 @@ model:
       # ... other OptimizerConfig parameters
 
     # --- Structure Fusion (Optional) ---
-    with_structure: False # Set to true if you provide structure_desc_source in data
     # struct_block_dims: [128, 256, 256] # Example: [input_dim_structure, hidden1, output_latent_dim_must_match_model_latent]
-    # Only if with_structure: True. First element is structure feature dim.
-    # modality_dropout_p: 0.3           # Only if with_structure and enable_self_supervised_training are True
 
     # --- Self-Supervised Learning (Optional) ---
     enable_self_supervised_training: False
     # loss_weights: # Weights for different loss components if SSL is enabled
     #   mfm: 1.0
-    #   contrastive: 1.0 # Only if with_structure: True
-    #   cross_recon: 1.0 # Only if with_structure: True
     # mask_ratio: 0.15
     # temperature: 0.07 # For contrastive loss
 
@@ -89,7 +84,6 @@ data:
     # --- Paths to your precomputed data files ---
     formula_desc_source: "path/to/your/precomputed_formula_descriptors.pkl" # Or .csv
     attributes_source: "path/to/your/precomputed_attributes.pkl" # Or .csv
-    # structure_desc_source: "path/to/your/precomputed_structure_descriptors.pkl" # Provide if model.init_args.with_structure is True
 
     # --- Task configurations will be linked from model.init_args.task_configs by default ---
     # task_configs: "${model.init_args.task_configs}" # This linking is usually automatic

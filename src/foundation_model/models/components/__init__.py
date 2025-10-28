@@ -8,14 +8,13 @@ This package contains modular components used to build the foundation model arch
 including encoders, fusion mechanisms, and self-supervised learning modules.
 """
 
-from .foundation_encoder import FoundationEncoder, MultiModalFoundationEncoder
+from .foundation_encoder import FoundationEncoder
 from .gated_fusion import GatedFusion
 from .self_supervised import SelfSupervisedModule
 from .structure_encoder import StructureEncoder
 
 __all__ = [
     "FoundationEncoder",
-    "MultiModalFoundationEncoder",
     "GatedFusion",
     "SelfSupervisedModule",
     "StructureEncoder",

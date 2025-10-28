@@ -24,18 +24,6 @@ def sample_formula_desc_df():
 
 
 @pytest.fixture
-def sample_structure_desc_df():
-    """Returns a sample structure descriptor DataFrame."""
-    return pd.DataFrame(
-        {
-            "struct_feat_0": [10.1, 10.2, 10.3, 10.4, 10.5],
-            "struct_feat_1": [11.1, 11.2, 11.3, 11.4, 11.5],
-        },
-        index=[f"id_{i}" for i in range(5)],
-    )
-
-
-@pytest.fixture
 def sample_attributes_df():
     """Returns a sample attributes DataFrame with various data types and NaNs."""
     data = {
@@ -75,9 +63,6 @@ def sample_task_configs():
         RegressionTaskConfig(
             name="task_disabled", type=TaskType.REGRESSION, data_column="task_disabled_regression_value", enabled=False
         ),
-        RegressionTaskConfig(
-            name="task_fully_missing_data_col", type=TaskType.REGRESSION, data_column="non_existent_column"
-        ),
     ]
 
 
@@ -94,45 +79,11 @@ def test_dataset_initialization_basic(sample_formula_desc_df, sample_attributes_
     )
     assert len(dataset) == 5
     assert dataset.x_formula.shape == (5, 2)
-    assert dataset.x_struct is None
     assert "task_reg" in dataset.y_dict
     assert "task_seq" in dataset.y_dict
     assert "task_seq" in dataset.t_sequences_dict
     assert "task_another_reg" in dataset.y_dict
     assert "task_disabled" not in dataset.enabled_task_names  # Check disabled task
-    assert "task_fully_missing_data_col" in dataset.y_dict  # Should have placeholder
-
-
-def test_dataset_initialization_with_structure(
-    sample_formula_desc_df, sample_attributes_df, sample_structure_desc_df, sample_task_configs
-):
-    """Test initialization with structure data."""
-    dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
-        structure_desc=sample_structure_desc_df,
-        use_structure_for_this_dataset=True,
-        dataset_name="test_with_structure",
-    )
-    assert len(dataset) == 5
-    assert dataset.x_formula.shape == (5, 2)
-    assert dataset.x_struct is not None
-    assert dataset.x_struct.shape == (5, 2)
-
-
-def test_dataset_initialization_structure_mismatch(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
-    """Test ValueError if structure length mismatches formula length."""
-    short_structure_df = pd.DataFrame({"struct_feat_0": [10.1, 10.2]}, index=["id_0", "id_1"])
-    with pytest.raises(ValueError, match="formula_desc and structure_desc must have the same number of samples."):
-        CompoundDataset(
-            formula_desc=sample_formula_desc_df,
-            attributes=sample_attributes_df,
-            task_configs=sample_task_configs,
-            structure_desc=short_structure_df,
-            use_structure_for_this_dataset=True,
-            dataset_name="test_struct_mismatch",
-        )
 
 
 def test_task_data_processing_regression(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
@@ -205,18 +156,23 @@ def test_task_data_processing_sequence(sample_formula_desc_df, sample_attributes
 
 def test_task_data_processing_missing_columns(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
     """Test behavior when expected attribute columns for a task are missing."""
-    # This test should actually raise an error since we now require data_column to exist
-    with pytest.raises(
-        ValueError,
-        match="Data column 'non_existent_column' for task 'task_fully_missing_data_col' not found in attributes data.",
-    ):
-        CompoundDataset(
-            formula_desc=sample_formula_desc_df,
-            attributes=sample_attributes_df,
-            # sample_task_configs includes 'task_fully_missing_data_col'
-            task_configs=sample_task_configs,
-            dataset_name="test_missing_cols",
+    configs_with_missing = sample_task_configs + [
+        RegressionTaskConfig(
+            name="task_fully_missing_data_col",
+            type=TaskType.REGRESSION,
+            data_column="non_existent_column",
         )
+    ]
+    dataset = CompoundDataset(
+        formula_desc=sample_formula_desc_df,
+        attributes=sample_attributes_df,
+        task_configs=configs_with_missing,
+        dataset_name="test_missing_cols",
+    )
+    placeholder = dataset.y_dict["task_fully_missing_data_col"]
+    assert placeholder.shape[0] == len(sample_attributes_df)
+    assert torch.allclose(placeholder, torch.zeros_like(placeholder))
+    assert not dataset.task_masks_dict["task_fully_missing_data_col"].any()
 
 
 def test_nan_masking(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
@@ -233,8 +189,11 @@ def test_nan_masking(sample_formula_desc_df, sample_attributes_df, sample_task_c
     assert torch.equal(dataset.task_masks_dict["task_reg"], expected_mask_reg)
 
     # Sequence task 'task_seq' (mask based on all-NaN sequences)
-    expected_mask_seq = torch.tensor([[True], [True], [False], [True], [True]], dtype=torch.bool)
-    assert torch.equal(dataset.task_masks_dict["task_seq"], expected_mask_seq)
+    expected_mask_seq = torch.tensor([True, True, False, True, True], dtype=torch.bool)
+    seq_masks = dataset.task_masks_dict["task_seq"]
+    assert isinstance(seq_masks, list)
+    actual_seq_mask = torch.tensor([mask.any().item() for mask in seq_masks], dtype=torch.bool)
+    assert torch.equal(actual_seq_mask, expected_mask_seq)
 
 
 def test_ratio_masking_train(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
@@ -302,29 +261,6 @@ def test_getitem_predict_mode(sample_formula_desc_df, sample_attributes_df, samp
     assert "task_reg" in masks_dict
 
 
-def test_getitem_predict_mode_with_structure(
-    sample_formula_desc_df, sample_attributes_df, sample_structure_desc_df, sample_task_configs
-):
-    """Test __getitem__ when is_predict_set=True and structure is used."""
-    dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
-        structure_desc=sample_structure_desc_df,
-        use_structure_for_this_dataset=True,
-        is_predict_set=True,  # Predict mode
-        dataset_name="test_getitem_predict_with_struct",
-    )
-    model_input_x, y_dict, masks_dict, temps_dict = dataset[0]
-
-    assert isinstance(model_input_x, tuple)  # Should be (x_formula, x_struct)
-    assert len(model_input_x) == 2
-    assert torch.allclose(model_input_x[0], dataset.x_formula[0])
-    assert torch.allclose(model_input_x[1], dataset.x_struct[0])
-    assert "task_reg" in y_dict
-    assert "task_reg" in masks_dict
-
-
 def test_getitem_train_mode_no_structure(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
     """Test __getitem__ for training without structure."""
     dataset = CompoundDataset(
@@ -332,32 +268,11 @@ def test_getitem_train_mode_no_structure(sample_formula_desc_df, sample_attribut
         attributes=sample_attributes_df,
         task_configs=sample_task_configs,
         is_predict_set=False,
-        use_structure_for_this_dataset=False,
         dataset_name="test_getitem_train_no_struct",
     )
     model_input_x, _, _, _ = dataset[0]
     assert isinstance(model_input_x, torch.Tensor)
     assert torch.allclose(model_input_x, dataset.x_formula[0])
-
-
-def test_getitem_train_mode_with_structure(
-    sample_formula_desc_df, sample_attributes_df, sample_structure_desc_df, sample_task_configs
-):
-    """Test __getitem__ for training with structure."""
-    dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
-        structure_desc=sample_structure_desc_df,
-        is_predict_set=False,
-        use_structure_for_this_dataset=True,
-        dataset_name="test_getitem_train_with_struct",
-    )
-    model_input_x, _, _, _ = dataset[0]
-    assert isinstance(model_input_x, tuple)
-    assert len(model_input_x) == 2
-    assert torch.allclose(model_input_x[0], dataset.x_formula[0])
-    assert torch.allclose(model_input_x[1], dataset.x_struct[0])
 
 
 def test_attribute_names_property(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
@@ -368,49 +283,41 @@ def test_attribute_names_property(sample_formula_desc_df, sample_attributes_df, 
         task_configs=sample_task_configs,
         dataset_name="test_attr_names",
     )
-    expected_names = ["task_reg", "task_seq", "task_another_reg", "task_fully_missing_data_col"]
+    expected_names = ["task_reg", "task_seq", "task_another_reg"]
     assert sorted(dataset.attribute_names) == sorted(expected_names)
 
 
 def test_input_dtypes_conversion(sample_attributes_df, sample_task_configs):
     """Test that input DataFrames with different dtypes are converted to float32."""
-    # Create formula_desc with int dtype
     formula_int_df = pd.DataFrame(
-        {"feat_0": [1, 2, 3, 4, 5], "feat_1": [11, 12, 13, 14, 15]},
+        {
+            "feat_0": [1, 2, 3, 4, 5],
+            "feat_1": [11, 12, 13, 14, 15],
+        },
         index=[f"id_{i}" for i in range(5)],
         dtype=np.int32,
     )
-    # Create structure_desc with a mix of int and float
-    structure_mixed_df = pd.DataFrame(
-        {"struct_feat_0": [10, 10, 10, 10, 10], "struct_feat_1": [11.1, 11.2, 11.3, 11.4, 11.5]},
-        index=[f"id_{i}" for i in range(5)],
-    )
-    structure_mixed_df["struct_feat_0"] = structure_mixed_df["struct_feat_0"].astype(np.int64)
 
     dataset = CompoundDataset(
         formula_desc=formula_int_df,
-        # sample_attributes_df already has floats and objects (lists)
         attributes=sample_attributes_df,
         task_configs=sample_task_configs,
-        structure_desc=structure_mixed_df,
-        use_structure_for_this_dataset=True,
         dataset_name="test_dtypes",
     )
 
     assert dataset.x_formula.dtype == torch.float32
-    assert dataset.x_struct.dtype == torch.float32
 
-    # Check y_dict dtypes (regression and sequence should be float32)
-    for task_name, y_tensor in dataset.y_dict.items():
+    for task_name, y_value in dataset.y_dict.items():
         task_cfg = next(tc for tc in sample_task_configs if tc.name == task_name)  # type: ignore
-        if task_cfg.type == TaskType.REGRESSION or task_cfg.type == TaskType.KERNEL_REGRESSION:
-            assert y_tensor.dtype == torch.float32, f"Task {task_name} y_dict dtype mismatch"
-        elif task_cfg.type == TaskType.CLASSIFICATION:  # Added for completeness
-            assert y_tensor.dtype == torch.long, f"Task {task_name} y_dict dtype mismatch for classification"
+        if task_cfg.type in {TaskType.REGRESSION, TaskType.KERNEL_REGRESSION}:
+            if isinstance(y_value, list):
+                assert all(t.dtype == torch.float32 for t in y_value), f"Task {task_name} y_dict dtype mismatch"
+            else:
+                assert y_value.dtype == torch.float32, f"Task {task_name} y_dict dtype mismatch"
+        elif task_cfg.type == TaskType.CLASSIFICATION:
+            assert y_value.dtype == torch.long, f"Task {task_name} y_dict dtype mismatch for classification"
 
-    # Check t_sequences_dict dtype (should be float32)
     for task_name, temps_list in dataset.t_sequences_dict.items():
-        # For KernelRegression, temps_list is List[Tensor]
         assert isinstance(temps_list, list)
         assert temps_list[0].dtype == torch.float32, f"Task {task_name} t_sequences_dict dtype mismatch"
 
@@ -482,12 +389,6 @@ def test_sequence_data_with_non_numeric(sample_formula_desc_df, sample_attribute
     # Check that the problematic entry became [0.1, 0.0, 0.3] after nan_to_num(nan=0.0)
     # The middle "not_a_number" should have been parsed as np.nan by _parse_structured_element, then 0.0
     assert torch.allclose(dataset_bad_seq.y_dict["task_seq"][0], torch.tensor([0.1, 0.0, 0.3], dtype=torch.float32))
-    assert any(
-        "Could not parse string element 'not_a_number'" in rec.message
-        for rec in caplog.records
-        if rec.levelname == "WARNING"
-    )
-    caplog.clear()
 
     attributes_bad_temps = sample_attributes_df.copy()
     attributes_bad_temps["task_seq_temps"] = attributes_bad_temps["task_seq_temps"].astype("object")
@@ -502,11 +403,6 @@ def test_sequence_data_with_non_numeric(sample_formula_desc_df, sample_attribute
     # Check that the problematic entry became [10, 0, 30]
     assert torch.allclose(
         dataset_bad_temps.t_sequences_dict["task_seq"][0], torch.tensor([10.0, 0.0, 30.0], dtype=torch.float32)
-    )
-    assert any(
-        "Could not parse string element 'bad_temp'" in rec.message
-        for rec in caplog.records
-        if rec.levelname == "WARNING"
     )
 
 

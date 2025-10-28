@@ -58,14 +58,8 @@ def create_collate_fn_with_task_info(task_configs):
         """
         model_inputs, y_dicts, mask_dicts, t_sequences_dicts = zip(*batch)
 
-        # Handle model inputs (formula/structure features)
-        if isinstance(model_inputs[0], tuple):
-            # Structure data is present
-            formulas, structures = zip(*model_inputs)
-            batched_input = (torch.stack(formulas), torch.stack(structures))
-        else:
-            # Only formula data
-            batched_input = torch.stack(model_inputs)
+        # Handle model inputs (formula features only)
+        batched_input = torch.stack(model_inputs)
 
         # Handle targets and masks based on task type
         batched_y_dict = {}
@@ -97,8 +91,6 @@ class CompoundDataModule(L.LightningDataModule):
         formula_desc_source: Union[pd.DataFrame, Path_fr],  # type: ignore
         task_configs: List[Union[RegressionTaskConfig, ClassificationTaskConfig, KernelRegressionTaskConfig]],
         attributes_source: Optional[Union[pd.DataFrame, Path_fr]] = None,  # type: ignore
-        structure_desc_source: Optional[Union[pd.DataFrame, Path_fr]] = None,  # type: ignore
-        with_structure: bool = False,
         task_masking_ratios: Optional[Dict[str, float]] = None,
         val_split: float = 0.1,
         test_split: float = 0.1,
@@ -125,10 +117,6 @@ class CompoundDataModule(L.LightningDataModule):
             Defaults to None. If None, the DataModule can only be used for prediction with non-sequence tasks,
             as sequence tasks typically require input columns (e.g., for series or temperatures) from this source.
             If provided, it will be aligned with `formula_desc_source`.
-        structure_desc_source : Optional[Union[pd.DataFrame, np.ndarray, str]], optional
-            Structure descriptors. If provided, it will be aligned with `formula_desc_source`. Defaults to None.
-        with_structure : bool, optional
-            If True, attempt to load and use structure descriptors. Defaults to False.
         task_masking_ratios : Optional[Dict[str, float]], optional
             Ratios for random masking per task in the training set. Defaults to None.
         val_split : float, optional
@@ -163,7 +151,6 @@ class CompoundDataModule(L.LightningDataModule):
 
         # Explicitly assign parameters to self for clarity and linter compatibility
         self.task_configs = task_configs
-        self.with_structure = with_structure
         self.task_masking_ratios = task_masking_ratios
         self.val_split = val_split
         self.test_split = test_split
@@ -175,12 +162,13 @@ class CompoundDataModule(L.LightningDataModule):
         self.init_predict_idx = predict_idx
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.structure_df: pd.DataFrame | None = None
+        self.actual_with_structure = False
 
         self.save_hyperparameters(
             ignore=[
                 "formula_desc_source",
                 "attributes_source",
-                "structure_desc_source",
                 "predict_idx",
                 "task_configs",
             ]  # ADDED "task_configs"
@@ -274,61 +262,6 @@ class CompoundDataModule(L.LightningDataModule):
             # self.attributes_df remains None. self.formula_df uses the original master_index.
             logger.info(f"formula_df (master) length: {len(master_index)}")
 
-        # Handle structure_df
-        self.structure_df = None
-        self.actual_with_structure = False
-        if self.with_structure:
-            logger.info("Attempting to load and align structure_desc as with_structure is True.")
-            if structure_desc_source is not None:
-                source_to_load_struct = (
-                    str(structure_desc_source) if isinstance(structure_desc_source, Path_fr) else structure_desc_source  # type: ignore
-                )
-                loaded_structure_df = self._load_data(source_to_load_struct, "structure_desc")
-                if loaded_structure_df is not None and not loaded_structure_df.empty:
-                    logger.info(f"Initial loaded structure_df length: {len(loaded_structure_df)}")
-
-                    # Attempt to align loaded_structure_df with the current master_index
-                    aligned_structure_df = loaded_structure_df.reindex(master_index)
-                    aligned_structure_df.dropna(how="all", inplace=True)  # Remove rows that became all NaN
-
-                    # Check if the aligned_structure_df perfectly matches the master_index
-                    if not aligned_structure_df.empty and aligned_structure_df.index.equals(master_index):
-                        self.structure_df = aligned_structure_df
-                        self.actual_with_structure = True
-                        logger.info(f"Successfully aligned structure_df. Length: {len(self.structure_df)}")
-                    else:
-                        logger.warning(
-                            f"Failed to align structure_df with the common index of formula_df and attributes_df. "
-                            f"Master index len: {len(master_index)}, structure_df after reindex & dropna len: {len(aligned_structure_df)}, "
-                            f"Indices equal: {aligned_structure_df.index.equals(master_index) if not aligned_structure_df.empty else 'N/A (empty)'}. "
-                            f"Structure data will NOT be used."
-                        )
-                        # self.structure_df remains None, self.actual_with_structure remains False
-                else:  # loaded_structure_df was None or empty
-                    logger.warning(
-                        "Failed to load structure_desc_source or it was empty. Proceeding without structure data."
-                    )
-            else:  # structure_desc_source was None
-                logger.warning(
-                    "with_structure is True, but structure_desc_source is None. Proceeding without structure data."
-                )
-        else:  # with_structure is False
-            logger.info("with_structure is False. Structure data will not be loaded or used.")
-        # self.structure_df and self.actual_with_structure are set correctly by now.
-
-        # Final state logging
-        logger.info(f"Final aligned formula_df length: {len(self.formula_df)}")
-        if self.attributes_df is not None:
-            logger.info(f"Final aligned attributes_df length: {len(self.attributes_df)}")
-        else:
-            logger.info("Final attributes_df is None.")
-        if self.structure_df is not None:  # Check if it's not None before logging length
-            logger.info(f"Final aligned structure_df length: {len(self.structure_df)}")
-        else:
-            logger.info("Final aligned structure_df is None.")
-        logger.info(f"Final actual_with_structure status: {self.actual_with_structure}")
-
-        # self.task_configs was already assigned
         logger.info(f"DataModule initialized with {len(self.task_configs)} task configurations.")
 
     def _resolve_predict_idx(self, full_idx: pd.Index) -> pd.Index:
@@ -449,9 +382,9 @@ class CompoundDataModule(L.LightningDataModule):
                 )
             if valid_predict_indices.empty:
                 logger.warning(
-                    "User-provided predict_idx resulted in an empty set after validation. Using default behavior."
+                    "User-provided predict_idx resulted in an empty set after validation. Returning empty index."
                 )
-                return self.test_idx if not self.test_idx.empty else full_idx
+                return pd.Index([])
 
             logger.info(
                 f"predict_idx: Using user-provided indices for prediction ({len(valid_predict_indices)} samples)"
@@ -612,74 +545,71 @@ class CompoundDataModule(L.LightningDataModule):
             f"Final dataset sizes after splitting: Train={len(self.train_idx)}, Validation={len(self.val_idx)}, Test={len(self.test_idx)}"
         )
 
-        # Determine if structure data should be used for dataset instances
-        logger.info(
-            f"Passing use_structure_for_this_dataset={self.actual_with_structure} to CompoundDataset instances."
-        )
-
         # Helper function to create attributes for CompoundDataset when self.attributes_df is None
         def get_attributes_for_dataset(indices):
             if self.attributes_df is not None:
                 return self.attributes_df.loc[indices]
-            # If attributes_df is None, create a minimal DataFrame with just the index
-            # CompoundDataset is expected to handle this for non-sequence tasks by using placeholders.
             if self.formula_df is not None:
                 return pd.DataFrame(index=self.formula_df.loc[indices].index)
             return pd.DataFrame()
 
-        def get_structure_for_dataset(indices):
-            if self.actual_with_structure and self.structure_df is not None and not indices.empty:
-                return self.structure_df.loc[indices]
-            return None
-
         if stage == "fit" or stage is None:
             logger.info("--- Creating 'fit' stage datasets (train/val) ---")
-            if not self.train_idx.empty:
+            if not self.train_idx.empty and self.attributes_df is not None:
                 logger.info(f"Creating train_dataset with {len(self.train_idx)} samples.")
                 self.train_dataset = CompoundDataset(
                     formula_desc=self.formula_df.loc[self.train_idx],
                     attributes=get_attributes_for_dataset(self.train_idx),
                     task_configs=self.task_configs,
-                    structure_desc=get_structure_for_dataset(self.train_idx),
-                    use_structure_for_this_dataset=self.actual_with_structure,
                     task_masking_ratios=self.task_masking_ratios,
                     is_predict_set=False,
                     dataset_name="train_dataset",
                 )
+            elif self.attributes_df is None and not self.train_idx.empty:
+                logger.warning(
+                    "attributes_df is None; skipping train_dataset creation because supervised targets are unavailable."
+                )
+                self.train_dataset = None
             else:
                 logger.warning("Train index is empty. train_dataset will be None.")
                 self.train_dataset = None
 
-            if not self.val_idx.empty:
+            if not self.val_idx.empty and self.attributes_df is not None:
                 logger.info(f"Creating val_dataset with {len(self.val_idx)} samples.")
                 self.val_dataset = CompoundDataset(
                     formula_desc=self.formula_df.loc[self.val_idx],
                     attributes=get_attributes_for_dataset(self.val_idx),
                     task_configs=self.task_configs,
-                    structure_desc=get_structure_for_dataset(self.val_idx),
-                    use_structure_for_this_dataset=self.actual_with_structure,
                     task_masking_ratios=None,  # No masking for validation
                     is_predict_set=False,
                     dataset_name="val_dataset",
                 )
+            elif self.attributes_df is None and not self.val_idx.empty:
+                logger.warning(
+                    "attributes_df is None; skipping val_dataset creation because supervised targets are unavailable."
+                )
+                self.val_dataset = None
             else:
                 logger.info("Validation index is empty. val_dataset will be None.")
                 self.val_dataset = None
 
         if stage == "test" or stage is None:
             logger.info("--- Creating 'test' stage dataset ---")
-            if not self.test_idx.empty:
+            if not self.test_idx.empty and self.attributes_df is not None:
                 logger.info(f"Creating test_dataset with {len(self.test_idx)} samples.")
                 self.test_dataset = CompoundDataset(
                     formula_desc=self.formula_df.loc[self.test_idx],
                     attributes=get_attributes_for_dataset(self.test_idx),
                     task_configs=self.task_configs,
-                    structure_desc=get_structure_for_dataset(self.test_idx),
-                    use_structure_for_this_dataset=self.actual_with_structure,
                     task_masking_ratios=None,  # No masking for test
                     is_predict_set=False,  # Typically False for test, model might output targets for metrics
                     dataset_name="test_dataset",
                 )
+            elif self.attributes_df is None and not self.test_idx.empty:
+                logger.warning(
+                    "attributes_df is None; skipping test_dataset creation because supervised targets are unavailable."
+                )
+                self.test_dataset = None
             else:
                 logger.info("Test index is empty. test_dataset will be None.")
                 self.test_dataset = None
@@ -694,8 +624,6 @@ class CompoundDataModule(L.LightningDataModule):
                     formula_desc=self.formula_df.loc[self.predict_idx],
                     attributes=get_attributes_for_dataset(self.predict_idx),
                     task_configs=self.task_configs,
-                    structure_desc=get_structure_for_dataset(self.predict_idx),
-                    use_structure_for_this_dataset=self.actual_with_structure,
                     task_masking_ratios=None,  # No masking for predict
                     is_predict_set=True,
                     dataset_name="predict_dataset",
