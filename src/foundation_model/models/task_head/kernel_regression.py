@@ -13,7 +13,6 @@ parameter ``t``.
 
 from __future__ import annotations
 
-import math
 from typing import List, Optional
 
 import torch
@@ -25,27 +24,6 @@ from foundation_model.models.fc_layers import LinearBlock
 from foundation_model.models.model_config import KernelRegressionTaskConfig
 
 from .base import BaseTaskHead
-
-
-class FourierFeatures(nn.Module):
-    """
-    Encode scalar ``t`` into random Fourier features.
-    """
-
-    def __init__(self, input_dim: int, mapping_size: int, scale: float = 10.0):
-        super().__init__()
-        if mapping_size <= 0:
-            raise ValueError("mapping_size must be positive for FourierFeatures.")
-        self.input_dim = input_dim
-        self.mapping_size = mapping_size
-        self.register_buffer("B", torch.randn((input_dim, mapping_size)) * scale)
-
-    def forward(self, t: torch.Tensor) -> torch.Tensor:
-        if t.dim() == 1:
-            t = t.unsqueeze(1)
-        t = t.float()
-        x_proj = 2 * math.pi * t @ self.B
-        return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
 
 
 class _GaussianKernel(nn.Module):
@@ -133,25 +111,11 @@ class KernelRegressionHead(BaseTaskHead):
         if config.kernel_num_centers <= 0:
             raise ValueError("kernel_num_centers must be positive.")
 
-        self.t_encoding_method = config.t_encoding_method
         self.enable_mu3 = config.enable_mu3
         self.n_kernels = int(config.kernel_num_centers)
 
-        # --- t encoder setup (mirrors the legacy behaviour) ---
-        t_embedding_dim = config.t_dim[0]
-        if self.t_encoding_method == "fourier":
-            mapping_size = math.ceil(t_embedding_dim / 2)
-            self.t_encoder = FourierFeatures(input_dim=1, mapping_size=mapping_size)
-            encoded_t_dim = mapping_size * 2
-        elif self.t_encoding_method == "fc":
-            self.t_encoder = nn.Sequential(nn.Linear(1, t_embedding_dim), nn.LeakyReLU(0.1))
-            encoded_t_dim = t_embedding_dim
-        else:
-            raise ValueError(
-                f"Unsupported t_encoding_method: {self.t_encoding_method}. Must be 'fourier' or 'fc'."
-            )
-
-        config.t_dim[0] = encoded_t_dim  # keep existing interfaces that inspect config.t_dim
+        # --- Raw t input (align with research prototype) ---
+        t_input_dim = 1
 
         # --- Kernel initialisation ---
         centers = self._init_centers_tensor(config)
@@ -182,8 +146,8 @@ class KernelRegressionHead(BaseTaskHead):
         )
 
         # --- μ₂(t) branch ---
-        shared_t_hidden = config.t_dim[1:]
-        mu2_dims = _build_dims(encoded_t_dim, config.mu2_hidden_dims, shared_t_hidden)
+        shared_t_hidden = config.t_dim
+        mu2_dims = _build_dims(t_input_dim, config.mu2_hidden_dims, shared_t_hidden)
         self.mu2_net = LinearBlock(
             mu2_dims + [1],
             normalization=config.norm,
@@ -194,7 +158,7 @@ class KernelRegressionHead(BaseTaskHead):
         self.mu3_net: Optional[LinearBlock]
         if self.enable_mu3:
             mu3_hidden = config.mu3_hidden_dims if config.mu3_hidden_dims is not None else shared_x_hidden
-            mu3_dims = _build_dims(config.x_dim[0] + encoded_t_dim, mu3_hidden, shared_x_hidden)
+            mu3_dims = _build_dims(config.x_dim[0] + t_input_dim, mu3_hidden, shared_x_hidden)
             self.mu3_net = LinearBlock(
                 mu3_dims + [1],
                 normalization=config.norm,
@@ -234,17 +198,15 @@ class KernelRegressionHead(BaseTaskHead):
         if t.dim() == 1:
             t = t.unsqueeze(1)
 
-        t_encoded = self.t_encoder(t)
-
         beta = self.beta_net(x)
         mu1 = self.mu1_net(x)
-        mu2 = self.mu2_net(t_encoded)
+        mu2 = self.mu2_net(t)
 
         k_t = self.kernel(t.squeeze(1))
         kernel_term = (k_t * beta).sum(dim=1, keepdim=True)
 
         if self.mu3_net is not None:
-            xt = torch.cat([x, t_encoded], dim=1)
+            xt = torch.cat([x, t], dim=1)
             mu3 = self.mu3_net(xt)
         else:
             mu3 = 0.0
