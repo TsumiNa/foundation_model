@@ -30,13 +30,13 @@ from .components.foundation_encoder import FoundationEncoder, MultiModalFoundati
 from .components.self_supervised import SelfSupervisedModule
 from .model_config import (
     ClassificationTaskConfig,
-    ExtendRegressionTaskConfig,
+    KernelRegressionTaskConfig,
     OptimizerConfig,
     RegressionTaskConfig,
     TaskType,
 )
 from .task_head.classification import ClassificationHead
-from .task_head.extend_regression import ExtendRegressionHead
+from .task_head.kernel_regression import KernelRegressionHead
 from .task_head.regression import RegressionHead
 
 
@@ -57,7 +57,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
        Supports various types of prediction tasks:
        - Regression tasks: Predict continuous value attributes
        - Classification tasks: Predict discrete categories
-       - ExtendRegression tasks: Predict variable-length sequences (e.g., DOS, temperature-dependent properties)
+       - KernelRegression tasks: Predict variable-length sequences (e.g., DOS, temperature-dependent properties)
 
     4. Structure Fusion (optional):
        When with_structure=True, can fuse information from different modalities (e.g., formula and structure).
@@ -84,10 +84,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         Widths of shared MLP layers (foundation encoder). The first element is the input dimension,
         and the last element is the latent representation dimension.
         Example: [128, 256, 512, 256] represents a 3-layer MLP with input dimension 128 and latent dimension 256.
-    task_configs : list[RegressionTaskConfig | ClassificationTaskConfig | ExtendRegressionTaskConfig]
+    task_configs : list[RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig]
         List of task configurations, each defining a prediction task. Each configuration must specify
         task type, name, dimensions, etc. Regression and classification task heads receive the deposit
-        layer output, while ExtendRegression task heads receive both deposit layer output and sequence points.
+        layer output, while KernelRegression task heads receive both deposit layer output and sequence points.
     norm_shared : bool
         Whether to apply layer normalization in shared layers.
     residual_shared : bool
@@ -132,7 +132,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
     def __init__(
         self,
         shared_block_dims: list[int],
-        task_configs: list[RegressionTaskConfig | ClassificationTaskConfig | ExtendRegressionTaskConfig],
+        task_configs: list[RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig],
         *,
         # Normalization/residual options
         norm_shared: bool = True,
@@ -329,9 +329,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
             elif config_item.type == TaskType.CLASSIFICATION:
                 assert isinstance(config_item, ClassificationTaskConfig)
                 task_heads_dict[config_item.name] = ClassificationHead(config=config_item)
-            elif config_item.type == TaskType.ExtendRegression:
-                assert isinstance(config_item, ExtendRegressionTaskConfig)
-                task_heads_dict[config_item.name] = ExtendRegressionHead(config=config_item)
+            elif config_item.type == TaskType.KERNEL_REGRESSION:
+                assert isinstance(config_item, KernelRegressionTaskConfig)
+                task_heads_dict[config_item.name] = KernelRegressionHead(config=config_item)
         return task_heads_dict
 
     def _init_task_heads(self):
@@ -370,7 +370,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """Track which types of tasks are enabled."""
         self.has_regression = any(tc.type == TaskType.REGRESSION for tc in self.task_configs if tc.enabled)
         self.has_classification = any(tc.type == TaskType.CLASSIFICATION for tc in self.task_configs if tc.enabled)
-        self.has_extend_regression = any(tc.type == TaskType.ExtendRegression for tc in self.task_configs if tc.enabled)
+        self.has_kernel_regression = any(tc.type == TaskType.KERNEL_REGRESSION for tc in self.task_configs if tc.enabled)
 
     def _init_weights(self):
         """Initialize model weights and apply freezing based on freeze_shared_encoder config."""
@@ -438,9 +438,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Input tensor(s). If structure fusion is enabled, this should be a tuple
             of (formula_tensor, structure_tensor).
         t_sequences : dict[str, torch.Tensor] | None, optional
-            A dictionary where keys are ExtendRegression task names and values are the
+            A dictionary where keys are KernelRegression task names and values are the
             corresponding sequence input data (e.g., temperature points, time steps)
-            for the batch. Required if ExtendRegression tasks are present. Defaults to None.
+            for the batch. Required if KernelRegression tasks are present. Defaults to None.
 
         Returns
         -------
@@ -462,17 +462,17 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Apply task heads - all task heads use h_task (deposit layer output)
         outputs = {}
         for name, head in self.task_heads.items():
-            if isinstance(head, ExtendRegressionHead):
-                # Get specific sequence data for this ExtendRegression head
+            if isinstance(head, KernelRegressionHead):
+                # Get specific sequence data for this KernelRegression head
                 task_sequence_input = t_sequences.get(name) if t_sequences else None
                 if task_sequence_input is not None:
-                    # DOSDataset-style expansion: expand h_task and t for ExtendRegressionHead
-                    expanded_h_task, expanded_t = self._expand_for_extend_regression(h_task, task_sequence_input)
+                    # DOSDataset-style expansion: expand h_task and t for KernelRegressionHead
+                    expanded_h_task, expanded_t = self._expand_for_kernel_regression(h_task, task_sequence_input)
                     outputs[name] = head(expanded_h_task, t=expanded_t)
                 else:
-                    # For ExtendRegressionHead, t parameter is required
+                    # For KernelRegressionHead, t parameter is required
                     raise ValueError(
-                        f"ExtendRegressionHead '{name}' requires t parameter but t_sequences is missing or doesn't contain '{name}'"
+                        f"KernelRegressionHead '{name}' requires t parameter but t_sequences is missing or doesn't contain '{name}'"
                     )
             else:
                 outputs[name] = head(h_task)
@@ -654,9 +654,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
             target = y_dict_batch[name]
             sample_mask = task_masks_batch.get(name)
 
-            # Handle ExtendRegression tasks with List[Tensor] format
-            if isinstance(head, ExtendRegressionHead):
-                # For ExtendRegression, target and mask are in List[Tensor] format
+            # Handle KernelRegression tasks with List[Tensor] format
+            if isinstance(head, KernelRegressionHead):
+                # For KernelRegression, target and mask are in List[Tensor] format
                 # We need to concatenate them to match the flattened prediction format
                 if isinstance(target, list):
                     target = torch.cat(target, dim=0)
@@ -664,7 +664,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     sample_mask = torch.cat(sample_mask, dim=0)
                 elif sample_mask is None:
                     logger.warning(
-                        f"Mask not found for ExtendRegression task {name} in training_step. Assuming all valid."
+                        f"Mask not found for KernelRegression task {name} in training_step. Assuming all valid."
                     )
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
             else:
@@ -906,9 +906,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
             target = y_dict_batch[name]
             sample_mask = task_masks_batch.get(name)
 
-            # Handle ExtendRegression tasks with List[Tensor] format
-            if isinstance(head, ExtendRegressionHead):
-                # For ExtendRegression, target and mask are in List[Tensor] format
+            # Handle KernelRegression tasks with List[Tensor] format
+            if isinstance(head, KernelRegressionHead):
+                # For KernelRegression, target and mask are in List[Tensor] format
                 # We need to concatenate them to match the flattened prediction format
                 if isinstance(target, list):
                     target = torch.cat(target, dim=0)
@@ -916,7 +916,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     sample_mask = torch.cat(sample_mask, dim=0)
                 elif sample_mask is None:
                     logger.warning(
-                        f"Mask not found for ExtendRegression task {name} in validation_step. Assuming all valid."
+                        f"Mask not found for KernelRegression task {name} in validation_step. Assuming all valid."
                     )
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
             else:
@@ -1127,16 +1127,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
             target = y_dict_batch[name]
             sample_mask = task_masks_batch.get(name)
 
-            # Handle ExtendRegression tasks with List[Tensor] format
-            if isinstance(head, ExtendRegressionHead):
-                # For ExtendRegression, target and mask are in List[Tensor] format
+            # Handle KernelRegression tasks with List[Tensor] format
+            if isinstance(head, KernelRegressionHead):
+                # For KernelRegression, target and mask are in List[Tensor] format
                 # We need to concatenate them to match the flattened prediction format
                 if isinstance(target, list):
                     target = torch.cat(target, dim=0)
                 if sample_mask is not None and isinstance(sample_mask, list):
                     sample_mask = torch.cat(sample_mask, dim=0)
                 elif sample_mask is None:
-                    logger.warning(f"Mask not found for ExtendRegression task {name} in test_step. Assuming all valid.")
+                    logger.warning(f"Mask not found for KernelRegression task {name} in test_step. Assuming all valid.")
                     sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
             else:
                 # For other tasks, use normal tensor format
@@ -1261,13 +1261,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Sequence input data is now a dictionary
         task_sequence_data_batch = batch[3] if len(batch) > 3 else {}  # Default to empty dict if not provided
 
-        # Store original sequence lengths for ExtendRegression tasks before forward pass
-        extend_regression_sequence_lengths = {}
+        # Store original sequence lengths for KernelRegression tasks before forward pass
+        kernel_regression_sequence_lengths = {}
         for task_name, sequence_data in task_sequence_data_batch.items():
-            if task_name in self.task_heads and isinstance(self.task_heads[task_name], ExtendRegressionHead):
+            if task_name in self.task_heads and isinstance(self.task_heads[task_name], KernelRegressionHead):
                 if isinstance(sequence_data, list):
                     # List[Tensor] format - store length of each tensor
-                    extend_regression_sequence_lengths[task_name] = [len(seq) for seq in sequence_data]
+                    kernel_regression_sequence_lengths[task_name] = [len(seq) for seq in sequence_data]
                 elif isinstance(sequence_data, torch.Tensor):
                     # Legacy tensor format - count non-zero elements per sample
                     batch_size = sequence_data.shape[0]
@@ -1275,7 +1275,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     for i in range(batch_size):
                         valid_mask = sequence_data[i] != 0.0
                         lengths.append(int(valid_mask.sum().item()))
-                    extend_regression_sequence_lengths[task_name] = lengths
+                    kernel_regression_sequence_lengths[task_name] = lengths
 
         # 2. Prepare input for the raw forward pass, always treating structure as None for predict_step
         if self.with_structure:
@@ -1316,10 +1316,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # The head.predict() method now handles snake_case prefixing
             processed_pred_dict = head.predict(raw_pred_tensor)  # type: ignore
 
-            # For ExtendRegression tasks, reshape flattened predictions back to List[Tensor] format
-            if isinstance(head, ExtendRegressionHead) and task_name in extend_regression_sequence_lengths:
-                sequence_lengths = extend_regression_sequence_lengths[task_name]
-                processed_pred_dict = self._reshape_extend_regression_predictions(processed_pred_dict, sequence_lengths)
+            # For KernelRegression tasks, reshape flattened predictions back to List[Tensor] format
+            if isinstance(head, KernelRegressionHead) and task_name in kernel_regression_sequence_lengths:
+                sequence_lengths = kernel_regression_sequence_lengths[task_name]
+                processed_pred_dict = self._reshape_kernel_regression_predictions(processed_pred_dict, sequence_lengths)
 
             final_predictions.update(processed_pred_dict)
 
@@ -1498,11 +1498,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         return optimizers_and_schedulers
 
-    def _expand_for_extend_regression(
+    def _expand_for_kernel_regression(
         self, h_task: torch.Tensor, t_sequence: List[torch.Tensor] | torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Expand h_task and t_sequence for ExtendRegressionHead processing.
+        Expand h_task and t_sequence for KernelRegressionHead processing.
 
         This method does pure data expansion without any filtering or mask decisions.
         It simply concatenates all sequence data and replicates features accordingly.
@@ -1579,13 +1579,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         return expanded_h_task, expanded_t
 
-    def _reshape_extend_regression_predictions(
+    def _reshape_kernel_regression_predictions(
         self, processed_pred_dict: dict[str, np.ndarray], sequence_lengths: List[int]
     ) -> dict[str, List[np.ndarray]]:
         """
-        Reshape flattened ExtendRegression predictions back to List[numpy.ndarray] format.
+        Reshape flattened KernelRegression predictions back to List[numpy.ndarray] format.
 
-        This method takes the flattened predictions from an ExtendRegressionHead and
+        This method takes the flattened predictions from a KernelRegressionHead and
         reshapes them back to the original List[numpy.ndarray] format that matches the input
         structure, ensuring batch consistency with other task types and compatibility
         with PredictionDataFrameWriter.
@@ -1593,7 +1593,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         Parameters
         ----------
         processed_pred_dict : dict[str, np.ndarray]
-            Dictionary containing flattened predictions from ExtendRegressionHead.predict().
+            Dictionary containing flattened predictions from KernelRegressionHead.predict().
             Keys are typically prefixed with snake_case task name (e.g., "task_name_value").
             Values are already numpy arrays.
         sequence_lengths : List[int]
@@ -1613,7 +1613,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             if isinstance(flattened_value, np.ndarray):
                 flattened_array = flattened_value
             else:
-                # Fallback for torch tensors (should not happen with ExtendRegression)
+                # Fallback for torch tensors (should not happen with KernelRegression)
                 flattened_array = flattened_value.detach().cpu().numpy()
 
             # Split the flattened array back into individual sample predictions

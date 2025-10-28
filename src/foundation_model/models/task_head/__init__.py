@@ -12,12 +12,12 @@ Task heads for the FlexibleMultiTaskModel.
 # For example:
 from .base import BaseTaskHead
 from .classification import ClassificationHead
-from .extend_regression import ExtendRegressionHead
+from .kernel_regression import KernelRegressionHead
 from .regression import RegressionHead
 
 __all__ = [
     "BaseTaskHead",
     "ClassificationHead",
     "RegressionHead",
-    "ExtendRegressionHead",
+    "KernelRegressionHead",
 ]

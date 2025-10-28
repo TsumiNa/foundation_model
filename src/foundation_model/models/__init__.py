@@ -6,7 +6,7 @@ import torch
 from foundation_model.models.model_config import (
     BaseTaskConfig,
     ClassificationTaskConfig,
-    ExtendRegressionTaskConfig,
+    KernelRegressionTaskConfig,
     OptimizerConfig,
     RegressionTaskConfig,
     TaskType,
@@ -20,7 +20,7 @@ __all__ = [
     "TaskType",
     "RegressionTaskConfig",
     "ClassificationTaskConfig",
-    "ExtendRegressionTaskConfig",
+    "KernelRegressionTaskConfig",
     "OptimizerConfig",
 ]
 

@@ -8,13 +8,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 import torch
 
 from foundation_model.data.datamodule import CompoundDataModule
-from foundation_model.models.model_config import ExtendRegressionTaskConfig, RegressionTaskConfig, TaskType
+from foundation_model.models.model_config import KernelRegressionTaskConfig, RegressionTaskConfig, TaskType
 
 
-def test_extend_regression_issue():
-    """Test the ExtendRegression issue with NaN handling."""
+def test_kernel_regression_issue():
+    """Test the KernelRegression issue with NaN handling."""
 
-    print("=== TESTING EXTEND REGRESSION NaN HANDLING ===")
+    print("=== TESTING KERNEL REGRESSION NaN HANDLING ===")
 
     # Create task configs
     task_configs = [
@@ -25,9 +25,9 @@ def test_extend_regression_issue():
             dims=[128, 64, 32, 1],
             enabled=True,
         ),
-        ExtendRegressionTaskConfig(
+        KernelRegressionTaskConfig(
             name="dos",
-            type=TaskType.ExtendRegression,
+            type=TaskType.KERNEL_REGRESSION,
             data_column="DOS density (normalized)",
             t_column="DOS energy",
             x_dim=[128, 32, 16],
@@ -134,7 +134,7 @@ def test_extend_regression_issue():
         # Test mask structure
         print(f"  Available mask keys: {list(sample_task_masks_dict.keys())}")
 
-        # Test DOS masks (ExtendRegression - should be List[Tensor])
+        # Test DOS masks (KernelRegression - should be List[Tensor])
         if "dos" in sample_task_masks_dict:
             dos_masks = sample_task_masks_dict["dos"]
             dos_y_data = sample_y_dict["dos"]
@@ -361,4 +361,4 @@ def test_extend_regression_issue():
 
 
 if __name__ == "__main__":
-    test_extend_regression_issue()
+    test_kernel_regression_issue()

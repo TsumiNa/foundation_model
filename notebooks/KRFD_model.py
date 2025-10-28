@@ -75,7 +75,7 @@ def init_weights_xavier_uniform(module: nn.Module):
 # -------------------------
 # Model: Gaussian kernel
 # -------------------------
-class GaussianKernel(nn.Module):
+class _GaussianKernel(nn.Module):
     """
     Gaussian kernel: k(t, t_i) = exp(-(t - t_i)^2 / (2σ_i^2))
     """
@@ -206,7 +206,7 @@ class KernelRegression(LightningModule):
             raise ValueError("kernel_sigmas must be 1D tensor of length n_kernels")
 
         # Gaussian kernel module
-        self.kernel = GaussianKernel(
+        self.kernel = _GaussianKernel(
             centers=kernel_centers.float(),
             sigmas=kernel_sigmas.float(),
             learnable_centers=cfg.learnable_centers,

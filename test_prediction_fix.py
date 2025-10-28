@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-Test script to verify the prediction fix for ExtendRegression tasks.
+Test script to verify the prediction fix for KernelRegression tasks.
 This script tests the complete prediction pipeline to ensure all samples are processed correctly.
 """
 
@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
-from foundation_model.models.model_config import ExtendRegressionTaskConfig, TaskType
+from foundation_model.models.model_config import KernelRegressionTaskConfig, TaskType
 
 
 def test_prediction_pipeline():
@@ -39,9 +39,9 @@ def test_prediction_pipeline():
     # Create task configuration
     print("\n2. CREATING TASK CONFIGURATION...")
     task_configs = [
-        ExtendRegressionTaskConfig(
+        KernelRegressionTaskConfig(
             name="dos",
-            type=TaskType.ExtendRegression,
+            type=TaskType.KERNEL_REGRESSION,
             data_column="DOS density (normalized)",
             t_column="DOS energy",
             x_dim=[128, 32, 16],

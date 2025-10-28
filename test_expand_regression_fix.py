@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 import torch
 
 from foundation_model.data.datamodule import CompoundDataModule
-from foundation_model.models.model_config import ExtendRegressionTaskConfig, RegressionTaskConfig, TaskType
+from foundation_model.models.model_config import KernelRegressionTaskConfig, RegressionTaskConfig, TaskType
 
 
 def test_energy_zero_handling():
@@ -25,9 +25,9 @@ def test_energy_zero_handling():
             dims=[128, 64, 32, 1],
             enabled=True,
         ),
-        ExtendRegressionTaskConfig(
+        KernelRegressionTaskConfig(
             name="dos",
-            type=TaskType.ExtendRegression,
+            type=TaskType.KERNEL_REGRESSION,
             data_column="DOS density (normalized)",
             t_column="DOS energy",
             x_dim=[128, 32, 16],

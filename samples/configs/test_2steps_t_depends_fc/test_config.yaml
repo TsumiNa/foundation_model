@@ -130,7 +130,7 @@ model:
       #     min_lr: 1.0e-05
 
       - name: dos # Note: Duplicate task name, this might be an issue or intended for some reason.
-        type: ExtendRegression
+        type: KernelRegression
         data_column: DOS density (normalized) # Assuming same column for this duplicate
         t_column: DOS energy
         x_dim: [128, 64]

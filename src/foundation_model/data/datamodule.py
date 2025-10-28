@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 
 from foundation_model.models.model_config import (
     ClassificationTaskConfig,
-    ExtendRegressionTaskConfig,
+    KernelRegressionTaskConfig,
     RegressionTaskConfig,
     TaskType,
 )
@@ -25,9 +25,9 @@ from .dataset import CompoundDataset
 
 def create_collate_fn_with_task_info(task_configs):
     """
-    Creates a custom collate function that handles ExtendRegression tasks properly.
+    Creates a custom collate function that handles KernelRegression tasks properly.
 
-    ExtendRegression tasks need List[Tensor] format for both targets and t-parameters
+    KernelRegression tasks need List[Tensor] format for both targets and t-parameters
     to support variable-length sequences without padding waste.
 
     Parameters
@@ -40,9 +40,7 @@ def create_collate_fn_with_task_info(task_configs):
     callable
         Custom collate function for DataLoader
     """
-    extend_regression_tasks = {
-        cfg.name for cfg in task_configs if cfg.type == TaskType.ExtendRegression and cfg.enabled
-    }
+    kernel_regression_tasks = {cfg.name for cfg in task_configs if cfg.type == TaskType.KERNEL_REGRESSION and cfg.enabled}
 
     def custom_collate_fn(batch):
         """
@@ -74,8 +72,8 @@ def create_collate_fn_with_task_info(task_configs):
         batched_mask_dict = {}
 
         for key in y_dicts[0].keys():
-            if key in extend_regression_tasks:
-                # ExtendRegression: Keep List[Tensor] format for variable-length sequences
+            if key in kernel_regression_tasks:
+                # KernelRegression: Keep List[Tensor] format for variable-length sequences
                 batched_y_dict[key] = [d[key] for d in y_dicts]
                 batched_mask_dict[key] = [d[key] for d in mask_dicts]
             else:
@@ -97,7 +95,7 @@ class CompoundDataModule(L.LightningDataModule):
     def __init__(
         self,
         formula_desc_source: Union[pd.DataFrame, Path_fr],  # type: ignore
-        task_configs: List[Union[RegressionTaskConfig, ClassificationTaskConfig, ExtendRegressionTaskConfig]],
+        task_configs: List[Union[RegressionTaskConfig, ClassificationTaskConfig, KernelRegressionTaskConfig]],
         attributes_source: Optional[Union[pd.DataFrame, Path_fr]] = None,  # type: ignore
         structure_desc_source: Optional[Union[pd.DataFrame, Path_fr]] = None,  # type: ignore
         with_structure: bool = False,
@@ -258,20 +256,20 @@ class CompoundDataModule(L.LightningDataModule):
                 "attributes_source is None. Proceeding without attributes_df. This is only supported if no sequence tasks require it."
             )
             # Validate that no task requires attributes_df if it's None,
-            # especially if an ExtendRegression task specifies a t_column.
+            # especially if a KernelRegression task specifies a t_column.
             for cfg in self.task_configs:
-                if cfg.enabled and cfg.type == TaskType.ExtendRegression:
-                    # Type check and cast to access ExtendRegression-specific attributes
-                    if isinstance(cfg, ExtendRegressionTaskConfig) and hasattr(cfg, "t_column") and cfg.t_column:
+                if cfg.enabled and cfg.type == TaskType.KERNEL_REGRESSION:
+                    # Type check and cast to access KernelRegression-specific attributes
+                    if isinstance(cfg, KernelRegressionTaskConfig) and hasattr(cfg, "t_column") and cfg.t_column:
                         logger.error(
-                            f"Task '{cfg.name}' is an ExtendRegression task that specifies a 't_column' ('{cfg.t_column}'), "
+                            f"Task '{cfg.name}' is a KernelRegression task that specifies a 't_column' ('{cfg.t_column}'), "
                             f"but attributes_source is None. attributes_source is required to load this t-parameter data."
                         )
                         raise ValueError(
-                            f"attributes_source cannot be None when ExtendRegression task '{cfg.name}' requires a t_column ('{cfg.t_column}')."
+                            f"attributes_source cannot be None when KernelRegression task '{cfg.name}' requires a t_column ('{cfg.t_column}')."
                         )
-            # If we reach here, attributes_source is None, and no enabled ExtendRegressionTaskConfig requires a t_column.
-            # Other tasks (or ExtendRegression tasks without a t_column) will have their data_column handled by CompoundDataset
+            # If we reach here, attributes_source is None, and no enabled KernelRegressionTaskConfig requires a t_column.
+            # Other tasks (or KernelRegression tasks without a t_column) will have their data_column handled by CompoundDataset
             # (likely resulting in placeholders if data_column was specified).
             # self.attributes_df remains None. self.formula_df uses the original master_index.
             logger.info(f"formula_df (master) length: {len(master_index)}")
@@ -715,7 +713,7 @@ class CompoundDataModule(L.LightningDataModule):
             logger.warning("train_dataloader: Train dataset is empty (length 0). Returning None.")
             return None
 
-        # Create custom collate function for ExtendRegression tasks
+        # Create custom collate function for KernelRegression tasks
         collate_fn = create_collate_fn_with_task_info(self.task_configs)
 
         return DataLoader(
@@ -735,7 +733,7 @@ class CompoundDataModule(L.LightningDataModule):
             logger.info("val_dataloader: Validation dataset is empty (length 0). Returning None.")
             return None
 
-        # Create custom collate function for ExtendRegression tasks
+        # Create custom collate function for KernelRegression tasks
         collate_fn = create_collate_fn_with_task_info(self.task_configs)
 
         return DataLoader(
@@ -755,7 +753,7 @@ class CompoundDataModule(L.LightningDataModule):
             logger.info("test_dataloader: Test dataset is empty (length 0). Returning None.")
             return None
 
-        # Create custom collate function for ExtendRegression tasks
+        # Create custom collate function for KernelRegression tasks
         collate_fn = create_collate_fn_with_task_info(self.task_configs)
 
         return DataLoader(
@@ -775,7 +773,7 @@ class CompoundDataModule(L.LightningDataModule):
             logger.info("predict_dataloader: Predict dataset is empty (length 0). Returning None.")
             return None
 
-        # Create custom collate function for ExtendRegression tasks
+        # Create custom collate function for KernelRegression tasks
         collate_fn = create_collate_fn_with_task_info(self.task_configs)
 
         return DataLoader(

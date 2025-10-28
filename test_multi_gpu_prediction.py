@@ -13,7 +13,7 @@ import lightning as L
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
-from foundation_model.models.model_config import ExtendRegressionTaskConfig, TaskType
+from foundation_model.models.model_config import KernelRegressionTaskConfig, TaskType
 from foundation_model.scripts.callbacks.prediction_writer import PredictionDataFrameWriter
 
 
@@ -24,9 +24,9 @@ def test_multi_gpu_prediction():
 
     # Create task configuration
     task_configs = [
-        ExtendRegressionTaskConfig(
+        KernelRegressionTaskConfig(
             name="dos",
-            type=TaskType.ExtendRegression,
+            type=TaskType.KERNEL_REGRESSION,
             data_column="DOS density (normalized)",
             t_column="DOS energy",
             x_dim=[128, 32, 16],

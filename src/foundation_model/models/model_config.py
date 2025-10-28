@@ -15,7 +15,7 @@ class TaskType(str, Enum):  # Inherit from str
 
     REGRESSION = "REGRESSION"
     CLASSIFICATION = "CLASSIFICATION"
-    ExtendRegression = "ExtendRegression"
+    KERNEL_REGRESSION = "KernelRegression"
 
 
 @dataclass
@@ -87,27 +87,50 @@ class ClassificationTaskConfig(BaseTaskConfig):
 
 
 @dataclass
-class ExtendRegressionTaskConfig(BaseTaskConfig):
+class KernelRegressionTaskConfig(BaseTaskConfig):
     """
-    Configuration for extended regression tasks that handle variable-length sequences.
+    Configuration for extended regression (kernel regression) tasks that handle variable-length sequences.
 
     This configuration supports tasks like DOS prediction, temperature-dependent properties,
     time series analysis, etc., where each sample has a sequence of (t, target) pairs.
 
     Attributes:
-        x_dim: List of layer dimensions for f_x and g_x networks
-        t_dim: List of layer dimensions for f_t and g_t networks
-        interaction_dim: Dimension for interaction term between g_x and g_t
-        t_encoding_method: Method for encoding t-parameters ("fourier" or "fc")
-        t_column: Column name in attributes DataFrame containing t-parameter sequences
-        norm: Whether to use normalization in LinearBlocks
-        residual: Whether to use residual connections in LinearBlocks
+        x_dim: Base layer dimensions for networks operating on shared X features.
+        t_dim: Base layer dimensions for networks operating on encoded t features.
+        t_encoding_method: Method for encoding t-parameters ("fourier" or "fc").
+        t_column: Column name in attributes DataFrame containing t-parameter sequences.
+        norm: Whether to use normalization in LinearBlocks.
+        residual: Whether to use residual connections in LinearBlocks.
+        kernel_num_centers: Number of Gaussian kernel centres.
+        kernel_centers_init: Optional initial kernel centres.
+        kernel_sigmas_init: Optional initial kernel bandwidths.
+        kernel_init_sigma: Default bandwidth initialisation when none is provided.
+        kernel_init_range: Range used to initialise equally spaced kernel centres.
+        kernel_learnable_centers: Whether kernel centres are learnable.
+        kernel_learnable_sigmas: Whether kernel bandwidths are learnable.
+        kernel_min_sigma: Lower bound for kernel bandwidths.
+        enable_mu3: Whether to enable the joint X–t baseline branch.
+        mu*_hidden_dims: Optional overrides for hidden dimensions in the respective branches.
     """
 
     x_dim: List[int] = field(default_factory=lambda: [256, 128, 64])
     t_dim: List[int] = field(default_factory=lambda: [256, 128, 64])
     t_encoding_method: Literal["fourier", "fc"] = "fourier"  # Encoding method for t-parameters
     t_column: str = ""  # Column name containing t-parameter sequences (e.g., energy, temperature, time)
-    type: TaskType = TaskType.ExtendRegression
+    type: TaskType = TaskType.KERNEL_REGRESSION
     norm: bool = True
     residual: bool = False
+    # Kernel regression specific parameters
+    kernel_num_centers: int = field(default=32, kw_only=True)
+    kernel_centers_init: Optional[List[float]] = field(default=None, kw_only=True)
+    kernel_sigmas_init: Optional[List[float]] = field(default=None, kw_only=True)
+    kernel_init_sigma: float = field(default=0.15, kw_only=True)
+    kernel_init_range: Tuple[float, float] = field(default=(0.0, 1.0), kw_only=True)
+    kernel_learnable_centers: bool = field(default=False, kw_only=True)
+    kernel_learnable_sigmas: bool = field(default=True, kw_only=True)
+    kernel_min_sigma: float = field(default=1e-3, kw_only=True)
+    enable_mu3: bool = field(default=True, kw_only=True)
+    mu3_hidden_dims: Optional[List[int]] = field(default=None, kw_only=True)
+    beta_hidden_dims: Optional[List[int]] = field(default=None, kw_only=True)
+    mu1_hidden_dims: Optional[List[int]] = field(default=None, kw_only=True)
+    mu2_hidden_dims: Optional[List[int]] = field(default=None, kw_only=True)

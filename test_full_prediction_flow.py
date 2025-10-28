@@ -10,7 +10,7 @@ import torch
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
-from foundation_model.models.model_config import ExtendRegressionTaskConfig, RegressionTaskConfig, TaskType
+from foundation_model.models.model_config import KernelRegressionTaskConfig, RegressionTaskConfig, TaskType
 
 
 def test_full_prediction_flow():
@@ -27,9 +27,9 @@ def test_full_prediction_flow():
             dims=[128, 64, 32, 1],
             enabled=True,
         ),
-        ExtendRegressionTaskConfig(
+        KernelRegressionTaskConfig(
             name="dos",
-            type=TaskType.ExtendRegression,
+            type=TaskType.KERNEL_REGRESSION,
             data_column="DOS density (normalized)",
             t_column="DOS energy",
             x_dim=[128, 32, 16],

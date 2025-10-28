@@ -7,7 +7,7 @@ import torch
 
 from foundation_model.data.dataset import CompoundDataset
 from foundation_model.models.model_config import (
-    ExtendRegressionTaskConfig,
+    KernelRegressionTaskConfig,
     RegressionTaskConfig,
     TaskType,
 )
@@ -63,9 +63,9 @@ def sample_task_configs():
     """Returns a list of sample TaskConfig objects."""
     return [
         RegressionTaskConfig(name="task_reg", type=TaskType.REGRESSION, data_column="task_reg_regression_value"),
-        ExtendRegressionTaskConfig(
+        KernelRegressionTaskConfig(
             name="task_seq",
-            type=TaskType.ExtendRegression,
+            type=TaskType.KERNEL_REGRESSION,
             data_column="task_seq_sequence_series",
             t_column="task_seq_temps",
         ),
@@ -162,9 +162,9 @@ def test_task_data_processing_sequence(sample_formula_desc_df, sample_attributes
     # Create a task config that only includes valid tasks for this test
     valid_task_configs = [
         RegressionTaskConfig(name="task_reg", type=TaskType.REGRESSION, data_column="task_reg_regression_value"),
-        ExtendRegressionTaskConfig(
+        KernelRegressionTaskConfig(
             name="task_seq",
-            type=TaskType.ExtendRegression,
+            type=TaskType.KERNEL_REGRESSION,
             data_column="task_seq_sequence_series",
             t_column="task_seq_temps",
         ),
@@ -177,7 +177,7 @@ def test_task_data_processing_sequence(sample_formula_desc_df, sample_attributes
     )
     task_name = "task_seq"
     assert task_name in dataset.y_dict
-    # For ExtendRegression, y_dict stores List[Tensor]
+    # For KernelRegression, y_dict stores List[Tensor]
     assert isinstance(dataset.y_dict[task_name], list)
     assert len(dataset.y_dict[task_name]) == 5  # 5 samples
     # Check first sample
@@ -188,13 +188,13 @@ def test_task_data_processing_sequence(sample_formula_desc_df, sample_attributes
     assert torch.allclose(dataset.y_dict[task_name][2], expected_y_third)
 
     assert task_name in dataset.t_sequences_dict
-    # For ExtendRegression, t_sequences_dict stores List[Tensor], so check the first sample
+    # For KernelRegression, t_sequences_dict stores List[Tensor], so check the first sample
     assert len(dataset.t_sequences_dict[task_name]) == 5  # 5 samples
     expected_temps = torch.tensor([10, 20, 30], dtype=torch.float32)  # Single sample
     assert torch.allclose(dataset.t_sequences_dict[task_name][0], expected_temps)
 
     assert task_name in dataset.task_masks_dict
-    # For ExtendRegression, task_masks_dict also stores List[Tensor]
+    # For KernelRegression, task_masks_dict also stores List[Tensor]
     assert isinstance(dataset.task_masks_dict[task_name], list)
     assert len(dataset.task_masks_dict[task_name]) == 5
     # Check that first sample mask is all True (valid data)
@@ -403,14 +403,14 @@ def test_input_dtypes_conversion(sample_attributes_df, sample_task_configs):
     # Check y_dict dtypes (regression and sequence should be float32)
     for task_name, y_tensor in dataset.y_dict.items():
         task_cfg = next(tc for tc in sample_task_configs if tc.name == task_name)  # type: ignore
-        if task_cfg.type == TaskType.REGRESSION or task_cfg.type == TaskType.ExtendRegression:
+        if task_cfg.type == TaskType.REGRESSION or task_cfg.type == TaskType.KERNEL_REGRESSION:
             assert y_tensor.dtype == torch.float32, f"Task {task_name} y_dict dtype mismatch"
         elif task_cfg.type == TaskType.CLASSIFICATION:  # Added for completeness
             assert y_tensor.dtype == torch.long, f"Task {task_name} y_dict dtype mismatch for classification"
 
     # Check t_sequences_dict dtype (should be float32)
     for task_name, temps_list in dataset.t_sequences_dict.items():
-        # For ExtendRegression, temps_list is List[Tensor]
+        # For KernelRegression, temps_list is List[Tensor]
         assert isinstance(temps_list, list)
         assert temps_list[0].dtype == torch.float32, f"Task {task_name} t_sequences_dict dtype mismatch"
 
@@ -511,7 +511,7 @@ def test_sequence_data_with_non_numeric(sample_formula_desc_df, sample_attribute
 
 
 def test_missing_specified_t_column_raises_error(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
-    """Test ValueError if a specified t_column is missing for an ExtendRegression task."""
+    """Test ValueError if a specified t_column is missing for a KernelRegression task."""
     attributes_no_temps = sample_attributes_df.drop(columns=["task_seq_temps"])
 
     # sample_task_configs already has task_seq configured with t_column="task_seq_temps"
@@ -527,18 +527,18 @@ def test_missing_specified_t_column_raises_error(sample_formula_desc_df, sample_
         )
 
 
-def test_extend_regression_task_no_t_column_specified(sample_formula_desc_df, sample_attributes_df, caplog):
-    """Test behavior when t_column is not specified for an ExtendRegression task (uses placeholder)."""
+def test_kernel_regression_task_no_t_column_specified(sample_formula_desc_df, sample_attributes_df, caplog):
+    """Test behavior when t_column is not specified for a KernelRegression task (uses placeholder)."""
     caplog.set_level(logging.INFO)  # Set caplog level to INFO
 
     task_configs_no_t_spec = [
         RegressionTaskConfig(name="task_reg", type=TaskType.REGRESSION, data_column="task_reg_regression_value"),
-        ExtendRegressionTaskConfig(
-            name="task_seq", type=TaskType.ExtendRegression, data_column="task_seq_sequence_series", t_column=""
+        KernelRegressionTaskConfig(
+            name="task_seq", type=TaskType.KERNEL_REGRESSION, data_column="task_seq_sequence_series", t_column=""
         ),  # t_column is empty
     ]
 
-    with pytest.raises(ValueError, match="t_column for ExtendRegression task 'task_seq' must be specified."):
+    with pytest.raises(ValueError, match="t_column for KernelRegression task 'task_seq' must be specified."):
         CompoundDataset(
             formula_desc=sample_formula_desc_df,
             attributes=sample_attributes_df,  # attributes_df still has "task_seq_temps" but it won't be used

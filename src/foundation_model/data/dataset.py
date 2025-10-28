@@ -166,7 +166,7 @@ class CompoundDataset(Dataset):
         self.y_dict: Dict[str, Union[torch.Tensor, List[torch.Tensor]]] = {}
         self.t_sequences_dict: Dict[
             str, Union[torch.Tensor, List[torch.Tensor]]
-        ] = {}  # For t-parameter sequences of ExtendRegression tasks
+        ] = {}  # For t-parameter sequences of KernelRegression tasks
         self.task_masks_dict: Dict[str, Union[torch.Tensor, List[torch.Tensor]]] = {}
         self.enabled_task_names: List[str] = []
 
@@ -199,8 +199,8 @@ class CompoundDataset(Dataset):
             logger.debug(f"[{self.dataset_name}] Task '{task_name}': Loading data from column '{data_col_for_task}'.")
             raw_column_data = attributes[data_col_for_task]
 
-            if task_type == TaskType.ExtendRegression:
-                # For ExtendRegression, handle variable-length sequences without stacking
+            if task_type == TaskType.KERNEL_REGRESSION:
+                # For KernelRegression, handle variable-length sequences without stacking
                 current_task_values_list = []
                 current_task_mask_list = []
 
@@ -224,13 +224,13 @@ class CompoundDataset(Dataset):
                     f"[{self.dataset_name}] Task '{task_name}': y_dict stored as List[Tensor] with {len(self.y_dict[task_name])} sequences, base_mask valid count: {np.sum(base_mask_np)}"
                 )
 
-                # --- T-parameter Data Loading (t_sequences_dict for ExtendRegression tasks) using cfg.t_column ---
+                # --- T-parameter Data Loading (t_sequences_dict for KernelRegression tasks) using cfg.t_column ---
                 t_col_for_task = cfg.t_column
 
                 # Strict validation for t_column
                 if not t_col_for_task:  # Not specified
                     logger.error(f"[{self.dataset_name}] Task '{task_name}': t_column is not specified in config.")
-                    raise ValueError(f"t_column for ExtendRegression task '{task_name}' must be specified.")
+                    raise ValueError(f"t_column for KernelRegression task '{task_name}' must be specified.")
                 elif t_col_for_task not in attributes.columns:  # Specified but not found
                     logger.error(
                         f"[{self.dataset_name}] Task '{task_name}': t_column '{t_col_for_task}' "
@@ -246,7 +246,7 @@ class CompoundDataset(Dataset):
                     raw_t_data = attributes[t_col_for_task]
                     current_task_t_list = []
                     for element in raw_t_data:
-                        # For ExtendRegression, we expect variable-length sequences, so don't use expected_t_len
+                        # For KernelRegression, we expect variable-length sequences, so don't use expected_t_len
                         parsed_t = _parse_structured_element(
                             element,
                             task_name,
@@ -256,7 +256,7 @@ class CompoundDataset(Dataset):
                         )
                         current_task_t_list.append(parsed_t)
 
-                # For ExtendRegression, store as List[Tensor] to support variable-length sequences
+                # For KernelRegression, store as List[Tensor] to support variable-length sequences
                 self.t_sequences_dict[task_name] = [
                     torch.tensor(np.nan_to_num(seq, nan=0.0), dtype=torch.float32) for seq in current_task_t_list
                 ]
@@ -334,8 +334,8 @@ class CompoundDataset(Dataset):
                     # ... (logging for masking)
                 # ... (handle ratio_to_keep == 0.0 or >= 1.0)
 
-            if task_type == TaskType.ExtendRegression:
-                # For ExtendRegression, store masks as List[Tensor] to match y_dict format
+            if task_type == TaskType.KERNEL_REGRESSION:
+                # For KernelRegression, store masks as List[Tensor] to match y_dict format
                 self.task_masks_dict[task_name] = [
                     torch.ones_like(seq, dtype=torch.bool)
                     if final_mask_np[i]
@@ -378,7 +378,7 @@ class CompoundDataset(Dataset):
         sample_task_masks_dict = {
             name: self.task_masks_dict[name][idx] for name in self.enabled_task_names if name in self.task_masks_dict
         }
-        sample_t_sequences_dict = {  # T-parameter sequences for ExtendRegression tasks
+        sample_t_sequences_dict = {  # T-parameter sequences for KernelRegression tasks
             name: self.t_sequences_dict[name][idx] for name in self.enabled_task_names if name in self.t_sequences_dict
         }
 

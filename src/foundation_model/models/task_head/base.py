@@ -63,7 +63,6 @@ class BaseTaskHead(nn.Module, ABC):
         torch.Tensor
             Output tensor.
         """
-        pass
 
     @abstractmethod
     def compute_loss(
@@ -71,7 +70,7 @@ class BaseTaskHead(nn.Module, ABC):
         pred: torch.Tensor,
         target: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    ) -> Optional[torch.Tensor]:
         """
         Compute loss for the task.
 

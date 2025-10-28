@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
 """
-Test PredictionDataFrameWriter compatibility with ExtendRegressionHead.
+Test PredictionDataFrameWriter compatibility with the KernelRegressionHead.
 
 This test verifies that the Lightning callback can correctly process
-predictions from ExtendRegressionHead and save them to DataFrame format.
+predictions from KernelRegressionHead and save them to DataFrame format.
 """
 
 import tempfile
@@ -13,27 +13,27 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-from foundation_model.models.model_config import ExtendRegressionTaskConfig
-from foundation_model.models.task_head.extend_regression import ExtendRegressionHead
+from foundation_model.models.model_config import KernelRegressionTaskConfig
+from foundation_model.models.task_head.kernel_regression import KernelRegressionHead
 from foundation_model.scripts.callbacks.prediction_writer import PredictionDataFrameWriter
 
 
 def test_prediction_writer_compatibility():
-    """Test that PredictionDataFrameWriter works with ExtendRegressionHead output format."""
+    """Test that PredictionDataFrameWriter works with KernelRegressionHead output format."""
 
-    print("Testing PredictionDataFrameWriter compatibility with ExtendRegressionHead...")
+    print("Testing PredictionDataFrameWriter compatibility with KernelRegressionHead...")
 
-    # 1. Create ExtendRegressionHead
-    config = ExtendRegressionTaskConfig(
+    # 1. Create KernelRegressionHead
+    config = KernelRegressionTaskConfig(
         name="test_dos_prediction",
         x_dim=[64, 32, 16],
         t_dim=[32, 16, 8],
-        interaction_dim=8,
+        kernel_num_centers=5,
         t_encoding_method="fourier",
     )
 
-    head = ExtendRegressionHead(config)
-    print(f"✓ Created ExtendRegressionHead with task: {config.name}")
+    head = KernelRegressionHead(config)
+    print(f"✓ Created KernelRegressionHead with task: {config.name}")
 
     # 2. Create test data - simulate expanded format from FlexibleMultiTaskModel
     batch_size = 3
@@ -43,7 +43,7 @@ def test_prediction_writer_compatibility():
     raw_output = torch.randn(total_points, 1)  # Shape: (total_points, 1)
 
     # 3. Get predictions using head.predict (this is what FlexibleMultiTaskModel.predict_step calls)
-    predictions = head.predict(raw_output, additional=False)
+    predictions = head.predict(raw_output)
     print("✓ Head predictions generated:")
     for key, value in predictions.items():
         print(f"  - {key}: shape {value.shape}, dtype {value.dtype}")
@@ -53,17 +53,17 @@ def test_prediction_writer_compatibility():
 
     # Batch 1: 4 points
     batch1_output = torch.randn(4, 1)
-    batch1_pred = head.predict(batch1_output, additional=False)
+    batch1_pred = head.predict(batch1_output)
     batch_predictions.append(batch1_pred)
 
     # Batch 2: 3 points
     batch2_output = torch.randn(3, 1)
-    batch2_pred = head.predict(batch2_output, additional=False)
+    batch2_pred = head.predict(batch2_output)
     batch_predictions.append(batch2_pred)
 
     # Batch 3: 3 points
     batch3_output = torch.randn(3, 1)
-    batch3_pred = head.predict(batch3_output, additional=False)
+    batch3_pred = head.predict(batch3_output)
     batch_predictions.append(batch3_pred)
 
     print(f"✓ Created {len(batch_predictions)} batch predictions")
@@ -135,7 +135,7 @@ def test_prediction_writer_compatibility():
 
     # Single point prediction
     single_output = torch.randn(1, 1)
-    single_pred = head.predict(single_output, additional=False)
+    single_pred = head.predict(single_output)
     single_df = writer._process_predictions([single_pred])
     assert len(single_df) == 1, f"Expected 1 row for single prediction, got {len(single_df)}"
     print("✓ Single point prediction handled correctly")
@@ -144,28 +144,28 @@ def test_prediction_writer_compatibility():
 
 
 def test_multiple_tasks_compatibility():
-    """Test PredictionDataFrameWriter with multiple ExtendRegression tasks."""
+    """Test PredictionDataFrameWriter with multiple kernel regression tasks."""
 
-    print("\n--- Testing multiple ExtendRegression tasks ---")
+    print("\n--- Testing multiple KernelRegression tasks ---")
 
-    # Create two ExtendRegression tasks
-    config1 = ExtendRegressionTaskConfig(name="dos_prediction", x_dim=[64, 32], t_dim=[16, 8], interaction_dim=4)
+    # Create two KernelRegression tasks
+    config1 = KernelRegressionTaskConfig(name="dos_prediction", x_dim=[64, 32], t_dim=[16, 8], kernel_num_centers=4)
 
-    config2 = ExtendRegressionTaskConfig(
+    config2 = KernelRegressionTaskConfig(
         name="bandStructure",  # Test different naming format
         x_dim=[64, 16],
         t_dim=[8, 4],
-        interaction_dim=2,
+        kernel_num_centers=3,
     )
 
-    head1 = ExtendRegressionHead(config1)
-    head2 = ExtendRegressionHead(config2)
+    head1 = KernelRegressionHead(config1)
+    head2 = KernelRegressionHead(config2)
 
     # Simulate batch predictions with both tasks
     batch_output = torch.randn(5, 1)
 
-    pred1 = head1.predict(batch_output, additional=False)
-    pred2 = head2.predict(batch_output, additional=False)
+    pred1 = head1.predict(batch_output)
+    pred2 = head2.predict(batch_output)
 
     # Combine predictions (as FlexibleMultiTaskModel.predict_step would)
     combined_pred = {**pred1, **pred2}

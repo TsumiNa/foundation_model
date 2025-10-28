@@ -209,7 +209,7 @@ class PredictionDiagnosticTool:
 
         # Store original methods
         self.original_methods["model_predict_step"] = model.predict_step
-        self.original_methods["model_expand_for_extend_regression"] = model._expand_for_extend_regression
+        self.original_methods["model_expand_for_kernel_regression"] = model._expand_for_kernel_regression
 
         # Track predict_step calls
         self.predict_step_call_count = 0
@@ -237,7 +237,7 @@ class PredictionDiagnosticTool:
 
             # Count output samples
             if result:
-                # For ExtendRegression tasks, count list elements
+                # For KernelRegression tasks, count list elements
                 for task_name, predictions in result.items():
                     if isinstance(predictions, list):
                         output_count = len(predictions)
@@ -252,13 +252,13 @@ class PredictionDiagnosticTool:
 
             return result
 
-        # Track _expand_for_extend_regression calls
+        # Track _expand_for_kernel_regression calls
         self.expand_call_count = 0
         self.expand_input_samples = 0
         self.expand_output_samples = 0
 
-        def tracked_expand_for_extend_regression(h_task, t_sequence):
-            """Tracked version of _expand_for_extend_regression method."""
+        def tracked_expand_for_kernel_regression(h_task, t_sequence):
+            """Tracked version of _expand_for_kernel_regression method."""
             self.expand_call_count += 1
 
             # Count input samples
@@ -286,14 +286,14 @@ class PredictionDiagnosticTool:
                 non_empty_count = 0
                 placeholder_count = 0
 
-            logger.info(f"_expand_for_extend_regression call {self.expand_call_count}:")
+            logger.info(f"_expand_for_kernel_regression call {self.expand_call_count}:")
             logger.info(f"  Input batch size: {input_batch_size}")
             logger.info(f"  t_sequence: {t_sequence_info}")
             logger.info(f"  Non-empty sequences: {non_empty_count}")
             logger.info(f"  Placeholder sequences: {placeholder_count}")
 
             # Call original method
-            expanded_h_task, expanded_t = self.original_methods["model_expand_for_extend_regression"](
+            expanded_h_task, expanded_t = self.original_methods["model_expand_for_kernel_regression"](
                 h_task, t_sequence
             )
 
@@ -307,7 +307,7 @@ class PredictionDiagnosticTool:
 
         # Apply hooks
         model.predict_step = tracked_predict_step
-        model._expand_for_extend_regression = tracked_expand_for_extend_regression
+        model._expand_for_kernel_regression = tracked_expand_for_kernel_regression
 
     def restore_original_methods(self, datamodule, dataset, model):
         """Restore original methods after diagnosis."""
@@ -325,8 +325,8 @@ class PredictionDiagnosticTool:
 
         if "model_predict_step" in self.original_methods:
             model.predict_step = self.original_methods["model_predict_step"]
-        if "model_expand_for_extend_regression" in self.original_methods:
-            model._expand_for_extend_regression = self.original_methods["model_expand_for_extend_regression"]
+        if "model_expand_for_kernel_regression" in self.original_methods:
+            model._expand_for_kernel_regression = self.original_methods["model_expand_for_kernel_regression"]
 
     def analyze_prediction_output(self, output_path: str):
         """Analyze the final prediction output file."""
@@ -391,7 +391,7 @@ class PredictionDiagnosticTool:
             report.append(f"   predict_step input samples: {self.predict_step_input_samples}")
             report.append(f"   predict_step output samples: {self.predict_step_output_samples}")
         if hasattr(self, "expand_call_count"):
-            report.append(f"   _expand_for_extend_regression calls: {self.expand_call_count}")
+            report.append(f"   _expand_for_kernel_regression calls: {self.expand_call_count}")
             report.append(f"   expand input samples: {self.expand_input_samples}")
             report.append(f"   expand output samples: {self.expand_output_samples}")
 
@@ -412,7 +412,7 @@ class PredictionDiagnosticTool:
         # Check for expansion issues
         if hasattr(self, "expand_input_samples") and hasattr(self, "expand_output_samples"):
             if self.expand_output_samples == 0 and self.expand_input_samples > 0:
-                issues.append("_expand_for_extend_regression produced no output despite having input")
+                issues.append("_expand_for_kernel_regression produced no output despite having input")
 
         if issues:
             for issue in issues:
@@ -444,7 +444,7 @@ def main():
         logger.info("=== Creating DataModule ===")
 
         # Import task configs (simplified version for testing)
-        from foundation_model.models.model_config import ExtendRegressionTaskConfig, RegressionTaskConfig, TaskType
+        from foundation_model.models.model_config import KernelRegressionTaskConfig, RegressionTaskConfig, TaskType
 
         task_configs = [
             RegressionTaskConfig(
@@ -468,9 +468,9 @@ def main():
                 dims=[128, 64, 32, 1],
                 enabled=True,
             ),
-            ExtendRegressionTaskConfig(
+            KernelRegressionTaskConfig(
                 name="dos",
-                type=TaskType.ExtendRegression,
+                type=TaskType.KERNEL_REGRESSION,
                 data_column="DOS density (normalized)",
                 t_column="DOS energy",
                 x_dim=[128, 32, 16],

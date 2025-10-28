@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """
-Integration test for ExtendRegressionHead with FlexibleMultiTaskModel.
+Integration test for the KernelRegressionHead with FlexibleMultiTaskModel.
 Tests the DOSDataset-style data expansion logic.
 """
 
 import torch
 
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
-from foundation_model.models.model_config import ExtendRegressionTaskConfig
+from foundation_model.models.model_config import KernelRegressionTaskConfig
 
 
-def test_flexible_model_with_extend_regression():
-    """Test FlexibleMultiTaskModel with ExtendRegressionHead integration."""
-    print("Testing FlexibleMultiTaskModel with ExtendRegressionHead integration...")
+def test_flexible_model_with_kernel_regression():
+    """Test FlexibleMultiTaskModel with KernelRegressionHead integration."""
+    print("Testing FlexibleMultiTaskModel with KernelRegressionHead integration...")
 
-    # Create ExtendRegressionTaskConfig
-    extend_config = ExtendRegressionTaskConfig(
+    # Create KernelRegressionTaskConfig
+    extend_config = KernelRegressionTaskConfig(
         name="test_dos_prediction",
         x_dim=[128, 64, 32],  # Input from shared encoder: 128, hidden layers: 64, output: 32
         t_dim=[16, 8],  # t_embedding_dim=16, hidden=8, output=1 (will be added automatically)
-        interaction_dim=8,
+        kernel_num_centers=8,
         t_encoding_method="fourier",
     )
 
@@ -33,7 +33,7 @@ def test_flexible_model_with_extend_regression():
 
     print(f"✓ Model created with task: {extend_config.name}")
     print(f"  - Deposit dim: {model.deposit_dim}")
-    print(f"  - Has extend regression: {model.has_extend_regression}")
+    print(f"  - Has kernel regression: {model.has_kernel_regression}")
 
     # Test data expansion logic
     batch_size = 3
@@ -41,19 +41,17 @@ def test_flexible_model_with_extend_regression():
 
     # Create test inputs
     x_formula = torch.randn(batch_size, 64)  # Feature input
-    t_sequence = torch.tensor(
-        [
-            [1.0, 2.0, 3.0, 0.0],  # Sample 1: 3 valid t values
-            [0.5, 1.5, 0.0, 0.0],  # Sample 2: 2 valid t values
-            [0.1, 0.2, 0.3, 0.4],  # Sample 3: 4 valid t values
-        ]
-    )  # Shape: (3, 4)
+    t_sequence = [
+        torch.tensor([1.0, 2.0, 3.0]),
+        torch.tensor([0.5, 1.5]),
+        torch.tensor([0.1, 0.2, 0.3, 0.4]),
+    ]
 
     task_sequence_data_batch = {"test_dos_prediction": t_sequence}
 
     print("✓ Test data created:")
     print(f"  - x_formula shape: {x_formula.shape}")
-    print(f"  - t_sequence shape: {t_sequence.shape}")
+    print(f"  - t_sequence lengths: {[len(seq) for seq in t_sequence]}")
     print("  - Valid t counts: [3, 2, 4] = 9 total")
 
     # Test forward pass
@@ -76,11 +74,11 @@ def test_flexible_model_with_extend_regression():
     print("✓ Data expansion verification passed")
 
     # Test with different t_encoding_method
-    extend_config_fc = ExtendRegressionTaskConfig(
+    extend_config_fc = KernelRegressionTaskConfig(
         name="test_dos_fc",
         x_dim=[128, 64, 32],
         t_dim=[20, 10],  # t_embedding_dim=20
-        interaction_dim=8,
+        kernel_num_centers=6,
         t_encoding_method="fc",
     )
 
@@ -99,7 +97,7 @@ def test_flexible_model_with_extend_regression():
     print(f"  - Output shape: {pred_tensor_fc.shape}")
 
     # Test edge case: all zeros (no valid t values)
-    t_sequence_zeros = torch.zeros(batch_size, seq_len)
+    t_sequence_zeros = [torch.zeros(0) for _ in range(batch_size)]
     task_sequence_data_batch_zeros = {"test_dos_prediction": t_sequence_zeros}
 
     with torch.no_grad():
@@ -116,4 +114,4 @@ def test_flexible_model_with_extend_regression():
 
 
 if __name__ == "__main__":
-    test_flexible_model_with_extend_regression()
+    test_flexible_model_with_kernel_regression()
