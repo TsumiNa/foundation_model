@@ -27,7 +27,7 @@ PREDICTION PIPELINE DIAGNOSTIC REPORT
    expand output samples: 32761
 
 4. PROCESSING LOG:
-   [raw_data_loaded] Samples: 49034 | from /data/foundation_model/data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet
+   [raw_data_loaded] Samples: 49034 | from data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet
    [datamodule_predict_idx_resolved] Samples: 48998 | predict_idx type: <class 'pandas.core.indexes.base.Index'>
    [datamodule_predict_dataset_created] Samples: 48998
    [datamodule_formula_df] Samples: 48998

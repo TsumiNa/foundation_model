@@ -434,7 +434,7 @@ def main():
 
     # Configuration paths
     config_path = "samples/configs/test_2steps_t_depends_fc/predict_config.yaml"
-    data_path = "/data/foundation_model/data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet"
+    data_path = "data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet"
 
     try:
         # Step 1: Analyze raw data quality
@@ -481,7 +481,7 @@ def main():
         ]
 
         datamodule = CompoundDataModule(
-            formula_desc_source="/data/foundation_model/data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet",
+            formula_desc_source="data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet",
             attributes_source=data_path,
             task_configs=task_configs,
             predict_idx="all",

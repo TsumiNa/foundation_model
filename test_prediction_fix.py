@@ -30,7 +30,7 @@ def test_prediction_pipeline():
     # Load data to check initial counts
     print("\n1. LOADING RAW DATA...")
     try:
-        raw_data = pd.read_parquet("/data/foundation_model/data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet")
+        raw_data = pd.read_parquet("data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet")
         print(f"   Raw data loaded: {len(raw_data)} samples")
     except Exception as e:
         print(f"   Error loading raw data: {e}")
@@ -58,8 +58,8 @@ def test_prediction_pipeline():
     print("\n3. CREATING DATAMODULE...")
     try:
         datamodule = CompoundDataModule(
-            formula_desc_source="/data/foundation_model/data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet",
-            attributes_source="/data/foundation_model/data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet",
+            formula_desc_source="data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet",
+            attributes_source="data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet",
             task_configs=task_configs,
             batch_size=256,
             num_workers=0,

@@ -41,8 +41,8 @@ def test_full_prediction_flow():
 
     # Initialize datamodule
     datamodule = CompoundDataModule(
-        formula_desc_source="/data/foundation_model/data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet",
-        attributes_source="/data/foundation_model/data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet",
+        formula_desc_source="data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet",
+        attributes_source="data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet",
         task_configs=task_configs,
         batch_size=8,
         num_workers=0,
