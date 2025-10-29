@@ -216,26 +216,24 @@ $$ \mathcal{L}'_t = \frac{1}{2\sigma_t^2} \mathcal{L}_t + \log \sigma_t $$
 where $\mathcal{L}_t = (y_t - f_t(\mathbf{x}))^2$ is the raw squared error. A similar formulation applies to classification tasks.
 
 #### Practical Implementation
-The model learns $\log \sigma_t$ for each supervised task $t$, stored in `model.task_log_sigmas`. The final loss component for a supervised task $t$ is:
-$$ \mathcal{L}'_{t, \text{final}} = w_t \cdot \left( \frac{\exp(-2 \log \sigma_t)}{2} \mathcal{L}_t \right) + \log \sigma_t $$
+The model learns $\log \sigma_t$ for each supervised task $t$, stored in `model.task_log_sigmas`. With an optional per-task scalar `loss_weight = w_t`, the final loss component becomes:
+$$ \mathcal{L}'_{t, \text{final}} = \frac{w_t \cdot \exp(-2 \log \sigma_t)}{2} \mathcal{L}_t + \log \sigma_t $$
 Where:
 -   $\mathcal{L}_t$: The raw, unweighted loss for task $t$.
 -   $\log \sigma_t$: The learnable log uncertainty for task $t$.
 -   $\exp(-2 \log \sigma_t)$: Equivalent to $1/\sigma_t^2$ (precision). If $\mathcal{L}_t$ is large (task is hard/noisy), $\log \sigma_t$ increases, down-weighting $\mathcal{L}_t$.
--   $w_t$: Optional static weight from `loss_weights` (defaults to 1.0), scaling the data-dependent term.
+-   $w_t$: User-provided scalar (defaults to 1.0) that scales task $t$'s contribution.
 -   The $\log \sigma_t$ term regularizes, preventing $\sigma_t$ from collapsing.
 
-### 3. Static Weighting for Self-Supervised Learning (SSL) Tasks
-SSL tasks (MFM, Contrastive, Cross-Reconstruction) are weighted using only the static weights $w_{ssl}$ from the `loss_weights` configuration:
-$\mathcal{L}'_{ssl, \text{final}} = w_{ssl} \cdot \mathcal{L}_{ssl, \text{raw}}$
-
-### 4. Total Loss for Optimization
+### 3. Total Loss for Optimization
 The total loss optimized during training (`train_final_loss`) is:
-$$ \text{train\_final\_loss} = \sum_{t \in \text{supervised}} \mathcal{L}'_{t, \text{final}} + \sum_{s \in \text{SSL}} \mathcal{L}'_{s, \text{final}} $$
+$$ \text{train\_final\_loss} = \sum_{t \in \text{supervised}} \mathcal{L}'_{t, \text{final}} + \sum_{s \in \text{auxiliary}} \mathcal{L}'_{s, \text{final}} $$
 
-This is accumulated as `final_supervised_loss + final_ssl_loss`.
+When the uncertainty balancer is disabled, each supervised term simplifies to $w_t \cdot \mathcal{L}_t$.
 
-### 5. Validation Loss
+Any auxiliary/self-supervised heads contribute via their own modules; if none are configured this reduces to the supervised sum above.
+
+### 4. Validation Loss
 During validation, the same weighting formulation is applied using the learned $\log \sigma_t$ values (without updating them). The primary metric for callbacks (e.g., `ModelCheckpoint`, `EarlyStopping`) is `val_final_loss`.
 
 ### Loss Calculation Flow Diagram
@@ -249,7 +247,7 @@ graph TD
         SumLosses["Sum All Contributions"]:::output
 
         %% ---------- Supervised tasks ----------
-        subgraph SupervisedLosses["Supervised Tasks Contribution (final_supervised_loss)"]
+        subgraph SupervisedLosses["Supervised Tasks Contribution"]
             direction TB
             SumSupervised["Sum Task Components"]:::output
             Task1_Final["Task&nbsp;1: Final Component"]:::taskhead
@@ -270,23 +268,7 @@ graph TD
             Task2_Final --> SumSupervised
             TaskN_Final --> SumSupervised
         end
-
-        %% ---------- SSL tasks ----------
-        subgraph SSLLosses["SSL Tasks Contribution (final_ssl_loss)"]
-            direction TB
-            SumSSL["Sum SSL Components"]:::output
-            SSL_MFM_Final["MFM: Final Component"]:::sslcomp
-            SSL_Contrast_Final["Contrastive: Final Component"]:::sslcomp
-            
-            SSL_MFM_Raw["Raw MFM Loss"]:::rawloss -- "Scale by w<sub>mfm</sub>" --> SSL_MFM_Final
-            SSL_Contrast_Raw["Raw Contrastive Loss"]:::rawloss -- "Scale by w<sub>contrast</sub>" --> SSL_Contrast_Final
-            
-            SSL_MFM_Final --> SumSSL
-            SSL_Contrast_Final --> SumSSL
-        end
-        
         SumSupervised --> SumLosses
-        SumSSL --> SumLosses
     end
 
     %% ---------- Inputs ----------
@@ -295,37 +277,27 @@ graph TD
         L2_Head["Task 2 Head"]:::taskhead --> Task2_Raw
         LN_Head["..."]:::taskhead --> TaskN_Raw
         
-        SSL_Module["SSL Module"]:::foundation --> SSL_MFM_Raw
-        SSL_Module --> SSL_Contrast_Raw
-        
-        Config_LossWeights["Config: loss_weights (w_t, w_mfm, …)"]:::inputsrc -.-> Op1_Scale
-        Config_LossWeights -.-> Op2_Scale
-        Config_LossWeights -.-> SSL_MFM_Final
-        Config_LossWeights -.-> SSL_Contrast_Final
-        
         Learnable_LogSigmas["Learnable: task_log_sigmas (logσ_t)"]:::inputsrc -.-> Op1_Scale
         Learnable_LogSigmas -.-> Op1_AddReg
         Learnable_LogSigmas -.-> Op2_Scale
         Learnable_LogSigmas -.-> Op2_AddReg
+        LossWeight1["Config: loss_weight (w₁)"]:::inputsrc -.-> Op1_Scale
+        LossWeight2["Config: loss_weight (w₂)"]:::inputsrc -.-> Op2_Scale
     end
 
     %% ---------- Style definitions ----------
     classDef output      fill:#EAEAEA,stroke:#888888,stroke-width:2px,color:#000;
     classDef taskhead    fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000;
-    classDef foundation  fill:#DFF0D8,stroke:#77B55A,stroke-width:2px,color:#000;
     classDef rawloss     fill:#FFF3CD,stroke:#FFC107,stroke-width:1px,color:#000;
     classDef operation   fill:#E1F5FE,stroke:#0288D1,stroke-width:1px,color:#000;
-    classDef sslcomp     fill:#FFEBEE,stroke:#D32F2F,stroke-width:1px,color:#000;
     classDef inputsrc    fill:#E8EAF6,stroke:#3F51B5,stroke-width:1px,color:#000;
 
     %% ---------- Class assignments ----------
     class Task1_Final,Task2_Final,TaskN_Final taskhead
-    class SSL_MFM_Final,SSL_Contrast_Final sslcomp
-    class SumLosses,SumSupervised,SumSSL output
+    class SumLosses,SumSupervised output
     class L1_Head,L2_Head,LN_Head taskhead
-    class SSL_Module foundation
-    class Config_LossWeights,Learnable_LogSigmas inputsrc
-    class Task1_Raw,Task2_Raw,TaskN_Raw,SSL_MFM_Raw,SSL_Contrast_Raw rawloss
+    class Learnable_LogSigmas,LossWeight1,LossWeight2 inputsrc
+    class Task1_Raw,Task2_Raw,TaskN_Raw rawloss
     class Op1_Scale,Op1_AddReg,Op2_Scale,Op2_AddReg operation
 ```
 

@@ -44,7 +44,7 @@ def test_add_and_remove_tasks_dynamically():
     assert "cls_task" in model.task_heads
     assert isinstance(model.task_heads["cls_task"], ClassificationHead)
     assert model.has_classification
-    assert model.w["cls_task"] == pytest.approx(1.0)
+    assert model._get_task_static_weight("cls_task") == pytest.approx(1.0)
     assert "cls_task" in model.task_configs_map
     if model.enable_learnable_loss_balancer:
         assert "cls_task" in model.task_log_sigmas
@@ -53,7 +53,6 @@ def test_add_and_remove_tasks_dynamically():
     assert returned is model
     assert "cls_task" not in model.task_heads
     assert "cls_task" not in model.task_configs_map
-    assert "cls_task" not in model.w
     if model.enable_learnable_loss_balancer:
         assert "cls_task" not in model.task_log_sigmas
     assert not model.has_classification
@@ -64,13 +63,14 @@ def test_add_and_remove_tasks_dynamically():
         t_dim=[16, 8],
         kernel_num_centers=4,
         t_encoding_method="fc",
+        loss_weight=0.5,
     )
-    model.add_task(kr_cfg, loss_weight=0.5)
+    model.add_task(kr_cfg)
 
     assert "kernel_task" in model.task_heads
     assert isinstance(model.task_heads["kernel_task"], KernelRegressionHead)
     assert model.has_kernel_regression
-    assert model.w["kernel_task"] == pytest.approx(0.5)
+    assert model._get_task_static_weight("kernel_task") == pytest.approx(0.5)
     if model.enable_learnable_loss_balancer:
         assert "kernel_task" in model.task_log_sigmas
 
@@ -123,7 +123,7 @@ def test_add_and_remove_chain_returns_self():
         residual=False,
     )
 
-    chained_model = model.add_task(cls_chain_cfg).add_task(extra_reg_cfg)
+    chained_model = model.add_task(cls_chain_cfg, extra_reg_cfg)
     assert chained_model is model
     assert {"cls_chain", "extra_reg"}.issubset(model.task_heads.keys())
 

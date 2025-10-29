@@ -1,7 +1,7 @@
 # Copyright 2025 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Sequence
 
 import joblib
 import lightning as L
@@ -40,7 +40,9 @@ def create_collate_fn_with_task_info(task_configs):
     callable
         Custom collate function for DataLoader
     """
-    kernel_regression_tasks = {cfg.name for cfg in task_configs if cfg.type == TaskType.KERNEL_REGRESSION and cfg.enabled}
+    kernel_regression_tasks = {
+        cfg.name for cfg in task_configs if cfg.type == TaskType.KERNEL_REGRESSION and cfg.enabled
+    }
 
     def custom_collate_fn(batch):
         """
@@ -88,16 +90,18 @@ def create_collate_fn_with_task_info(task_configs):
 class CompoundDataModule(L.LightningDataModule):
     def __init__(
         self,
-        formula_desc_source: Union[pd.DataFrame, Path_fr],  # type: ignore
-        task_configs: List[Union[RegressionTaskConfig, ClassificationTaskConfig, KernelRegressionTaskConfig]],
-        attributes_source: Optional[Union[pd.DataFrame, Path_fr]] = None,  # type: ignore
+        formula_desc_source: pd.DataFrame | Path_fr,  # type: ignore
+        task_configs: Sequence[
+            RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
+        ],
+        attributes_source: pd.DataFrame | Path_fr | None = None,  # type: ignore
         task_masking_ratios: Optional[Dict[str, float]] = None,
         val_split: float = 0.1,
         test_split: float = 0.1,
         train_random_seed: int = 42,
         test_random_seed: int = 24,
         test_all: bool = False,
-        predict_idx: Optional[Union[pd.Index, np.ndarray, List, str, List[str]]] = None,  # Extended functionality
+        predict_idx: pd.Index | np.ndarray | List | str | List[str] | None = None,  # Extended functionality
         batch_size: int = 32,
         num_workers: int = 0,
     ):
@@ -107,11 +111,11 @@ class CompoundDataModule(L.LightningDataModule):
 
         Parameters
         ----------
-        formula_desc_source : Union[pd.DataFrame, np.ndarray, str]
+        formula_desc_source : pd.DataFrame | np.ndarray | str
             Formula descriptors (DataFrame, NumPy array, or path to pickle/CSV/parquet). Its index is the master reference.
         task_configs : List
             List of task configurations.
-        attributes_source : Optional[Union[pd.DataFrame, str]], optional
+        attributes_source : Optional[pd.DataFrame | str], optional
             Source for task target attributes, sequence data, temperature data, and 'split' column.
             Can be a DataFrame, NumPy array, or a path to a pickle/CSV/parquet file.
             Defaults to None. If None, the DataModule can only be used for prediction with non-sequence tasks,
@@ -132,7 +136,7 @@ class CompoundDataModule(L.LightningDataModule):
         test_all : bool, optional
             If True, all data (after alignment) is used for the test set. `train_idx` and `val_idx` will be empty.
             This overrides `test_split` and 'split' column logic if `attributes_source` is provided. Defaults to False.
-        predict_idx : Optional[Union[pd.Index, np.ndarray, List, str, List[str]]], optional
+        predict_idx : Optional[pd.Index | np.ndarray | List | str | List[str]], optional
             Specific indices to use for the prediction set. Can be:
             - pd.Index, np.ndarray, List: Specific indices that must be present in `formula_desc_source`
             - str: One of "test", "val", "train", "all" to use the corresponding dataset
@@ -391,7 +395,7 @@ class CompoundDataModule(L.LightningDataModule):
             )
             return valid_predict_indices
 
-    def _load_data(self, source: Union[pd.DataFrame, str], name: str) -> Optional[pd.DataFrame]:
+    def _load_data(self, source: pd.DataFrame | str, name: str) -> Optional[pd.DataFrame]:
         """Helper to load data from various sources."""
         logger.debug(f"Attempting to load '{name}' from source type: {type(source)}")
         if source is None:

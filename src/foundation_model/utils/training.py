@@ -1,5 +1,3 @@
-from typing import Union  # For Python < 3.10 compatibility with |
-
 import lightning as L
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
@@ -15,17 +13,17 @@ def training(
     datamodule: L.LightningDataModule,
     max_epochs: int = 100,
     accelerator: str = "auto",
-    devices: Union[int, list, str] = "auto",  # Using Union for older Python
-    profiler: Union[str, None] = None,
-    default_root_dir: Union[str, None] = None,
+    devices: int | list | str = "auto",
+    profiler: str | None = None,
+    default_root_dir: str | None = None,
     strategy: str = "auto",
     fast_dev_run: bool = False,
     log_name: str = "my_exp_name",  # Used for default logger/checkpoint paths
     verbose: bool = True,  # General verbosity for callbacks
-    early_stopping_config: Union[EarlyStoppingConfig, bool, None] = None,
-    checkpoint_config: Union[ModelCheckpointConfig, bool, None] = None,
-    csv_logger_config: Union[dict, bool, None] = None,
-    tb_logger_config: Union[dict, bool, None] = None,
+    early_stopping_config: EarlyStoppingConfig | bool | None = None,
+    checkpoint_config: ModelCheckpointConfig | bool | None = None,
+    csv_logger_config: dict | bool | None = None,
+    tb_logger_config: dict | bool | None = None,
 ):
     """
     Train and evaluate a PyTorch Lightning model using the Lightning Trainer.
@@ -54,16 +52,16 @@ def training(
         Name for the experiment logs, by default "my_exp_name"
     verbose : bool, optional
         Whether to print verbose output, by default True
-    early_stopping_config : Union[EarlyStoppingConfig, bool, None], optional
+    early_stopping_config : EarlyStoppingConfig | bool | None, optional
         Configuration for early stopping. Can be an EarlyStoppingConfig instance,
         True to use defaults, False to disable, or None to use defaults.
-    checkpoint_config : Union[ModelCheckpointConfig, bool, None], optional
+    checkpoint_config : ModelCheckpointConfig | bool | None, optional
         Configuration for model checkpointing. Can be a ModelCheckpointConfig instance,
         True to use defaults, False to disable, or None to use defaults.
-    csv_logger_config : Union[dict, bool, None], optional
+    csv_logger_config : dict | bool | None, optional
         Configuration for CSV logger. Can be a dict of parameters,
         True to use defaults, False to disable, or None to use defaults.
-    tb_logger_config : Union[dict, bool, None], optional
+    tb_logger_config : dict | bool | None, optional
         Configuration for TensorBoard logger. Can be a dict of parameters,
         True to use defaults, False to disable, or None to use defaults.
     """

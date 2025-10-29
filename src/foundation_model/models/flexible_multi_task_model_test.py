@@ -49,6 +49,7 @@ def model_config_mixed_tasks():
             dims=[deposit_dim, 64, 1],
             data_column="regr_task_1",
             optimizer=OptimizerConfig(lr=1e-4, scheduler_type="None"),
+            loss_weight=1.0,
         ),
         ClassificationTaskConfig(
             name="clf_task_1",
@@ -57,6 +58,7 @@ def model_config_mixed_tasks():
             data_column="clf_task_1_classification_value",
             num_classes=3,
             optimizer=OptimizerConfig(lr=1e-4, scheduler_type="None"),
+            loss_weight=1.0,
         ),
         RegressionTaskConfig(
             name="regr_task_2",
@@ -64,6 +66,7 @@ def model_config_mixed_tasks():
             dims=[deposit_dim, 32, 2],
             data_column="regr_task_2",
             optimizer=OptimizerConfig(lr=1e-4, scheduler_type="None"),
+            loss_weight=0.5,
         ),
     ]
 
@@ -73,7 +76,6 @@ def model_config_mixed_tasks():
         "norm_shared": True,
         "residual_shared": False,
         "shared_block_optimizer": OptimizerConfig(lr=1e-3, scheduler_type="None"),
-        "loss_weights": None,  # Default weights will be used
     }
     return SimpleNamespace(**config_dict)
 
@@ -131,7 +133,6 @@ def test_model_initialization(model_config_mixed_tasks):
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
         shared_block_optimizer=config.shared_block_optimizer,
-        loss_weights=config.loss_weights,
     )
 
     assert model.encoder is not None, "Encoder should be initialized"
@@ -170,7 +171,6 @@ def test_model_forward_pass(model_config_mixed_tasks, sample_batch_mixed_tasks):
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
         shared_block_optimizer=config.shared_block_optimizer,
-        loss_weights=config.loss_weights,
     )
     model.eval()  # Set model to evaluation mode
 
@@ -220,7 +220,6 @@ def test_model_training_step(model_config_mixed_tasks, sample_batch_mixed_tasks,
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
         shared_block_optimizer=config.shared_block_optimizer,
-        loss_weights=config.loss_weights,
     )
     model.train()  # Set model to training mode
 
@@ -289,6 +288,8 @@ def test_model_training_step(model_config_mixed_tasks, sample_batch_mixed_tasks,
         assert f"train_{task_cfg.name}_raw_loss" in logged_metrics
         assert isinstance(logged_metrics[f"train_{task_cfg.name}_raw_loss"], torch.Tensor)
         assert f"train_{task_cfg.name}_final_loss_contrib" in logged_metrics
+        assert f"train_{task_cfg.name}_static_weight" in logged_metrics
+        assert isinstance(logged_metrics[f"train_{task_cfg.name}_static_weight"], torch.Tensor)
 
     assert "train_mfm_loss" not in logged_metrics
     assert "train_contrastive_loss" not in logged_metrics
@@ -305,7 +306,6 @@ def test_model_validation_step(model_config_mixed_tasks, sample_batch_mixed_task
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
         shared_block_optimizer=config.shared_block_optimizer,
-        loss_weights=config.loss_weights,
     )
     model.eval()  # Set model to evaluation mode
 
@@ -326,6 +326,8 @@ def test_model_validation_step(model_config_mixed_tasks, sample_batch_mixed_task
         assert f"val_{task_cfg.name}_raw_loss" in logged_metrics
         assert isinstance(logged_metrics[f"val_{task_cfg.name}_raw_loss"], torch.Tensor)
         assert f"val_{task_cfg.name}_final_loss_contrib" in logged_metrics
+        assert f"val_{task_cfg.name}_static_weight" in logged_metrics
+        assert isinstance(logged_metrics[f"val_{task_cfg.name}_static_weight"], torch.Tensor)
 
     assert "val_mfm_loss" not in logged_metrics
     assert "val_contrastive_loss" not in logged_metrics
@@ -341,7 +343,6 @@ def test_model_predict_step_all_tasks(model_config_mixed_tasks, sample_batch_mix
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
         shared_block_optimizer=config.shared_block_optimizer,
-        loss_weights=config.loss_weights,
     )
     model.eval()  # Set model to evaluation mode
 
@@ -411,7 +412,6 @@ def test_model_configure_optimizers(model_config_mixed_tasks):
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
         shared_block_optimizer=config.shared_block_optimizer,
-        loss_weights=config.loss_weights,
     )
 
     optimizers_and_schedulers = model.configure_optimizers()
@@ -578,7 +578,6 @@ def test_trainer_integration_mixed_tasks(model_config_mixed_tasks, dummy_compoun
         norm_shared=config.norm_shared,
         residual_shared=config.residual_shared,
         shared_block_optimizer=config.shared_block_optimizer,
-        loss_weights=config.loss_weights,
     )
 
     # Using integer for version, and a slightly different name for clarity
@@ -683,7 +682,9 @@ def test_model_predict_step_specific_tasks(model_config_mixed_tasks, sample_batc
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
-        # ... other params from config ...
+        norm_shared=config.norm_shared,
+        residual_shared=config.residual_shared,
+        shared_block_optimizer=config.shared_block_optimizer,
     )
     model.eval()
     x_formula, y_dict, task_masks, temps_batch = sample_batch_mixed_tasks
@@ -751,7 +752,9 @@ def test_model_registered_tasks_info_property(model_config_mixed_tasks):
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
-        # ... other params from config ...
+        norm_shared=config.norm_shared,
+        residual_shared=config.residual_shared,
+        shared_block_optimizer=config.shared_block_optimizer,
     )
 
     df_info = model.registered_tasks_info

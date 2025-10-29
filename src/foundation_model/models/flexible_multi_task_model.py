@@ -16,7 +16,7 @@ Tensor shape legend (used across all docstrings):
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import lightning as L
 import numpy as np
@@ -80,26 +80,21 @@ class FlexibleMultiTaskModel(L.LightningModule):
         List of task configurations, each defining a prediction task. Each configuration must specify
         task type, name, dimensions, etc. Regression and classification task heads receive the deposit
         layer output, while KernelRegression task heads receive both deposit layer output and sequence points.
+        A task-specific `loss_weight` (defaults to 1.0) can be set in each configuration to scale its loss.
     norm_shared : bool
         Whether to apply layer normalization in shared layers.
     residual_shared : bool
         Whether to use residual connections in shared layers.
     shared_block_optimizer : OptimizerConfig | None
         Optimizer configuration for the shared foundation encoder and deposit layer.
-    loss_weights : dict[str, float] | None
-        Weight coefficients dictionary for balancing different loss components in the total loss.
-        Includes the following keys:
-        - Task names: Weight for each task's loss, default 1.0
-        Example: {"band_gap": 1.0, "formation_energy": 0.5}
     enable_learnable_loss_balancer : bool
         Whether to use learnable log_sigma_t parameters for each supervised task to weight their losses.
-        Defaults to True. If False, only static loss_weights are used.
     """
 
     def __init__(
         self,
         shared_block_dims: list[int],
-        task_configs: list[RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig],
+        task_configs: Sequence[RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig],
         *,
         # Normalization/residual options
         norm_shared: bool = True,
@@ -110,7 +105,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         strict_loading: bool = True,
         # Optimization parameters
         shared_block_optimizer: OptimizerConfig | None = None,
-        loss_weights: dict[str, float] | None = None,
         enable_learnable_loss_balancer: bool = True,  # New parameter
         # Loss calculation behavior
         allow_all_missing_in_batch: bool = True,  # New parameter for handling all-missing batches
@@ -137,6 +131,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.deposit_dim = self.shared_block_dims[-1]  # Define deposit_dim consistently
         self.task_configs = task_configs
         self.task_configs_map = {cfg.name: cfg for cfg in self.task_configs}
+        for cfg in self.task_configs:
+            cfg.loss_weight = self._normalize_loss_weight(getattr(cfg, "loss_weight", 1.0), cfg.name)
 
         # Normalization/residual options
         self.norm_shared = norm_shared
@@ -148,9 +144,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Optimizer configurations
         self.shared_block_optimizer = shared_block_optimizer or OptimizerConfig(weight_decay=1e-2)
 
-        # Initialize loss weights
-        self._init_loss_weights(loss_weights)
-
         # Initialize learnable uncertainty parameters (log(sigma_t))
         if self.enable_learnable_loss_balancer:
             self.task_log_sigmas = nn.ParameterDict(
@@ -158,7 +151,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     cfg.name: nn.Parameter(torch.zeros((), device=self.device))  # Ensure device matches
                     for cfg in self.task_configs
                     if cfg.enabled
-                    # SSL tasks are handled by self.w, not learnable sigmas here
                 }
             )
             logger.info("Learnable task uncertainty (task_log_sigmas) is ENABLED.")
@@ -197,15 +189,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
             logger.info(f"  {line}")
         logger.info("FlexibleMultiTaskModel initialization complete.")
 
-    def _init_loss_weights(self, loss_weights: dict[str, float] | None = None):
-        """Initialize loss weights for different components."""
-        # Start with default weights for all enabled tasks
-        self.w = {cfg.name: 1.0 for cfg in self.task_configs if cfg.enabled}
-
-        # Apply user-provided weights
-        if loss_weights:
-            self.w.update(loss_weights)
-
     def _init_foundation_encoder(self):
         """Initialize the foundation encoder."""
         # deposit_dim is now self.deposit_dim, defined in __init__
@@ -229,7 +212,29 @@ class FlexibleMultiTaskModel(L.LightningModule):
         except StopIteration:
             return torch.device("cpu")
 
-    def _validate_task_config(self, config_item: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig):
+    def _get_task_static_weight(self, task_name: str) -> float:
+        """Return the configured static loss weight for a task."""
+        cfg = self.task_configs_map.get(task_name)
+        if cfg is None:
+            return 1.0
+        return self._normalize_loss_weight(getattr(cfg, "loss_weight", 1.0), task_name)
+
+    @staticmethod
+    def _normalize_loss_weight(weight_value: float | None, task_name: str) -> float:
+        """Validate and normalize a configured loss weight."""
+        if weight_value is None:
+            return 1.0
+        try:
+            numeric_value = float(weight_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Task '{task_name}' has non-numeric loss_weight: {weight_value!r}") from exc
+        if numeric_value < 0:
+            raise ValueError(f"Task '{task_name}' has negative loss_weight; expected non-negative value.")
+        return numeric_value
+
+    def _validate_task_config(
+        self, config_item: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
+    ):
         """Validate that the task configuration is compatible with the shared encoder."""
         if not config_item.name:
             raise ValueError("Task config must have a non-empty name.")
@@ -256,6 +261,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     f"Task '{config_item.name}' expects dims[0]=={expected_input_dim}, "
                     f"but received {config_item.dims[0]}."
                 )
+        config_item.loss_weight = self._normalize_loss_weight(
+            getattr(config_item, "loss_weight", 1.0), config_item.name
+        )
 
     def _instantiate_task_head(
         self, config_item: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
@@ -327,47 +335,50 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """Track which types of tasks are enabled."""
         self.has_regression = any(tc.type == TaskType.REGRESSION for tc in self.task_configs if tc.enabled)
         self.has_classification = any(tc.type == TaskType.CLASSIFICATION for tc in self.task_configs if tc.enabled)
-        self.has_kernel_regression = any(tc.type == TaskType.KERNEL_REGRESSION for tc in self.task_configs if tc.enabled)
+        self.has_kernel_regression = any(
+            tc.type == TaskType.KERNEL_REGRESSION for tc in self.task_configs if tc.enabled
+        )
 
     def add_task(
         self,
-        task_config: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig,
-        *,
-        loss_weight: float | None = None,
+        *task_configs: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig,
     ) -> "FlexibleMultiTaskModel":
         """
-        Dynamically add a new task configuration and instantiate its head.
+        Dynamically add one or more task configurations and instantiate their heads.
 
         Parameters
         ----------
-        task_config : RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
-            Task configuration describing the new head.
-        loss_weight : float | None, optional
-            Static loss weight for the task; defaults to 1.0 if omitted.
+        *task_configs : RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
+            Task configuration objects describing the new heads.
         """
-        self._validate_task_config(task_config)
+        if not task_configs:
+            logger.warning("add_task called without task configurations; ignoring.")
+            return self
 
-        # Register configuration
-        self.task_configs.append(task_config)
-        self.task_configs_map[task_config.name] = task_config
+        for task_config in task_configs:
+            self._validate_task_config(task_config)
 
-        # Setup weights
-        if task_config.enabled:
-            self.w[task_config.name] = loss_weight if loss_weight is not None else 1.0
+        for task_config in task_configs:
+            # Register configuration
+            self.task_configs.append(task_config)
+            self.task_configs_map[task_config.name] = task_config
 
-        # Instantiate and register task head
-        if task_config.enabled:
-            head_module = self._instantiate_task_head(task_config)
-            self.task_heads[task_config.name] = head_module
-            self._register_task_log_sigma(task_config.name)
-            if task_config.freeze_parameters:
-                for p in head_module.parameters():
-                    p.requires_grad_(False)
+            # Instantiate and register task head
+            if task_config.enabled:
+                head_module = self._instantiate_task_head(task_config)
+                self.task_heads[task_config.name] = head_module
+                self._register_task_log_sigma(task_config.name)
+                if task_config.freeze_parameters:
+                    for p in head_module.parameters():
+                        p.requires_grad_(False)
 
         # Update task type tracking
         self._track_task_types()
 
-        logger.info(f"Added task '{task_config.name}' (type={task_config.type.value}, enabled={task_config.enabled}).")
+        for task_config in task_configs:
+            logger.info(
+                f"Added task '{task_config.name}' (type={task_config.type.value}, enabled={task_config.enabled})."
+            )
         return self
 
     def remove_tasks(self, *task_names: str) -> "FlexibleMultiTaskModel":
@@ -396,8 +407,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         for name in existing:
             if name in self.task_heads:
                 del self.task_heads[name]
-            if name in self.w:
-                del self.w[name]
             self._deregister_task_log_sigma(name)
 
         # Filter configurations and rebuild map
@@ -536,27 +545,22 @@ class FlexibleMultiTaskModel(L.LightningModule):
             train_logs[f"train_{name}_all_missing"] = 0.0
 
         for name, raw_loss_t in raw_supervised_losses.items():
-            static_weight = self.w.get(name, 1.0)
-
+            static_weight = self._get_task_static_weight(name)
             if self.enable_learnable_loss_balancer and name in self.task_log_sigmas:
                 current_log_sigma_t = self.task_log_sigmas[name]
                 precision_factor_t = torch.exp(-2 * current_log_sigma_t)
-                final_task_loss_component = (static_weight * 0.5 * precision_factor_t * raw_loss_t) + current_log_sigma_t
+                final_task_loss_component = (
+                    static_weight * 0.5 * precision_factor_t * raw_loss_t
+                ) + current_log_sigma_t
 
                 supervised_loss_contribution += final_task_loss_component
                 train_logs[f"train_{name}_sigma_t"] = torch.exp(current_log_sigma_t).detach()
                 train_logs[f"train_{name}_final_loss_contrib"] = final_task_loss_component.detach()
             else:
-                if self.enable_learnable_loss_balancer and name not in self.task_log_sigmas:
-                    logger.warning(
-                        f"Task {name} uses static weight as it's not in task_log_sigmas (learnable uncertainty is ON)."
-                    )
-
                 final_task_loss_component = static_weight * raw_loss_t
                 supervised_loss_contribution += final_task_loss_component
                 train_logs[f"train_{name}_final_loss_contrib"] = final_task_loss_component.detach()
-                if name in self.task_log_sigmas:
-                    train_logs[f"train_{name}_sigma_t"] = 1.0
+            train_logs[f"train_{name}_static_weight"] = torch.tensor(static_weight, device=x.device)
 
         train_logs["train_final_supervised_loss"] = supervised_loss_contribution.detach()
 
@@ -658,24 +662,22 @@ class FlexibleMultiTaskModel(L.LightningModule):
         val_logs["val_sum_supervised_raw_loss"] = val_sum_supervised_raw_loss
 
         for name, raw_loss_t in raw_val_supervised_losses.items():
-            static_weight = self.w.get(name, 1.0)
-
+            static_weight = self._get_task_static_weight(name)
             if self.enable_learnable_loss_balancer and name in self.task_log_sigmas:
                 current_log_sigma_t = self.task_log_sigmas[name]
                 precision_factor_t = torch.exp(-2 * current_log_sigma_t)
-                final_task_loss_component = (static_weight * 0.5 * precision_factor_t * raw_loss_t) + current_log_sigma_t
+                final_task_loss_component = (
+                    static_weight * 0.5 * precision_factor_t * raw_loss_t
+                ) + current_log_sigma_t
 
                 val_supervised_loss_contribution += final_task_loss_component.detach()
                 val_logs[f"val_{name}_sigma_t"] = torch.exp(current_log_sigma_t).detach()
                 val_logs[f"val_{name}_final_loss_contrib"] = final_task_loss_component.detach()
             else:
-                if self.enable_learnable_loss_balancer and name not in self.task_log_sigmas:
-                    logger.warning(
-                        f"Task {name} uses static weight in validation as it's not in task_log_sigmas (learnable uncertainty is ON)."
-                    )
                 final_task_loss_component = static_weight * raw_loss_t
                 val_supervised_loss_contribution += final_task_loss_component.detach()
                 val_logs[f"val_{name}_final_loss_contrib"] = final_task_loss_component.detach()
+            val_logs[f"val_{name}_static_weight"] = torch.tensor(static_weight, device=x.device)
 
         val_logs["val_final_supervised_loss"] = val_supervised_loss_contribution.detach()
         final_val_loss = final_val_loss + val_supervised_loss_contribution
@@ -752,30 +754,30 @@ class FlexibleMultiTaskModel(L.LightningModule):
         test_logs["test_sum_supervised_raw_loss"] = test_sum_supervised_raw_loss
 
         for name, raw_loss_t in raw_test_supervised_losses.items():
-            static_weight = self.w.get(name, 1.0)
-
+            static_weight = self._get_task_static_weight(name)
             if self.enable_learnable_loss_balancer and name in self.task_log_sigmas:
                 current_log_sigma_t = self.task_log_sigmas[name]
                 precision_factor_t = torch.exp(-2 * current_log_sigma_t)
-                final_task_loss_component = (static_weight * 0.5 * precision_factor_t * raw_loss_t) + current_log_sigma_t
+                final_task_loss_component = (
+                    static_weight * 0.5 * precision_factor_t * raw_loss_t
+                ) + current_log_sigma_t
 
                 test_supervised_loss_contribution += final_task_loss_component.detach()
                 test_logs[f"test_{name}_sigma_t"] = torch.exp(current_log_sigma_t).detach()
                 test_logs[f"test_{name}_final_loss_contrib"] = final_task_loss_component.detach()
             else:
-                if self.enable_learnable_loss_balancer and name not in self.task_log_sigmas:
-                    logger.warning(
-                        f"Task {name} uses static weight in test as it's not in task_log_sigmas (learnable uncertainty is ON)."
-                    )
                 final_task_loss_component = static_weight * raw_loss_t
                 test_supervised_loss_contribution += final_task_loss_component.detach()
                 test_logs[f"test_{name}_final_loss_contrib"] = final_task_loss_component.detach()
+            test_logs[f"test_{name}_static_weight"] = torch.tensor(static_weight, device=x.device)
 
         test_logs["test_final_supervised_loss"] = test_supervised_loss_contribution.detach()
         final_test_loss = final_test_loss + test_supervised_loss_contribution
 
         self.log_dict(test_logs, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("test_final_loss", final_test_loss.detach(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        self.log(
+            "test_final_loss", final_test_loss.detach(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
+        )
 
         return None
 

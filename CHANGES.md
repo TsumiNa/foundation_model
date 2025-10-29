@@ -61,4 +61,5 @@
 - New `--pretrain` flag enables contrastive, cross‑reconstruction, masked‑feature, and optional property‑supervision losses.
 - **Encoder control flag** `--freeze_encoder` freezes shared / structure encoders.
 - Added five selectable sequence heads: `rnn`, `vec`, `transformer` (Flash‑Attention), `tcn`, `hybrid`.
-- CLI accepts `--sequence_mode`, `--loss_weights` for custom recipes.
+- CLI accepts `--sequence_mode` for custom recipes; each task config now supports `loss_weight` (replacing the legacy global `loss_weights` flag).
+- `FlexibleMultiTaskModel.add_task` now accepts multiple task configs in one call for bulk head registration.

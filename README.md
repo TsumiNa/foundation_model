@@ -120,78 +120,15 @@ For detailed examples of different configurations (such as pre-training, fine-tu
 
 ### Loss Weighting Strategy
 
-To effectively train the `FlexibleMultiTaskModel` on diverse supervised tasks that may have different loss scales and learning dynamics, a sophisticated loss weighting strategy is employed:
+To train the `FlexibleMultiTaskModel` on supervised tasks with different loss scales, we rely on a learnable uncertainty term inspired by [Kendall, Gal, and Cipolla (CVPR 2018)](https://doi.org/10.1109/CVPR.2018.00781):
 
-1.  **Supervised Tasks (e.g., Regression, Classification):**
-    *   Each supervised task $t$ has its raw loss $\mathcal{L}_t$ (e.g., MSE, Cross-Entropy) calculated by its respective head.
-    *   **Learnable Uncertainty:** The model learns a task-specific uncertainty parameter $\sigma_t$ (actually $\log \sigma_t$) for each supervised task. This allows the model to adaptively down-weight tasks that are inherently noisier or harder to learn.
-    *   **Static Weights:** An optional static weight $w_t$ (from the `loss_weights` configuration) can also be applied as a manual emphasis.
-    *   The final loss component for a supervised task $t$ is calculated as:
-        $\mathcal{L}'_{t, \text{final}} = w_t \cdot \frac{\exp(-2 \log \sigma_t)}{2} \mathcal{L}_t + \log \sigma_t$
-        This formula balances the raw loss (scaled by precision $1/\sigma_t^2$ and $w_t$) with a regularization term ($\log \sigma_t$) that prevents $\sigma_t$ from collapsing.
+1.  **Task heads produce raw losses.** Each supervised task $t$ supplies the head-specific loss $\mathcal{L}_t$ (e.g., MSE or cross-entropy).
+2.  **Per-task static scaling.** Each task configuration exposes `loss_weight` (default `1.0`) to scale that task’s raw loss before further combination.
+3.  **Optional learnable uncertainty.** When `enable_learnable_loss_balancer` is `True`, the model maintains a per-task parameter $\log \sigma_t` and scales the contribution as $\mathcal{L}'_{t} = \tfrac{1}{2}\,\texttt{loss\_weight}_t\,\exp(-2 \log \sigma_t)\,\mathcal{L}_t + \log \sigma_t`. This lets the model down-weight noisier objectives while respecting explicit task priorities.
+4.  **Fallback when disabled.** If the balancer is disabled or a task does not expose $\log \sigma_t`, the contribution becomes $\mathcal{L}'_{t} = \texttt{loss\_weight}_t \cdot \mathcal{L}_t`.
+5.  **Total loss.** The overall objective is the sum of all task contributions.
 
-2.  **Self-Supervised Learning (SSL) Tasks:**
-    *   SSL tasks (e.g., Masked Feature Modeling) are weighted using only their static weights $w_{ssl}$ from the `loss_weights` configuration:
-        $\mathcal{L}'_{ssl, \text{final}} = w_{ssl} \cdot \mathcal{L}_{ssl, \text{raw}}$
-
-3.  **Total Loss:**
-    *   The total training loss is the sum of all $\mathcal{L}'_{t, \text{final}}$ from supervised tasks and all $\mathcal{L}'_{ssl, \text{final}}$ from SSL tasks.
-
-This adaptive approach, inspired by [Kendall, Gal, and Cipolla (CVPR 2018)](https://doi.org/10.1109/CVPR.2018.00781), helps in robustly training the multi-task model. For a more detailed mathematical derivation and component breakdown, please see the [**Loss Calculation and Weighting section in ARCHITECTURE.md**](ARCHITECTURE.md#loss-calculation-and-weighting).
-
-**Simplified Loss Flow:**
-
-```mermaid
-graph TD
-    direction TB                     %% 顶层方向
-
-    %% ---------- Supervised Task ----------
-    subgraph SupervisedTaskLoss["Supervised Task 't'"]
-        RawLoss_t["Raw Loss L_t"]:::inputdata
-        LogSigma_t["Learnable log_sigma_t"]:::param
-        StaticWeight_t["Static Weight w_t"]:::param
-        
-        WeightingLogic["Weighting Logic<br>w_t * exp(-2 logσ_t)/2 * L_t + logσ_t"]:::operation
-        FinalLoss_t["Final Loss Component L'_t"]:::taskhead
-
-        RawLoss_t --> WeightingLogic
-        LogSigma_t --> WeightingLogic
-        StaticWeight_t --> WeightingLogic
-        WeightingLogic --> FinalLoss_t
-    end
-
-    %% ------------- SSL Task -------------
-    subgraph SSLTaskLoss["SSL Task 's'"]
-        RawLoss_s["Raw Loss L_s"]:::inputdata
-        StaticWeight_s["Static Weight w_s"]:::param
-        WeightedSSL["w_s * L_s"]:::operation
-        FinalLoss_s["Final Loss Component L'_s"]:::taskhead 
-
-        RawLoss_s --> WeightedSSL
-        StaticWeight_s --> WeightedSSL
-        WeightedSSL --> FinalLoss_s
-    end
-    
-    %% ---------- 汇总节点 ----------
-    Combine["Sum All Weighted Losses"]:::output
-    FinalLoss_t --> Combine
-    FinalLoss_s --> Combine
-    Ellipsis["... (other tasks) ..."] --> Combine
-
-    %% ------------- STYLES ----------------
-    classDef output fill:#EAEAEA,stroke:#888888,stroke-width:2px,color:#000;
-    classDef taskhead fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000;
-    classDef param fill:#DFF0D8,stroke:#77B55A,stroke-width:1px,color:#000;
-    classDef inputdata fill:#E0EFFF,stroke:#5C9DFF,stroke-width:1px,color:#000;
-    classDef operation fill:#D9EDF7,stroke:#6BADCF,stroke-width:1px,color:#000;
-
-    %% --------- CLASS ASSIGNMENTS ----------
-    class Combine output
-    class RawLoss_t,RawLoss_s inputdata
-    class LogSigma_t,StaticWeight_t,StaticWeight_s param
-    class WeightingLogic,WeightedSSL operation
-    class FinalLoss_t,FinalLoss_s taskhead
-```
+See [ARCHITECTURE.md](ARCHITECTURE.md#loss-calculation-and-weighting) for a deeper walk-through of the loss pipeline and implementation hooks.
 
 ## Data Handling
 
@@ -257,6 +194,13 @@ This explicit column mapping approach provides clarity and flexibility in defini
 
 The `train.py` script utilizes PyTorch Lightning's `CLI` ([see official documentation](https://lightning.ai/docs/pytorch/stable/cli/lightning_cli.html)). This allows for comprehensive configuration of the model (`FlexibleMultiTaskModel`) and data module (`CompoundDataModule`) through YAML files, with parameters passed directly to their `__init__` methods via an `init_args` block. You can also override these YAML settings using command-line arguments.
 
+You can also adjust tasks programmatically. For example, to swap in two new heads after loading a checkpoint:
+
+```python
+model.remove_tasks("old_regression")
+model.add_task(new_reg_cfg, new_cls_cfg)  # accepts multiple configs in one call
+```
+
 It's recommended to start with a base YAML configuration (e.g., `samples/generated_configs/generated_model_config.yaml` or `configs/model_configs/base_model.yaml` adapted to the `init_args` structure) and then customize it.
 
 **Command-Line Overrides:**
@@ -268,8 +212,7 @@ To override a parameter, you specify its full path. For example:
 
 ##### Example 1 – Supervised training run
 
-This example runs standard supervised training. Adjust `loss_weights` if you need to emphasise
-specific tasks.
+This example runs standard supervised training.
 
 ```bash
 python -m foundation_model.scripts.train --config path/to/your/config.yaml \
@@ -280,9 +223,16 @@ python -m foundation_model.scripts.train --config path/to/your/config.yaml \
 model:
   class_path: foundation_model.models.FlexibleMultiTaskModel
   init_args:
-    # ... other shared_block_dims, task_configs ...
-    # loss_weights:
-    #   example_task_1: 1.0
+    # ... other shared_block_dims ...
+    task_configs:
+      - name: example_task_1
+        type: REGRESSION
+        dims: [128, 64, 1]
+        data_column: my_property
+        loss_weight: 0.8  # Optional per-task scaling (defaults to 1.0)
+      # - name: another_task
+      #   ...
+      #   loss_weight: 1.0
 trainer:
   max_epochs: 60
 ```

@@ -1,5 +1,5 @@
 import ast  # For safely evaluating string representations of lists/arrays
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -88,7 +88,7 @@ def _parse_structured_element(
 class CompoundDataset(Dataset):
     def __init__(
         self,
-        formula_desc: Union[pd.DataFrame, np.ndarray],
+        formula_desc: pd.DataFrame | np.ndarray,
         attributes: pd.DataFrame,  # Contains targets, series, temps, masks
         task_configs: List,  # List of task configuration objects
         task_masking_ratios: Optional[Dict[str, float]] = None,
@@ -131,11 +131,11 @@ class CompoundDataset(Dataset):
 
         self.x_struct: torch.Tensor | None = None
         logger.info(f"[{self.dataset_name}] Final x_formula shape: {self.x_formula.shape}")
-        self.y_dict: Dict[str, Union[torch.Tensor, List[torch.Tensor]]] = {}
+        self.y_dict: Dict[str, torch.Tensor | List[torch.Tensor]] = {}
         self.t_sequences_dict: Dict[
-            str, Union[torch.Tensor, List[torch.Tensor]]
+            str, torch.Tensor | List[torch.Tensor]
         ] = {}  # For t-parameter sequences of KernelRegression tasks
-        self.task_masks_dict: Dict[str, Union[torch.Tensor, List[torch.Tensor]]] = {}
+        self.task_masks_dict: Dict[str, torch.Tensor | List[torch.Tensor]] = {}
         self.enabled_task_names: List[str] = []
 
         for cfg in task_configs:

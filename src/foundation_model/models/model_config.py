@@ -52,7 +52,7 @@ class BaseTaskConfig:
 
     # Default fields below are now keyword-only
     enabled: bool = field(default=True, kw_only=True)  # Whether the task is enabled
-    weight: float = field(default=1.0, kw_only=True)  # Weight of the task in the loss function
+    loss_weight: float = field(default=1.0, kw_only=True)  # Static weight applied to this task's loss
     freeze_parameters: bool = field(default=False, kw_only=True)  # Whether to freeze this task's parameters
 
     # LoRA configuration

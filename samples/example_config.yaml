@@ -35,7 +35,7 @@ model:
       #   type: REGRESSION
       #   data_column: "name_of_column_for_regression_targets_in_attributes_file" # NEW
       #   enabled: True
-      #   weight: 1.0 # Loss weight for this task
+      #   loss_weight: 1.0 # Static scaling for this task's loss
       #   dims: [256, 128, 1] # Example: [model_latent_dim, head_hidden_dim, output_dim]
       #                      # The first element should match the model's output_latent_dim (last element of shared_block_dims)
       #   norm: True
@@ -46,7 +46,7 @@ model:
       #   type: CLASSIFICATION
       #   data_column: "name_of_column_for_classification_targets_in_attributes_file" # NEW
       #   enabled: True
-      #   weight: 1.0
+      #   loss_weight: 1.0
       #   dims: [256, 128] # Example: [model_latent_dim, head_hidden_dim]
       #   num_classes: 3
       #   norm: True
@@ -55,7 +55,7 @@ model:
       #   data_column: "name_of_column_for_sequence_data_in_attributes_file" # NEW
       #   steps_column: "name_of_column_for_sequence_steps_in_attributes_file" # NEW (optional, for sequence steps/x-axis)
       #   enabled: True
-      #   weight: 1.0
+      #   loss_weight: 1.0
       #   subtype: "rnn" # Or "tcn", "fixed_vec"
       #   d_in: 256 # Should match model_latent_dim
       #   hidden: 128
@@ -70,10 +70,6 @@ model:
 
     # --- Structure Fusion (Optional) ---
     # struct_block_dims: [128, 256, 256] # Example: [input_dim_structure, hidden1, output_latent_dim_must_match_model_latent]
-
-    # --- Self-Supervised Learning (Optional) ---
-    # loss_weights: # Weights for different loss components if SSL is enabled
-    #   mfm: 1.0
 
 data:
   class_path: foundation_model.data.datamodule.CompoundDataModule
