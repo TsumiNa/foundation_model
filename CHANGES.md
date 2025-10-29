@@ -2,7 +2,7 @@
 
 ### 2025-05-14
 - **Component cleanup**:
-  - Removed obsolete `GatedFusion` and `LoRAAdapter` modules from the components package.
+  - Removed obsolete `GatedFusion`, `LoRAAdapter`, and `StructureEncoder` modules from the components package.
   - Simplified classification and regression heads to operate without LoRA adapters.
   - Updated documentation to reflect the removal of gated fusion and LoRA features.
 
@@ -49,7 +49,7 @@
 - **Major Code Refactoring**:
   - Implemented a more modular architecture with separate components
   - Created a task head abstraction hierarchy for different task types
-  - Moved components to dedicated modules (StructureEncoder and adapter/fusion layers)
+  - Moved components to dedicated modules (adapter/fusion layers)
   - Added configuration system using Pydantic models
   - Added YAML-based configuration support
 - **Package Management**:

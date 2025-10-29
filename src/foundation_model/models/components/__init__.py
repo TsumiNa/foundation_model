@@ -9,9 +9,5 @@ including encoders, fusion mechanisms, and auxiliary utilities.
 """
 
 from .foundation_encoder import FoundationEncoder
-from .structure_encoder import StructureEncoder
 
-__all__ = [
-    "FoundationEncoder",
-    "StructureEncoder",
-]
+__all__ = ["FoundationEncoder"]
