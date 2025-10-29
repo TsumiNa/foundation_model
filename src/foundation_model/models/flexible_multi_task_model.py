@@ -14,7 +14,9 @@ Tensor shape legend (used across all docstrings):
 * **D** - latent / embedding feature dimension
 """
 
-from typing import List, Optional  # Added List, Optional, Any
+from __future__ import annotations
+
+from typing import List, Optional
 
 import lightning as L
 import numpy as np
@@ -220,6 +222,82 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.shared = self.encoder.shared
         self.deposit = self.encoder.deposit
 
+    def _infer_parameter_device(self) -> torch.device:
+        """Infer the device for newly created modules/parameters."""
+        try:
+            return next(self.parameters()).device
+        except StopIteration:
+            return torch.device("cpu")
+
+    def _validate_task_config(self, config_item: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig):
+        """Validate that the task configuration is compatible with the shared encoder."""
+        if not config_item.name:
+            raise ValueError("Task config must have a non-empty name.")
+        if config_item.name in self.task_configs_map:
+            raise ValueError(f"Task '{config_item.name}' already exists in the model.")
+
+        expected_input_dim = self.deposit_dim
+
+        if config_item.type == TaskType.KERNEL_REGRESSION:
+            assert isinstance(config_item, KernelRegressionTaskConfig)
+            if not config_item.x_dim:
+                raise ValueError(f"KernelRegression task '{config_item.name}' requires at least one x_dim entry.")
+            if config_item.x_dim[0] != expected_input_dim:
+                raise ValueError(
+                    f"KernelRegression task '{config_item.name}' expects x_dim[0]=={expected_input_dim}, "
+                    f"but received {config_item.x_dim[0]}."
+                )
+        else:
+            assert isinstance(config_item, (RegressionTaskConfig, ClassificationTaskConfig))
+            if not getattr(config_item, "dims", None):
+                raise ValueError(f"Task '{config_item.name}' requires a non-empty dims configuration.")
+            if config_item.dims[0] != expected_input_dim:
+                raise ValueError(
+                    f"Task '{config_item.name}' expects dims[0]=={expected_input_dim}, "
+                    f"but received {config_item.dims[0]}."
+                )
+
+    def _instantiate_task_head(
+        self, config_item: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
+    ) -> nn.Module:
+        """Instantiate a task head module for the provided configuration."""
+        if not config_item.enabled:
+            raise ValueError(f"Task '{config_item.name}' must be enabled before instantiation.")
+
+        if config_item.type == TaskType.REGRESSION:
+            assert isinstance(config_item, RegressionTaskConfig)
+            head_module = RegressionHead(config=config_item)
+        elif config_item.type == TaskType.CLASSIFICATION:
+            assert isinstance(config_item, ClassificationTaskConfig)
+            head_module = ClassificationHead(config=config_item)
+        elif config_item.type == TaskType.KERNEL_REGRESSION:
+            assert isinstance(config_item, KernelRegressionTaskConfig)
+            head_module = KernelRegressionHead(config=config_item)
+        else:
+            raise ValueError(f"Unsupported task type: {config_item.type}")
+
+        device = self._infer_parameter_device()
+        head_module.to(device)
+        return head_module
+
+    def _register_task_log_sigma(self, task_name: str):
+        """Register a learnable log sigma parameter for the task if enabled."""
+        if not self.enable_learnable_loss_balancer:
+            return
+
+        if task_name in self.task_log_sigmas:
+            return
+
+        device = self._infer_parameter_device()
+        self.task_log_sigmas[task_name] = nn.Parameter(torch.zeros((), device=device))
+
+    def _deregister_task_log_sigma(self, task_name: str):
+        """Remove the learnable log sigma parameter for the task if present."""
+        if not self.enable_learnable_loss_balancer:
+            return
+        if task_name in self.task_log_sigmas:
+            del self.task_log_sigmas[task_name]
+
     def _build_task_heads(self) -> nn.ModuleDict:
         """
         Create task heads based on configurations.
@@ -231,15 +309,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             if not config_item.enabled:
                 continue
 
-            if config_item.type == TaskType.REGRESSION:
-                assert isinstance(config_item, RegressionTaskConfig)
-                task_heads_dict[config_item.name] = RegressionHead(config=config_item)
-            elif config_item.type == TaskType.CLASSIFICATION:
-                assert isinstance(config_item, ClassificationTaskConfig)
-                task_heads_dict[config_item.name] = ClassificationHead(config=config_item)
-            elif config_item.type == TaskType.KERNEL_REGRESSION:
-                assert isinstance(config_item, KernelRegressionTaskConfig)
-                task_heads_dict[config_item.name] = KernelRegressionHead(config=config_item)
+            task_heads_dict[config_item.name] = self._instantiate_task_head(config_item)
         return task_heads_dict
 
     def _init_task_heads(self):
@@ -258,6 +328,87 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.has_regression = any(tc.type == TaskType.REGRESSION for tc in self.task_configs if tc.enabled)
         self.has_classification = any(tc.type == TaskType.CLASSIFICATION for tc in self.task_configs if tc.enabled)
         self.has_kernel_regression = any(tc.type == TaskType.KERNEL_REGRESSION for tc in self.task_configs if tc.enabled)
+
+    def add_task(
+        self,
+        task_config: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig,
+        *,
+        loss_weight: float | None = None,
+    ) -> "FlexibleMultiTaskModel":
+        """
+        Dynamically add a new task configuration and instantiate its head.
+
+        Parameters
+        ----------
+        task_config : RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
+            Task configuration describing the new head.
+        loss_weight : float | None, optional
+            Static loss weight for the task; defaults to 1.0 if omitted.
+        """
+        self._validate_task_config(task_config)
+
+        # Register configuration
+        self.task_configs.append(task_config)
+        self.task_configs_map[task_config.name] = task_config
+
+        # Setup weights
+        if task_config.enabled:
+            self.w[task_config.name] = loss_weight if loss_weight is not None else 1.0
+
+        # Instantiate and register task head
+        if task_config.enabled:
+            head_module = self._instantiate_task_head(task_config)
+            self.task_heads[task_config.name] = head_module
+            self._register_task_log_sigma(task_config.name)
+            if task_config.freeze_parameters:
+                for p in head_module.parameters():
+                    p.requires_grad_(False)
+
+        # Update task type tracking
+        self._track_task_types()
+
+        logger.info(f"Added task '{task_config.name}' (type={task_config.type.value}, enabled={task_config.enabled}).")
+        return self
+
+    def remove_tasks(self, *task_names: str) -> "FlexibleMultiTaskModel":
+        """
+        Remove one or more tasks from the model by name.
+
+        Parameters
+        ----------
+        *task_names : str
+            Names of tasks to remove.
+        """
+        if not task_names:
+            return self
+
+        to_remove = {name for name in task_names}
+        existing = {name for name in to_remove if name in self.task_configs_map}
+
+        missing = to_remove - existing
+        for name in missing:
+            logger.warning(f"remove_tasks: task '{name}' not found; skipping.")
+
+        if not existing:
+            return self
+
+        # Remove ModuleDict entries and auxiliary state
+        for name in existing:
+            if name in self.task_heads:
+                del self.task_heads[name]
+            if name in self.w:
+                del self.w[name]
+            self._deregister_task_log_sigma(name)
+
+        # Filter configurations and rebuild map
+        self.task_configs = [cfg for cfg in self.task_configs if cfg.name not in existing]
+        self.task_configs_map = {cfg.name: cfg for cfg in self.task_configs}
+
+        # Refresh task-type flags
+        self._track_task_types()
+
+        logger.info(f"Removed tasks: {', '.join(sorted(existing))}")
+        return self
 
     def _init_weights(self):
         """Initialize model weights and apply freezing based on freeze_shared_encoder config."""
@@ -770,6 +921,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         """Configure optimizers for all parameter groups."""
+
         optimizers_and_schedulers = []
 
         # 1. Main parameters (Encoder + optionally task_log_sigmas)
