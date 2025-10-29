@@ -20,7 +20,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from numpy import ndarray
 
-from foundation_model.models.fc_layers import LinearBlock
+from foundation_model.models.components.fc_layers import LinearBlock
 from foundation_model.models.model_config import KernelRegressionTaskConfig
 
 from .base import BaseTaskHead

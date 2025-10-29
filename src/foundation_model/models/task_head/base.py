@@ -88,7 +88,6 @@ class BaseTaskHead(nn.Module, ABC):
         torch.Tensor
             Total loss as a scalar tensor.
         """
-        pass
 
     @abstractmethod
     def _predict_impl(self, x: torch.Tensor) -> Dict[str, ndarray]:

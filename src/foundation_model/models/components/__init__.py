@@ -8,6 +8,7 @@ This package contains modular components used to build the foundation model arch
 including encoders, fusion mechanisms, and auxiliary utilities.
 """
 
+from .fc_layers import LinearBlock, LinearLayer, ResidualBlock
 from .foundation_encoder import FoundationEncoder
 
-__all__ = ["FoundationEncoder"]
+__all__ = ["LinearLayer", "ResidualBlock", "LinearBlock", "FoundationEncoder"]

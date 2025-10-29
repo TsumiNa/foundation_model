@@ -20,8 +20,7 @@ class LinearLayer(nn.Module):
         super().__init__()
         self.layer = nn.Linear(n_in, n_out)
         self.normal = nn.BatchNorm1d(n_out) if normalization else None
-        self.activation = nn.LeakyReLU(0.1)
-        self.activation = activation
+        self.activation = nn.LeakyReLU(0.1) if activation is None else activation
 
     def forward(self, x):
         _out = self.layer(x)

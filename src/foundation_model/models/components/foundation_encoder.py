@@ -11,7 +11,7 @@ into latent representations for multi-task learning models.
 import torch
 import torch.nn as nn
 
-from ..fc_layers import LinearBlock
+from .fc_layers import LinearBlock
 
 
 class FoundationEncoder(nn.Module):
@@ -98,5 +98,3 @@ class FoundationEncoder(nn.Module):
             Encoded representation of masked features.
         """
         return self.shared(x_masked)
-
-
