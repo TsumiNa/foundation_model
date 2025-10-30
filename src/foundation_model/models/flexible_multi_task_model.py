@@ -103,7 +103,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         freeze_shared_encoder: bool = False,
         # Optimization parameters
         shared_block_optimizer: OptimizerConfig | None = None,
-        enable_learnable_loss_balancer: bool = True,  # New parameter
+        enable_learnable_loss_balancer: bool = False,  # New parameter
         # Loss calculation behavior
         allow_all_missing_in_batch: bool = True,  # New parameter for handling all-missing batches
     ):
