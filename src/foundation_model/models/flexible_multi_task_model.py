@@ -101,8 +101,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         residual_shared: bool = False,
         # Freezing parameters
         freeze_shared_encoder: bool = False,
-        # Whether to enable strict loading of the model state_dict
-        strict_loading: bool = True,
         # Optimization parameters
         shared_block_optimizer: OptimizerConfig | None = None,
         enable_learnable_loss_balancer: bool = True,  # New parameter
@@ -115,9 +113,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Store the new parameters
         self.enable_learnable_loss_balancer = enable_learnable_loss_balancer
         self.allow_all_missing_in_batch = allow_all_missing_in_batch
-
-        # Store the strict loading parameter
-        self.strict_loading = strict_loading
 
         # Validate inputs
         if len(shared_block_dims) < 2:
