@@ -101,6 +101,8 @@ class CompoundDataModule(L.LightningDataModule):
         train_random_seed: int = 42,
         test_random_seed: int = 24,
         test_all: bool = False,
+        swap_train_val_split: float = 0.0,
+        swap_train_val_seed: Optional[int] = None,
         predict_idx: pd.Index | np.ndarray | List | str | List[str] | None = None,  # Extended functionality
         batch_size: int = 32,
         num_workers: int = 0,
@@ -136,6 +138,12 @@ class CompoundDataModule(L.LightningDataModule):
         test_all : bool, optional
             If True, all data (after alignment) is used for the test set. `train_idx` and `val_idx` will be empty.
             This overrides `test_split` and 'split' column logic if `attributes_source` is provided. Defaults to False.
+        swap_train_val_split : float, optional
+            Fraction of samples to exchange between the train and validation splits after they are formed.
+            Supports values in [0, 1]. Set to >0 to enable bootstrap-style resampling of train/val while keeping
+            overall split sizes unchanged. Defaults to 0.0.
+        swap_train_val_seed : Optional[int], optional
+            Random seed used when swapping train/val samples. Defaults to None (uses non-deterministic RNG state).
         predict_idx : Optional[pd.Index | np.ndarray | List | str | List[str]], optional
             Specific indices to use for the prediction set. Can be:
             - pd.Index, np.ndarray, List: Specific indices that must be present in `formula_desc_source`
@@ -161,6 +169,10 @@ class CompoundDataModule(L.LightningDataModule):
         self.train_random_seed = train_random_seed
         self.test_random_seed = test_random_seed
         self.test_all = test_all
+        if not 0.0 <= swap_train_val_split <= 1.0:
+            raise ValueError("swap_train_val_split must be between 0.0 and 1.0 inclusive.")
+        self.swap_train_val_split = swap_train_val_split
+        self.swap_train_val_seed = swap_train_val_seed
         # Store user-provided predict_idx without converting to pd.Index yet
         # We'll handle string/list conversion in setup() method
         self.init_predict_idx = predict_idx
@@ -439,6 +451,103 @@ class CompoundDataModule(L.LightningDataModule):
             logger.error(f"Unexpected error loading '{name}' data from {source}: {e}", exc_info=True)
             return None
 
+    def _get_attributes_for_indices(self, indices: pd.Index) -> pd.DataFrame:
+        """Return attribute rows matching the provided indices."""
+        if self.attributes_df is not None:
+            return self.attributes_df.loc[indices]
+        if self.formula_df is not None:
+            return pd.DataFrame(index=self.formula_df.loc[indices].index)
+        return pd.DataFrame()
+
+    def _build_fit_datasets(self, log_prefix: str = "--- Creating 'fit' stage datasets (train/val) ---") -> None:
+        """Construct train and validation datasets based on current indices."""
+        logger.info(log_prefix)
+        if not self.train_idx.empty and self.attributes_df is not None:
+            logger.info(f"Creating train_dataset with {len(self.train_idx)} samples.")
+            self.train_dataset = CompoundDataset(
+                formula_desc=self.formula_df.loc[self.train_idx],
+                attributes=self._get_attributes_for_indices(self.train_idx),
+                task_configs=self.task_configs,
+                task_masking_ratios=self.task_masking_ratios,
+                is_predict_set=False,
+                dataset_name="train_dataset",
+            )
+        elif self.attributes_df is None and not self.train_idx.empty:
+            logger.warning(
+                "attributes_df is None; skipping train_dataset creation because supervised targets are unavailable."
+            )
+            self.train_dataset = None
+        else:
+            logger.warning("Train index is empty. train_dataset will be None.")
+            self.train_dataset = None
+
+        if not self.val_idx.empty and self.attributes_df is not None:
+            logger.info(f"Creating val_dataset with {len(self.val_idx)} samples.")
+            self.val_dataset = CompoundDataset(
+                formula_desc=self.formula_df.loc[self.val_idx],
+                attributes=self._get_attributes_for_indices(self.val_idx),
+                task_configs=self.task_configs,
+                task_masking_ratios=None,
+                is_predict_set=False,
+                dataset_name="val_dataset",
+            )
+        elif self.attributes_df is None and not self.val_idx.empty:
+            logger.warning(
+                "attributes_df is None; skipping val_dataset creation because supervised targets are unavailable."
+            )
+            self.val_dataset = None
+        else:
+            logger.info("Validation index is empty. val_dataset will be None.")
+            self.val_dataset = None
+
+    def _apply_train_val_swap(self, swap_ratio: float, random_seed: Optional[int]) -> None:
+        """Randomly exchange a fraction of samples between train and validation splits."""
+        if swap_ratio <= 0.0:
+            return
+
+        if not hasattr(self, "train_idx") or not hasattr(self, "val_idx"):
+            raise RuntimeError("Data splits are not initialized. Call setup(stage='fit') before applying swap.")
+
+        train_count = len(self.train_idx)
+        val_count = len(self.val_idx)
+
+        if train_count == 0 or val_count == 0:
+            logger.warning(
+                "swap_train_val_split skipped because one of the splits is empty "
+                f"(train={train_count}, val={val_count})."
+            )
+            return
+
+        n_swap = int(min(train_count, val_count) * swap_ratio)
+        if n_swap == 0:
+            logger.info(
+                "swap_train_val_split computed zero samples to swap "
+                f"(swap_ratio={swap_ratio}, min_size={min(train_count, val_count)})."
+            )
+            return
+
+        rng = np.random.default_rng(random_seed)
+        train_choices = rng.choice(self.train_idx.to_numpy(), size=n_swap, replace=False)
+        val_choices = rng.choice(self.val_idx.to_numpy(), size=n_swap, replace=False)
+
+        train_swap = pd.Index(train_choices)
+        val_swap = pd.Index(val_choices)
+
+        train_remaining = self.train_idx[~self.train_idx.isin(train_swap)]
+        val_remaining = self.val_idx[~self.val_idx.isin(val_swap)]
+
+        self.train_idx = pd.Index(list(train_remaining) + list(val_swap))
+        self.val_idx = pd.Index(list(val_remaining) + list(train_swap))
+
+        if self.attributes_df is not None and "split" in self.attributes_df.columns:
+            self.attributes_df.loc[train_swap, "split"] = "val"
+            self.attributes_df.loc[val_swap, "split"] = "train"
+
+        logger.info(
+            f"Swapped {n_swap} samples between train and validation splits "
+            f"(swap_ratio={swap_ratio}, random_seed={random_seed})."
+        )
+
     def setup(self, stage: Optional[str] = None):
         """Prepare datasets for different stages (fit, test, predict)."""
         logger.info(f"--- Setting up DataModule for stage: {stage} ---")
@@ -545,57 +654,15 @@ class CompoundDataModule(L.LightningDataModule):
                 logger.info("Using all data for train_idx as attributes_df is None and not test_all.")
             # If self.test_all is True, self.test_idx is already full_idx, train/val are empty.
 
+        # Optional bootstrap-style train/val swapping
+        self._apply_train_val_swap(self.swap_train_val_split, self.swap_train_val_seed)
+
         logger.info(
             f"Final dataset sizes after splitting: Train={len(self.train_idx)}, Validation={len(self.val_idx)}, Test={len(self.test_idx)}"
         )
 
-        # Helper function to create attributes for CompoundDataset when self.attributes_df is None
-        def get_attributes_for_dataset(indices):
-            if self.attributes_df is not None:
-                return self.attributes_df.loc[indices]
-            if self.formula_df is not None:
-                return pd.DataFrame(index=self.formula_df.loc[indices].index)
-            return pd.DataFrame()
-
         if stage == "fit" or stage is None:
-            logger.info("--- Creating 'fit' stage datasets (train/val) ---")
-            if not self.train_idx.empty and self.attributes_df is not None:
-                logger.info(f"Creating train_dataset with {len(self.train_idx)} samples.")
-                self.train_dataset = CompoundDataset(
-                    formula_desc=self.formula_df.loc[self.train_idx],
-                    attributes=get_attributes_for_dataset(self.train_idx),
-                    task_configs=self.task_configs,
-                    task_masking_ratios=self.task_masking_ratios,
-                    is_predict_set=False,
-                    dataset_name="train_dataset",
-                )
-            elif self.attributes_df is None and not self.train_idx.empty:
-                logger.warning(
-                    "attributes_df is None; skipping train_dataset creation because supervised targets are unavailable."
-                )
-                self.train_dataset = None
-            else:
-                logger.warning("Train index is empty. train_dataset will be None.")
-                self.train_dataset = None
-
-            if not self.val_idx.empty and self.attributes_df is not None:
-                logger.info(f"Creating val_dataset with {len(self.val_idx)} samples.")
-                self.val_dataset = CompoundDataset(
-                    formula_desc=self.formula_df.loc[self.val_idx],
-                    attributes=get_attributes_for_dataset(self.val_idx),
-                    task_configs=self.task_configs,
-                    task_masking_ratios=None,  # No masking for validation
-                    is_predict_set=False,
-                    dataset_name="val_dataset",
-                )
-            elif self.attributes_df is None and not self.val_idx.empty:
-                logger.warning(
-                    "attributes_df is None; skipping val_dataset creation because supervised targets are unavailable."
-                )
-                self.val_dataset = None
-            else:
-                logger.info("Validation index is empty. val_dataset will be None.")
-                self.val_dataset = None
+            self._build_fit_datasets()
 
         if stage == "test" or stage is None:
             logger.info("--- Creating 'test' stage dataset ---")
@@ -603,7 +670,7 @@ class CompoundDataModule(L.LightningDataModule):
                 logger.info(f"Creating test_dataset with {len(self.test_idx)} samples.")
                 self.test_dataset = CompoundDataset(
                     formula_desc=self.formula_df.loc[self.test_idx],
-                    attributes=get_attributes_for_dataset(self.test_idx),
+                    attributes=self._get_attributes_for_indices(self.test_idx),
                     task_configs=self.task_configs,
                     task_masking_ratios=None,  # No masking for test
                     is_predict_set=False,  # Typically False for test, model might output targets for metrics
@@ -626,7 +693,7 @@ class CompoundDataModule(L.LightningDataModule):
             if not self.predict_idx.empty:
                 self.predict_dataset = CompoundDataset(
                     formula_desc=self.formula_df.loc[self.predict_idx],
-                    attributes=get_attributes_for_dataset(self.predict_idx),
+                    attributes=self._get_attributes_for_indices(self.predict_idx),
                     task_configs=self.task_configs,
                     task_masking_ratios=None,  # No masking for predict
                     is_predict_set=True,

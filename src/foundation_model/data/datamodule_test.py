@@ -15,6 +15,33 @@ from foundation_model.models.model_config import (
 )
 
 
+def _expected_swapped_indices(train_idx, val_idx, swap_ratio, seed):
+    """Replicate the swapping logic used by CompoundDataModule."""
+    if swap_ratio <= 0.0:
+        return pd.Index(train_idx), pd.Index(val_idx)
+
+    train_idx = pd.Index(train_idx)
+    val_idx = pd.Index(val_idx)
+
+    n_swap = int(min(len(train_idx), len(val_idx)) * swap_ratio)
+    if n_swap == 0:
+        return train_idx, val_idx
+
+    rng = np.random.default_rng(seed)
+    train_swap = pd.Index(rng.choice(train_idx.to_numpy(), size=n_swap, replace=False))
+    val_swap = pd.Index(rng.choice(val_idx.to_numpy(), size=n_swap, replace=False))
+
+    train_swap_set = set(train_swap)
+    val_swap_set = set(val_swap)
+
+    train_remaining = [idx for idx in train_idx if idx not in train_swap_set]
+    val_remaining = [idx for idx in val_idx if idx not in val_swap_set]
+
+    new_train = pd.Index(train_remaining + list(val_swap))
+    new_val = pd.Index(val_remaining + list(train_swap))
+    return new_train, new_val
+
+
 # --- Fixtures ---
 @pytest.fixture
 def base_formula_df():  # 20 samples s0-s19
@@ -182,6 +209,49 @@ def test_datamodule_setup_attributes_none_splitting(base_formula_df, sample_task
     assert dm_test_all.train_idx.empty
     assert dm_test_all.val_idx.empty
 
+
+def test_swap_train_val_split_applied(base_formula_df, attributes_df_full_match, sample_task_configs_dm):
+    swap_ratio = 0.4
+    swap_seed = 123
+
+    dm = CompoundDataModule(
+        formula_desc_source=base_formula_df,
+        attributes_source=attributes_df_full_match,
+        task_configs=sample_task_configs_dm,
+        swap_train_val_split=swap_ratio,
+        swap_train_val_seed=swap_seed,
+    )
+
+    original_train = attributes_df_full_match[attributes_df_full_match["split"] == "train"].index
+    original_val = attributes_df_full_match[attributes_df_full_match["split"] == "val"].index
+    expected_train, expected_val = _expected_swapped_indices(original_train, original_val, swap_ratio, swap_seed)
+
+    dm.setup(stage="fit")
+
+    assert list(dm.train_idx) == list(expected_train)
+    assert list(dm.val_idx) == list(expected_val)
+
+    # Ensure split labels were updated accordingly
+    assert all(dm.attributes_df.loc[idx, "split"] == "train" for idx in dm.train_idx)
+    assert all(dm.attributes_df.loc[idx, "split"] == "val" for idx in dm.val_idx)
+    assert all(dm.attributes_df.loc[idx, "split"] == "test" for idx in dm.test_idx)
+
+
+def test_swap_train_val_split_zero_no_change(base_formula_df, attributes_df_full_match, sample_task_configs_dm):
+    dm = CompoundDataModule(
+        formula_desc_source=base_formula_df,
+        attributes_source=attributes_df_full_match,
+        task_configs=sample_task_configs_dm,
+        swap_train_val_split=0.0,
+    )
+
+    original_train = attributes_df_full_match[attributes_df_full_match["split"] == "train"].index
+    original_val = attributes_df_full_match[attributes_df_full_match["split"] == "val"].index
+
+    dm.setup(stage="fit")
+
+    assert list(dm.train_idx) == list(original_train)
+    assert list(dm.val_idx) == list(original_val)
 
 def test_datamodule_setup_with_user_predict_idx(base_formula_df, sample_task_configs_no_seq_dm, caplog):
     """Test setup(stage='predict') with user-provided predict_idx."""
