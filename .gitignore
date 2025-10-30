@@ -39,6 +39,7 @@ lightning_logs/
 /data/scripts/.ipynb_checkpoints
 /samples/example_logs
 /notebooks/logs
+/artifacts
 
 # IDE
 .idea/

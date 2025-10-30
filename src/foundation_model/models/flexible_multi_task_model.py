@@ -272,6 +272,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if not config_item.enabled:
             raise ValueError(f"Task '{config_item.name}' must be enabled before instantiation.")
 
+        head_module: nn.Module
         if config_item.type == TaskType.REGRESSION:
             assert isinstance(config_item, RegressionTaskConfig)
             head_module = RegressionHead(config=config_item)

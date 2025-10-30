@@ -55,12 +55,6 @@ class BaseTaskConfig:
     loss_weight: float = field(default=1.0, kw_only=True)  # Static weight applied to this task's loss
     freeze_parameters: bool = field(default=False, kw_only=True)  # Whether to freeze this task's parameters
 
-    # LoRA configuration
-    lora_enabled: bool = field(default=False, kw_only=True)  # Whether to enable LoRA adaptation
-    lora_rank: int = field(default=0, kw_only=True)  # Rank for LoRA adaptation, 0 means disabled
-    lora_alpha: float = field(default=1.0, kw_only=True)  # Scaling factor for LoRA adaptation
-    lora_freeze_base: bool = field(default=True, kw_only=True)  # Whether to freeze the base weights when using LoRA
-
     # Optimizer configuration
     optimizer: Optional[OptimizerConfig] = field(default=None, kw_only=True)  # Optimizer configuration for this task
 

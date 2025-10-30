@@ -167,7 +167,6 @@ model:
       monitor: val_final_loss
     norm_shared: true
     residual_shared: false
-    # lora_rank and lora_alpha are per-task configurations
 
 data:
   class_path: foundation_model.data.CompoundDataModule
