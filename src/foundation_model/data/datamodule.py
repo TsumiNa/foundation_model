@@ -91,9 +91,7 @@ class CompoundDataModule(L.LightningDataModule):
     def __init__(
         self,
         formula_desc_source: pd.DataFrame | Path_fr,  # type: ignore
-        task_configs: Sequence[
-            RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
-        ],
+        task_configs: Sequence[RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig],
         attributes_source: pd.DataFrame | Path_fr | None = None,  # type: ignore
         task_masking_ratios: Optional[Dict[str, float]] = None,
         val_split: float = 0.1,
