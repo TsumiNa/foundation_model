@@ -244,6 +244,50 @@ def test_ratio_masking_predict(sample_formula_desc_df, sample_attributes_df, sam
     assert torch.equal(dataset.task_masks_dict[task_name_to_mask], expected_mask)
 
 
+def test_task_masking_seed_controls_rng(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+    """Ensure task_masking_seed makes masking deterministic."""
+    task_name = "task_reg"
+    masking_ratio = 0.5
+    masking_ratios = {task_name: masking_ratio}
+    masking_seed = 123
+
+    dataset_seeded = CompoundDataset(
+        formula_desc=sample_formula_desc_df,
+        attributes=sample_attributes_df,
+        task_configs=sample_task_configs,
+        task_masking_ratios=masking_ratios,
+        task_masking_seed=masking_seed,
+        is_predict_set=False,
+        dataset_name="test_ratio_mask_seeded",
+    )
+
+    final_mask = dataset_seeded.task_masks_dict[task_name].squeeze().numpy()
+    base_mask = np.array([True, True, False, True, True])
+    expected_mask = base_mask.copy()
+    valid_indices = np.where(base_mask)[0]
+    num_to_keep = int(np.round(len(valid_indices) * masking_ratio))
+    num_to_drop = len(valid_indices) - num_to_keep
+    if num_to_drop > 0:
+        rng = np.random.default_rng(masking_seed)
+        indices_to_drop = rng.choice(valid_indices, size=num_to_drop, replace=False)
+        expected_mask[indices_to_drop] = False
+    assert np.array_equal(final_mask, expected_mask)
+
+    # Changing the global NumPy RNG should not affect the seeded behavior
+    np.random.seed(999)
+    dataset_seeded_repeat = CompoundDataset(
+        formula_desc=sample_formula_desc_df,
+        attributes=sample_attributes_df,
+        task_configs=sample_task_configs,
+        task_masking_ratios=masking_ratios,
+        task_masking_seed=masking_seed,
+        is_predict_set=False,
+        dataset_name="test_ratio_mask_seeded_repeat",
+    )
+    repeated_mask = dataset_seeded_repeat.task_masks_dict[task_name].squeeze().numpy()
+    assert np.array_equal(final_mask, repeated_mask)
+
+
 def test_getitem_predict_mode(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
     """Test __getitem__ when is_predict_set=True."""
     dataset = CompoundDataset(

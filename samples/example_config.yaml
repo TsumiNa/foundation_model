@@ -82,12 +82,12 @@ data:
     # task_configs: "${model.init_args.task_configs}" # This linking is usually automatic
 
     # --- Data Handling and Splitting ---
-    # task_masking_ratios: # Optional: if you want to randomly mask portions of data for specific tasks during training
+    # task_masking_ratios: # Optional: mask training samples (dict per task or single float for all tasks)
     #   "Band gap": 0.9 # Example: use 90% of available "Band gap" data for training samples
+    # task_masking_ratios: 0.9 # Example: use same keep ratio for every enabled task
     val_split: 0.1 # Proportion of non-test data for validation
     test_split: 0.1 # Proportion of total data for testing
-    train_random_seed: 42
-    test_random_seed: 24
+    random_seed: 42
     # test_all: False # If True, all data is used for the test set
     # predict_idx: null # Path to a file or list of indices for prediction
 

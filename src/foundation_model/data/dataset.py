@@ -1,5 +1,5 @@
 import ast  # For safely evaluating string representations of lists/arrays
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import numpy as np
 import pandas as pd
@@ -91,7 +91,8 @@ class CompoundDataset(Dataset):
         formula_desc: pd.DataFrame | np.ndarray,
         attributes: pd.DataFrame,  # Contains targets, series, temps, masks
         task_configs: List,  # List of task configuration objects
-        task_masking_ratios: Optional[Dict[str, float]] = None,
+        task_masking_ratios: Dict[str, float] | None = None,
+        task_masking_seed: int | None = None,
         is_predict_set: bool = False,
         dataset_name: str = "dataset",
     ):
@@ -99,6 +100,10 @@ class CompoundDataset(Dataset):
         logger.info(f"[{self.dataset_name}] Initializing CompoundDataset...")
         self.is_predict_set = is_predict_set
         self.task_masking_ratios = task_masking_ratios
+        self.task_masking_seed = task_masking_seed
+        self._task_masking_rng = np.random.default_rng(task_masking_seed) if task_masking_seed is not None else None
+        if self._task_masking_rng is not None:
+            logger.info(f"[{self.dataset_name}] Task masking RNG seeded with {task_masking_seed}.")
 
         # --- Input Validation (remains largely the same) ---
         if not isinstance(formula_desc, (pd.DataFrame, np.ndarray)):
@@ -301,7 +306,12 @@ class CompoundDataset(Dataset):
                     if len(valid_indices) > 0:
                         num_to_keep = int(np.round(len(valid_indices) * ratio_to_keep))
                         if num_to_keep < len(valid_indices):
-                            indices_to_set_false = np.random.choice(
+                            rng_choice = (
+                                self._task_masking_rng.choice
+                                if self._task_masking_rng is not None
+                                else np.random.choice
+                            )
+                            indices_to_set_false = rng_choice(
                                 valid_indices, size=len(valid_indices) - num_to_keep, replace=False
                             )
                             final_mask_np[indices_to_set_false] = False

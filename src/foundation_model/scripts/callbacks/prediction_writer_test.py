@@ -132,8 +132,7 @@ def test_prediction_writer_multi_gpu_integration(tmp_path: Path) -> None:
         predict_idx="all",
         val_split=0.1,
         test_split=0.1,
-        train_random_seed=42,
-        test_random_seed=24,
+        random_seed=42,
     )
 
     model = FlexibleMultiTaskModel.load_from_checkpoint(str(_EXAMPLE_CHECKPOINT), strict=True)

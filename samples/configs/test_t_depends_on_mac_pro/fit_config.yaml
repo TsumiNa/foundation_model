@@ -180,8 +180,7 @@ data:
     num_workers: 0
     val_split: 0.1
     test_split: 0.1
-    train_random_seed: 42
-    test_random_seed: 24
+    random_seed: 42
 
 trainer:
   default_root_dir: ${oc.env:LOG_DIR,results/logs/default_experiment}/fit

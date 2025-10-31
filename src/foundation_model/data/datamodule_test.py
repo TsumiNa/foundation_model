@@ -212,19 +212,20 @@ def test_datamodule_setup_attributes_none_splitting(base_formula_df, sample_task
 
 def test_swap_train_val_split_applied(base_formula_df, attributes_df_full_match, sample_task_configs_dm):
     swap_ratio = 0.4
-    swap_seed = 123
 
     dm = CompoundDataModule(
         formula_desc_source=base_formula_df,
         attributes_source=attributes_df_full_match,
         task_configs=sample_task_configs_dm,
         swap_train_val_split=swap_ratio,
-        swap_train_val_seed=swap_seed,
+        random_seed=123,
     )
 
     original_train = attributes_df_full_match[attributes_df_full_match["split"] == "train"].index
     original_val = attributes_df_full_match[attributes_df_full_match["split"] == "val"].index
-    expected_train, expected_val = _expected_swapped_indices(original_train, original_val, swap_ratio, swap_seed)
+    expected_train, expected_val = _expected_swapped_indices(
+        original_train, original_val, swap_ratio, dm._seed_for("swap")
+    )
 
     dm.setup(stage="fit")
 
@@ -423,6 +424,24 @@ def test_datamodule_task_masking_ratios_propagation(base_formula_df, attributes_
     assert dm.predict_dataset.task_masking_ratios is None
 
 
+def test_datamodule_task_masking_ratio_float_applies_all_tasks(
+    base_formula_df, attributes_df_full_match, sample_task_configs_dm
+):
+    mask_ratio = 0.25
+    dm = CompoundDataModule(
+        formula_desc_source=base_formula_df,
+        attributes_source=attributes_df_full_match,
+        task_configs=sample_task_configs_dm,
+        task_masking_ratios=mask_ratio,
+    )
+    dm.setup(stage="fit")
+    assert dm.train_dataset is not None
+    expected = {
+        cfg.name: mask_ratio
+        for cfg in sample_task_configs_dm
+        if getattr(cfg, "enabled", True)
+    }
+    assert dm.train_dataset.task_masking_ratios == expected
 def test_datamodule_empty_dataset_returns_none_dataloader(base_formula_df, sample_task_configs_no_seq_dm, caplog):
     # --- Loguru to caplog bridge (local to this test) ---
     class PropagateHandler(logging.Handler):

@@ -422,7 +422,8 @@ data: # Renamed from datamodule for consistency with LightningCLI v2.0+ common p
     # train_ratio, val_ratio, test_split are used if 'split' column is NOT in attributes_source
     # val_split: 0.1 
     # test_split: 0.1
-    # train_random_seed: 42
+    # random_seed: 42
+    # task_masking_ratios: 0.9  # Or provide {"task_A": 0.9, "task_B": 0.5} for per-task control
     task_masking_ratios:
       task_A: 1.0 # Experiment with this: 1.0, 0.5, 0.25 etc. for task_A
       # task_B: 1.0 # Can also apply to other tasks

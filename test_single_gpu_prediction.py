@@ -49,8 +49,7 @@ def test_single_gpu_prediction():
         predict_idx="all",  # Test with all data
         val_split=0.1,
         test_split=0.1,
-        train_random_seed=42,
-        test_random_seed=24,
+        random_seed=42,
     )
 
     print("Creating PredictionDataFrameWriter with single GPU support...")

@@ -1,7 +1,7 @@
 # Copyright 2025 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Sequence
 
 import joblib
 import lightning as L
@@ -93,14 +93,12 @@ class CompoundDataModule(L.LightningDataModule):
         formula_desc_source: pd.DataFrame | Path_fr,  # type: ignore
         task_configs: Sequence[RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig],
         attributes_source: pd.DataFrame | Path_fr | None = None,  # type: ignore
-        task_masking_ratios: Optional[Dict[str, float]] = None,
+        task_masking_ratios: float | Dict[str, float] | None = None,
+        random_seed: int | None = 42,
         val_split: float = 0.1,
         test_split: float = 0.1,
-        train_random_seed: int = 42,
-        test_random_seed: int = 24,
         test_all: bool = False,
         swap_train_val_split: float = 0.0,
-        swap_train_val_seed: Optional[int] = None,
         predict_idx: pd.Index | np.ndarray | List | str | List[str] | None = None,  # Extended functionality
         batch_size: int = 32,
         num_workers: int = 0,
@@ -115,24 +113,25 @@ class CompoundDataModule(L.LightningDataModule):
             Formula descriptors (DataFrame, NumPy array, or path to pickle/CSV/parquet). Its index is the master reference.
         task_configs : List
             List of task configurations.
-        attributes_source : Optional[pd.DataFrame | str], optional
+        attributes_source : pd.DataFrame | str | None, optional
             Source for task target attributes, sequence data, temperature data, and 'split' column.
             Can be a DataFrame, NumPy array, or a path to a pickle/CSV/parquet file.
             Defaults to None. If None, the DataModule can only be used for prediction with non-sequence tasks,
             as sequence tasks typically require input columns (e.g., for series or temperatures) from this source.
             If provided, it will be aligned with `formula_desc_source`.
-        task_masking_ratios : Optional[Dict[str, float]], optional
-            Ratios for random masking per task in the training set. Defaults to None.
+        task_masking_ratios : float | Dict[str, float] | None, optional
+            Random masking ratios for training data.
+            Accepts either a mapping of task name to keep-ratio, or a single float applied to every enabled task.
+            Defaults to None (no additional masking).
+        random_seed : int | None, optional
+            Base seed controlling all stochastic operations (test split, validation split, task masking, train/val swap).
+            Derived seeds are generated deterministically per operation to preserve reproducibility. Defaults to 42.
         val_split : float, optional
             Proportion of non-test data (derived from `attributes_source` if available, or `formula_desc_source` otherwise)
             to use for validation. Defaults to 0.1. Only applicable if `attributes_source` is provided and no 'split' column is used.
         test_split : float, optional
             Proportion of data (derived from `attributes_source` if available, or `formula_desc_source` otherwise)
             to use for testing. Defaults to 0.1. Only applicable if `attributes_source` is provided and no 'split' column is used.
-        train_random_seed : int, optional
-            Random seed for splitting train and validation sets. Defaults to 42.
-        test_random_seed : int, optional
-            Random seed for splitting the test set from the rest. Defaults to 24.
         test_all : bool, optional
             If True, all data (after alignment) is used for the test set. `train_idx` and `val_idx` will be empty.
             This overrides `test_split` and 'split' column logic if `attributes_source` is provided. Defaults to False.
@@ -140,9 +139,7 @@ class CompoundDataModule(L.LightningDataModule):
             Fraction of samples to exchange between the train and validation splits after they are formed.
             Supports values in [0, 1]. Set to >0 to enable bootstrap-style resampling of train/val while keeping
             overall split sizes unchanged. Defaults to 0.0.
-        swap_train_val_seed : Optional[int], optional
-            Random seed used when swapping train/val samples. Defaults to None (uses non-deterministic RNG state).
-        predict_idx : Optional[pd.Index | np.ndarray | List | str | List[str]], optional
+        predict_idx : pd.Index | np.ndarray | List | str | List[str] | None, optional
             Specific indices to use for the prediction set. Can be:
             - pd.Index, np.ndarray, List: Specific indices that must be present in `formula_desc_source`
             - str: One of "test", "val", "train", "all" to use the corresponding dataset
@@ -162,15 +159,13 @@ class CompoundDataModule(L.LightningDataModule):
         # Explicitly assign parameters to self for clarity and linter compatibility
         self.task_configs = task_configs
         self.task_masking_ratios = task_masking_ratios
+        self.random_seed = random_seed
         self.val_split = val_split
         self.test_split = test_split
-        self.train_random_seed = train_random_seed
-        self.test_random_seed = test_random_seed
         self.test_all = test_all
         if not 0.0 <= swap_train_val_split <= 1.0:
             raise ValueError("swap_train_val_split must be between 0.0 and 1.0 inclusive.")
         self.swap_train_val_split = swap_train_val_split
-        self.swap_train_val_seed = swap_train_val_seed
         # Store user-provided predict_idx without converting to pd.Index yet
         # We'll handle string/list conversion in setup() method
         self.init_predict_idx = predict_idx
@@ -178,6 +173,13 @@ class CompoundDataModule(L.LightningDataModule):
         self.num_workers = num_workers
         self.structure_df: pd.DataFrame | None = None
         self.actual_with_structure = False
+
+        self._seed_offsets: Dict[str, int] = {
+            "train_split": 0,
+            "test_split": 10_000,
+            "task_masking": 20_000,
+            "swap": 30_000,
+        }
 
         self.save_hyperparameters(
             ignore=[
@@ -277,6 +279,40 @@ class CompoundDataModule(L.LightningDataModule):
             logger.info(f"formula_df (master) length: {len(master_index)}")
 
         logger.info(f"DataModule initialized with {len(self.task_configs)} task configurations.")
+
+    def _seed_for(self, purpose: str) -> int | None:
+        """Return a deterministic seed for the given purpose derived from the base random_seed."""
+        if self.random_seed is None:
+            return None
+        offset = self._seed_offsets.get(purpose, 0)
+        # Modulo 2**32 to keep value within 32-bit integer range expected by numpy/sklearn
+        return (self.random_seed + offset) % (2**32)
+
+    def _resolved_task_masking_ratios(self) -> Dict[str, float] | None:
+        """
+        Normalize task_masking_ratios input to a dictionary keyed by task name.
+
+        Returns
+        -------
+        Dict[str, float] | None
+            Mapping of task names to keep ratios, or None when masking is disabled.
+        """
+        ratios = self.task_masking_ratios
+        if ratios is None:
+            return None
+        if isinstance(ratios, dict):
+            return ratios
+
+        try:
+            ratio_value = float(ratios)
+        except (TypeError, ValueError) as exc:  # pragma: no cover - defensive, should not happen with type hints
+            raise TypeError("task_masking_ratios must be a dict, float, or None.") from exc
+
+        return {
+            cfg.name: ratio_value
+            for cfg in self.task_configs
+            if getattr(cfg, "enabled", True)
+        }
 
     def _resolve_predict_idx(self, full_idx: pd.Index) -> pd.Index:
         """
@@ -405,7 +441,7 @@ class CompoundDataModule(L.LightningDataModule):
             )
             return valid_predict_indices
 
-    def _load_data(self, source: pd.DataFrame | str, name: str) -> Optional[pd.DataFrame]:
+    def _load_data(self, source: pd.DataFrame | str, name: str) -> pd.DataFrame | None:
         """Helper to load data from various sources."""
         logger.debug(f"Attempting to load '{name}' from source type: {type(source)}")
         if source is None:
@@ -462,11 +498,13 @@ class CompoundDataModule(L.LightningDataModule):
         logger.info(log_prefix)
         if not self.train_idx.empty and self.attributes_df is not None:
             logger.info(f"Creating train_dataset with {len(self.train_idx)} samples.")
+            train_masking_ratios = self._resolved_task_masking_ratios()
             self.train_dataset = CompoundDataset(
                 formula_desc=self.formula_df.loc[self.train_idx],
                 attributes=self._get_attributes_for_indices(self.train_idx),
                 task_configs=self.task_configs,
-                task_masking_ratios=self.task_masking_ratios,
+                task_masking_ratios=train_masking_ratios,
+                task_masking_seed=self._seed_for("task_masking"),
                 is_predict_set=False,
                 dataset_name="train_dataset",
             )
@@ -486,6 +524,7 @@ class CompoundDataModule(L.LightningDataModule):
                 attributes=self._get_attributes_for_indices(self.val_idx),
                 task_configs=self.task_configs,
                 task_masking_ratios=None,
+                task_masking_seed=self._seed_for("task_masking"),
                 is_predict_set=False,
                 dataset_name="val_dataset",
             )
@@ -498,7 +537,7 @@ class CompoundDataModule(L.LightningDataModule):
             logger.info("Validation index is empty. val_dataset will be None.")
             self.val_dataset = None
 
-    def _apply_train_val_swap(self, swap_ratio: float, random_seed: Optional[int]) -> None:
+    def _apply_train_val_swap(self, swap_ratio: float, random_seed: int | None) -> None:
         """Randomly exchange a fraction of samples between train and validation splits."""
         if swap_ratio <= 0.0:
             return
@@ -546,7 +585,7 @@ class CompoundDataModule(L.LightningDataModule):
             f"(swap_ratio={swap_ratio}, random_seed={random_seed})."
         )
 
-    def setup(self, stage: Optional[str] = None):
+    def setup(self, stage: str | None = None):
         """Prepare datasets for different stages (fit, test, predict)."""
         logger.info(f"--- Setting up DataModule for stage: {stage} ---")
         if self.formula_df is None:  # attributes_df can now be None
@@ -583,7 +622,10 @@ class CompoundDataModule(L.LightningDataModule):
             if self.val_idx.empty and not self.train_idx.empty:  # and self.attributes_df is not None implicitly
                 logger.warning("No 'val' samples in 'split' column. Splitting 10% of 'train' for validation.")
                 self.train_idx, self.val_idx = train_test_split(
-                    self.train_idx, test_size=0.1, random_state=self.train_random_seed, shuffle=True
+                    self.train_idx,
+                    test_size=0.1,
+                    random_state=self._seed_for("train_split"),
+                    shuffle=True,
                 )
         elif (
             self.attributes_df is not None
@@ -600,11 +642,12 @@ class CompoundDataModule(L.LightningDataModule):
                 train_val_idx, self.test_idx = train_test_split(
                     full_idx,  # full_idx here is from attributes_df.index
                     test_size=self.test_split,
-                    random_state=self.test_random_seed,
+                    random_state=self._seed_for("test_split"),
                     shuffle=True,
                 )
                 logger.info(
-                    f"Split full data ({len(full_idx)}) into train_val ({len(train_val_idx)}) and test ({len(self.test_idx)}) using seed {self.test_random_seed}."
+                    f"Split full data ({len(full_idx)}) into train_val ({len(train_val_idx)}) and test ({len(self.test_idx)}) "
+                    f"using derived seed {self._seed_for('test_split')} (base random_seed={self.random_seed})."
                 )
             else:  # test_split is 0
                 train_val_idx = full_idx
@@ -626,11 +669,13 @@ class CompoundDataModule(L.LightningDataModule):
                     self.train_idx, self.val_idx = train_test_split(
                         train_val_idx,
                         test_size=effective_val_split,
-                        random_state=self.train_random_seed,
+                        random_state=self._seed_for("train_split"),
                         shuffle=True,
                     )
                     logger.info(
-                        f"Split train_val ({len(train_val_idx)}) into train ({len(self.train_idx)}) and val ({len(self.val_idx)}) using seed {self.train_random_seed}, effective_val_split {effective_val_split:.3f}."
+                        f"Split train_val ({len(train_val_idx)}) into train ({len(self.train_idx)}) and val ({len(self.val_idx)}) "
+                        f"using derived seed {self._seed_for('train_split')} (base random_seed={self.random_seed}), "
+                        f"effective_val_split {effective_val_split:.3f}."
                     )
             elif len(train_val_idx) > 0:  # val_split is 0
                 self.train_idx = train_val_idx
@@ -653,7 +698,7 @@ class CompoundDataModule(L.LightningDataModule):
             # If self.test_all is True, self.test_idx is already full_idx, train/val are empty.
 
         # Optional bootstrap-style train/val swapping
-        self._apply_train_val_swap(self.swap_train_val_split, self.swap_train_val_seed)
+        self._apply_train_val_swap(self.swap_train_val_split, self._seed_for("swap"))
 
         logger.info(
             f"Final dataset sizes after splitting: Train={len(self.train_idx)}, Validation={len(self.val_idx)}, Test={len(self.test_idx)}"
@@ -671,6 +716,7 @@ class CompoundDataModule(L.LightningDataModule):
                     attributes=self._get_attributes_for_indices(self.test_idx),
                     task_configs=self.task_configs,
                     task_masking_ratios=None,  # No masking for test
+                    task_masking_seed=self._seed_for("task_masking"),
                     is_predict_set=False,  # Typically False for test, model might output targets for metrics
                     dataset_name="test_dataset",
                 )
@@ -694,6 +740,7 @@ class CompoundDataModule(L.LightningDataModule):
                     attributes=self._get_attributes_for_indices(self.predict_idx),
                     task_configs=self.task_configs,
                     task_masking_ratios=None,  # No masking for predict
+                    task_masking_seed=self._seed_for("task_masking"),
                     is_predict_set=True,
                     dataset_name="predict_dataset",
                 )
