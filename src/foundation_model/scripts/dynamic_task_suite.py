@@ -311,7 +311,7 @@ class DynamicTaskSuiteRunner:
                 phase="finetune",
                 run_id=run_idx,
                 stage_num=stage_idx,
-                stage_tasks=[finetune_name],
+                stage_tasks=list(stage_tasks),
                 new_task_name=finetune_name,
                 output_dir=prediction_dir,
             )
