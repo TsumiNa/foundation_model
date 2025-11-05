@@ -275,17 +275,26 @@ Full fine-tune: encoder is not frozen (`freeze_parameters: false`). A sequence t
 # Assumes config.yaml is set for fine-tuning.
 # The relevant sequence task should be configured with subtype "transformer" in YAML.
 
-python -m foundation_model.scripts.train --config path/to/your/transformer_config.yaml \
+python -m foundation_model.scripts.train --config path/to/your/transformer_encoder.yaml \
   --model.init_args.shared_block_optimizer.freeze_parameters=False
 ```
-*YAML snippet (`transformer_config.yaml`):*
+*YAML snippet (`transformer_encoder.yaml`):*
 ```yaml
-# In transformer_config.yaml
+# In transformer_encoder.yaml
 # ...
 model:
   class_path: foundation_model.models.FlexibleMultiTaskModel
   init_args:
     # ...
+    shared_block_dims: [128, 256]  # Input dimension -> fallback latent dimension
+    encoder_config:
+      type: transformer
+      d_model: 256
+      num_layers: 4
+      nhead: 4
+      dropout: 0.1
+      use_cls_token: true
+      apply_layer_norm: true
     shared_block_optimizer:
       # ...
       freeze_parameters: false # Encoder is trainable
@@ -293,14 +302,28 @@ model:
       - name: "temp_dos_transformer" # Example sequence task
         type: "SEQUENCE"
         subtype: "transformer" # Key: Use Transformer head
-        d_in: 512             # Input dimension from encoder deposit layer
-        d_model: 256          # Transformer d_model
+        d_in: 256             # Input dimension from encoder deposit layer
+        d_model: 256          # Transformer d_model for the head
         nhead: 4              # Transformer nhead
         # ... other transformer parameters (num_encoder_layers, dim_feedforward, etc.)
         # ... other settings for this task ...
       # ... other tasks ...
 # ...
 ```
+
+> ℹ️ **How the Transformer encoder trains tokens**
+>
+> * With ``use_cls_token: true`` the deposit layer consumes the contextualised
+>   ``[CLS]`` embedding. Even though the other feature tokens are not pooled
+>   explicitly, they still receive gradients through the attention connections to
+>   the classifier query because their keys and values inform every ``[CLS]``
+>   update.
+> * Setting ``use_cls_token: false`` switches to mean pooling so every token is
+>   exposed directly to the supervised loss without relying on masked pre-training;
+>   gradients are distributed evenly across the sequence length.
+> * Both aggregation modes therefore keep all feature tokens in play for
+>   supervised objectives, and you can choose the variant that best matches your
+>   task assumptions.
 
 ##### Example 4 – Partial fine-tune (encoder unlocked, specific sequence head)
 
@@ -406,8 +429,11 @@ model:
         cell: "gru"
         optimizer: { lr: 0.001, scheduler_type: "None" }
     # Add other model.init_args as needed, e.g.:
-    # norm_shared: true
-    # residual_shared: false
+    # encoder_config:
+    #   type: mlp
+    #   hidden_dims: [128, 256]
+    #   norm: true
+    #   residual: false
     shared_block_optimizer: { lr: 0.001, scheduler_type: "None", freeze_parameters: false }
 
 # --- Data Module Configuration (for CompoundDataModule) ---

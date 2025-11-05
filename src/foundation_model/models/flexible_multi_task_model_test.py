@@ -20,6 +20,7 @@ from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
 from foundation_model.models.model_config import (
     ClassificationTaskConfig,
+    MLPEncoderConfig,
     OptimizerConfig,
     RegressionTaskConfig,
     TaskType,
@@ -73,8 +74,7 @@ def model_config_mixed_tasks():
     config_dict = {
         "shared_block_dims": shared_dims,
         "task_configs": task_configs_list,
-        "norm_shared": True,
-        "residual_shared": False,
+        "encoder_config": MLPEncoderConfig(hidden_dims=shared_dims[1:], norm=True, residual=False),
         "shared_block_optimizer": OptimizerConfig(lr=1e-3, scheduler_type="None"),
     }
     return SimpleNamespace(**config_dict)
@@ -130,8 +130,7 @@ def test_model_initialization(model_config_mixed_tasks):
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
-        norm_shared=config.norm_shared,
-        residual_shared=config.residual_shared,
+        encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
     )
 
@@ -168,8 +167,7 @@ def test_model_forward_pass(model_config_mixed_tasks, sample_batch_mixed_tasks):
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
-        norm_shared=config.norm_shared,
-        residual_shared=config.residual_shared,
+        encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
     )
     model.eval()  # Set model to evaluation mode
@@ -217,8 +215,7 @@ def test_model_training_step(model_config_mixed_tasks, sample_batch_mixed_tasks,
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
-        norm_shared=config.norm_shared,
-        residual_shared=config.residual_shared,
+        encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
     )
     model.train()  # Set model to training mode
@@ -303,8 +300,7 @@ def test_model_validation_step(model_config_mixed_tasks, sample_batch_mixed_task
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
-        norm_shared=config.norm_shared,
-        residual_shared=config.residual_shared,
+        encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
     )
     model.eval()  # Set model to evaluation mode
@@ -340,8 +336,7 @@ def test_model_predict_step_all_tasks(model_config_mixed_tasks, sample_batch_mix
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
-        norm_shared=config.norm_shared,
-        residual_shared=config.residual_shared,
+        encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
     )
     model.eval()  # Set model to evaluation mode
@@ -409,8 +404,7 @@ def test_model_configure_optimizers(model_config_mixed_tasks):
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
-        norm_shared=config.norm_shared,
-        residual_shared=config.residual_shared,
+        encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
     )
 
@@ -575,8 +569,7 @@ def test_trainer_integration_mixed_tasks(model_config_mixed_tasks, dummy_compoun
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
-        norm_shared=config.norm_shared,
-        residual_shared=config.residual_shared,
+        encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
     )
 
@@ -682,8 +675,7 @@ def test_model_predict_step_specific_tasks(model_config_mixed_tasks, sample_batc
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
-        norm_shared=config.norm_shared,
-        residual_shared=config.residual_shared,
+        encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
     )
     model.eval()
@@ -752,8 +744,7 @@ def test_model_registered_tasks_info_property(model_config_mixed_tasks):
     model = FlexibleMultiTaskModel(
         shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
-        norm_shared=config.norm_shared,
-        residual_shared=config.residual_shared,
+        encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
     )
 

@@ -63,12 +63,14 @@ graph TD
     subgraph FoundationEncoderModule["FoundationEncoder (self.encoder)"]
         direction TB
 
-        FormulaEncoder["Formula Encoder (MLP)<br/>(self.encoder.shared)<br/>shared_block_dims"]
+        FormulaEncoder["Configurable Shared Encoder<br/>(MLP or Transformer)<br/>(self.encoder.shared)"]
+        Aggregation["Token Aggregation<br/>([CLS] or Mean Pool)"]
         DepositBlock["Deposit Block (Linear + Tanh)<br/>(self.encoder.deposit)<br/>D_latent → D_deposit"]
 
         X_formula --> FormulaEncoder
-        FormulaEncoder -- "h_latent (B, D_latent)" --> DepositBlock
-        FormulaEncoder -.-> H_Latent_Output_Point["h_latent"]
+        FormulaEncoder -- "Token embeddings (B, L, D_model)" --> Aggregation
+        Aggregation -- "h_latent (B, D_latent)" --> DepositBlock
+        Aggregation -.-> H_Latent_Output_Point["h_latent"]
         H_Latent_Output_Point --> DepositBlock
     end
 
@@ -123,7 +125,7 @@ graph TD
     %% ---------- Class assignments ----------
     class Legend_B,Legend_L,Legend_D legend_style
     class X_formula,X_structure,Task_Sequence_Data_Batch input
-    class F_Encoder,S_Encoder,DepositBlock foundation
+    class FormulaEncoder,Aggregation,DepositBlock foundation
     class Fusion fusion
     class H_Latent_Output_Point point
     class AttrTaskHeadsJunction,SeqTaskHeadsJunction junction
@@ -140,17 +142,16 @@ The model can accept several types of inputs:
 -   **`task_sequence_data_batch`** (Optional): A dictionary where keys are sequence task names and values are tensors representing sequence input data (e.g., temperatures, time steps) for those tasks. Shape of each tensor: `(BatchSize, SequenceLength, NumFeaturesPerPoint)` (typically `(B,L,1)`).
 
 ### 2. Foundation Encoder (`self.encoder`)
-This is the core shared part of the model. It processes formula descriptors through a feed-forward network and produces task-ready representations.
+This is the core shared part of the model. It processes formula descriptors with a configurable backbone and produces task-ready representations. The behavior is driven by `encoder_config`, which declares its mode with the `EncoderType` enum (`encoder_config.type`) defined in `model_config.py`.
 
--   **`shared` (MLP Block)**: Processes `x_formula`.
-    -   Input: `x_formula` (Dimension `D_in_formula`, which is `shared_block_dims[0]`).
-    -   Hidden Layers: Defined by `shared_block_dims[1:-1]`.
-    -   Output: `h_latent` (Latent representation, dimension `shared_block_dims[-1]`).
+-   **`shared` (Configurable Backbone)**: Projects `x_formula` into a latent space.
+    -   **MLP Mode** (`MLPEncoderConfig`): Applies the feed-forward stack defined by `hidden_dims`, optional normalization, and residual settings. The final hidden size becomes `latent_dim`.
+    -   **Transformer Mode** (`TransformerEncoderConfig`): Treats each scalar feature as a token, learns per-token embeddings, and runs a stack of Transformer encoder blocks. Token outputs are aggregated through either a learnable `[CLS]` token or mean pooling depending on `use_cls_token`. The aggregated representation becomes `h_latent`.
 -   **`deposit` (Linear + Tanh)**: Processes `h_latent`.
-    -   Input: `h_latent` (Dimension `shared_block_dims[-1]`).
-    -   Output: `h_task` (Task-specific input representation, dimension `D_deposit`). `D_deposit` is typically the input dimension expected by the first non-sequence task head.
+    -   Input: `h_latent` (dimension defined by the chosen encoder’s `latent_dim`).
+    -   Output: `h_task` (task-specific input representation, dimension `D_deposit`). `D_deposit` is typically the input dimension expected by the first non-sequence task head.
 
-The output `h_task` (from the `deposit` layer) serves as the primary contextual input for ALL task heads (Attribute, Classification, and Sequence). The `h_latent` representation is the intermediate output within the `FoundationEncoder` before the `deposit` layer.
+The output `h_task` (from the `deposit` layer) serves as the primary contextual input for ALL task heads (Attribute, Classification, and Sequence). The `h_latent` representation is the intermediate output within the `FoundationEncoder` before the `deposit` layer, whether it originates from the final MLP layer or the Transformer aggregation.
 
 ### 3. Task Heads (`self.task_heads`)
 This is an `nn.ModuleDict` containing individual prediction heads for each configured task.
