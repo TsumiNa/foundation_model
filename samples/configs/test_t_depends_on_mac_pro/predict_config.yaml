@@ -165,8 +165,11 @@ model:
       patience: 50
       min_lr: 1.0e-03
       monitor: val_final_loss
-    norm_shared: true
-    residual_shared: false
+    encoder_config:
+      type: mlp
+      hidden_dims: [128]
+      norm: true
+      residual: false
 
 data:
   class_path: foundation_model.data.CompoundDataModule

@@ -1,5 +1,11 @@
 # Recent Updates
 
+### 2025-11-06
+- **Encoder configuration refactor**:
+  - Added `EncoderType`, `BaseEncoderConfig`, and concrete `MLPEncoderConfig` / `TransformerEncoderConfig` dataclasses for declarative encoder selection.
+  - Updated `FoundationEncoder` and `FlexibleMultiTaskModel` to consume the unified `encoder_config`, covering `[CLS]` and mean-pooling aggregation options.
+  - Refreshed `ARCHITECTURE.md`, `README.md`, and sample configs to document how transformer tokens propagate gradients and how to choose between encoder backbones.
+
 ### 2025-05-14
 - **Component cleanup**:
   - Removed obsolete `GatedFusion`, `LoRAAdapter`, and `StructureEncoder` modules from the components package.

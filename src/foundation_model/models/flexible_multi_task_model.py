@@ -16,7 +16,8 @@ Tensor shape legend (used across all docstrings):
 
 from __future__ import annotations
 
-from typing import List, Optional, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any, List, Optional
 
 import lightning as L
 import numpy as np
@@ -30,11 +31,14 @@ from torch.optim.lr_scheduler import LRScheduler  # Changed from _LRScheduler
 
 from .components.foundation_encoder import FoundationEncoder
 from .model_config import (
+    BaseEncoderConfig,
     ClassificationTaskConfig,
     KernelRegressionTaskConfig,
+    MLPEncoderConfig,
     OptimizerConfig,
     RegressionTaskConfig,
     TaskType,
+    build_encoder_config,
 )
 from .task_head.classification import ClassificationHead
 from .task_head.kernel_regression import KernelRegressionHead
@@ -73,18 +77,18 @@ class FlexibleMultiTaskModel(L.LightningModule):
     Parameters
     ----------
     shared_block_dims : list[int]
-        Widths of shared MLP layers (foundation encoder). The first element is the input dimension,
-        and the last element is the latent representation dimension.
-        Example: [128, 256, 512, 256] represents a 3-layer MLP with input dimension 128 and latent dimension 256.
+        Legacy specification of encoder dimensions. The first element is the input feature dimension.
+        The remaining values seed the default ``MLPEncoderConfig`` (hidden layer widths) and provide the
+        fallback latent dimension used when ``encoder_config`` is omitted. Example: ``[128, 256, 512]``
+        produces a 2-layer MLP with latent size ``512`` by default.
     task_configs : list[RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig]
         List of task configurations, each defining a prediction task. Each configuration must specify
         task type, name, dimensions, etc. Regression and classification task heads receive the deposit
         layer output, while KernelRegression task heads receive both deposit layer output and sequence points.
         A task-specific `loss_weight` (defaults to 1.0) can be set in each configuration to scale its loss.
-    norm_shared : bool
-        Whether to apply layer normalization in shared layers.
-    residual_shared : bool
-        Whether to use residual connections in shared layers.
+    encoder_config : BaseEncoderConfig | Mapping[str, Any] | None
+        Configuration controlling the foundation encoder backbone. When omitted,
+        an ``MLPEncoderConfig`` is created from ``shared_block_dims[1:]``.
     shared_block_optimizer : OptimizerConfig | None
         Optimizer configuration for the shared foundation encoder and deposit layer.
     enable_learnable_loss_balancer : bool
@@ -96,9 +100,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
         shared_block_dims: list[int],
         task_configs: Sequence[RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig],
         *,
-        # Normalization/residual options
-        norm_shared: bool = True,
-        residual_shared: bool = False,
+        # Encoder selection
+        encoder_config: BaseEncoderConfig | Mapping[str, Any] | None = None,
         # Freezing parameters
         freeze_shared_encoder: bool = False,
         # Optimization parameters
@@ -122,16 +125,25 @@ class FlexibleMultiTaskModel(L.LightningModule):
             raise ValueError("At least one task configuration must be provided")
 
         # Store configuration parameters
-        self.shared_block_dims = shared_block_dims
-        self.deposit_dim = self.shared_block_dims[-1]  # Define deposit_dim consistently
+        self.shared_block_dims = list(shared_block_dims)
+        default_hidden_dims = self.shared_block_dims[1:]
+        self.encoder_config = build_encoder_config(
+            encoder_config,
+            default_hidden_dims=default_hidden_dims,
+            default_latent_dim=default_hidden_dims[-1],
+        )
+
+        if isinstance(self.encoder_config, MLPEncoderConfig):
+            realized_dims = [self.shared_block_dims[0], *self.encoder_config.hidden_dims]
+        else:
+            realized_dims = [self.shared_block_dims[0], self.encoder_config.latent_dim]
+
+        self.shared_block_dims = realized_dims
+        self.deposit_dim = self.encoder_config.latent_dim
         self.task_configs = task_configs
         self.task_configs_map = {cfg.name: cfg for cfg in self.task_configs}
         for cfg in self.task_configs:
             cfg.loss_weight = self._normalize_loss_weight(getattr(cfg, "loss_weight", 1.0), cfg.name)
-
-        # Normalization/residual options
-        self.norm_shared = norm_shared
-        self.residual_shared = residual_shared
 
         # Freezing parameters
         self.freeze_shared_encoder = freeze_shared_encoder
@@ -184,10 +196,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         self.encoder = FoundationEncoder(
             input_dim=self.shared_block_dims[0],
-            hidden_dims=self.shared_block_dims[1:],
+            encoder_config=self.encoder_config,
             deposit_dim=self.deposit_dim,
-            norm=self.norm_shared,
-            residual=self.residual_shared,
         )
 
         # Keep references to original components for backward compatibility

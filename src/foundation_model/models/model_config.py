@@ -5,17 +5,139 @@
 Configuration classes for the foundation model.
 """
 
-from dataclasses import dataclass, field  # Import field
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Literal, Optional, Tuple
+from typing import Any, List, Literal, Mapping, Optional, Sequence, Tuple
 
 
-class TaskType(str, Enum):  # Inherit from str
+class TaskType(str, Enum):
     """Types of tasks supported by the model."""
 
     REGRESSION = "REGRESSION"
     CLASSIFICATION = "CLASSIFICATION"
     KERNEL_REGRESSION = "KernelRegression"
+
+
+class EncoderType(str, Enum):
+    """Available foundation encoder backbones."""
+
+    MLP = "mlp"
+    TRANSFORMER = "transformer"
+
+
+@dataclass
+class BaseEncoderConfig:
+    """Base class for encoder configuration objects."""
+
+    type: EncoderType
+
+    def __post_init__(self) -> None:  # pragma: no cover - simple normalization
+        if not isinstance(self.type, EncoderType):
+            self.type = EncoderType(str(self.type).lower())
+
+    @property
+    def latent_dim(self) -> int:
+        """Return the latent dimension produced by the encoder."""
+
+        raise NotImplementedError("Subclasses must define a latent_dim property")
+
+
+@dataclass
+class MLPEncoderConfig(BaseEncoderConfig):
+    """Configuration for the MLP foundation encoder."""
+
+    hidden_dims: Sequence[int]
+    norm: bool = True
+    residual: bool = False
+    type: EncoderType = EncoderType.MLP
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not self.hidden_dims:
+            raise ValueError("MLPEncoderConfig.hidden_dims must contain at least one dimension")
+        self.hidden_dims = tuple(int(dim) for dim in self.hidden_dims)
+
+    @property
+    def latent_dim(self) -> int:
+        return int(self.hidden_dims[-1])
+
+
+@dataclass
+class TransformerEncoderConfig(BaseEncoderConfig):
+    """Configuration for the transformer foundation encoder.
+
+    ``use_cls_token`` determines how the encoder aggregates feature tokens
+    before passing them into the deposit layer: enabling it selects the
+    contextualised ``[CLS]`` embedding, while disabling it applies mean pooling
+    over all tokens. In both cases gradients still reach every feature token via
+    the self-attention blocks.
+    """
+
+    d_model: int
+    num_layers: int = 2
+    nhead: int = 4
+    dim_feedforward: int | None = None
+    dropout: float = 0.1
+    use_cls_token: bool = True
+    apply_layer_norm: bool = True
+    type: EncoderType = EncoderType.TRANSFORMER
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.d_model <= 0:
+            raise ValueError("TransformerEncoderConfig.d_model must be positive")
+        if self.num_layers <= 0:
+            raise ValueError("TransformerEncoderConfig.num_layers must be positive")
+        if self.nhead <= 0:
+            raise ValueError("TransformerEncoderConfig.nhead must be positive")
+        if self.dim_feedforward is not None and self.dim_feedforward <= 0:
+            raise ValueError("TransformerEncoderConfig.dim_feedforward must be positive when provided")
+
+    @property
+    def latent_dim(self) -> int:
+        return int(self.d_model)
+
+
+EncoderConfig = MLPEncoderConfig | TransformerEncoderConfig
+
+
+def build_encoder_config(
+    config: BaseEncoderConfig | Mapping[str, Any] | None,
+    *,
+    default_hidden_dims: Sequence[int],
+    default_latent_dim: int,
+) -> EncoderConfig:
+    """Normalize encoder configuration inputs to dataclass instances."""
+
+    if not default_hidden_dims:
+        raise ValueError("default_hidden_dims must contain at least one value")
+
+    if config is None:
+        return MLPEncoderConfig(hidden_dims=default_hidden_dims)
+
+    if isinstance(config, BaseEncoderConfig):
+        return config
+
+    if not isinstance(config, Mapping):
+        raise TypeError(
+            "encoder_config must be a BaseEncoderConfig, mapping, or None; "
+            f"received {type(config).__name__}"
+        )
+
+    config_dict = dict(config)
+    config_type = config_dict.pop("type", EncoderType.MLP)
+    if not isinstance(config_type, EncoderType):
+        config_type = EncoderType(str(config_type).lower())
+
+    if config_type is EncoderType.MLP:
+        hidden_dims = config_dict.pop("hidden_dims", default_hidden_dims)
+        return MLPEncoderConfig(hidden_dims=hidden_dims, **config_dict)
+
+    if config_type is EncoderType.TRANSFORMER:
+        d_model = config_dict.pop("d_model", default_latent_dim)
+        return TransformerEncoderConfig(d_model=d_model, **config_dict)
+
+    raise ValueError(f"Unsupported encoder type: {config_type}")
 
 
 @dataclass

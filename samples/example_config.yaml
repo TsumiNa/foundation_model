@@ -19,8 +19,11 @@ model:
       [256, 512, 256] # Example: [input_dim_formula, hidden1, output_latent_dim]
       # The input_dim_formula (first element) should match the
       # feature dimension of your formula_desc_source.
-    norm_shared: True
-    residual_shared: false
+    encoder_config:
+      type: mlp
+      hidden_dims: [512, 256]
+      norm: true
+      residual: false
 
     # --- Task Configurations ---
     # These tasks will be passed to both the model and the datamodule.
