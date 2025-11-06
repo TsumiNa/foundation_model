@@ -672,29 +672,31 @@ class TestDataModuleDistributedMode:
 
         with patch("torch.distributed.is_available", return_value=True):
             with patch("torch.distributed.is_initialized", return_value=True):
-                dm = CompoundDataModule(
-                    formula_desc_source=base_formula_df,
-                    attributes_source=attributes_df_full_match,
-                    task_configs=[
-                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-                    ],
-                    batch_size=4,
-                    num_workers=0,
-                    val_split=0.2,
-                    test_split=0.2,
-                    random_seed=42,
-                )
+                with patch("torch.distributed.get_rank", return_value=0):
+                    with patch("torch.distributed.get_world_size", return_value=2):
+                        dm = CompoundDataModule(
+                            formula_desc_source=base_formula_df,
+                            attributes_source=attributes_df_full_match,
+                            task_configs=[
+                                RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+                            ],
+                            batch_size=4,
+                            num_workers=0,
+                            val_split=0.2,
+                            test_split=0.2,
+                            random_seed=42,
+                        )
 
-                dm.setup(stage="fit")
-                val_loader = dm.val_dataloader()
+                        dm.setup(stage="fit")
+                        val_loader = dm.val_dataloader()
 
-                assert val_loader.sampler is not None
-                assert isinstance(val_loader.sampler, DistributedSampler)
+                        assert val_loader.sampler is not None
+                        assert isinstance(val_loader.sampler, DistributedSampler)
 
-                # Verify sampler settings for validation
-                sampler = val_loader.sampler
-                assert sampler.shuffle is False, "Validation sampler should not shuffle"
-                assert sampler.drop_last is False, "Should keep all samples"
+                        # Verify sampler settings for validation
+                        sampler = val_loader.sampler
+                        assert sampler.shuffle is False, "Validation sampler should not shuffle"
+                        assert sampler.drop_last is False, "Should keep all samples"
 
     def test_test_dataloader_uses_distributed_sampler(self, base_formula_df, attributes_df_full_match):
         """Test that test_dataloader uses DistributedSampler in multi-GPU mode."""
@@ -703,29 +705,31 @@ class TestDataModuleDistributedMode:
 
         with patch("torch.distributed.is_available", return_value=True):
             with patch("torch.distributed.is_initialized", return_value=True):
-                dm = CompoundDataModule(
-                    formula_desc_source=base_formula_df,
-                    attributes_source=attributes_df_full_match,
-                    task_configs=[
-                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-                    ],
-                    batch_size=4,
-                    num_workers=0,
-                    val_split=0.2,
-                    test_split=0.2,
-                    random_seed=42,
-                )
+                with patch("torch.distributed.get_rank", return_value=0):
+                    with patch("torch.distributed.get_world_size", return_value=2):
+                        dm = CompoundDataModule(
+                            formula_desc_source=base_formula_df,
+                            attributes_source=attributes_df_full_match,
+                            task_configs=[
+                                RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+                            ],
+                            batch_size=4,
+                            num_workers=0,
+                            val_split=0.2,
+                            test_split=0.2,
+                            random_seed=42,
+                        )
 
-                dm.setup(stage="test")
-                test_loader = dm.test_dataloader()
+                        dm.setup(stage="test")
+                        test_loader = dm.test_dataloader()
 
-                assert test_loader.sampler is not None
-                assert isinstance(test_loader.sampler, DistributedSampler)
+                        assert test_loader.sampler is not None
+                        assert isinstance(test_loader.sampler, DistributedSampler)
 
-                # Verify sampler settings for test
-                sampler = test_loader.sampler
-                assert sampler.shuffle is False, "Test sampler should not shuffle"
-                assert sampler.drop_last is False, "Should keep all samples"
+                        # Verify sampler settings for test
+                        sampler = test_loader.sampler
+                        assert sampler.shuffle is False, "Test sampler should not shuffle"
+                        assert sampler.drop_last is False, "Should keep all samples"
 
     def test_predict_dataloader_uses_distributed_sampler(self, base_formula_df, attributes_df_full_match):
         """Test that predict_dataloader uses DistributedSampler in multi-GPU mode."""
