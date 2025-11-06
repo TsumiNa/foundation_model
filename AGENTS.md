@@ -19,8 +19,10 @@
 - Module and file names stay snake_case; classes use CapWords (`KernelRegressionHead`), functions snake_case, constants UPPER_SNAKE.
 
 ## Testing Guidelines
-- Tests rely on `pytest` with benchmark plugins; name files `test_*.py` and functions `test_*`.
-- Include targeted unit tests near the feature (`test_kernel_regression_refactor.py`) and integration flows when touching the trainer or data pathways.
+- Tests rely on `pytest` with benchmark plugins; name test functions `test_*`.
+- **Unit tests**: Place alongside the code being tested with naming pattern `<module_name>_test.py` (e.g., `datamodule_test.py` for `datamodule.py`, `dynamic_task_suite_test.py` for `dynamic_task_suite.py`). This co-location makes tests easy to discover and maintain.
+- **Integration tests**: Keep at repo root as `test_*.py` (e.g., `test_integration_kernel_regression.py`, `test_single_gpu_prediction.py`) for quick discovery of cross-module workflows.
+- Include targeted unit tests when adding or modifying features; write integration tests when touching the trainer or data pathways.
 - Run `pytest` before submitting; for long-running suites, at least execute the affected module tests and document any skips.
 
 ## Commit & Pull Request Guidelines
