@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+
 try:  # pragma: no cover - optional distributed import
     import torch.distributed as dist
 except Exception:  # noqa: BLE001 - broad to cover ImportError/RuntimeError
@@ -433,7 +434,7 @@ class DynamicTaskSuiteRunner:
 
         trainer.fit(model, datamodule=datamodule)
         best_path = checkpoint_cb.best_model_path
-        fm_logger.info("Stage %s finished; best checkpoint: %s", stage_name, best_path or "<none>")
+        fm_logger.info(f"Stage {stage_name} finished; best checkpoint: {best_path or '<none>'}")
         if best_path:
             state = torch.load(best_path, map_location="cpu", weights_only=True)
             state_dict = state.get("state_dict", state)
@@ -512,9 +513,7 @@ class DynamicTaskSuiteRunner:
         predictions_path = output_dir / "predictions.parquet"
         task_order_path = output_dir / "tasks.txt"
 
-        is_distributed = (
-            dist is not None and dist.is_available() and dist.is_initialized()
-        )
+        is_distributed = dist is not None and dist.is_available() and dist.is_initialized()
         rank = dist.get_rank() if is_distributed else 0
         world_size = dist.get_world_size() if is_distributed else 1
 
@@ -647,7 +646,7 @@ class DynamicTaskSuiteRunner:
             lo = float(np.min([preds.min(), targets.min()]))
             hi = float(np.max([preds.max(), targets.max()]))
             if not np.isfinite(lo) or not np.isfinite(hi):
-                fm_logger.warning("Skipping plot for %s: non-finite range.", name)
+                fm_logger.warning(f"Skipping plot for {name}: non-finite range.")
                 continue
             buffer = 0.05 * (hi - lo) if hi > lo else 0.1
             lo -= buffer
@@ -696,18 +695,14 @@ class DynamicTaskSuiteRunner:
 
         if prediction_rows:
             pd.DataFrame(prediction_rows).to_parquet(predictions_path, index=False)
-            fm_logger.info("Saved predictions to %s", predictions_path)
+            fm_logger.info(f"Saved predictions to {predictions_path}")
 
         with metrics_path.open("w", encoding="utf-8") as handle:
             json.dump(metrics_payload, handle, indent=2)
-        fm_logger.info("Saved metrics to %s", metrics_path)
+        fm_logger.info(f"Saved metrics to {metrics_path}")
 
         model.to(original_device)
         model.train(was_training)
-
-        model.to(original_device)
-        if was_training:
-            model.train()
 
     def _load_datasets(self) -> None:
         config = self.config
@@ -769,10 +764,10 @@ class DynamicTaskSuiteRunner:
         self.finetune_features = finetune_features
         self.finetune_targets = finetune_targets
 
-        fm_logger.info("Pretrain feature matrix: %s", pretrain_features.shape)
-        fm_logger.info("Pretrain target matrix: %s", pretrain_targets.shape)
-        fm_logger.info("Finetune feature matrix: %s", finetune_features.shape)
-        fm_logger.info("Finetune target matrix: %s", finetune_targets.shape)
+        fm_logger.info(f"Pretrain feature matrix: {pretrain_features.shape}")
+        fm_logger.info(f"Pretrain target matrix: {pretrain_targets.shape}")
+        fm_logger.info(f"Finetune feature matrix: {finetune_features.shape}")
+        fm_logger.info(f"Finetune target matrix: {finetune_targets.shape}")
 
     def _load_scalers(self, property_names: Iterable[str]) -> dict[str, Any]:
         if not self.config.use_normalized_targets:
@@ -1258,7 +1253,7 @@ def main() -> None:
     config = parse_arguments()
     runner = DynamicTaskSuiteRunner(config)
     summary_path = runner.run()
-    fm_logger.info("Experiment summary written to %s", summary_path)
+    fm_logger.info(f"Experiment summary written to {summary_path}")
 
 
 if __name__ == "__main__":
