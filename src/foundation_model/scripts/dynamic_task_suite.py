@@ -27,9 +27,26 @@ from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
 from foundation_model.models.model_config import (
     BaseEncoderConfig,
+    ClassificationTaskConfig,
+    KernelRegressionTaskConfig,
+    MLPEncoderConfig,
     OptimizerConfig,
     RegressionTaskConfig,
+    TaskType,
+    TransformerEncoderConfig,
     build_encoder_config,
+)
+
+torch.serialization.add_safe_globals(
+    [
+        RegressionTaskConfig,
+        ClassificationTaskConfig,
+        KernelRegressionTaskConfig,
+        OptimizerConfig,
+        TransformerEncoderConfig,
+        MLPEncoderConfig,
+        TaskType,
+    ]
 )
 
 # Default task configuration mirrors the notebook for discoverability.
@@ -115,9 +132,7 @@ class SuiteConfig:
         if self.task_sequence:
             invalid = sorted(set(self.task_sequence) - set(self.pretrain_tasks))
             if invalid:
-                raise ValueError(
-                    f"task_sequence contains tasks {invalid} not present in the pretrain task list"
-                )
+                raise ValueError(f"task_sequence contains tasks {invalid} not present in the pretrain task list")
         if len(self.shared_block_dims) < 2:
             raise ValueError("shared_block_dims must include input dimension and at least one latent dimension.")
         if self.use_deposit_layer is not None and not isinstance(self.use_deposit_layer, bool):
@@ -863,7 +878,7 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
         "--encoder-config",
         help=(
             "JSON string or path to JSON file describing the foundation encoder "
-            "(e.g. '{\"type\": \"transformer\", \"d_model\": 256, \"nhead\": 8}'). "
+            '(e.g. \'{"type": "transformer", "d_model": 256, "nhead": 8}\'). '
             "Defaults to the legacy MLP when omitted."
         ),
     )
@@ -1056,9 +1071,7 @@ def _load_config_file(config_path: Path) -> Mapping[str, Any]:
             try:
                 import tomli as tomllib  # type: ignore
             except ModuleNotFoundError as exc:
-                raise SystemExit(
-                    "Reading TOML config files requires Python 3.11+ or the 'tomli' package."
-                ) from exc
+                raise SystemExit("Reading TOML config files requires Python 3.11+ or the 'tomli' package.") from exc
         data = tomllib.loads(text)
     else:
         raise SystemExit(f"Unsupported config file extension '{suffix}'. Use a .yaml or .toml file.")
@@ -1160,9 +1173,7 @@ def _normalize_task_masking(values: Any) -> float | Dict[str, float] | None:
     ratios: dict[str, float] = {}
     for item in flattened:
         if "=" not in item:
-            raise ValueError(
-                f"Invalid task_masking_ratios entry '{item}'. Expected float or task=ratio format."
-            )
+            raise ValueError(f"Invalid task_masking_ratios entry '{item}'. Expected float or task=ratio format.")
         task, value = item.split("=", 1)
         ratios[task.strip()] = float(value)
     return ratios
