@@ -28,6 +28,7 @@ from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskM
 from foundation_model.models.model_config import (
     BaseEncoderConfig,
     ClassificationTaskConfig,
+    EncoderType,
     KernelRegressionTaskConfig,
     MLPEncoderConfig,
     OptimizerConfig,
@@ -46,9 +47,9 @@ torch.serialization.add_safe_globals(
         TransformerEncoderConfig,
         MLPEncoderConfig,
         TaskType,
+        EncoderType,
     ]
 )
-
 # Default task configuration mirrors the notebook for discoverability.
 DEFAULT_PRETRAIN_TASKS: list[str] = [
     "density",
@@ -374,7 +375,7 @@ class DynamicTaskSuiteRunner:
                 phase="finetune",
                 run_id=run_idx,
                 stage_num=stage_idx,
-                stage_tasks=list(stage_tasks),
+                stage_tasks=[finetune_name],
                 new_task_name=finetune_name,
                 output_dir=prediction_dir,
             )
