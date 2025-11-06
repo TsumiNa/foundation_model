@@ -633,9 +633,9 @@ class TestDataModuleDistributedMode:
         from unittest.mock import patch
         from torch.utils.data.distributed import DistributedSampler
 
-        # Mock distributed environment as initialized
-        with patch("torch.distributed.is_available", return_value=True):
-            with patch("torch.distributed.is_initialized", return_value=True):
+        # Patch in foundation_model.data.datamodule where torch.distributed is actually used
+        with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
+            with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
                 with patch("torch.distributed.get_rank", return_value=0):
                     with patch("torch.distributed.get_world_size", return_value=2):
                         dm = CompoundDataModule(
@@ -670,8 +670,9 @@ class TestDataModuleDistributedMode:
         from unittest.mock import patch
         from torch.utils.data.distributed import DistributedSampler
 
-        with patch("torch.distributed.is_available", return_value=True):
-            with patch("torch.distributed.is_initialized", return_value=True):
+        # Patch in foundation_model.data.datamodule where torch.distributed is actually used
+        with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
+            with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
                 with patch("torch.distributed.get_rank", return_value=0):
                     with patch("torch.distributed.get_world_size", return_value=2):
                         dm = CompoundDataModule(
@@ -703,8 +704,9 @@ class TestDataModuleDistributedMode:
         from unittest.mock import patch
         from torch.utils.data.distributed import DistributedSampler
 
-        with patch("torch.distributed.is_available", return_value=True):
-            with patch("torch.distributed.is_initialized", return_value=True):
+        # Patch in foundation_model.data.datamodule where torch.distributed is actually used
+        with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
+            with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
                 with patch("torch.distributed.get_rank", return_value=0):
                     with patch("torch.distributed.get_world_size", return_value=2):
                         dm = CompoundDataModule(
@@ -736,8 +738,9 @@ class TestDataModuleDistributedMode:
         from unittest.mock import patch
         from torch.utils.data.distributed import DistributedSampler
 
-        with patch("torch.distributed.is_available", return_value=True):
-            with patch("torch.distributed.is_initialized", return_value=True):
+        # Patch in foundation_model.data.datamodule where torch.distributed is actually used
+        with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
+            with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
                 with patch("torch.distributed.get_rank", return_value=0):
                     with patch("torch.distributed.get_world_size", return_value=2):
                         dm = CompoundDataModule(
@@ -775,26 +778,28 @@ class TestDistributedSamplerDataCoverage:
 
         world_size = 3  # Simulate 3 GPUs
 
-        with patch("torch.distributed.is_available", return_value=True):
-            with patch("torch.distributed.is_initialized", return_value=True):
-                dm = CompoundDataModule(
-                    formula_desc_source=base_formula_df,
-                    attributes_source=attributes_df_full_match,
-                    task_configs=[
-                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-                    ],
-                    batch_size=4,
-                    num_workers=0,
-                    val_split=0.2,
-                    test_split=0.2,
-                    random_seed=42,
-                )
+        # Setup datamodule first (without distributed mode)
+        dm = CompoundDataModule(
+            formula_desc_source=base_formula_df,
+            attributes_source=attributes_df_full_match,
+            task_configs=[
+                RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+            ],
+            batch_size=4,
+            num_workers=0,
+            val_split=0.2,
+            test_split=0.2,
+            random_seed=42,
+        )
 
-                dm.setup(stage="test")
+        dm.setup(stage="test")
 
-                # Simulate getting samplers for different ranks
-                all_indices = []
-                for rank in range(world_size):
+        # Simulate getting samplers for different ranks
+        all_indices = []
+        for rank in range(world_size):
+            # Patch in foundation_model.data.datamodule for each rank
+            with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
+                with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
                     with patch("torch.distributed.get_rank", return_value=rank):
                         with patch("torch.distributed.get_world_size", return_value=world_size):
                             test_loader = dm.test_dataloader()
@@ -804,16 +809,16 @@ class TestDistributedSamplerDataCoverage:
                             indices = list(sampler)
                             all_indices.extend(indices)
 
-                # Remove duplicates (from padding)
-                unique_indices = sorted(set(all_indices))
-                test_dataset_size = len(dm.test_dataset)
+        # Remove duplicates (from padding)
+        unique_indices = sorted(set(all_indices))
+        test_dataset_size = len(dm.test_dataset)
 
-                # Verify all samples are covered
-                assert len(unique_indices) == test_dataset_size, (
-                    f"All {test_dataset_size} samples should be covered, "
-                    f"but only {len(unique_indices)} unique indices found"
-                )
-                assert unique_indices == list(range(test_dataset_size)), "Should cover indices 0 to n-1"
+        # Verify all samples are covered
+        assert len(unique_indices) == test_dataset_size, (
+            f"All {test_dataset_size} samples should be covered, "
+            f"but only {len(unique_indices)} unique indices found"
+        )
+        assert unique_indices == list(range(test_dataset_size)), "Should cover indices 0 to n-1"
 
     def test_no_overlap_between_ranks_except_padding(self, base_formula_df, attributes_df_full_match):
         """Test that different ranks process different data (except for padding)."""
@@ -821,42 +826,44 @@ class TestDistributedSamplerDataCoverage:
 
         world_size = 3
 
-        with patch("torch.distributed.is_available", return_value=True):
-            with patch("torch.distributed.is_initialized", return_value=True):
-                dm = CompoundDataModule(
-                    formula_desc_source=base_formula_df,
-                    attributes_source=attributes_df_full_match,
-                    task_configs=[
-                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-                    ],
-                    batch_size=4,
-                    num_workers=0,
-                    val_split=0.2,
-                    test_split=0.2,
-                    random_seed=42,
-                )
+        # Setup datamodule first (without distributed mode)
+        dm = CompoundDataModule(
+            formula_desc_source=base_formula_df,
+            attributes_source=attributes_df_full_match,
+            task_configs=[
+                RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+            ],
+            batch_size=4,
+            num_workers=0,
+            val_split=0.2,
+            test_split=0.2,
+            random_seed=42,
+        )
 
-                dm.setup(stage="test")
-                test_dataset_size = len(dm.test_dataset)
+        dm.setup(stage="test")
+        test_dataset_size = len(dm.test_dataset)
 
-                rank_indices = {}
-                for rank in range(world_size):
+        rank_indices = {}
+        for rank in range(world_size):
+            # Patch in foundation_model.data.datamodule for each rank
+            with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
+                with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
                     with patch("torch.distributed.get_rank", return_value=rank):
                         with patch("torch.distributed.get_world_size", return_value=world_size):
                             test_loader = dm.test_dataloader()
                             sampler = test_loader.sampler
                             rank_indices[rank] = list(sampler)
 
-                # Check overlap - should only be padding at the end
-                for rank_a in range(world_size):
-                    for rank_b in range(rank_a + 1, world_size):
-                        overlap = set(rank_indices[rank_a]) & set(rank_indices[rank_b])
-                        # Overlap should only occur due to padding
-                        if len(overlap) > 0:
-                            # Verify overlapping indices are due to padding (repeated from beginning)
-                            assert all(
-                                idx < (test_dataset_size % world_size) for idx in overlap
-                            ), "Overlap should only be padding indices"
+        # Check overlap - should only be padding at the end
+        for rank_a in range(world_size):
+            for rank_b in range(rank_a + 1, world_size):
+                overlap = set(rank_indices[rank_a]) & set(rank_indices[rank_b])
+                # Overlap should only occur due to padding
+                if len(overlap) > 0:
+                    # Verify overlapping indices are due to padding (repeated from beginning)
+                    assert all(
+                        idx < (test_dataset_size % world_size) for idx in overlap
+                    ), "Overlap should only be padding indices"
 
     def test_uneven_dataset_distribution(self):
         """Test correct handling when dataset size is not divisible by world_size."""
@@ -868,29 +875,31 @@ class TestDistributedSamplerDataCoverage:
 
         world_size = 3
 
-        with patch("torch.distributed.is_available", return_value=True):
-            with patch("torch.distributed.is_initialized", return_value=True):
-                dm = CompoundDataModule(
-                    formula_desc_source=formula_df,
-                    attributes_source=attr_df,
-                    task_configs=[
-                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-                    ],
-                    batch_size=4,
-                    num_workers=0,
-                    val_split=0.2,
-                    test_split=0.2,
-                    random_seed=42,
-                )
+        # Setup datamodule first (without distributed mode)
+        dm = CompoundDataModule(
+            formula_desc_source=formula_df,
+            attributes_source=attr_df,
+            task_configs=[
+                RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+            ],
+            batch_size=4,
+            num_workers=0,
+            val_split=0.2,
+            test_split=0.2,
+            random_seed=42,
+        )
 
-                dm.setup(stage="test")
-                test_dataset_size = len(dm.test_dataset)
+        dm.setup(stage="test")
+        test_dataset_size = len(dm.test_dataset)
 
-                # Collect indices from all ranks
-                all_indices = []
-                samples_per_rank = []
+        # Collect indices from all ranks
+        all_indices = []
+        samples_per_rank = []
 
-                for rank in range(world_size):
+        for rank in range(world_size):
+            # Patch in foundation_model.data.datamodule for each rank
+            with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
+                with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
                     with patch("torch.distributed.get_rank", return_value=rank):
                         with patch("torch.distributed.get_world_size", return_value=world_size):
                             test_loader = dm.test_dataloader()
@@ -899,14 +908,14 @@ class TestDistributedSamplerDataCoverage:
                             samples_per_rank.append(len(indices))
                             all_indices.extend(indices)
 
-                # Each rank should have equal samples (with padding)
-                assert all(
-                    count == samples_per_rank[0] for count in samples_per_rank
-                ), "All ranks should process equal number of samples (with padding)"
+        # Each rank should have equal samples (with padding)
+        assert all(
+            count == samples_per_rank[0] for count in samples_per_rank
+        ), "All ranks should process equal number of samples (with padding)"
 
-                # After deduplication, should have exactly test_dataset_size samples
-                unique_indices = set(all_indices)
-                assert len(unique_indices) == test_dataset_size, (
-                    f"After deduplication, should have {test_dataset_size} unique samples, "
-                    f"got {len(unique_indices)}"
-                )
+        # After deduplication, should have exactly test_dataset_size samples
+        unique_indices = set(all_indices)
+        assert len(unique_indices) == test_dataset_size, (
+            f"After deduplication, should have {test_dataset_size} unique samples, "
+            f"got {len(unique_indices)}"
+        )
