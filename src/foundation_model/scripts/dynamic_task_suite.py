@@ -526,6 +526,21 @@ class DynamicTaskSuiteRunner:
         if test_loader is None:
             raise RuntimeError(f"{phase} stage {stage_num} has no test dataloader")
 
+        # Get sample indices for this rank (for proper ordering in distributed mode)
+        sampler = test_loader.sampler
+        if sampler is not None and hasattr(sampler, "dataset"):
+            # DistributedSampler case: get the indices this rank will process
+            total_size = len(sampler.dataset)
+            indices_for_rank = list(range(rank, total_size, world_size))
+            # Handle padding: DistributedSampler may add extra samples
+            num_samples = len(sampler)
+            if num_samples > len(indices_for_rank):
+                # Wrap around to fill the padding
+                indices_for_rank.extend(indices_for_rank[: num_samples - len(indices_for_rank)])
+        else:
+            # Non-distributed case: process all samples in order
+            indices_for_rank = list(range(len(test_loader.dataset)))
+
         original_device = next(model.parameters()).device
         was_training = model.training
         model.to(device)
@@ -533,13 +548,17 @@ class DynamicTaskSuiteRunner:
 
         aggregated: dict[str, dict[str, list[float]]] = {}
         prediction_rows: list[dict[str, float | int | str | None]] = []
-        per_task_counts: dict[str, int] = {}
+        global_sample_idx = 0  # Track position in indices_for_rank
 
         with torch.no_grad():
             for batch in test_loader:
                 x, y_dict, mask_dict, t_sequences = batch
                 x = x.to(device)
                 preds = model(x, t_sequences)
+
+                # Determine batch size for index mapping
+                batch_size = x.shape[0]
+                batch_indices = indices_for_rank[global_sample_idx : global_sample_idx + batch_size]
 
                 for name, pred_tensor in preds.items():
                     if name not in y_dict:
@@ -567,20 +586,30 @@ class DynamicTaskSuiteRunner:
                     entry["preds"].extend(pred_np.tolist())
                     entry["targets"].extend(target_np.tolist())
 
-                    start_idx = per_task_counts.get(name, 0)
-                    for offset, (actual_val, pred_val) in enumerate(zip(target_np.tolist(), pred_np.tolist())):
+                    # Assign original dataset indices to predictions
+                    for in_batch_idx, (actual_val, pred_val) in enumerate(
+                        zip(target_np.tolist(), pred_np.tolist())
+                    ):
+                        # Map to original dataset index
+                        if in_batch_idx < len(batch_indices):
+                            dataset_idx = batch_indices[in_batch_idx]
+                        else:
+                            # Fallback for edge cases
+                            dataset_idx = batch_indices[-1] if batch_indices else global_sample_idx + in_batch_idx
+
                         prediction_rows.append(
                             {
                                 "run": run_id,
                                 "phase": phase,
                                 "stage": stage_num,
                                 "task": name,
-                                "sample_index": start_idx + offset,
+                                "dataset_index": dataset_idx,  # Original dataset position
                                 "actual": actual_val,
                                 "predicted": pred_val,
                             }
                         )
-                    per_task_counts[name] = start_idx + len(target_np)
+
+                global_sample_idx += batch_size
 
         payload = {
             "prediction_rows": prediction_rows,
@@ -613,12 +642,32 @@ class DynamicTaskSuiteRunner:
         aggregated = merged_aggregated
 
         if prediction_rows:
-            sample_counters: dict[str, int] = {}
+            # Deduplicate by (task, dataset_index) - keep first occurrence
+            # This handles DistributedSampler padding where samples may be duplicated
+            seen_keys: set[tuple[str, int]] = set()
+            deduplicated_rows: list[dict[str, float | int | str | None]] = []
+
             for row in prediction_rows:
+                task_name = str(row.get("task"))
+                dataset_idx = int(row.get("dataset_index", -1))
+                key = (task_name, dataset_idx)
+
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    deduplicated_rows.append(row)
+
+            # Sort by task name, then by dataset_index to restore original order
+            deduplicated_rows.sort(key=lambda r: (str(r.get("task")), int(r.get("dataset_index", 0))))
+
+            # Assign sequential sample_index per task (for backward compatibility)
+            sample_counters: dict[str, int] = {}
+            for row in deduplicated_rows:
                 task_name = str(row.get("task"))
                 current_index = sample_counters.get(task_name, 0)
                 row["sample_index"] = current_index
                 sample_counters[task_name] = current_index + 1
+
+            prediction_rows = deduplicated_rows
 
         metrics: dict[str, dict[str, float | int | None]] = {}
         for name in stage_tasks:

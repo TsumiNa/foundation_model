@@ -12,6 +12,7 @@ from jsonargparse.typing import Path_fr
 from loguru import logger
 from sklearn.model_selection import train_test_split  # For data splitting
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 
 from foundation_model.models.model_config import (
     ClassificationTaskConfig,
@@ -760,10 +761,26 @@ class CompoundDataModule(L.LightningDataModule):
         # Create custom collate function for KernelRegression tasks
         collate_fn = create_collate_fn_with_task_info(self.task_configs)
 
+        # Detect distributed training environment
+        use_ddp = torch.distributed.is_available() and torch.distributed.is_initialized()
+
+        if use_ddp:
+            # Use DistributedSampler for multi-GPU training
+            sampler = DistributedSampler(
+                self.train_dataset,
+                shuffle=True,
+                drop_last=False,  # Keep all samples
+            )
+            shuffle = False  # shuffle and sampler are mutually exclusive
+        else:
+            sampler = None
+            shuffle = True
+
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
-            shuffle=True,
+            shuffle=shuffle,
+            sampler=sampler,
             num_workers=self.num_workers,
             pin_memory=True,
             collate_fn=collate_fn,
@@ -780,10 +797,24 @@ class CompoundDataModule(L.LightningDataModule):
         # Create custom collate function for KernelRegression tasks
         collate_fn = create_collate_fn_with_task_info(self.task_configs)
 
+        # Detect distributed training environment
+        use_ddp = torch.distributed.is_available() and torch.distributed.is_initialized()
+
+        if use_ddp:
+            # Use DistributedSampler for multi-GPU validation
+            sampler = DistributedSampler(
+                self.val_dataset,
+                shuffle=False,  # Don't shuffle validation data
+                drop_last=False,  # Keep all samples
+            )
+        else:
+            sampler = None
+
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
+            sampler=sampler,
             num_workers=self.num_workers,
             pin_memory=True,
             collate_fn=collate_fn,
@@ -800,10 +831,24 @@ class CompoundDataModule(L.LightningDataModule):
         # Create custom collate function for KernelRegression tasks
         collate_fn = create_collate_fn_with_task_info(self.task_configs)
 
+        # Detect distributed training environment
+        use_ddp = torch.distributed.is_available() and torch.distributed.is_initialized()
+
+        if use_ddp:
+            # Use DistributedSampler for multi-GPU testing
+            sampler = DistributedSampler(
+                self.test_dataset,
+                shuffle=False,  # Don't shuffle test data
+                drop_last=False,  # Keep all samples
+            )
+        else:
+            sampler = None
+
         return DataLoader(
             self.test_dataset,
             batch_size=self.batch_size,
             shuffle=False,
+            sampler=sampler,
             num_workers=self.num_workers,
             pin_memory=True,
             collate_fn=collate_fn,
