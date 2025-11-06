@@ -161,6 +161,10 @@ finetune_tasks = [
 # Optional per-task masking ratios (can also be a float).
 # task_masking_ratios = { density = 0.1, "linear_expansion" = 0.2 }
 
+# Optional dataset subsampling during debugging; uncomment to limit rows loaded.
+# pretrain_sample = 1000
+# finetune_sample = 500
+
 swap_train_val_split = 0.0
 val_split = 0.1
 test_split = 0.1
