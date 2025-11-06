@@ -142,10 +142,6 @@ class _TransformerBackbone(nn.Module):
 
         return self.output_norm(latent)
 
-    def encode_masked(self, x_masked: torch.Tensor) -> torch.Tensor:
-        return self.forward(x_masked)
-
-
 class FoundationEncoder(nn.Module):
     """
     Foundation model encoder providing shared representations for multi-task learning.
@@ -179,6 +175,7 @@ class FoundationEncoder(nn.Module):
             raise ValueError("deposit_dim must be positive when provided")
 
         self.encoder_config = encoder_config
+        self.use_deposit_layer = encoder_config.use_deposit_layer
 
         if isinstance(encoder_config, MLPEncoderConfig):
             hidden_dims = list(encoder_config.hidden_dims)
@@ -209,15 +206,22 @@ class FoundationEncoder(nn.Module):
 
         if deposit_dim is None:
             deposit_dim = latent_dim
+        elif not self.use_deposit_layer and deposit_dim != latent_dim:
+            raise ValueError(
+                "deposit_dim must equal the latent dimension when the deposit layer is disabled"
+            )
 
         self.latent_dim = latent_dim
         self.deposit_dim = deposit_dim
 
         # Deposit layer serves as a buffer between shared encoder and task heads
-        self.deposit = nn.Sequential(
-            nn.Linear(latent_dim, deposit_dim),
-            nn.Tanh(),
-        )
+        if self.use_deposit_layer:
+            self.deposit = nn.Sequential(
+                nn.Linear(latent_dim, deposit_dim),
+                nn.Tanh(),
+            )
+        else:
+            self.deposit = nn.Tanh()
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -240,23 +244,3 @@ class FoundationEncoder(nn.Module):
         task_representation = self.deposit(latent)
 
         return latent, task_representation
-
-    def encode_masked(self, x_masked: torch.Tensor, is_structure: bool = False) -> torch.Tensor:
-        """
-        Encode masked features for self-supervised learning.
-
-        Parameters
-        ----------
-        x_masked : torch.Tensor
-            Masked input features.
-        is_structure : bool
-            Retained for backward compatibility. Ignored in this encoder.
-
-        Returns
-        -------
-        torch.Tensor
-            Encoded representation of masked features.
-        """
-        if hasattr(self.shared, "encode_masked"):
-            return self.shared.encode_masked(x_masked)
-        return self.shared(x_masked)

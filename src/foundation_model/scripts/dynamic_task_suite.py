@@ -76,9 +76,11 @@ class SuiteConfig:
     freeze_shared_encoder: bool = True
     enable_learnable_loss: bool = False
     quiet_model_logging: bool = True
+    use_deposit_layer: bool | None = None
     shared_block_dims: Sequence[int] = (190, 256, 128)
     encoder_config: Mapping[str, Any] | BaseEncoderConfig | None = None
     head_hidden_dim: int = 64
+    head_lr: float | None = None
     num_pretrain_runs: int = 10
     pretrain_max_epochs: int = 200
     finetune_max_epochs: int = 200
@@ -118,6 +120,10 @@ class SuiteConfig:
                 )
         if len(self.shared_block_dims) < 2:
             raise ValueError("shared_block_dims must include input dimension and at least one latent dimension.")
+        if self.use_deposit_layer is not None and not isinstance(self.use_deposit_layer, bool):
+            raise TypeError("use_deposit_layer must be a boolean when provided.")
+        if self.head_lr is not None and self.head_lr <= 0:
+            raise ValueError("head_lr must be positive when provided.")
 
 
 class DynamicTaskSuiteRunner:
@@ -249,8 +255,23 @@ class DynamicTaskSuiteRunner:
         hidden_dims = list(self.config.shared_block_dims[1:])
         if not hidden_dims:
             raise ValueError("shared_block_dims must include at least one latent dimension.")
+        source_config = self.config.encoder_config
+        override = self.config.use_deposit_layer
+        if override is not None:
+            if isinstance(source_config, BaseEncoderConfig):
+                updated_config = copy.deepcopy(source_config)
+                updated_config.use_deposit_layer = override
+                config_payload: BaseEncoderConfig | Mapping[str, Any] | None = updated_config
+            else:
+                mapping_payload: dict[str, Any] = {}
+                if isinstance(source_config, Mapping):
+                    mapping_payload.update(source_config)
+                mapping_payload["use_deposit_layer"] = override
+                config_payload = mapping_payload
+        else:
+            config_payload = source_config
         return build_encoder_config(
-            self.config.encoder_config,
+            config_payload,
             default_hidden_dims=hidden_dims,
             default_latent_dim=hidden_dims[-1],
         )
@@ -438,12 +459,19 @@ class DynamicTaskSuiteRunner:
         )
 
     def _build_regression_task(self, name: str, column: str) -> RegressionTaskConfig:
+        optimizer = None
+        if self.config.head_lr is not None:
+            optimizer = OptimizerConfig(
+                lr=self.config.head_lr,
+                weight_decay=1e-5,
+            )
         return RegressionTaskConfig(
             name=name,
             data_column=column,
             dims=[self.encoder_latent_dim, self.config.head_hidden_dim, 1],
             norm=True,
             residual=False,
+            optimizer=optimizer,
         )
 
     def _plot_predictions(
@@ -743,21 +771,26 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
         description="Run the dynamic pretrain + finetune suite originally prototyped in the notebook.",
     )
     parser.add_argument(
+        "--config-file",
+        type=Path,
+        help="YAML or TOML file containing argument defaults.",
+    )
+    parser.add_argument(
         "--descriptor-path",
         type=Path,
-        required=True,
+        default=None,
         help="Path to the shared descriptor parquet.",
     )
     parser.add_argument(
         "--pretrain-data-path",
         type=Path,
-        required=True,
+        default=None,
         help="Path to the pretraining targets parquet.",
     )
     parser.add_argument(
         "--finetune-data-path",
         type=Path,
-        required=True,
+        default=None,
         help="Path to the finetuning targets parquet.",
     )
     parser.add_argument(
@@ -768,7 +801,7 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        required=True,
+        default=None,
         help="Directory where artifacts will be written.",
     )
 
@@ -836,6 +869,11 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
     )
     parser.add_argument("--head-hidden-dim", type=int, default=64, help="Hidden dimension for task heads.")
     parser.add_argument(
+        "--head-lr",
+        type=float,
+        help="Override learning rate for dynamically constructed regression heads (defaults to model-config behavior).",
+    )
+    parser.add_argument(
         "--disable-normalized-targets",
         action="store_true",
         help="Train on raw targets (scaler not required).",
@@ -861,6 +899,17 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
         dest="quiet_logging",
         action="store_false",
         help="Enable verbose model logging.",
+    )
+    deposit_group = parser.add_mutually_exclusive_group()
+    deposit_group.add_argument(
+        "--disable-deposit-layer",
+        action="store_true",
+        help="Remove the deposit Linear layer and pass shared features through Tanh directly.",
+    )
+    deposit_group.add_argument(
+        "--enable-deposit-layer",
+        action="store_true",
+        help="Force-enable the deposit Linear layer even if a config file disables it.",
     )
     parser.add_argument(
         "--val-split",
@@ -898,13 +947,27 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
         help="Patience parameter for EarlyStopping on validation loss.",
     )
 
+    preliminary, _ = parser.parse_known_args(args=args)
+    config_extras: dict[str, Any] = {}
+    if preliminary.config_file is not None:
+        config_mapping = _load_config_file(preliminary.config_file)
+        config_extras = _apply_config_defaults(parser, config_mapping)
+
     parsed = parser.parse_args(args=args)
+
+    required_fields = ["descriptor_path", "pretrain_data_path", "finetune_data_path", "output_dir"]
+    missing = [field for field in required_fields if getattr(parsed, field) is None]
+    if missing:
+        missing_flags = ", ".join(f"--{field.replace('_', '-')}" for field in missing)
+        raise SystemExit(f"Missing required arguments: {missing_flags}. Provide them via CLI or config file.")
 
     pretrain_tasks = parsed.pretrain_tasks or list(DEFAULT_PRETRAIN_TASKS)
     finetune_tasks = parsed.finetune_tasks or list(DEFAULT_FINETUNE_TASKS)
-    task_masking = _parse_task_masking_arg(parsed.task_masking_ratios)
+    task_masking = _normalize_task_masking(parsed.task_masking_ratios)
     encoder_config_value: Mapping[str, Any] | None = None
-    if parsed.encoder_config:
+    if isinstance(parsed.encoder_config, Mapping):
+        encoder_config_value = parsed.encoder_config
+    elif parsed.encoder_config:
         candidate_path = Path(parsed.encoder_config)
         if candidate_path.exists():
             try:
@@ -923,6 +986,15 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
                         "Failed to parse --encoder-config. Provide a JSON object or path to a JSON file; "
                         f"received: {parsed.encoder_config!r}"
                     ) from None
+    config_deposit_preference = config_extras.get("use_deposit_layer")
+    if parsed.disable_deposit_layer:
+        deposit_override: bool | None = False
+    elif parsed.enable_deposit_layer:
+        deposit_override = True
+    elif isinstance(config_deposit_preference, bool):
+        deposit_override = config_deposit_preference
+    else:
+        deposit_override = None
 
     return SuiteConfig(
         descriptor_path=parsed.descriptor_path,
@@ -935,9 +1007,11 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
         freeze_shared_encoder=parsed.freeze_shared_encoder,
         enable_learnable_loss=parsed.enable_learnable_loss,
         quiet_model_logging=parsed.quiet_logging,
+        use_deposit_layer=deposit_override,
         shared_block_dims=tuple(parsed.shared_block_dims),
         encoder_config=encoder_config_value,
         head_hidden_dim=parsed.head_hidden_dim,
+        head_lr=parsed.head_lr,
         num_pretrain_runs=parsed.num_pretrain_runs,
         pretrain_max_epochs=parsed.pretrain_max_epochs,
         finetune_max_epochs=parsed.finetune_max_epochs,
@@ -962,12 +1036,125 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
     )
 
 
-def _parse_task_masking_arg(values: list[str] | None) -> float | Dict[str, float] | None:
-    if not values:
+def _load_config_file(config_path: Path) -> Mapping[str, Any]:
+    if not config_path.exists():
+        raise SystemExit(f"Config file not found: {config_path}")
+    suffix = config_path.suffix.lower()
+    text = config_path.read_text(encoding="utf-8")
+    if suffix in {".yaml", ".yml"}:
+        try:
+            import yaml  # type: ignore
+        except ModuleNotFoundError as exc:  # pragma: no cover - dependency guard
+            raise SystemExit(
+                "Reading YAML config files requires the 'PyYAML' package. Install it or use TOML instead."
+            ) from exc
+        data = yaml.safe_load(text)
+    elif suffix == ".toml":
+        try:
+            import tomllib  # type: ignore[attr-defined]
+        except ModuleNotFoundError:  # pragma: no cover - Python <3.11 fallback
+            try:
+                import tomli as tomllib  # type: ignore
+            except ModuleNotFoundError as exc:
+                raise SystemExit(
+                    "Reading TOML config files requires Python 3.11+ or the 'tomli' package."
+                ) from exc
+        data = tomllib.loads(text)
+    else:
+        raise SystemExit(f"Unsupported config file extension '{suffix}'. Use a .yaml or .toml file.")
+
+    if data is None:
+        data = {}
+    if not isinstance(data, Mapping):
+        raise SystemExit(f"Top-level structure in {config_path} must be a mapping/object.")
+    return data
+
+
+def _apply_config_defaults(parser: argparse.ArgumentParser, config_mapping: Mapping[str, Any]) -> dict[str, Any]:
+    extras: dict[str, Any] = {}
+    action_by_dest = {
+        action.dest: action
+        for action in parser._actions
+        if action.dest and action.dest != argparse.SUPPRESS  # type: ignore[attr-defined]
+    }
+    defaults: dict[str, Any] = {}
+    for key, value in config_mapping.items():
+        action = action_by_dest.get(key)
+        if action is None:
+            extras[key] = value
+            continue
+        defaults[key] = _coerce_config_value(action, value)
+    if defaults:
+        parser.set_defaults(**defaults)
+    return extras
+
+
+def _coerce_config_value(action: argparse.Action, value: Any) -> Any:
+    if _is_boolean_flag(action):
+        return _to_bool(value)
+
+    if isinstance(action, argparse._AppendAction):
+        items = value if isinstance(value, (list, tuple)) else [value]
+        return [_coerce_scalar_value(action, item) for item in items]
+
+    if action.nargs in ("+", "*"):
+        items = value if isinstance(value, (list, tuple)) else [value]
+        return [_coerce_scalar_value(action, item) for item in items]
+
+    return _coerce_scalar_value(action, value)
+
+
+def _coerce_scalar_value(action: argparse.Action, value: Any) -> Any:
+    converter = getattr(action, "type", None)
+    if converter is None:
+        return value
+    if converter is Path:
+        if isinstance(value, Path):
+            return value
+        return Path(value)
+    try:
+        if isinstance(value, converter):  # type: ignore[arg-type]
+            return value
+    except TypeError:
+        pass
+    return converter(value)
+
+
+def _is_boolean_flag(action: argparse.Action) -> bool:
+    return (
+        action.nargs == 0
+        and isinstance(getattr(action, "const", None), bool)
+        and isinstance(getattr(action, "default", None), bool)
+    )
+
+
+def _to_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _normalize_task_masking(values: Any) -> float | Dict[str, float] | None:
+    if values is None:
         return None
+    if isinstance(values, (float, int)):
+        return float(values)
+    if isinstance(values, Mapping):
+        return {str(k): float(v) for k, v in values.items()}
+    if isinstance(values, str):
+        values = [values]
     flattened: list[str] = []
-    for entry in values:
-        flattened.extend(part for part in entry.split(",") if part)
+    if isinstance(values, Sequence):
+        for entry in values:
+            flattened.extend(part for part in str(entry).split(",") if part)
+    else:
+        raise ValueError(
+            f"Unsupported task_masking_ratios value: {values!r}. Expected float, mapping, or list of strings."
+        )
+    if not flattened:
+        return None
     if len(flattened) == 1 and "=" not in flattened[0]:
         return float(flattened[0])
     ratios: dict[str, float] = {}

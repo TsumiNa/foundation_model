@@ -30,10 +30,13 @@ class BaseEncoderConfig:
     """Base class for encoder configuration objects."""
 
     type: EncoderType
+    use_deposit_layer: bool = True
 
     def __post_init__(self) -> None:  # pragma: no cover - simple normalization
         if not isinstance(self.type, EncoderType):
             self.type = EncoderType(str(self.type).lower())
+        if not isinstance(self.use_deposit_layer, bool):
+            raise TypeError("BaseEncoderConfig.use_deposit_layer must be a boolean value")
 
     @property
     def latent_dim(self) -> int:

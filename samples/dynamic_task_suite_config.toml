@@ -1,0 +1,176 @@
+# Default configuration for running the dynamic task suite.
+# Replace the placeholder paths below with the absolute locations of
+# your descriptor and target parquet files on the HPC system.
+
+descriptor_path = "data/amorphous_polymer_FFDescriptor_20250730.parquet"
+pretrain_data_path = "data/amorphous_polymer_non_PI_properties_20250730.parquet"
+finetune_data_path = "data/amorphous_polymer_PI_properties_20250730.parquet"
+output_dir = "artifacts/polymers_pretrain_finetune_runs"
+
+# Optional: set to the scaler generated during preprocessing.
+scaler_path = "data/amorphous_polymer_properties_scaler_20250730.pkl.z"
+
+# Model and training hyperparameters
+shared_block_dims = [190, 256, 128]
+encoder_config = { type = "mlp" }
+use_deposit_layer = true
+head_hidden_dim = 64
+head_lr = 0.005
+num_pretrain_runs = 50
+pretrain_max_epochs = 1000
+finetune_max_epochs = 1000
+batch_size = 256
+num_workers = 8
+log_every_n_steps = 50
+random_seed_base = 1729
+datamodule_random_seed = 42
+
+# Task configuration
+pretrain_tasks = [
+    'density (normalized)',
+    'Rg (normalized)',
+    'Scaled Rg (normalized)',
+    'r2 (normalized)',
+    'self-diffusion (normalized)',
+    'Cp (normalized)',
+    'Cv (normalized)',
+    'compressibility (normalized)',
+    'bulk_modulus (normalized)',
+    'isentropic_compressibility (normalized)',
+    'isentropic_bulk_modulus (normalized)',
+    'volume_expansion (normalized)',
+    'linear_expansion (normalized)',
+    'static_dielectric_const (normalized)',
+    'dielectric_const_dc (normalized)',
+    'nematic_order_parameter (normalized)',
+    'refractive_index (normalized)',
+    'tg (normalized)',
+    'tg_thermal_expansion_coef(upper_tg) (normalized)',
+    'tg_thermal_expansion_coef(below_tg) (normalized)',
+    'thermal_conductivity (normalized)',
+    'thermal_diffusivity (normalized)',
+    'TC_ke (normalized)',
+    'TC_pe (normalized)',
+    'TC_pair (normalized)',
+    'TC_bond (normalized)',
+    'TC_angle (normalized)',
+    'TC_dihed (normalized)',
+    'TC_improper (normalized)',
+    'TC_kspace (normalized)',
+    'sp_ced (normalized)',
+    'sp_total (normalized)',
+    'sp_vdw (normalized)',
+    'sp_ele (normalized)',
+    'sp_ele_short (normalized)',
+    'sp_ele_long (normalized)',
+    'mol_weight_monomer1 (normalized)',
+    'vdw_volume_monomer1 (normalized)',
+    'qm_total_energy_monomer1 (normalized)',
+    'qm_homo_monomer1 (normalized)',
+    'qm_lumo_monomer1 (normalized)',
+    'qm_dipole_monomer1 (normalized)',
+    'qm_polarizability_monomer1 (normalized)',
+]
+finetune_tasks = [
+    'density (normalized)',
+    'Rg (normalized)',
+    'Scaled Rg (normalized)',
+    'r2 (normalized)',
+    'self-diffusion (normalized)',
+    'Cp (normalized)',
+    'Cv (normalized)',
+    'compressibility (normalized)',
+    'bulk_modulus (normalized)',
+    'isentropic_compressibility (normalized)',
+    'isentropic_bulk_modulus (normalized)',
+    'volume_expansion (normalized)',
+    'linear_expansion (normalized)',
+    'static_dielectric_const (normalized)',
+    'dielectric_const_dc (normalized)',
+    'nematic_order_parameter (normalized)',
+    'refractive_index (normalized)',
+    'tg (normalized)',
+    'tg_thermal_expansion_coef(upper_tg) (normalized)',
+    'tg_thermal_expansion_coef(below_tg) (normalized)',
+    'thermal_conductivity (normalized)',
+    'thermal_diffusivity (normalized)',
+    'TC_ke (normalized)',
+    'TC_pe (normalized)',
+    'TC_pair (normalized)',
+    'TC_bond (normalized)',
+    'TC_angle (normalized)',
+    'TC_dihed (normalized)',
+    'TC_improper (normalized)',
+    'TC_kspace (normalized)',
+    'mol_weight_monomer1 (normalized)',
+    'vdw_volume_monomer1 (normalized)',
+    'qm_total_energy_monomer1 (normalized)',
+    'qm_homo_monomer1 (normalized)',
+    'qm_lumo_monomer1 (normalized)',
+    'qm_dipole_monomer1 (normalized)',
+    'qm_polarizability_monomer1 (normalized)',
+]
+
+# Optional: enforce a deterministic pretrain stage order.
+# task_sequence = [
+#     'density (normalized)',
+#     'Rg (normalized)',
+#     'Scaled Rg (normalized)',
+#     'r2 (normalized)',
+#     'self-diffusion (normalized)',
+#     'Cp (normalized)',
+#     'Cv (normalized)',
+#     'compressibility (normalized)',
+#     'bulk_modulus (normalized)',
+#     'isentropic_compressibility (normalized)',
+#     'isentropic_bulk_modulus (normalized)',
+#     'volume_expansion (normalized)',
+#     'linear_expansion (normalized)',
+#     'static_dielectric_const (normalized)',
+#     'dielectric_const_dc (normalized)',
+#     'nematic_order_parameter (normalized)',
+#     'refractive_index (normalized)',
+#     'tg (normalized)',
+#     'tg_thermal_expansion_coef(upper_tg) (normalized)',
+#     'tg_thermal_expansion_coef(below_tg) (normalized)',
+#     'thermal_conductivity (normalized)',
+#     'thermal_diffusivity (normalized)',
+#     'TC_ke (normalized)',
+#     'TC_pe (normalized)',
+#     'TC_pair (normalized)',
+#     'TC_bond (normalized)',
+#     'TC_angle (normalized)',
+#     'TC_dihed (normalized)',
+#     'TC_improper (normalized)',
+#     'TC_kspace (normalized)',
+#     'sp_ced (normalized)',
+#     'sp_total (normalized)',
+#     'sp_vdw (normalized)',
+#     'sp_ele (normalized)',
+#     'sp_ele_short (normalized)',
+#     'sp_ele_long (normalized)',
+#     'mol_weight_monomer1 (normalized)',
+#     'vdw_volume_monomer1 (normalized)',
+#     'qm_total_energy_monomer1 (normalized)',
+#     'qm_homo_monomer1 (normalized)',
+#     'qm_lumo_monomer1 (normalized)',
+#     'qm_dipole_monomer1 (normalized)',
+#     'qm_polarizability_monomer1 (normalized)',
+# ]
+
+# Optional per-task masking ratios (can also be a float).
+# task_masking_ratios = { density = 0.1, "linear_expansion" = 0.2 }
+
+swap_train_val_split = 0.0
+val_split = 0.1
+test_split = 0.1
+test_all = false
+
+accelerator = "auto"
+devices = "auto"
+early_stopping_patience = 20
+
+# Logging settings
+enable_learnable_loss = true
+freeze_shared_encoder = true
+quiet_model_logging = true
