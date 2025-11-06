@@ -498,3 +498,348 @@ def test_datamodule_empty_dataset_returns_none_dataloader(base_formula_df, sampl
         ), "Expected log for None predict_dataset not found"
     finally:
         loguru_logger.remove(handler_id)  # Clean up the handler
+
+
+# ============================================================================
+# Tests for DistributedSampler support (multi-GPU training)
+# ============================================================================
+
+
+class TestDataModuleSingleGPUMode:
+    """Test DataModule behavior in single GPU/CPU mode (no DistributedSampler)."""
+
+    def test_train_dataloader_no_sampler_single_gpu(self, base_formula_df, attributes_df_full_match):
+        """Test that train_dataloader doesn't use sampler in single GPU mode."""
+        from unittest.mock import patch
+
+        # Mock distributed environment as NOT initialized
+        with patch("torch.distributed.is_available", return_value=False):
+            with patch("torch.distributed.is_initialized", return_value=False):
+                dm = CompoundDataModule(
+                    formula_desc_source=base_formula_df,
+                    attributes_source=attributes_df_full_match,
+                    task_configs=[
+                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+                    ],
+                    batch_size=4,
+                    num_workers=0,
+                    val_split=0.2,
+                    test_split=0.2,
+                    random_seed=42,
+                )
+
+                dm.setup(stage="fit")
+                train_loader = dm.train_dataloader()
+
+                # Verify no DistributedSampler is used
+                # Note: PyTorch DataLoader creates a RandomSampler internally when shuffle=True
+                from torch.utils.data.distributed import DistributedSampler
+
+                assert not isinstance(
+                    train_loader.sampler, DistributedSampler
+                ), "Single GPU should not use DistributedSampler"
+
+    def test_val_dataloader_no_sampler_single_gpu(self, base_formula_df, attributes_df_full_match):
+        """Test that val_dataloader doesn't use sampler in single GPU mode."""
+        from unittest.mock import patch
+
+        with patch("torch.distributed.is_available", return_value=False):
+            with patch("torch.distributed.is_initialized", return_value=False):
+                dm = CompoundDataModule(
+                    formula_desc_source=base_formula_df,
+                    attributes_source=attributes_df_full_match,
+                    task_configs=[
+                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+                    ],
+                    batch_size=4,
+                    num_workers=0,
+                    val_split=0.2,
+                    test_split=0.2,
+                    random_seed=42,
+                )
+
+                dm.setup(stage="fit")
+                val_loader = dm.val_dataloader()
+
+                from torch.utils.data.distributed import DistributedSampler
+
+                assert not isinstance(
+                    val_loader.sampler, DistributedSampler
+                ), "Single GPU validation should not use DistributedSampler"
+
+    def test_test_dataloader_no_sampler_single_gpu(self, base_formula_df, attributes_df_full_match):
+        """Test that test_dataloader doesn't use sampler in single GPU mode."""
+        from unittest.mock import patch
+
+        with patch("torch.distributed.is_available", return_value=False):
+            with patch("torch.distributed.is_initialized", return_value=False):
+                dm = CompoundDataModule(
+                    formula_desc_source=base_formula_df,
+                    attributes_source=attributes_df_full_match,
+                    task_configs=[
+                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+                    ],
+                    batch_size=4,
+                    num_workers=0,
+                    val_split=0.2,
+                    test_split=0.2,
+                    random_seed=42,
+                )
+
+                dm.setup(stage="test")
+                test_loader = dm.test_dataloader()
+
+                from torch.utils.data.distributed import DistributedSampler
+
+                assert not isinstance(
+                    test_loader.sampler, DistributedSampler
+                ), "Single GPU test should not use DistributedSampler"
+
+
+class TestDataModuleDistributedMode:
+    """Test DataModule behavior in distributed (multi-GPU) mode."""
+
+    def test_train_dataloader_uses_distributed_sampler(self, base_formula_df, attributes_df_full_match):
+        """Test that train_dataloader uses DistributedSampler in multi-GPU mode."""
+        from unittest.mock import patch
+        from torch.utils.data.distributed import DistributedSampler
+
+        # Mock distributed environment as initialized
+        with patch("torch.distributed.is_available", return_value=True):
+            with patch("torch.distributed.is_initialized", return_value=True):
+                with patch("torch.distributed.get_rank", return_value=0):
+                    with patch("torch.distributed.get_world_size", return_value=2):
+                        dm = CompoundDataModule(
+                            formula_desc_source=base_formula_df,
+                            attributes_source=attributes_df_full_match,
+                            task_configs=[
+                                RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+                            ],
+                            batch_size=4,
+                            num_workers=0,
+                            val_split=0.2,
+                            test_split=0.2,
+                            random_seed=42,
+                        )
+
+                        dm.setup(stage="fit")
+                        train_loader = dm.train_dataloader()
+
+                        # Verify DistributedSampler is used
+                        assert train_loader.sampler is not None, "Multi-GPU should use sampler"
+                        assert isinstance(
+                            train_loader.sampler, DistributedSampler
+                        ), "Should use DistributedSampler in multi-GPU mode"
+
+                        # Verify sampler settings
+                        sampler = train_loader.sampler
+                        assert sampler.shuffle is True, "Training sampler should shuffle"
+                        assert sampler.drop_last is False, "Should keep all samples (drop_last=False)"
+
+    def test_val_dataloader_uses_distributed_sampler(self, base_formula_df, attributes_df_full_match):
+        """Test that val_dataloader uses DistributedSampler in multi-GPU mode."""
+        from unittest.mock import patch
+        from torch.utils.data.distributed import DistributedSampler
+
+        with patch("torch.distributed.is_available", return_value=True):
+            with patch("torch.distributed.is_initialized", return_value=True):
+                dm = CompoundDataModule(
+                    formula_desc_source=base_formula_df,
+                    attributes_source=attributes_df_full_match,
+                    task_configs=[
+                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+                    ],
+                    batch_size=4,
+                    num_workers=0,
+                    val_split=0.2,
+                    test_split=0.2,
+                    random_seed=42,
+                )
+
+                dm.setup(stage="fit")
+                val_loader = dm.val_dataloader()
+
+                assert val_loader.sampler is not None
+                assert isinstance(val_loader.sampler, DistributedSampler)
+
+                # Verify sampler settings for validation
+                sampler = val_loader.sampler
+                assert sampler.shuffle is False, "Validation sampler should not shuffle"
+                assert sampler.drop_last is False, "Should keep all samples"
+
+    def test_test_dataloader_uses_distributed_sampler(self, base_formula_df, attributes_df_full_match):
+        """Test that test_dataloader uses DistributedSampler in multi-GPU mode."""
+        from unittest.mock import patch
+        from torch.utils.data.distributed import DistributedSampler
+
+        with patch("torch.distributed.is_available", return_value=True):
+            with patch("torch.distributed.is_initialized", return_value=True):
+                dm = CompoundDataModule(
+                    formula_desc_source=base_formula_df,
+                    attributes_source=attributes_df_full_match,
+                    task_configs=[
+                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+                    ],
+                    batch_size=4,
+                    num_workers=0,
+                    val_split=0.2,
+                    test_split=0.2,
+                    random_seed=42,
+                )
+
+                dm.setup(stage="test")
+                test_loader = dm.test_dataloader()
+
+                assert test_loader.sampler is not None
+                assert isinstance(test_loader.sampler, DistributedSampler)
+
+                # Verify sampler settings for test
+                sampler = test_loader.sampler
+                assert sampler.shuffle is False, "Test sampler should not shuffle"
+                assert sampler.drop_last is False, "Should keep all samples"
+
+
+class TestDistributedSamplerDataCoverage:
+    """Test that DistributedSampler covers all data correctly across ranks."""
+
+    def test_all_samples_covered_across_ranks(self, base_formula_df, attributes_df_full_match):
+        """Test that all samples are covered when combining all ranks."""
+        from unittest.mock import patch
+
+        world_size = 3  # Simulate 3 GPUs
+
+        with patch("torch.distributed.is_available", return_value=True):
+            with patch("torch.distributed.is_initialized", return_value=True):
+                dm = CompoundDataModule(
+                    formula_desc_source=base_formula_df,
+                    attributes_source=attributes_df_full_match,
+                    task_configs=[
+                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+                    ],
+                    batch_size=4,
+                    num_workers=0,
+                    val_split=0.2,
+                    test_split=0.2,
+                    random_seed=42,
+                )
+
+                dm.setup(stage="test")
+
+                # Simulate getting samplers for different ranks
+                all_indices = []
+                for rank in range(world_size):
+                    with patch("torch.distributed.get_rank", return_value=rank):
+                        with patch("torch.distributed.get_world_size", return_value=world_size):
+                            test_loader = dm.test_dataloader()
+                            sampler = test_loader.sampler
+
+                            # Get indices for this rank
+                            indices = list(sampler)
+                            all_indices.extend(indices)
+
+                # Remove duplicates (from padding)
+                unique_indices = sorted(set(all_indices))
+                test_dataset_size = len(dm.test_dataset)
+
+                # Verify all samples are covered
+                assert len(unique_indices) == test_dataset_size, (
+                    f"All {test_dataset_size} samples should be covered, "
+                    f"but only {len(unique_indices)} unique indices found"
+                )
+                assert unique_indices == list(range(test_dataset_size)), "Should cover indices 0 to n-1"
+
+    def test_no_overlap_between_ranks_except_padding(self, base_formula_df, attributes_df_full_match):
+        """Test that different ranks process different data (except for padding)."""
+        from unittest.mock import patch
+
+        world_size = 3
+
+        with patch("torch.distributed.is_available", return_value=True):
+            with patch("torch.distributed.is_initialized", return_value=True):
+                dm = CompoundDataModule(
+                    formula_desc_source=base_formula_df,
+                    attributes_source=attributes_df_full_match,
+                    task_configs=[
+                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+                    ],
+                    batch_size=4,
+                    num_workers=0,
+                    val_split=0.2,
+                    test_split=0.2,
+                    random_seed=42,
+                )
+
+                dm.setup(stage="test")
+                test_dataset_size = len(dm.test_dataset)
+
+                rank_indices = {}
+                for rank in range(world_size):
+                    with patch("torch.distributed.get_rank", return_value=rank):
+                        with patch("torch.distributed.get_world_size", return_value=world_size):
+                            test_loader = dm.test_dataloader()
+                            sampler = test_loader.sampler
+                            rank_indices[rank] = list(sampler)
+
+                # Check overlap - should only be padding at the end
+                for rank_a in range(world_size):
+                    for rank_b in range(rank_a + 1, world_size):
+                        overlap = set(rank_indices[rank_a]) & set(rank_indices[rank_b])
+                        # Overlap should only occur due to padding
+                        if len(overlap) > 0:
+                            # Verify overlapping indices are due to padding (repeated from beginning)
+                            assert all(
+                                idx < (test_dataset_size % world_size) for idx in overlap
+                            ), "Overlap should only be padding indices"
+
+    def test_uneven_dataset_distribution(self):
+        """Test correct handling when dataset size is not divisible by world_size."""
+        from unittest.mock import patch
+
+        # Create data with 17 samples (17 % 3 = 2, so 2 samples will be padded)
+        formula_df = pd.DataFrame({"f1": np.random.rand(17), "f2": np.random.rand(17)}, index=[f"s{i}" for i in range(17)])
+        attr_df = pd.DataFrame({"r1": np.random.rand(17)}, index=[f"s{i}" for i in range(17)])
+
+        world_size = 3
+
+        with patch("torch.distributed.is_available", return_value=True):
+            with patch("torch.distributed.is_initialized", return_value=True):
+                dm = CompoundDataModule(
+                    formula_desc_source=formula_df,
+                    attributes_source=attr_df,
+                    task_configs=[
+                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+                    ],
+                    batch_size=4,
+                    num_workers=0,
+                    val_split=0.2,
+                    test_split=0.2,
+                    random_seed=42,
+                )
+
+                dm.setup(stage="test")
+                test_dataset_size = len(dm.test_dataset)
+
+                # Collect indices from all ranks
+                all_indices = []
+                samples_per_rank = []
+
+                for rank in range(world_size):
+                    with patch("torch.distributed.get_rank", return_value=rank):
+                        with patch("torch.distributed.get_world_size", return_value=world_size):
+                            test_loader = dm.test_dataloader()
+                            sampler = test_loader.sampler
+                            indices = list(sampler)
+                            samples_per_rank.append(len(indices))
+                            all_indices.extend(indices)
+
+                # Each rank should have equal samples (with padding)
+                assert all(
+                    count == samples_per_rank[0] for count in samples_per_rank
+                ), "All ranks should process equal number of samples (with padding)"
+
+                # After deduplication, should have exactly test_dataset_size samples
+                unique_indices = set(all_indices)
+                assert len(unique_indices) == test_dataset_size, (
+                    f"After deduplication, should have {test_dataset_size} unique samples, "
+                    f"got {len(unique_indices)}"
+                )
