@@ -116,8 +116,11 @@ def test_parse_arguments_from_toml_config(tmp_path: Path):
     assert suite_config.use_deposit_layer is False
     assert suite_config.pretrain_tasks == ["density", "Rg"]
     assert suite_config.finetune_tasks == ["density"]
-    assert suite_config.encoder_config.type.value == "transformer"
-    assert suite_config.encoder_config.latent_dim == 256
+
+    # encoder_config is a dict when loaded from TOML
+    assert isinstance(suite_config.encoder_config, dict)
+    assert suite_config.encoder_config["type"] == "transformer"
+    assert suite_config.encoder_config["d_model"] == 256
 
 
 def test_config_file_overridden_by_cli(tmp_path: Path):
