@@ -25,7 +25,7 @@ class EncoderType(str, Enum):
     TRANSFORMER = "transformer"
 
 
-@dataclass
+@dataclass(kw_only=True)
 class BaseEncoderConfig:
     """Base class for encoder configuration objects."""
 
@@ -42,7 +42,7 @@ class BaseEncoderConfig:
         raise NotImplementedError("Subclasses must define a latent_dim property")
 
 
-@dataclass
+@dataclass(kw_only=True)
 class MLPEncoderConfig(BaseEncoderConfig):
     """Configuration for the MLP foundation encoder."""
 
@@ -62,7 +62,7 @@ class MLPEncoderConfig(BaseEncoderConfig):
         return int(self.hidden_dims[-1])
 
 
-@dataclass
+@dataclass(kw_only=True)
 class TransformerEncoderConfig(BaseEncoderConfig):
     """Configuration for the transformer foundation encoder.
 

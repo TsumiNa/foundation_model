@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import random
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, Sequence
+from typing import Any, Dict, Iterable, Mapping, Sequence
 
 import joblib
 import matplotlib.pyplot as plt
@@ -24,7 +25,12 @@ from loguru import logger as fm_logger
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
-from foundation_model.models.model_config import OptimizerConfig, RegressionTaskConfig
+from foundation_model.models.model_config import (
+    BaseEncoderConfig,
+    OptimizerConfig,
+    RegressionTaskConfig,
+    build_encoder_config,
+)
 
 # Default task configuration mirrors the notebook for discoverability.
 DEFAULT_PRETRAIN_TASKS: list[str] = [
@@ -71,6 +77,7 @@ class SuiteConfig:
     enable_learnable_loss: bool = False
     quiet_model_logging: bool = True
     shared_block_dims: Sequence[int] = (190, 256, 128)
+    encoder_config: Mapping[str, Any] | BaseEncoderConfig | None = None
     head_hidden_dim: int = 64
     num_pretrain_runs: int = 10
     pretrain_max_epochs: int = 200
@@ -109,6 +116,8 @@ class SuiteConfig:
                 raise ValueError(
                     f"task_sequence contains tasks {invalid} not present in the pretrain task list"
                 )
+        if len(self.shared_block_dims) < 2:
+            raise ValueError("shared_block_dims must include input dimension and at least one latent dimension.")
 
 
 class DynamicTaskSuiteRunner:
@@ -121,6 +130,8 @@ class DynamicTaskSuiteRunner:
         self.pretrain_targets: pd.DataFrame | None = None
         self.finetune_features: pd.DataFrame | None = None
         self.finetune_targets: pd.DataFrame | None = None
+        self.encoder_config = self._build_encoder_config()
+        self.encoder_latent_dim = self.encoder_config.latent_dim
         if config.quiet_model_logging:
             fm_logger.disable("foundation_model")
         else:
@@ -234,6 +245,19 @@ class DynamicTaskSuiteRunner:
         rng = random.Random(self.config.random_seed_base + run_idx)
         return rng.sample(self.config.pretrain_tasks, k=len(self.config.pretrain_tasks))
 
+    def _build_encoder_config(self) -> BaseEncoderConfig:
+        hidden_dims = list(self.config.shared_block_dims[1:])
+        if not hidden_dims:
+            raise ValueError("shared_block_dims must include at least one latent dimension.")
+        return build_encoder_config(
+            self.config.encoder_config,
+            default_hidden_dims=hidden_dims,
+            default_latent_dim=hidden_dims[-1],
+        )
+
+    def _encoder_config_instance(self) -> BaseEncoderConfig:
+        return copy.deepcopy(self.encoder_config)
+
     def _prepare_pretrain_stage(
         self,
         stage_tasks: Sequence[str],
@@ -245,6 +269,7 @@ class DynamicTaskSuiteRunner:
             model = FlexibleMultiTaskModel(
                 shared_block_dims=list(self.config.shared_block_dims),
                 task_configs=task_configs,
+                encoder_config=self._encoder_config_instance(),
                 enable_learnable_loss_balancer=self.config.enable_learnable_loss,
                 shared_block_optimizer=OptimizerConfig(lr=5e-2),
             )
@@ -253,6 +278,7 @@ class DynamicTaskSuiteRunner:
                 checkpoint_path=previous_checkpoint,
                 strict=False,
                 enable_learnable_loss_balancer=self.config.enable_learnable_loss,
+                encoder_config=self._encoder_config_instance(),
             )
             existing = set(model.task_heads.keys())
             new_configs = [cfg for cfg in task_configs if cfg.name not in existing]
@@ -276,6 +302,7 @@ class DynamicTaskSuiteRunner:
                 strict=False,
                 enable_learnable_loss_balancer=self.config.enable_learnable_loss,
                 freeze_shared_encoder=self.config.freeze_shared_encoder,
+                encoder_config=self._encoder_config_instance(),
                 shared_block_optimizer=OptimizerConfig(lr=5e-2),
             )
             active = list(finetune_model.task_heads.keys())
@@ -414,7 +441,7 @@ class DynamicTaskSuiteRunner:
         return RegressionTaskConfig(
             name=name,
             data_column=column,
-            dims=[self.config.shared_block_dims[-1], self.config.head_hidden_dim, 1],
+            dims=[self.encoder_latent_dim, self.config.head_hidden_dim, 1],
             norm=True,
             residual=False,
         )
@@ -799,6 +826,14 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
         default=[190, 256, 128],
         help="Shared encoder dims.",
     )
+    parser.add_argument(
+        "--encoder-config",
+        help=(
+            "JSON string or path to JSON file describing the foundation encoder "
+            "(e.g. '{\"type\": \"transformer\", \"d_model\": 256, \"nhead\": 8}'). "
+            "Defaults to the legacy MLP when omitted."
+        ),
+    )
     parser.add_argument("--head-hidden-dim", type=int, default=64, help="Hidden dimension for task heads.")
     parser.add_argument(
         "--disable-normalized-targets",
@@ -868,6 +903,26 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
     pretrain_tasks = parsed.pretrain_tasks or list(DEFAULT_PRETRAIN_TASKS)
     finetune_tasks = parsed.finetune_tasks or list(DEFAULT_FINETUNE_TASKS)
     task_masking = _parse_task_masking_arg(parsed.task_masking_ratios)
+    encoder_config_value: Mapping[str, Any] | None = None
+    if parsed.encoder_config:
+        candidate_path = Path(parsed.encoder_config)
+        if candidate_path.exists():
+            try:
+                encoder_config_value = json.loads(candidate_path.read_text())
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"Failed to parse encoder config JSON from file {candidate_path}: {exc}") from exc
+        else:
+            try:
+                encoder_config_value = json.loads(parsed.encoder_config)
+            except json.JSONDecodeError:
+                lowered = parsed.encoder_config.strip().lower()
+                if lowered in {"mlp", "transformer"}:
+                    encoder_config_value = {"type": lowered}
+                else:
+                    raise SystemExit(
+                        "Failed to parse --encoder-config. Provide a JSON object or path to a JSON file; "
+                        f"received: {parsed.encoder_config!r}"
+                    ) from None
 
     return SuiteConfig(
         descriptor_path=parsed.descriptor_path,
@@ -881,6 +936,7 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
         enable_learnable_loss=parsed.enable_learnable_loss,
         quiet_model_logging=parsed.quiet_logging,
         shared_block_dims=tuple(parsed.shared_block_dims),
+        encoder_config=encoder_config_value,
         head_hidden_dim=parsed.head_hidden_dim,
         num_pretrain_runs=parsed.num_pretrain_runs,
         pretrain_max_epochs=parsed.pretrain_max_epochs,
