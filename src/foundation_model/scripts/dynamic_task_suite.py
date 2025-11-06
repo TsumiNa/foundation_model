@@ -18,6 +18,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+try:  # pragma: no cover - optional distributed import
+    import torch.distributed as dist
+except Exception:  # noqa: BLE001 - broad to cover ImportError/RuntimeError
+    dist = None
 from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
@@ -507,7 +511,15 @@ class DynamicTaskSuiteRunner:
         metrics_path = output_dir / "metrics.json"
         predictions_path = output_dir / "predictions.parquet"
         task_order_path = output_dir / "tasks.txt"
-        task_order_path.write_text(" -> ".join(stage_tasks), encoding="utf-8")
+
+        is_distributed = (
+            dist is not None and dist.is_available() and dist.is_initialized()
+        )
+        rank = dist.get_rank() if is_distributed else 0
+        world_size = dist.get_world_size() if is_distributed else 1
+
+        if rank == 0:
+            task_order_path.write_text(" -> ".join(stage_tasks), encoding="utf-8")
 
         device = self._resolve_device()
         datamodule.setup(stage="test")
@@ -517,10 +529,10 @@ class DynamicTaskSuiteRunner:
 
         original_device = next(model.parameters()).device
         was_training = model.training
-        model = model.to(device)
+        model.to(device)
         model.eval()
 
-        aggregated: dict[str, dict[str, list[np.ndarray]]] = {}
+        aggregated: dict[str, dict[str, list[float]]] = {}
         prediction_rows: list[dict[str, float | int | str | None]] = []
         per_task_counts: dict[str, int] = {}
 
@@ -553,8 +565,8 @@ class DynamicTaskSuiteRunner:
                     pred_np = self._maybe_inverse_transform(name, pred_np)
 
                     entry = aggregated.setdefault(name, {"preds": [], "targets": []})
-                    entry["preds"].append(pred_np)
-                    entry["targets"].append(target_np)
+                    entry["preds"].extend(pred_np.tolist())
+                    entry["targets"].extend(target_np.tolist())
 
                     start_idx = per_task_counts.get(name, 0)
                     for offset, (actual_val, pred_val) in enumerate(zip(target_np.tolist(), pred_np.tolist())):
@@ -571,12 +583,52 @@ class DynamicTaskSuiteRunner:
                         )
                     per_task_counts[name] = start_idx + len(target_np)
 
+        payload = {
+            "prediction_rows": prediction_rows,
+            "aggregated": aggregated,
+        }
+
+        if is_distributed:
+            gather_buffer: list[dict[str, Any] | None] = [None] * world_size
+            dist.all_gather_object(gather_buffer, payload)
+        else:
+            gather_buffer = [payload]
+
+        merged_prediction_rows: list[dict[str, float | int | str | None]] = []
+        merged_aggregated: dict[str, dict[str, list[float]]] = {}
+        for item in gather_buffer:
+            if not item:
+                continue
+            merged_prediction_rows.extend(item.get("prediction_rows", []))
+            for task_name, entry in item.get("aggregated", {}).items():
+                merged_entry = merged_aggregated.setdefault(task_name, {"preds": [], "targets": []})
+                merged_entry["preds"].extend(entry.get("preds", []))
+                merged_entry["targets"].extend(entry.get("targets", []))
+
+        if is_distributed and rank != 0:
+            model.to(original_device)
+            model.train(was_training)
+            return
+
+        prediction_rows = merged_prediction_rows
+        aggregated = merged_aggregated
+
+        if prediction_rows:
+            sample_counters: dict[str, int] = {}
+            for row in prediction_rows:
+                task_name = str(row.get("task"))
+                current_index = sample_counters.get(task_name, 0)
+                row["sample_index"] = current_index
+                sample_counters[task_name] = current_index + 1
+
         metrics: dict[str, dict[str, float | int | None]] = {}
         for name in stage_tasks:
             if name not in aggregated:
                 continue
-            preds = np.concatenate(aggregated[name]["preds"])
-            targets = np.concatenate(aggregated[name]["targets"])
+            preds = np.asarray(aggregated[name]["preds"], dtype=np.float64)
+            targets = np.asarray(aggregated[name]["targets"], dtype=np.float64)
+            if preds.size == 0 or targets.size == 0:
+                continue
             diff = preds - targets
             mae = float(np.mean(np.abs(diff)))
             mse = float(np.mean(diff**2))
@@ -649,6 +701,9 @@ class DynamicTaskSuiteRunner:
         with metrics_path.open("w", encoding="utf-8") as handle:
             json.dump(metrics_payload, handle, indent=2)
         fm_logger.info("Saved metrics to %s", metrics_path)
+
+        model.to(original_device)
+        model.train(was_training)
 
         model.to(original_device)
         if was_training:

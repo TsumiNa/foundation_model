@@ -200,91 +200,39 @@ class PredictionDataFrameWriter(BasePredictionWriter):
             All predictions gathered from all processes (only valid on rank 0).
         """
         try:
-            import pickle
-
             import torch.distributed as dist
 
-            # Convert predictions to a list for easier handling
             local_predictions = list(predictions) if predictions else []
-
-            # Log information about local predictions
             logger.info(
                 f"Process {trainer.global_rank}/{trainer.world_size} has {len(local_predictions)} prediction batches"
             )
 
-            # Use PyTorch distributed to gather all predictions
-            if trainer.world_size > 1 and dist.is_initialized():
-                # Serialize local predictions for transmission
-                local_data = pickle.dumps(local_predictions)
-                local_size = len(local_data)
+            if trainer.world_size > 1 and dist.is_available() and dist.is_initialized():
+                gathered: list[list[Any] | None] = [None] * trainer.world_size
+                dist.all_gather_object(gathered, local_predictions)
 
-                # Create tensor for the size of serialized data
-                size_tensor = torch.tensor([local_size], dtype=torch.long, device=trainer.strategy.root_device)
-
-                # Gather sizes from all processes
                 if trainer.is_global_zero:
-                    size_list = [torch.zeros_like(size_tensor) for _ in range(trainer.world_size)]
-                    dist.gather(size_tensor, size_list, dst=0)
-                    sizes = [s.item() for s in size_list]
-                    logger.info(f"Gathered data sizes from all processes: {sizes}")
-                else:
-                    dist.gather(size_tensor, dst=0)
-                    sizes = None
+                    merged: list[Any] = []
+                    for rank, rank_preds in enumerate(gathered):
+                        if not rank_preds:
+                            logger.info(f"Rank {rank} contributed 0 prediction batches.")
+                            continue
+                        logger.info(f"Rank {rank} contributed {len(rank_preds)} prediction batches.")
+                        merged.extend(rank_preds)
+                    logger.info(f"Total gathered predictions: {len(merged)} batches from all processes")
+                    return merged
 
-                # Gather actual data
-                if trainer.is_global_zero and sizes is not None:
-                    # Prepare tensors to receive data from all processes
-                    max_size = max(sizes) if sizes else local_size
-                    gathered_data = []
+                return []
 
-                    for rank in range(trainer.world_size):
-                        if rank == 0:
-                            # Main process uses its own data
-                            gathered_data.append(local_data)
-                        else:
-                            # Receive data from other processes
-                            data_tensor = torch.zeros(
-                                int(max_size), dtype=torch.uint8, device=trainer.strategy.root_device
-                            )
-                            dist.recv(data_tensor, src=rank)
-                            # Only use the actual data size, not the padded size
-                            actual_data = data_tensor[: int(sizes[rank])].cpu().numpy().tobytes()
-                            gathered_data.append(actual_data)
+            logger.info(f"Single process mode: processing {len(local_predictions)} prediction batches")
+            return local_predictions
 
-                    # Deserialize all gathered data
-                    all_predictions = []
-                    for rank, data in enumerate(gathered_data):
-                        try:
-                            rank_predictions = pickle.loads(data)
-                            logger.info(f"Successfully deserialized {len(rank_predictions)} batches from rank {rank}")
-                            all_predictions.extend(rank_predictions)
-                        except Exception as e:
-                            logger.error(f"Failed to deserialize data from rank {rank}: {e}")
-
-                    logger.info(f"Total gathered predictions: {len(all_predictions)} batches from all processes")
-                    return all_predictions
-
-                else:
-                    # Non-main processes send their data
-                    # Pad data to max_size if necessary
-                    data_tensor = torch.zeros(local_size, dtype=torch.uint8, device=trainer.strategy.root_device)
-                    data_tensor[:local_size] = torch.frombuffer(local_data, dtype=torch.uint8)
-                    dist.send(data_tensor, dst=0)
-                    logger.info(f"Process {trainer.global_rank} sent {len(local_predictions)} batches to main process")
-                    return []
-            else:
-                # Single process or distributed not initialized
-                logger.info(f"Single process mode: processing {len(local_predictions)} prediction batches")
-                return local_predictions
-
-        except Exception as e:
+        except Exception as e:  # pragma: no cover - defensive
             logger.error(f"Error during distributed prediction gathering: {e}")
             logger.warning("Falling back to local predictions only")
-            # Fallback to local predictions if anything fails
-            if trainer.is_global_zero:
+            if getattr(trainer, "is_global_zero", True):
                 return list(predictions) if predictions else []
-            else:
-                return []
+            return []
 
     def write_on_epoch_end(
         self,
