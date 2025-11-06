@@ -595,6 +595,35 @@ class TestDataModuleSingleGPUMode:
                     test_loader.sampler, DistributedSampler
                 ), "Single GPU test should not use DistributedSampler"
 
+    def test_predict_dataloader_no_sampler_single_gpu(self, base_formula_df, attributes_df_full_match):
+        """Test that predict_dataloader doesn't use DistributedSampler in single GPU mode."""
+        from unittest.mock import patch
+
+        with patch("torch.distributed.is_available", return_value=False):
+            with patch("torch.distributed.is_initialized", return_value=False):
+                dm = CompoundDataModule(
+                    formula_desc_source=base_formula_df,
+                    attributes_source=attributes_df_full_match,
+                    task_configs=[
+                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+                    ],
+                    batch_size=4,
+                    num_workers=0,
+                    predict_idx="all",
+                    val_split=0.2,
+                    test_split=0.2,
+                    random_seed=42,
+                )
+
+                dm.setup(stage="predict")
+                predict_loader = dm.predict_dataloader()
+
+                from torch.utils.data.distributed import DistributedSampler
+
+                assert not isinstance(
+                    predict_loader.sampler, DistributedSampler
+                ), "Single GPU predict should not use DistributedSampler"
+
 
 class TestDataModuleDistributedMode:
     """Test DataModule behavior in distributed (multi-GPU) mode."""
@@ -697,6 +726,40 @@ class TestDataModuleDistributedMode:
                 sampler = test_loader.sampler
                 assert sampler.shuffle is False, "Test sampler should not shuffle"
                 assert sampler.drop_last is False, "Should keep all samples"
+
+    def test_predict_dataloader_uses_distributed_sampler(self, base_formula_df, attributes_df_full_match):
+        """Test that predict_dataloader uses DistributedSampler in multi-GPU mode."""
+        from unittest.mock import patch
+        from torch.utils.data.distributed import DistributedSampler
+
+        with patch("torch.distributed.is_available", return_value=True):
+            with patch("torch.distributed.is_initialized", return_value=True):
+                with patch("torch.distributed.get_rank", return_value=0):
+                    with patch("torch.distributed.get_world_size", return_value=2):
+                        dm = CompoundDataModule(
+                            formula_desc_source=base_formula_df,
+                            attributes_source=attributes_df_full_match,
+                            task_configs=[
+                                RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
+                            ],
+                            batch_size=4,
+                            num_workers=0,
+                            predict_idx="all",  # Predict on all data
+                            val_split=0.2,
+                            test_split=0.2,
+                            random_seed=42,
+                        )
+
+                        dm.setup(stage="predict")
+                        predict_loader = dm.predict_dataloader()
+
+                        assert predict_loader.sampler is not None
+                        assert isinstance(predict_loader.sampler, DistributedSampler)
+
+                        # Verify sampler settings for predict
+                        sampler = predict_loader.sampler
+                        assert sampler.shuffle is False, "Predict sampler should not shuffle"
+                        assert sampler.drop_last is False, "Should keep all samples"
 
 
 class TestDistributedSamplerDataCoverage:

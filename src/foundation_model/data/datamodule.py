@@ -865,10 +865,24 @@ class CompoundDataModule(L.LightningDataModule):
         # Create custom collate function for KernelRegression tasks
         collate_fn = create_collate_fn_with_task_info(self.task_configs)
 
+        # Detect distributed training environment
+        use_ddp = torch.distributed.is_available() and torch.distributed.is_initialized()
+
+        if use_ddp:
+            # Use DistributedSampler for multi-GPU prediction
+            sampler = DistributedSampler(
+                self.predict_dataset,
+                shuffle=False,  # Don't shuffle prediction data
+                drop_last=False,  # Keep all samples
+            )
+        else:
+            sampler = None
+
         return DataLoader(
             self.predict_dataset,
             batch_size=self.batch_size,
             shuffle=False,
+            sampler=sampler,
             num_workers=self.num_workers,
             pin_memory=True,
             collate_fn=collate_fn,

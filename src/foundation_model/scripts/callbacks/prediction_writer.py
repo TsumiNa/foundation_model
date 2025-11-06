@@ -171,6 +171,19 @@ class PredictionDataFrameWriter(BasePredictionWriter):
         else:
             df = pd.DataFrame()
 
+        # Defensive deduplication: remove duplicate rows
+        # This handles cases where predictions were collected multiple times
+        # (e.g., if DistributedSampler wasn't properly configured)
+        if not df.empty:
+            original_len = len(df)
+            df = df.drop_duplicates()
+            if len(df) < original_len:
+                logger.warning(
+                    f"Dropped {original_len - len(df)} duplicate prediction rows. "
+                    f"This suggests predictions were collected multiple times, possibly due to "
+                    f"missing DistributedSampler in distributed training."
+                )
+
         return df
 
     def _gather_distributed_predictions(
