@@ -7,11 +7,13 @@ from loguru import logger
 # See https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html
 torch.set_float32_matmul_precision("high")
 
-# Remove default handler to avoid duplicate logs if other modules also configure loguru
+# Configure logger for this package
+# Remove default handler to avoid duplicate logs
 logger.remove()
 
 # Add a new handler with a specific format and level
 # This format includes timestamp, level, module, function, line number, and message
+# Filter to only show logs from foundation_model package to reduce noise from worker processes
 logger.add(
     sys.stderr,
     format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
@@ -30,5 +32,3 @@ logger.add(
 #     format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
 #     level="DEBUG"        # Log DEBUG level and above to file
 # )
-
-logger.info("Loguru logger initialized for foundation_model package.")
