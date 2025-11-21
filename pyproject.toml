@@ -64,6 +64,7 @@ ignore = [
     "F841", # unused-variable
     "E741", # ambiguous-variable-name
     "W505", # doc-line-too-long
+    "E501", # line-too-long (handled by formatter)
 ]
 fixable = ["ALL"]
 

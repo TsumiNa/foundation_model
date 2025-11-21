@@ -142,6 +142,7 @@ class _TransformerBackbone(nn.Module):
 
         return self.output_norm(latent)
 
+
 class FoundationEncoder(nn.Module):
     """
     Foundation model encoder providing shared representations for multi-task learning.
@@ -200,16 +201,12 @@ class FoundationEncoder(nn.Module):
             )
             latent_dim = encoder_config.d_model
         else:  # pragma: no cover - defensive branch
-            raise TypeError(
-                "encoder_config must be an instance of MLPEncoderConfig or TransformerEncoderConfig"
-            )
+            raise TypeError("encoder_config must be an instance of MLPEncoderConfig or TransformerEncoderConfig")
 
         if deposit_dim is None:
             deposit_dim = latent_dim
         elif not self.use_deposit_layer and deposit_dim != latent_dim:
-            raise ValueError(
-                "deposit_dim must equal the latent dimension when the deposit layer is disabled"
-            )
+            raise ValueError("deposit_dim must equal the latent dimension when the deposit layer is disabled")
 
         self.latent_dim = latent_dim
         self.deposit_dim = deposit_dim

@@ -143,11 +143,7 @@ def plot_scatter_comparison(
 
     # Add statistics text
     stats_text = (
-        f"R2 = {r_value**2:.4f}\n"
-        f"MSE = {mse:.4f}\n"
-        f"MAE = {mae:.4f}\n"
-        f"Slope = {slope:.4f}\n"
-        f"Intercept = {intercept:.4f}"
+        f"R2 = {r_value**2:.4f}\nMSE = {mse:.4f}\nMAE = {mae:.4f}\nSlope = {slope:.4f}\nIntercept = {intercept:.4f}"
     )
     ax.text(
         0.05,
@@ -227,9 +223,7 @@ def plot_predictions(
 
         try:
             # Create scatter plot
-            fig, _, stat = plot_scatter_comparison(
-                targets_m, preds_m, title=attributes[m], return_stat=True
-            )
+            fig, _, stat = plot_scatter_comparison(targets_m, preds_m, title=attributes[m], return_stat=True)
         except ValueError:
             continue
 

@@ -587,9 +587,7 @@ class DynamicTaskSuiteRunner:
                     entry["targets"].extend(target_np.tolist())
 
                     # Assign original dataset indices to predictions
-                    for in_batch_idx, (actual_val, pred_val) in enumerate(
-                        zip(target_np.tolist(), pred_np.tolist())
-                    ):
+                    for in_batch_idx, (actual_val, pred_val) in enumerate(zip(target_np.tolist(), pred_np.tolist())):
                         # Map to original dataset index
                         if in_batch_idx < len(batch_indices):
                             dataset_idx = batch_indices[in_batch_idx]

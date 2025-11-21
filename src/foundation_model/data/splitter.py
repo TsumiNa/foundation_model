@@ -36,8 +36,7 @@ class MultiTaskSplitter:
         total_ratio = train_ratio + val_ratio + test_ratio
         if not np.isclose(total_ratio, 1.0):
             raise ValueError(
-                f"Split ratios must sum to 1.0, got {total_ratio} "
-                f"({train_ratio}, {val_ratio}, {test_ratio})"
+                f"Split ratios must sum to 1.0, got {total_ratio} ({train_ratio}, {val_ratio}, {test_ratio})"
             )
 
         self.train_ratio = train_ratio
@@ -113,24 +112,17 @@ class MultiTaskSplitter:
             task_valid_indices = np.where(data[task].notna())[0]
 
             # Remove already allocated indices
-            available_indices = np.array(
-                [idx for idx in task_valid_indices if idx not in allocated_indices]
-            )
+            available_indices = np.array([idx for idx in task_valid_indices if idx not in allocated_indices])
 
             if len(available_indices) == 0:
-                warnings.warn(
-                    f"Task {task} has no unallocated data points. "
-                    "Using already allocated indices."
-                )
+                warnings.warn(f"Task {task} has no unallocated data points. Using already allocated indices.")
                 available_indices = task_valid_indices
 
             # Shuffle available indices
             np.random.shuffle(available_indices)
 
             # Calculate required counts
-            train_needed, val_needed, test_needed = self._get_required_counts(
-                len(available_indices)
-            )
+            train_needed, val_needed, test_needed = self._get_required_counts(len(available_indices))
 
             # Calculate target samples for val/test
             available_count = len(available_indices)

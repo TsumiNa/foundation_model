@@ -1,0 +1,125 @@
+# Default configuration for running the dynamic task suite.
+# Replace the placeholder paths below with the absolute locations of
+# your descriptor and target parquet files on the HPC system.
+
+descriptor_path = "data/amorphous_polymer_FFDescriptor_20250730.parquet"
+pretrain_data_path = "data/amorphous_polymer_non_PI_properties_20250730.parquet"
+finetune_data_path = "data/amorphous_polymer_PI_properties_20250730.parquet"
+output_dir = "artifacts/polymers_pretrain_finetune_runs_radonpy"
+
+# Optional: set to the scaler generated during preprocessing.
+scaler_path = "data/amorphous_polymer_properties_scaler_20250730.pkl.z"
+
+# Model and training hyperparameters
+shared_block_dims = [190, 256, 128]
+encoder_config = { type = "mlp" }
+use_deposit_layer = true
+head_hidden_dim = 64
+head_lr = 0.005
+num_pretrain_runs = 50
+pretrain_max_epochs = 1000
+finetune_max_epochs = 1000
+batch_size = 256
+num_workers = 8
+log_every_n_steps = 50
+random_seed_base = 1729
+datamodule_random_seed = 42
+
+# Task configuration
+pretrain_tasks = [
+    "density",
+    "Rg",
+    "r2",
+    "self-diffusion",
+    "Cp",
+    "Cv",
+    "bulk_modulus",
+    "volume_expansion",
+    "linear_expansion",
+    "static_dielectric_const",
+    "dielectric_const_dc",
+    "refractive_index",
+    "tg",
+    "thermal_conductivity",
+    "thermal_diffusivity",
+]
+finetune_tasks = [
+    "density",
+    "Rg",
+    "r2",
+    "self-diffusion",
+    "Cp",
+    "Cv",
+    "linear_expansion",
+    "refractive_index",
+    "tg",
+]
+
+# Optional: enforce a deterministic pretrain stage order.
+# task_sequence = [
+#     'density',
+#     'Rg',
+#     'Scaled Rg',
+#     'r2',
+#     'self-diffusion',
+#     'Cp',
+#     'Cv',
+#     'compressibility',
+#     'bulk_modulus',
+#     'isentropic_compressibility',
+#     'isentropic_bulk_modulus',
+#     'volume_expansion',
+#     'linear_expansion',
+#     'static_dielectric_const',
+#     'dielectric_const_dc',
+#     'nematic_order_parameter',
+#     'refractive_index',
+#     'tg',
+#     'tg_thermal_expansion_coef(upper_tg)',
+#     'tg_thermal_expansion_coef(below_tg)',
+#     'thermal_conductivity',
+#     'thermal_diffusivity',
+#     'TC_ke',
+#     'TC_pe',
+#     'TC_pair',
+#     'TC_bond',
+#     'TC_angle',
+#     'TC_dihed',
+#     'TC_improper',
+#     'TC_kspace',
+#     'sp_ced',
+#     'sp_total',
+#     'sp_vdw',
+#     'sp_ele',
+#     'sp_ele_short',
+#     'sp_ele_long',
+#     'mol_weight_monomer1',
+#     'vdw_volume_monomer1',
+#     'qm_total_energy_monomer1',
+#     'qm_homo_monomer1',
+#     'qm_lumo_monomer1',
+#     'qm_dipole_monomer1',
+#     'qm_polarizability_monomer1',
+# ]
+
+# Optional per-task masking ratios (can also be a float).
+# task_masking_ratios = { density = 0.1, "linear_expansion" = 0.2 }
+
+# Optional dataset subsampling during debugging; uncomment to limit rows loaded.
+# pretrain_sample = 1000
+# finetune_sample = 500
+
+swap_train_val_split = 0.0
+# val_split = 0.1
+# test_split = 0.1
+test_all = false
+
+accelerator = "auto"
+devices = "auto"
+# devices = "0, 1, 2"
+early_stopping_patience = 50
+
+# Logging settings
+enable_learnable_loss = true
+freeze_shared_encoder = true
+quiet_model_logging = true

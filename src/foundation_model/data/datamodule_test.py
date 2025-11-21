@@ -254,6 +254,7 @@ def test_swap_train_val_split_zero_no_change(base_formula_df, attributes_df_full
     assert list(dm.train_idx) == list(original_train)
     assert list(dm.val_idx) == list(original_val)
 
+
 def test_datamodule_setup_with_user_predict_idx(base_formula_df, sample_task_configs_no_seq_dm, caplog):
     """Test setup(stage='predict') with user-provided predict_idx."""
 
@@ -436,12 +437,10 @@ def test_datamodule_task_masking_ratio_float_applies_all_tasks(
     )
     dm.setup(stage="fit")
     assert dm.train_dataset is not None
-    expected = {
-        cfg.name: mask_ratio
-        for cfg in sample_task_configs_dm
-        if getattr(cfg, "enabled", True)
-    }
+    expected = {cfg.name: mask_ratio for cfg in sample_task_configs_dm if getattr(cfg, "enabled", True)}
     assert dm.train_dataset.task_masking_ratios == expected
+
+
 def test_datamodule_empty_dataset_returns_none_dataloader(base_formula_df, sample_task_configs_no_seq_dm, caplog):
     # --- Loguru to caplog bridge (local to this test) ---
     class PropagateHandler(logging.Handler):
@@ -535,9 +534,9 @@ class TestDataModuleSingleGPUMode:
                 # Note: PyTorch DataLoader creates a RandomSampler internally when shuffle=True
                 from torch.utils.data.distributed import DistributedSampler
 
-                assert not isinstance(
-                    train_loader.sampler, DistributedSampler
-                ), "Single GPU should not use DistributedSampler"
+                assert not isinstance(train_loader.sampler, DistributedSampler), (
+                    "Single GPU should not use DistributedSampler"
+                )
 
     def test_val_dataloader_no_sampler_single_gpu(self, base_formula_df, attributes_df_full_match):
         """Test that val_dataloader doesn't use sampler in single GPU mode."""
@@ -563,9 +562,9 @@ class TestDataModuleSingleGPUMode:
 
                 from torch.utils.data.distributed import DistributedSampler
 
-                assert not isinstance(
-                    val_loader.sampler, DistributedSampler
-                ), "Single GPU validation should not use DistributedSampler"
+                assert not isinstance(val_loader.sampler, DistributedSampler), (
+                    "Single GPU validation should not use DistributedSampler"
+                )
 
     def test_test_dataloader_no_sampler_single_gpu(self, base_formula_df, attributes_df_full_match):
         """Test that test_dataloader doesn't use sampler in single GPU mode."""
@@ -591,9 +590,9 @@ class TestDataModuleSingleGPUMode:
 
                 from torch.utils.data.distributed import DistributedSampler
 
-                assert not isinstance(
-                    test_loader.sampler, DistributedSampler
-                ), "Single GPU test should not use DistributedSampler"
+                assert not isinstance(test_loader.sampler, DistributedSampler), (
+                    "Single GPU test should not use DistributedSampler"
+                )
 
     def test_predict_dataloader_no_sampler_single_gpu(self, base_formula_df, attributes_df_full_match):
         """Test that predict_dataloader doesn't use DistributedSampler in single GPU mode."""
@@ -620,9 +619,9 @@ class TestDataModuleSingleGPUMode:
 
                 from torch.utils.data.distributed import DistributedSampler
 
-                assert not isinstance(
-                    predict_loader.sampler, DistributedSampler
-                ), "Single GPU predict should not use DistributedSampler"
+                assert not isinstance(predict_loader.sampler, DistributedSampler), (
+                    "Single GPU predict should not use DistributedSampler"
+                )
 
 
 class TestDataModuleDistributedMode:
@@ -656,9 +655,9 @@ class TestDataModuleDistributedMode:
 
                         # Verify DistributedSampler is used
                         assert train_loader.sampler is not None, "Multi-GPU should use sampler"
-                        assert isinstance(
-                            train_loader.sampler, DistributedSampler
-                        ), "Should use DistributedSampler in multi-GPU mode"
+                        assert isinstance(train_loader.sampler, DistributedSampler), (
+                            "Should use DistributedSampler in multi-GPU mode"
+                        )
 
                         # Verify sampler settings
                         sampler = train_loader.sampler
@@ -815,8 +814,7 @@ class TestDistributedSamplerDataCoverage:
 
         # Verify all samples are covered
         assert len(unique_indices) == test_dataset_size, (
-            f"All {test_dataset_size} samples should be covered, "
-            f"but only {len(unique_indices)} unique indices found"
+            f"All {test_dataset_size} samples should be covered, but only {len(unique_indices)} unique indices found"
         )
         assert unique_indices == list(range(test_dataset_size)), "Should cover indices 0 to n-1"
 
@@ -861,16 +859,18 @@ class TestDistributedSamplerDataCoverage:
                 # Overlap should only occur due to padding
                 if len(overlap) > 0:
                     # Verify overlapping indices are due to padding (repeated from beginning)
-                    assert all(
-                        idx < (test_dataset_size % world_size) for idx in overlap
-                    ), "Overlap should only be padding indices"
+                    assert all(idx < (test_dataset_size % world_size) for idx in overlap), (
+                        "Overlap should only be padding indices"
+                    )
 
     def test_uneven_dataset_distribution(self):
         """Test correct handling when dataset size is not divisible by world_size."""
         from unittest.mock import patch
 
         # Create data with 17 samples (17 % 3 = 2, so 2 samples will be padded)
-        formula_df = pd.DataFrame({"f1": np.random.rand(17), "f2": np.random.rand(17)}, index=[f"s{i}" for i in range(17)])
+        formula_df = pd.DataFrame(
+            {"f1": np.random.rand(17), "f2": np.random.rand(17)}, index=[f"s{i}" for i in range(17)]
+        )
         attr_df = pd.DataFrame({"r1": np.random.rand(17)}, index=[f"s{i}" for i in range(17)])
 
         world_size = 3
@@ -909,13 +909,12 @@ class TestDistributedSamplerDataCoverage:
                             all_indices.extend(indices)
 
         # Each rank should have equal samples (with padding)
-        assert all(
-            count == samples_per_rank[0] for count in samples_per_rank
-        ), "All ranks should process equal number of samples (with padding)"
+        assert all(count == samples_per_rank[0] for count in samples_per_rank), (
+            "All ranks should process equal number of samples (with padding)"
+        )
 
         # After deduplication, should have exactly test_dataset_size samples
         unique_indices = set(all_indices)
         assert len(unique_indices) == test_dataset_size, (
-            f"After deduplication, should have {test_dataset_size} unique samples, "
-            f"got {len(unique_indices)}"
+            f"After deduplication, should have {test_dataset_size} unique samples, got {len(unique_indices)}"
         )

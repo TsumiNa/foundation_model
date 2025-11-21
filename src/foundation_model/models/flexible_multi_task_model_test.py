@@ -441,9 +441,7 @@ def test_model_configure_optimizers(model_config_mixed_tasks):
         log_sigma_param_ids = {id(p) for p in model.task_log_sigmas.parameters() if p.requires_grad}
         encoder_related_ids = encoder_params_ids.union(log_sigma_param_ids)
         if not encoder_related_ids.isdisjoint(current_opt_param_ids):
-            assert current_opt_param_ids.issubset(
-                encoder_related_ids
-            )
+            assert current_opt_param_ids.issubset(encoder_related_ids)
             encoder_opt_found = True
             continue
 
@@ -687,9 +685,7 @@ def test_model_predict_step_specific_tasks(model_config_mixed_tasks, sample_batc
 
     # 1. Predict a single existing task
     task_to_predict_single = [config.task_configs[0].name]
-    output_single = model.predict_step(
-        predict_batch_tuple, batch_idx=0, tasks_to_predict=task_to_predict_single
-    )
+    output_single = model.predict_step(predict_batch_tuple, batch_idx=0, tasks_to_predict=task_to_predict_single)
     assert isinstance(output_single, dict)
     # Check that only keys related to task_to_predict_single are present
     for key in output_single.keys():
@@ -731,9 +727,7 @@ def test_model_predict_step_specific_tasks(model_config_mixed_tasks, sample_batc
     assert not any("non_existent_task" in key for key in output_non_existent.keys())
 
     # 4. Predict with an empty list (should return empty dict)
-    output_empty_list = model.predict_step(
-        predict_batch_tuple, batch_idx=0, tasks_to_predict=[]
-    )
+    output_empty_list = model.predict_step(predict_batch_tuple, batch_idx=0, tasks_to_predict=[])
     assert isinstance(output_empty_list, dict)
     assert len(output_empty_list) == 0
 

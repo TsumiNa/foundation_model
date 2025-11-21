@@ -123,8 +123,7 @@ def build_encoder_config(
 
     if not isinstance(config, Mapping):
         raise TypeError(
-            "encoder_config must be a BaseEncoderConfig, mapping, or None; "
-            f"received {type(config).__name__}"
+            f"encoder_config must be a BaseEncoderConfig, mapping, or None; received {type(config).__name__}"
         )
 
     config_dict = dict(config)

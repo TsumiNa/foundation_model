@@ -24,9 +24,11 @@ from foundation_model.models.model_config import (
 from .dataset import CompoundDataset
 
 
-def create_collate_fn_with_task_info(task_configs):
+class CollateFnWithTaskInfo:
     """
-    Creates a custom collate function that handles KernelRegression tasks properly.
+    Collate function that handles KernelRegression tasks properly.
+
+    Implemented as a class to be pickle-serializable for multiprocessing.
 
     KernelRegression tasks need List[Tensor] format for both targets and t-parameters
     to support variable-length sequences without padding waste.
@@ -35,17 +37,14 @@ def create_collate_fn_with_task_info(task_configs):
     ----------
     task_configs : List
         List of task configuration objects
-
-    Returns
-    -------
-    callable
-        Custom collate function for DataLoader
     """
-    kernel_regression_tasks = {
-        cfg.name for cfg in task_configs if cfg.type == TaskType.KERNEL_REGRESSION and cfg.enabled
-    }
 
-    def custom_collate_fn(batch):
+    def __init__(self, task_configs):
+        self.kernel_regression_tasks = {
+            cfg.name for cfg in task_configs if cfg.type == TaskType.KERNEL_REGRESSION and cfg.enabled
+        }
+
+    def __call__(self, batch):
         """
         Custom collate function for batching data.
 
@@ -69,7 +68,7 @@ def create_collate_fn_with_task_info(task_configs):
         batched_mask_dict = {}
 
         for key in y_dicts[0].keys():
-            if key in kernel_regression_tasks:
+            if key in self.kernel_regression_tasks:
                 # KernelRegression: Keep List[Tensor] format for variable-length sequences
                 batched_y_dict[key] = [d[key] for d in y_dicts]
                 batched_mask_dict[key] = [d[key] for d in mask_dicts]
@@ -85,10 +84,149 @@ def create_collate_fn_with_task_info(task_configs):
 
         return batched_input, batched_y_dict, batched_mask_dict, batched_t_sequences_dict
 
-    return custom_collate_fn
+
+def create_collate_fn_with_task_info(task_configs):
+    """
+    Creates a custom collate function that handles KernelRegression tasks properly.
+
+    Parameters
+    ----------
+    task_configs : List
+        List of task configuration objects
+
+    Returns
+    -------
+    CollateFnWithTaskInfo
+        Custom collate function for DataLoader
+    """
+    return CollateFnWithTaskInfo(task_configs)
 
 
 class CompoundDataModule(L.LightningDataModule):
+    """
+    A PyTorch Lightning DataModule for managing compound data with multiple task configurations.
+
+    This DataModule handles the loading, alignment, and splitting of chemical compound data
+    (formula descriptors and attributes) for training machine learning models with multiple
+    tasks. It supports regression, classification, and kernel regression tasks, with features
+    including data masking, train/validation swapping, and flexible prediction dataset selection.
+
+    Key Features
+    ------------
+    - Multi-task learning support (regression, classification, kernel regression)
+    - Flexible data loading from multiple formats (DataFrame, pickle, CSV, parquet)
+    - Automatic data alignment between formula descriptors and attributes
+    - Configurable train/validation/test splitting with multiple strategies
+    - Optional random masking for data augmentation
+    - Train/validation bootstrap-style sample swapping
+    - Distributed training support with DistributedSampler
+    - Extended predict dataset selection (by name, combination, or custom indices)
+
+    Data Alignment
+    --------------
+    The `formula_desc_source` index serves as the master reference for all data alignment.
+    If `attributes_source` is provided, it will be reindexed to match the formula descriptors.
+    Samples with all NaN values after alignment are automatically removed.
+
+    Splitting Strategies
+    --------------------
+    The module supports three splitting strategies (in priority order):
+    1. **test_all=True**: All data assigned to test set (train/val empty)
+    2. **'split' column**: Uses pre-defined splits from attributes_source
+    3. **Random splitting**: Uses val_split and test_split ratios
+
+    Reproducibility
+    ---------------
+    All random operations (splitting, masking, swapping) are controlled by deterministic
+    seeds derived from the base `random_seed` parameter, ensuring full reproducibility.
+
+    Distributed Training
+    --------------------
+    Automatically detects distributed training environments and uses DistributedSampler
+    to ensure proper data partitioning across multiple GPUs.
+
+    Examples
+    --------
+    Basic usage with random splitting:
+
+    >>> from foundation_model.data.datamodule import CompoundDataModule
+    >>> from foundation_model.data.task_config import RegressionTaskConfig
+    >>>
+    >>> task_configs = [
+    ...     RegressionTaskConfig(name="bandgap", data_column="bandgap", enabled=True)
+    ... ]
+    >>>
+    >>> dm = CompoundDataModule(
+    ...     formula_desc_source="descriptors.pkl",
+    ...     attributes_source="attributes.csv",
+    ...     task_configs=task_configs,
+    ...     val_split=0.1,
+    ...     test_split=0.2,
+    ...     batch_size=32
+    ... )
+    >>>
+    >>> dm.setup(stage="fit")
+    >>> train_loader = dm.train_dataloader()
+
+    Using pre-defined splits:
+
+    >>> # attributes.csv should contain a 'split' column with values: 'train', 'val', 'test'
+    >>> dm = CompoundDataModule(
+    ...     formula_desc_source="descriptors.pkl",
+    ...     attributes_source="attributes.csv",  # Must have 'split' column
+    ...     task_configs=task_configs,
+    ...     batch_size=32
+    ... )
+
+    Prediction with specific datasets:
+
+    >>> # Predict on test set
+    >>> dm = CompoundDataModule(
+    ...     formula_desc_source="descriptors.pkl",
+    ...     task_configs=task_configs,
+    ...     predict_idx="test"
+    ... )
+    >>>
+    >>> # Predict on combined train and validation sets
+    >>> dm = CompoundDataModule(
+    ...     formula_desc_source="descriptors.pkl",
+    ...     task_configs=task_configs,
+    ...     predict_idx=["train", "val"]
+    ... )
+    >>>
+    >>> # Predict on custom indices
+    >>> custom_indices = pd.Index(["compound_1", "compound_2", "compound_3"])
+    >>> dm = CompoundDataModule(
+    ...     formula_desc_source="descriptors.pkl",
+    ...     task_configs=task_configs,
+    ...     predict_idx=custom_indices
+    ... )
+
+    With data masking and swapping:
+
+    >>> dm = CompoundDataModule(
+    ...     formula_desc_source="descriptors.pkl",
+    ...     attributes_source="attributes.csv",
+    ...     task_configs=task_configs,
+    ...     task_masking_ratios=0.8,  # Keep 80% of data per task
+    ...     swap_train_val_split=0.1,  # Swap 10% of samples between train/val
+    ...     random_seed=42
+    ... )
+
+    Notes
+    -----
+    - When `attributes_source` is None, only prediction mode is fully supported for
+        non-sequence tasks, as supervised training requires target attributes.
+    - Kernel regression tasks requiring a t_column will raise an error if
+        `attributes_source` is None.
+    - Empty datasets will result in None dataloaders to prevent training errors.
+
+    See Also
+    --------
+    foundation_model.data.dataset.CompoundDataset : The underlying dataset class
+    foundation_model.data.task_config : Task configuration classes
+    """
+
     def __init__(
         self,
         formula_desc_source: pd.DataFrame | Path_fr,  # type: ignore
@@ -309,11 +447,7 @@ class CompoundDataModule(L.LightningDataModule):
         except (TypeError, ValueError) as exc:  # pragma: no cover - defensive, should not happen with type hints
             raise TypeError("task_masking_ratios must be a dict, float, or None.") from exc
 
-        return {
-            cfg.name: ratio_value
-            for cfg in self.task_configs
-            if getattr(cfg, "enabled", True)
-        }
+        return {cfg.name: ratio_value for cfg in self.task_configs if getattr(cfg, "enabled", True)}
 
     def _resolve_predict_idx(self, full_idx: pd.Index) -> pd.Index:
         """

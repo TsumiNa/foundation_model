@@ -362,8 +362,6 @@ class CompoundDataset(Dataset):
 
         return model_input_x, sample_y_dict, sample_task_masks_dict, sample_t_sequences_dict
 
-
-
     @property
     def attribute_names(self) -> List[str]:
         return self.enabled_task_names[:]
