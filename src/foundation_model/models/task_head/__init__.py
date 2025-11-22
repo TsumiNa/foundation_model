@@ -10,6 +10,7 @@ Task heads for the FlexibleMultiTaskModel.
 # Optionally, define __all__ if this module is intended for wildcard imports,
 # or just let imports be direct from submodules.
 # For example:
+from .autoencoder import AutoEncoderHead
 from .base import BaseTaskHead
 from .classification import ClassificationHead
 from .kernel_regression import KernelRegressionHead
@@ -20,4 +21,5 @@ __all__ = [
     "ClassificationHead",
     "RegressionHead",
     "KernelRegressionHead",
+    "AutoEncoderHead",
 ]

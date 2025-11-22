@@ -31,6 +31,7 @@ from torch.optim.lr_scheduler import LRScheduler  # Changed from _LRScheduler
 
 from .components.foundation_encoder import FoundationEncoder
 from .model_config import (
+    AutoEncoderTaskConfig,
     BaseEncoderConfig,
     ClassificationTaskConfig,
     KernelRegressionTaskConfig,
@@ -40,6 +41,7 @@ from .model_config import (
     TaskType,
     build_encoder_config,
 )
+from .task_head.autoencoder import AutoEncoderHead
 from .task_head.classification import ClassificationHead
 from .task_head.kernel_regression import KernelRegressionHead
 from .task_head.regression import RegressionHead
@@ -98,7 +100,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
     def __init__(
         self,
         shared_block_dims: list[int],
-        task_configs: Sequence[RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig],
+        task_configs: Sequence[
+            RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig | AutoEncoderTaskConfig
+        ],
         *,
         # Encoder selection
         encoder_config: BaseEncoderConfig | Mapping[str, Any] | None = None,
@@ -242,7 +246,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return numeric_value
 
     def _validate_task_config(
-        self, config_item: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
+        self,
+        config_item: RegressionTaskConfig
+        | ClassificationTaskConfig
+        | KernelRegressionTaskConfig
+        | AutoEncoderTaskConfig,
     ):
         """Validate that the task configuration is compatible with the shared encoder."""
         if not config_item.name:
@@ -262,7 +270,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     f"but received {config_item.x_dim[0]}."
                 )
         else:
-            assert isinstance(config_item, (RegressionTaskConfig, ClassificationTaskConfig))
+            assert isinstance(config_item, (RegressionTaskConfig, ClassificationTaskConfig, AutoEncoderTaskConfig))
             if not getattr(config_item, "dims", None):
                 raise ValueError(f"Task '{config_item.name}' requires a non-empty dims configuration.")
             if config_item.dims[0] != expected_input_dim:
@@ -275,7 +283,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
         )
 
     def _instantiate_task_head(
-        self, config_item: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
+        self,
+        config_item: RegressionTaskConfig
+        | ClassificationTaskConfig
+        | KernelRegressionTaskConfig
+        | AutoEncoderTaskConfig,
     ) -> nn.Module:
         """Instantiate a task head module for the provided configuration."""
         if not config_item.enabled:
@@ -291,6 +303,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         elif config_item.type == TaskType.KERNEL_REGRESSION:
             assert isinstance(config_item, KernelRegressionTaskConfig)
             head_module = KernelRegressionHead(config=config_item)
+        elif config_item.type == TaskType.AUTOENCODER:
+            assert isinstance(config_item, AutoEncoderTaskConfig)
+            head_module = AutoEncoderHead(config=config_item)
         else:
             raise ValueError(f"Unsupported task type: {config_item.type}")
 
@@ -614,12 +629,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         raw_supervised_losses = {}
         for name, pred_tensor in preds.items():
-            if name not in y_dict_batch or not self.task_configs_map[name].enabled:
-                continue
-
             head = self.task_heads[name]
-            target = y_dict_batch[name]
-            sample_mask = task_masks_batch.get(name)
+
+            if isinstance(head, AutoEncoderHead):
+                target = x
+                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+            elif name not in y_dict_batch or not self.task_configs_map[name].enabled:
+                continue
+            else:
+                target = y_dict_batch[name]
+                sample_mask = task_masks_batch.get(name)
 
             if isinstance(head, KernelRegressionHead):
                 if isinstance(target, list):
@@ -728,12 +747,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         raw_val_supervised_losses = {}
         for name, pred_tensor in preds.items():
-            if name not in y_dict_batch or not self.task_configs_map[name].enabled:
-                continue
-
             head = self.task_heads[name]
-            target = y_dict_batch[name]
-            sample_mask = task_masks_batch.get(name)
+
+            if isinstance(head, AutoEncoderHead):
+                target = x
+                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+            elif name not in y_dict_batch or not self.task_configs_map[name].enabled:
+                continue
+            else:
+                target = y_dict_batch[name]
+                sample_mask = task_masks_batch.get(name)
 
             if isinstance(head, KernelRegressionHead):
                 if isinstance(target, list):
@@ -755,7 +778,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             if raw_loss_t is None:
                 if self.allow_all_missing_in_batch:
                     self._log_debug(f"Task '{name}' has no valid samples in this batch. Skipping loss calculation.")
-                    val_logs[f"val_{name}_all_missing"] = 1.0
+                    val_logs[f"val_{name}_all_missing"] = torch.tensor(1.0, device=x.device)
                     continue
                 raise ValueError(
                     f"Task '{name}' has no valid samples in this batch and allow_all_missing_in_batch is False."
@@ -764,7 +787,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             raw_val_supervised_losses[name] = raw_loss_t
             val_sum_supervised_raw_loss += raw_loss_t.detach()
             val_logs[f"val_{name}_raw_loss"] = raw_loss_t.detach()
-            val_logs[f"val_{name}_all_missing"] = 0.0
+            val_logs[f"val_{name}_all_missing"] = torch.tensor(0.0, device=x.device)
 
         val_logs["val_sum_supervised_raw_loss"] = val_sum_supervised_raw_loss
 
@@ -822,12 +845,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         raw_test_supervised_losses = {}
         for name, pred_tensor in preds.items():
-            if name not in y_dict_batch or not self.task_configs_map[name].enabled:
-                continue
-
             head = self.task_heads[name]
-            target = y_dict_batch[name]
-            sample_mask = task_masks_batch.get(name)
+
+            if isinstance(head, AutoEncoderHead):
+                target = x
+                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+            elif name not in y_dict_batch or not self.task_configs_map[name].enabled:
+                continue
+            else:
+                target = y_dict_batch[name]
+                sample_mask = task_masks_batch.get(name)
 
             if isinstance(head, KernelRegressionHead):
                 if isinstance(target, list):
@@ -849,7 +876,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             if raw_loss_t is None:
                 if self.allow_all_missing_in_batch:
                     self._log_debug(f"Task '{name}' has no valid samples in this batch. Skipping loss calculation.")
-                    test_logs[f"test_{name}_all_missing"] = 1.0
+                    test_logs[f"test_{name}_all_missing"] = torch.tensor(1.0, device=x.device)
                     continue
                 raise ValueError(
                     f"Task '{name}' has no valid samples in this batch and allow_all_missing_in_batch is False."
@@ -858,7 +885,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             raw_test_supervised_losses[name] = raw_loss_t
             test_sum_supervised_raw_loss += raw_loss_t.detach()
             test_logs[f"test_{name}_raw_loss"] = raw_loss_t.detach()
-            test_logs[f"test_{name}_all_missing"] = 0.0
+            test_logs[f"test_{name}_all_missing"] = torch.tensor(0.0, device=x.device)
 
         test_logs["test_sum_supervised_raw_loss"] = test_sum_supervised_raw_loss
 
@@ -1455,3 +1482,243 @@ class FlexibleMultiTaskModel(L.LightningModule):
             logger.warning(f"Error during optimizer state validation: {e}. Removing optimizer states as fallback.")
             checkpoint.pop("optimizer_states", None)
             checkpoint.pop("lr_schedulers", None)
+
+    def optimize_latent(
+        self,
+        task_name: str,
+        initial_input: torch.Tensor | None = None,
+        mode: str = "max",
+        steps: int = 200,
+        lr: float = 0.1,
+        ae_task_name: str | None = None,
+        num_restarts: int = 1,
+        perturbation_std: float = 0.0,
+        latent_dim: int | None = None,
+    ) -> dict[str, torch.Tensor | list[float] | list[dict]]:
+        """
+        Optimize latent representation to maximize/minimize a target task's output.
+
+        This method uses gradient-based optimization to find an input (via its latent
+        representation) that achieves extreme values for a specified regression task.
+        Supports multiple initialization strategies and restarts to avoid local optima.
+
+        Parameters
+        ----------
+        task_name : str
+            Name of the regression task to optimize (e.g., "density").
+        initial_input : torch.Tensor | None, optional
+            Starting input tensor, shape (1, input_dim) or (B, input_dim).
+            If None, initializes from random latent. Defaults to None.
+        mode : str, optional
+            Optimization direction: "max" to maximize or "min" to minimize.
+            Defaults to "max".
+        steps : int, optional
+            Number of optimization steps per restart. Defaults to 200.
+        lr : float, optional
+            Learning rate for the optimizer. Defaults to 0.1.
+        ae_task_name : str, optional
+            Name of the autoencoder task for reconstruction. If None, only
+            returns the optimized latent. Defaults to None.
+        num_restarts : int, optional
+            Number of random restarts to avoid local optima. If > 1, returns
+            the best result across all restarts. Defaults to 1.
+        perturbation_std : float, optional
+            Standard deviation of Gaussian noise to add to initial latent.
+            Useful for exploring around a good starting point. Defaults to 0.0.
+        latent_dim : int | None, optional
+            Latent dimension for random initialization. Only used if initial_input
+            is None. If None, infers from encoder config. Defaults to None.
+
+        Returns
+        -------
+        dict[str, torch.Tensor | list[float] | list[dict]]
+            Dictionary containing:
+            - "optimized_latent": Best optimized latent representation, shape (1, latent_dim).
+            - "optimized_score": Best final task output value (scalar tensor).
+            - "reconstructed_input": Reconstructed input if ae_task_name provided, else None.
+            - "history": List of task scores at each step for the best run.
+            - "initial_score": Task score at the starting point.
+            - "all_restarts": List of dicts with results from all restarts (if num_restarts > 1).
+
+        Raises
+        ------
+        ValueError
+            If task_name is not a regression task or ae_task_name is not an autoencoder task.
+
+        Examples
+        --------
+        # Random initialization with multiple restarts
+        >>> result = model.optimize_latent(
+        ...     task_name="density",
+        ...     initial_input=None,  # Random start
+        ...     mode="max",
+        ...     steps=200,
+        ...     num_restarts=5,  # Try 5 different starting points
+        ...     ae_task_name="reconstruction"
+        ... )
+
+        # Start from a specific input with perturbation
+        >>> result = model.optimize_latent(
+        ...     task_name="density",
+        ...     initial_input=my_input,
+        ...     mode="max",
+        ...     steps=200,
+        ...     perturbation_std=0.1,  # Add noise to explore nearby
+        ...     num_restarts=3,
+        ...     ae_task_name="reconstruction"
+        ... )
+        """
+        # Validate task configurations
+        if task_name not in self.task_heads:
+            raise ValueError(f"Task '{task_name}' not found in model. Available tasks: {list(self.task_heads.keys())}")
+
+        task_config = self.task_configs_map[task_name]
+        if task_config.type != TaskType.REGRESSION:
+            raise ValueError(
+                f"Task '{task_name}' must be a regression task for optimization, got {task_config.type}"
+            )
+
+        if ae_task_name is not None:
+            if ae_task_name not in self.task_heads:
+                raise ValueError(
+                    f"Autoencoder task '{ae_task_name}' not found. Available tasks: {list(self.task_heads.keys())}"
+                )
+            ae_config = self.task_configs_map[ae_task_name]
+            if ae_config.type != TaskType.AUTOENCODER:
+                raise ValueError(
+                    f"Task '{ae_task_name}' must be an autoencoder task, got {ae_config.type}"
+                )
+
+        if mode not in {"max", "min"}:
+            raise ValueError(f"mode must be 'max' or 'min', got '{mode}'")
+
+        if num_restarts < 1:
+            raise ValueError(f"num_restarts must be >= 1, got {num_restarts}")
+
+        # Store original training state
+        was_training = self.training
+        self.eval()
+
+        device = next(self.parameters()).device
+
+        # Infer latent dimension if needed
+        if latent_dim is None:
+            if hasattr(self.encoder_config, 'latent_dim'):
+                latent_dim = self.encoder_config.latent_dim
+            else:
+                # Fallback: get from shared_block_dims
+                latent_dim = self.shared_block_dims[-1]
+
+        # Run optimization with restarts
+        all_results = []
+
+        for restart_idx in range(num_restarts):
+            # Initialize starting latent
+            if initial_input is None:
+                # Random initialization from standard normal
+                initial_latent = torch.randn(1, latent_dim, device=device)
+            else:
+                # Encode provided input
+                if initial_input.ndim == 1:
+                    initial_input_processed = initial_input.unsqueeze(0)
+                else:
+                    initial_input_processed = initial_input
+
+                if initial_input_processed.shape[0] != 1:
+                    if restart_idx == 0:
+                        logger.warning(
+                            f"optimize_latent expects batch size 1, got {initial_input_processed.shape[0]}. "
+                            f"Using first sample."
+                        )
+                    initial_input_processed = initial_input_processed[:1]
+
+                initial_input_processed = initial_input_processed.to(device)
+
+                with torch.no_grad():
+                    _, initial_latent = self.encoder(initial_input_processed)
+
+            # Add perturbation if requested
+            if perturbation_std > 0:
+                noise = torch.randn_like(initial_latent) * perturbation_std
+                initial_latent = initial_latent + noise
+
+            # Record initial score
+            with torch.no_grad():
+                initial_score = self.task_heads[task_name](initial_latent).item()
+
+            # Create optimizable latent
+            latent = initial_latent.detach().clone().requires_grad_(True)
+
+            # Setup optimizer
+            optimizer = optim.Adam([latent], lr=lr)
+
+            # Optimization loop
+            history: list[float] = []
+            sign = 1.0 if mode == "max" else -1.0
+
+            for step in range(steps):
+                optimizer.zero_grad()
+
+                # Forward through task head
+                pred = self.task_heads[task_name](latent)
+
+                # Compute loss (negative for maximization)
+                loss = -sign * pred.sum()
+
+                # Backward and optimize
+                loss.backward()
+                optimizer.step()
+
+                # Record history
+                with torch.no_grad():
+                    score = pred.item()
+                    history.append(score)
+
+            # Get final optimized values
+            with torch.no_grad():
+                optimized_latent = latent.detach()
+                optimized_score = self.task_heads[task_name](optimized_latent)
+
+                # Reconstruct if autoencoder provided
+                reconstructed_input = None
+                if ae_task_name is not None:
+                    reconstructed_input = self.task_heads[ae_task_name](optimized_latent)
+
+            # Store results for this restart
+            result = {
+                "optimized_latent": optimized_latent,
+                "optimized_score": optimized_score,
+                "reconstructed_input": reconstructed_input,
+                "history": history,
+                "initial_score": initial_score,
+                "restart_idx": restart_idx,
+            }
+            all_results.append(result)
+
+        # Restore training state
+        self.train(was_training)
+
+        # Select best result across restarts
+        if mode == "max":
+            best_result = max(all_results, key=lambda r: r["optimized_score"].item())
+        else:
+            best_result = min(all_results, key=lambda r: r["optimized_score"].item())
+
+        # Prepare return value
+        output = {
+            "optimized_latent": best_result["optimized_latent"],
+            "optimized_score": best_result["optimized_score"],
+            "reconstructed_input": best_result["reconstructed_input"],
+            "history": best_result["history"],
+            "initial_score": best_result["initial_score"],
+        }
+
+        # Include all restart results if multiple restarts were used
+        if num_restarts > 1:
+            output["all_restarts"] = all_results
+            logger.info(
+                f"Completed {num_restarts} restarts. Best score: {best_result['optimized_score'].item():.4f} "
+                f"(restart {best_result['restart_idx']})"
+            )
+
+        return output

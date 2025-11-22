@@ -16,6 +16,7 @@ class TaskType(str, Enum):
     REGRESSION = "REGRESSION"
     CLASSIFICATION = "CLASSIFICATION"
     KERNEL_REGRESSION = "KernelRegression"
+    AUTOENCODER = "AUTOENCODER"
 
 
 class EncoderType(str, Enum):
@@ -252,3 +253,13 @@ class KernelRegressionTaskConfig(BaseTaskConfig):
     beta_hidden_dims: Optional[List[int]] = field(default=None, kw_only=True)
     mu1_hidden_dims: Optional[List[int]] = field(default=None, kw_only=True)
     mu2_hidden_dims: Optional[List[int]] = field(default=None, kw_only=True)
+
+
+@dataclass
+class AutoEncoderTaskConfig(BaseTaskConfig):
+    """Configuration for autoencoder tasks (reconstruction)."""
+
+    dims: List[int] = field(default_factory=lambda: [256, 128, 64])
+    type: TaskType = TaskType.AUTOENCODER
+    norm: bool = True
+    residual: bool = False
