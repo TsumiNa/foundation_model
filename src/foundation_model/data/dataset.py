@@ -152,6 +152,12 @@ class CompoundDataset(Dataset):
             self.enabled_task_names.append(task_name)
             logger.info(f"[{self.dataset_name}] Processing enabled task '{task_name}' (type: {task_type.name})")
 
+            if task_type == TaskType.AUTOENCODER:
+                # AutoEncoder tasks use the input features as target, so no external data loading is needed.
+                # We skip y_dict and task_masks_dict population for this task.
+                # The model handles target generation (x) and masking (ones) internally.
+                continue
+
             # --- Primary Data Loading (y_dict) using cfg.data_column ---
             data_col_for_task = cfg.data_column
 
