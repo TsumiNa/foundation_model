@@ -99,13 +99,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     def __init__(
         self,
-        shared_block_dims: list[int],
         task_configs: Sequence[
             RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig | AutoEncoderTaskConfig
         ],
         *,
+        # Input dimension (replaces shared_block_dims for clearer API)
+        input_dim: int | None = None,
         # Encoder selection
         encoder_config: BaseEncoderConfig | Mapping[str, Any] | None = None,
+        # Legacy parameter (deprecated but kept for backward compatibility)
+        shared_block_dims: list[int] | None = None,
         # Freezing parameters
         freeze_shared_encoder: bool = False,
         # Optimization parameters
@@ -122,26 +125,64 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.allow_all_missing_in_batch = allow_all_missing_in_batch
 
         # Validate inputs
-        if len(shared_block_dims) < 2:
-            raise ValueError("shared_block_dims must have at least 2 elements")
-
         if not task_configs:
             raise ValueError("At least one task configuration must be provided")
 
-        # Store configuration parameters
-        self.shared_block_dims = list(shared_block_dims)
-        default_hidden_dims = self.shared_block_dims[1:]
-        self.encoder_config = build_encoder_config(
-            encoder_config,
-            default_hidden_dims=default_hidden_dims,
-            default_latent_dim=default_hidden_dims[-1],
-        )
-
-        if isinstance(self.encoder_config, MLPEncoderConfig):
-            realized_dims = [self.shared_block_dims[0], *self.encoder_config.hidden_dims]
+        # Handle legacy shared_block_dims parameter
+        if shared_block_dims is not None:
+            logger.warning(
+                "Parameter 'shared_block_dims' is deprecated and will be removed in a future version. "
+                "Use 'input_dim' and 'encoder_config' instead."
+            )
+            if len(shared_block_dims) < 2:
+                raise ValueError("shared_block_dims must have at least 2 elements")
+            # Extract input_dim and default_hidden_dims from legacy parameter
+            if input_dim is None:
+                input_dim = shared_block_dims[0]
+            default_hidden_dims = shared_block_dims[1:]
+        elif input_dim is None:
+            raise ValueError(
+                "Either 'input_dim' or 'shared_block_dims' must be provided. "
+                "Prefer using 'input_dim' as 'shared_block_dims' is deprecated."
+            )
         else:
-            realized_dims = [self.shared_block_dims[0], self.encoder_config.latent_dim]
+            # New API: input_dim provided, encoder_config required
+            if encoder_config is None:
+                raise ValueError("When using 'input_dim', 'encoder_config' must also be provided")
+            default_hidden_dims = None  # Will be handled by encoder_config
 
+        # Build encoder configuration
+        if default_hidden_dims is not None:
+            # Legacy path or explicit defaults
+            self.encoder_config = build_encoder_config(
+                encoder_config,
+                default_hidden_dims=default_hidden_dims,
+                default_latent_dim=default_hidden_dims[-1],
+            )
+        else:
+            # New API path: encoder_config must be complete
+            if encoder_config is None:
+                raise ValueError("encoder_config is required when not using shared_block_dims")
+            if isinstance(encoder_config, BaseEncoderConfig):
+                self.encoder_config = encoder_config
+            else:
+                # It's a dict, convert it
+                self.encoder_config = build_encoder_config(
+                    encoder_config,
+                    default_hidden_dims=[128],  # Fallback
+                    default_latent_dim=128,
+                )
+
+        # Store input_dim
+        self.input_dim = input_dim
+
+        # Build realized_dims for backward compatibility
+        if isinstance(self.encoder_config, MLPEncoderConfig):
+            realized_dims = [self.input_dim, *self.encoder_config.hidden_dims]
+        else:
+            realized_dims = [self.input_dim, self.encoder_config.latent_dim]
+
+        # Store for backward compatibility
         self.shared_block_dims = realized_dims
         self.deposit_dim = self.encoder_config.latent_dim
         self.task_configs = task_configs
@@ -199,7 +240,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # deposit_dim is now self.deposit_dim, defined in __init__
 
         self.encoder = FoundationEncoder(
-            input_dim=self.shared_block_dims[0],
+            input_dim=self.input_dim,
             encoder_config=self.encoder_config,
             deposit_dim=self.deposit_dim,
         )
