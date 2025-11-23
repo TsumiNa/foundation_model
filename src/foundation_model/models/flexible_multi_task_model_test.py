@@ -74,7 +74,7 @@ def model_config_mixed_tasks():
     config_dict = {
         "shared_block_dims": shared_dims,
         "task_configs": task_configs_list,
-        "encoder_config": MLPEncoderConfig(hidden_dims=shared_dims[1:], norm=True, residual=False),
+        "encoder_config": MLPEncoderConfig(hidden_dims=shared_dims, norm=True, residual=False),
         "shared_block_optimizer": OptimizerConfig(lr=1e-3, scheduler_type="None"),
     }
     return SimpleNamespace(**config_dict)
@@ -128,7 +128,6 @@ def test_model_initialization(model_config_mixed_tasks):
     """Test model initialization with mixed regression and classification tasks."""
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
-        shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
         encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
@@ -165,7 +164,6 @@ def test_model_forward_pass(model_config_mixed_tasks, sample_batch_mixed_tasks):
     """Test the forward pass for mixed regression and classification predictions."""
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
-        shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
         encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
@@ -213,7 +211,6 @@ def test_model_training_step(model_config_mixed_tasks, sample_batch_mixed_tasks,
     """Test the training_step for mixed regression and classification tasks."""
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
-        shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
         encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
@@ -298,7 +295,6 @@ def test_model_validation_step(model_config_mixed_tasks, sample_batch_mixed_task
     """Test the validation_step for mixed regression and classification tasks."""
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
-        shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
         encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
@@ -334,7 +330,6 @@ def test_model_predict_step_all_tasks(model_config_mixed_tasks, sample_batch_mix
     """Test the predict_step for all enabled tasks."""
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
-        shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
         encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
@@ -402,7 +397,6 @@ def test_model_configure_optimizers(model_config_mixed_tasks):
     """Test configure_optimizers for mixed regression and classification tasks."""
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
-        shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
         encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
@@ -565,7 +559,6 @@ def test_trainer_integration_mixed_tasks(model_config_mixed_tasks, dummy_compoun
     """
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
-        shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
         encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
@@ -671,7 +664,6 @@ def test_model_predict_step_specific_tasks(model_config_mixed_tasks, sample_batc
     """Test the predict_step with specific tasks requested."""
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
-        shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
         encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,
@@ -736,7 +728,6 @@ def test_model_registered_tasks_info_property(model_config_mixed_tasks):
     """Test the registered_tasks_info property."""
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
-        shared_block_dims=config.shared_block_dims,
         task_configs=config.task_configs,
         encoder_config=config.encoder_config,
         shared_block_optimizer=config.shared_block_optimizer,

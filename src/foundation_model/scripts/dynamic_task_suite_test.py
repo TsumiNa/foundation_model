@@ -1,5 +1,6 @@
-from pathlib import Path
 import textwrap
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -12,7 +13,7 @@ from foundation_model.scripts.dynamic_task_suite import (
 
 
 def _make_suite_config(tmp_path: Path, **overrides) -> SuiteConfig:
-    base_kwargs = {
+    base_kwargs: dict[str, Any] = {
         "descriptor_path": tmp_path / "descriptors.parquet",
         "pretrain_data_path": tmp_path / "pretrain.parquet",
         "finetune_data_path": tmp_path / "finetune.parquet",

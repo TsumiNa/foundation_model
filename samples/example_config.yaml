@@ -15,13 +15,9 @@ model:
   class_path: foundation_model.models.flexible_multi_task_model.FlexibleMultiTaskModel
   init_args:
     # --- Shared Encoder Configuration ---
-    shared_block_dims:
-      [256, 512, 256] # Example: [input_dim_formula, hidden1, output_latent_dim]
-      # The input_dim_formula (first element) should match the
-      # feature dimension of your formula_desc_source.
     encoder_config:
       type: mlp
-      hidden_dims: [512, 256]
+      hidden_dims: [256, 512, 256] # hidden_dims[0] is input_dim
       norm: true
       residual: false
 
@@ -40,7 +36,7 @@ model:
       #   enabled: True
       #   loss_weight: 1.0 # Static scaling for this task's loss
       #   dims: [256, 128, 1] # Example: [model_latent_dim, head_hidden_dim, output_dim]
-      #                      # The first element should match the model's output_latent_dim (last element of shared_block_dims)
+      #                      # The first element should match the model's encoder_config.latent_dim
       #   norm: True
       #   residual: False
       #   optimizer: # Optional: task-specific optimizer settings

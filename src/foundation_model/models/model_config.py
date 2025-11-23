@@ -16,6 +16,7 @@ class TaskType(str, Enum):
     REGRESSION = "REGRESSION"
     CLASSIFICATION = "CLASSIFICATION"
     KERNEL_REGRESSION = "KernelRegression"
+    AUTOENCODER = "AUTOENCODER"
 
 
 class EncoderType(str, Enum):
@@ -56,13 +57,21 @@ class MLPEncoderConfig(BaseEncoderConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if not self.hidden_dims:
-            raise ValueError("MLPEncoderConfig.hidden_dims must contain at least one dimension")
+        if not self.hidden_dims or len(self.hidden_dims) < 2:
+            raise ValueError(
+                "MLPEncoderConfig.hidden_dims must include input_dim as the first element and at least one hidden/latent dimension"
+            )
         self.hidden_dims = tuple(int(dim) for dim in self.hidden_dims)
+        if any(dim <= 0 for dim in self.hidden_dims):
+            raise ValueError("MLPEncoderConfig.hidden_dims entries must be positive integers")
 
     @property
     def latent_dim(self) -> int:
         return int(self.hidden_dims[-1])
+
+    @property
+    def input_dim(self) -> int:
+        return int(self.hidden_dims[0])
 
 
 @dataclass(kw_only=True)
@@ -84,9 +93,17 @@ class TransformerEncoderConfig(BaseEncoderConfig):
     use_cls_token: bool = True
     apply_layer_norm: bool = True
     type: EncoderType = EncoderType.TRANSFORMER
+    input_dim: int = 0
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        try:
+            input_dim_int = int(self.input_dim)
+        except (TypeError, ValueError) as exc:
+            raise TypeError("TransformerEncoderConfig.input_dim must be convertible to int") from exc
+        if isinstance(self.input_dim, bool) or input_dim_int <= 0:
+            raise ValueError("TransformerEncoderConfig.input_dim must be a positive integer")
+        self.input_dim = input_dim_int
         if self.d_model <= 0:
             raise ValueError("TransformerEncoderConfig.d_model must be positive")
         if self.num_layers <= 0:
@@ -104,19 +121,12 @@ class TransformerEncoderConfig(BaseEncoderConfig):
 EncoderConfig = MLPEncoderConfig | TransformerEncoderConfig
 
 
-def build_encoder_config(
-    config: BaseEncoderConfig | Mapping[str, Any] | None,
-    *,
-    default_hidden_dims: Sequence[int],
-    default_latent_dim: int,
-) -> EncoderConfig:
-    """Normalize encoder configuration inputs to dataclass instances."""
+def build_encoder_config(config: BaseEncoderConfig | Mapping[str, Any]) -> EncoderConfig:
+    """Normalize encoder configuration inputs to dataclass instances.
 
-    if not default_hidden_dims:
-        raise ValueError("default_hidden_dims must contain at least one value")
-
-    if config is None:
-        return MLPEncoderConfig(hidden_dims=default_hidden_dims)
+    For MLP, ``hidden_dims`` must include the input dimension as the first element.
+    For Transformer, ``input_dim`` must be provided explicitly.
+    """
 
     if isinstance(config, BaseEncoderConfig):
         return config
@@ -132,11 +142,31 @@ def build_encoder_config(
         config_type = EncoderType(str(config_type).lower())
 
     if config_type is EncoderType.MLP:
-        hidden_dims = config_dict.pop("hidden_dims", default_hidden_dims)
+        if "hidden_dims" not in config_dict:
+            raise ValueError(
+                "MLP encoder_config mapping must include 'hidden_dims' with input_dim as the first element"
+            )
+        hidden_dims = config_dict.pop("hidden_dims")
+        input_dim = config_dict.pop("input_dim", None)
+        if input_dim is not None:
+            try:
+                input_dim_int = int(input_dim)
+            except (TypeError, ValueError) as exc:
+                raise TypeError("encoder_config.input_dim must be convertible to int") from exc
+            if input_dim_int <= 0:
+                raise ValueError("encoder_config.input_dim must be positive")
+            if int(hidden_dims[0]) != input_dim_int:
+                raise ValueError(
+                    f"MLP encoder_config input_dim ({input_dim_int}) must match hidden_dims[0] ({hidden_dims[0]})"
+                )
         return MLPEncoderConfig(hidden_dims=hidden_dims, **config_dict)
 
     if config_type is EncoderType.TRANSFORMER:
-        d_model = config_dict.pop("d_model", default_latent_dim)
+        if "input_dim" not in config_dict:
+            raise ValueError("Transformer encoder_config mapping must include 'input_dim'")
+        if "d_model" not in config_dict:
+            raise ValueError("Transformer encoder_config mapping must include 'd_model'")
+        d_model = config_dict.pop("d_model")
         return TransformerEncoderConfig(d_model=d_model, **config_dict)
 
     raise ValueError(f"Unsupported encoder type: {config_type}")
@@ -252,3 +282,16 @@ class KernelRegressionTaskConfig(BaseTaskConfig):
     beta_hidden_dims: Optional[List[int]] = field(default=None, kw_only=True)
     mu1_hidden_dims: Optional[List[int]] = field(default=None, kw_only=True)
     mu2_hidden_dims: Optional[List[int]] = field(default=None, kw_only=True)
+
+
+@dataclass
+class AutoEncoderTaskConfig(BaseTaskConfig):
+    """Configuration for autoencoder tasks (reconstruction)."""
+
+    dims: List[int] = field(default_factory=lambda: [256, 128, 64])
+    type: TaskType = TaskType.AUTOENCODER
+    norm: bool = True
+    residual: bool = False
+
+
+TaskConfigType = RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig | AutoEncoderTaskConfig

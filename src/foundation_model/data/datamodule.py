@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 from foundation_model.models.model_config import (
+    AutoEncoderTaskConfig,
     ClassificationTaskConfig,
     KernelRegressionTaskConfig,
     RegressionTaskConfig,
@@ -230,7 +231,9 @@ class CompoundDataModule(L.LightningDataModule):
     def __init__(
         self,
         formula_desc_source: pd.DataFrame | Path_fr,  # type: ignore
-        task_configs: Sequence[RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig],
+        task_configs: Sequence[
+            RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig | AutoEncoderTaskConfig
+        ],
         attributes_source: pd.DataFrame | Path_fr | None = None,  # type: ignore
         task_masking_ratios: float | Dict[str, float] | None = None,
         random_seed: int | None = 42,
@@ -631,7 +634,7 @@ class CompoundDataModule(L.LightningDataModule):
     def _build_fit_datasets(self, log_prefix: str = "--- Creating 'fit' stage datasets (train/val) ---") -> None:
         """Construct train and validation datasets based on current indices."""
         logger.info(log_prefix)
-        if not self.train_idx.empty and self.attributes_df is not None:
+        if not self.train_idx.empty:
             logger.info(f"Creating train_dataset with {len(self.train_idx)} samples.")
             train_masking_ratios = self._resolved_task_masking_ratios()
             self.train_dataset = CompoundDataset(
@@ -643,16 +646,11 @@ class CompoundDataModule(L.LightningDataModule):
                 is_predict_set=False,
                 dataset_name="train_dataset",
             )
-        elif self.attributes_df is None and not self.train_idx.empty:
-            logger.warning(
-                "attributes_df is None; skipping train_dataset creation because supervised targets are unavailable."
-            )
-            self.train_dataset = None
         else:
             logger.warning("Train index is empty. train_dataset will be None.")
             self.train_dataset = None
 
-        if not self.val_idx.empty and self.attributes_df is not None:
+        if not self.val_idx.empty:
             logger.info(f"Creating val_dataset with {len(self.val_idx)} samples.")
             self.val_dataset = CompoundDataset(
                 formula_desc=self.formula_df.loc[self.val_idx],
@@ -663,13 +661,8 @@ class CompoundDataModule(L.LightningDataModule):
                 is_predict_set=False,
                 dataset_name="val_dataset",
             )
-        elif self.attributes_df is None and not self.val_idx.empty:
-            logger.warning(
-                "attributes_df is None; skipping val_dataset creation because supervised targets are unavailable."
-            )
-            self.val_dataset = None
         else:
-            logger.info("Validation index is empty. val_dataset will be None.")
+            logger.warning("Validation index is empty. val_dataset will be None.")
             self.val_dataset = None
 
     def _apply_train_val_swap(self, swap_ratio: float, random_seed: int | None) -> None:

@@ -25,21 +25,24 @@ import pandas as pd  # Added
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from loguru import logger  # Replaced logging with loguru
 from torch.optim.lr_scheduler import LRScheduler  # Changed from _LRScheduler
 
 from .components.foundation_encoder import FoundationEncoder
 from .model_config import (
+    AutoEncoderTaskConfig,
     BaseEncoderConfig,
     ClassificationTaskConfig,
     KernelRegressionTaskConfig,
-    MLPEncoderConfig,
     OptimizerConfig,
     RegressionTaskConfig,
+    TaskConfigType,
     TaskType,
     build_encoder_config,
 )
+from .task_head.autoencoder import AutoEncoderHead
 from .task_head.classification import ClassificationHead
 from .task_head.kernel_regression import KernelRegressionHead
 from .task_head.regression import RegressionHead
@@ -76,19 +79,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     Parameters
     ----------
-    shared_block_dims : list[int]
-        Legacy specification of encoder dimensions. The first element is the input feature dimension.
-        The remaining values seed the default ``MLPEncoderConfig`` (hidden layer widths) and provide the
-        fallback latent dimension used when ``encoder_config`` is omitted. Example: ``[128, 256, 512]``
-        produces a 2-layer MLP with latent size ``512`` by default.
     task_configs : list[RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig]
         List of task configurations, each defining a prediction task. Each configuration must specify
         task type, name, dimensions, etc. Regression and classification task heads receive the deposit
         layer output, while KernelRegression task heads receive both deposit layer output and sequence points.
         A task-specific `loss_weight` (defaults to 1.0) can be set in each configuration to scale its loss.
-    encoder_config : BaseEncoderConfig | Mapping[str, Any] | None
-        Configuration controlling the foundation encoder backbone. When omitted,
-        an ``MLPEncoderConfig`` is created from ``shared_block_dims[1:]``.
+    encoder_config : BaseEncoderConfig | Mapping[str, Any]
+        Configuration controlling the foundation encoder backbone.
+        For MLP, hidden_dims must include input_dim as the first element.
     shared_block_optimizer : OptimizerConfig | None
         Optimizer configuration for the shared foundation encoder and deposit layer.
     enable_learnable_loss_balancer : bool
@@ -97,11 +95,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     def __init__(
         self,
-        shared_block_dims: list[int],
-        task_configs: Sequence[RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig],
+        task_configs: Sequence[
+            RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig | AutoEncoderTaskConfig
+        ],
         *,
-        # Encoder selection
-        encoder_config: BaseEncoderConfig | Mapping[str, Any] | None = None,
+        encoder_config: BaseEncoderConfig | Mapping[str, Any],
         # Freezing parameters
         freeze_shared_encoder: bool = False,
         # Optimization parameters
@@ -118,29 +116,17 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.allow_all_missing_in_batch = allow_all_missing_in_batch
 
         # Validate inputs
-        if len(shared_block_dims) < 2:
-            raise ValueError("shared_block_dims must have at least 2 elements")
-
         if not task_configs:
             raise ValueError("At least one task configuration must be provided")
 
-        # Store configuration parameters
-        self.shared_block_dims = list(shared_block_dims)
-        default_hidden_dims = self.shared_block_dims[1:]
-        self.encoder_config = build_encoder_config(
-            encoder_config,
-            default_hidden_dims=default_hidden_dims,
-            default_latent_dim=default_hidden_dims[-1],
-        )
-
-        if isinstance(self.encoder_config, MLPEncoderConfig):
-            realized_dims = [self.shared_block_dims[0], *self.encoder_config.hidden_dims]
+        if encoder_config is None:
+            raise ValueError("encoder_config must be provided")
+        if isinstance(encoder_config, BaseEncoderConfig):
+            self.encoder_config = encoder_config
         else:
-            realized_dims = [self.shared_block_dims[0], self.encoder_config.latent_dim]
-
-        self.shared_block_dims = realized_dims
+            self.encoder_config = build_encoder_config(encoder_config)
         self.deposit_dim = self.encoder_config.latent_dim
-        self.task_configs = task_configs
+        self.task_configs = list(task_configs)
         self.task_configs_map = {cfg.name: cfg for cfg in self.task_configs}
         for cfg in self.task_configs:
             cfg.loss_weight = self._normalize_loss_weight(getattr(cfg, "loss_weight", 1.0), cfg.name)
@@ -195,14 +181,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # deposit_dim is now self.deposit_dim, defined in __init__
 
         self.encoder = FoundationEncoder(
-            input_dim=self.shared_block_dims[0],
             encoder_config=self.encoder_config,
             deposit_dim=self.deposit_dim,
         )
-
-        # Keep references to original components for backward compatibility
-        self.shared = self.encoder.shared
-        self.deposit = self.encoder.deposit
 
     def _infer_parameter_device(self) -> torch.device:
         """Infer the device for newly created modules/parameters."""
@@ -242,7 +223,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return numeric_value
 
     def _validate_task_config(
-        self, config_item: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
+        self,
+        config_item: RegressionTaskConfig
+        | ClassificationTaskConfig
+        | KernelRegressionTaskConfig
+        | AutoEncoderTaskConfig,
     ):
         """Validate that the task configuration is compatible with the shared encoder."""
         if not config_item.name:
@@ -262,7 +247,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     f"but received {config_item.x_dim[0]}."
                 )
         else:
-            assert isinstance(config_item, (RegressionTaskConfig, ClassificationTaskConfig))
+            assert isinstance(config_item, (RegressionTaskConfig, ClassificationTaskConfig, AutoEncoderTaskConfig))
             if not getattr(config_item, "dims", None):
                 raise ValueError(f"Task '{config_item.name}' requires a non-empty dims configuration.")
             if config_item.dims[0] != expected_input_dim:
@@ -275,7 +260,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
         )
 
     def _instantiate_task_head(
-        self, config_item: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
+        self,
+        config_item: RegressionTaskConfig
+        | ClassificationTaskConfig
+        | KernelRegressionTaskConfig
+        | AutoEncoderTaskConfig,
     ) -> nn.Module:
         """Instantiate a task head module for the provided configuration."""
         if not config_item.enabled:
@@ -291,6 +280,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         elif config_item.type == TaskType.KERNEL_REGRESSION:
             assert isinstance(config_item, KernelRegressionTaskConfig)
             head_module = KernelRegressionHead(config=config_item)
+        elif config_item.type == TaskType.AUTOENCODER:
+            assert isinstance(config_item, AutoEncoderTaskConfig)
+            head_module = AutoEncoderHead(config=config_item)
         else:
             raise ValueError(f"Unsupported task type: {config_item.type}")
 
@@ -325,10 +317,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             if config.enabled:
                 self._activate_task(config)
 
-    def _activate_task(
-        self,
-        task_config: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig,
-    ) -> nn.Module:
+    def _activate_task(self, task_config: TaskConfigType) -> nn.Module:
         """Activate (or re-activate) a task by ensuring its head and auxiliary state are registered."""
         name = task_config.name
 
@@ -377,7 +366,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     def add_task(
         self,
-        *task_configs: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig,
+        *task_configs: TaskConfigType,
     ) -> "FlexibleMultiTaskModel":
         """
         Dynamically add one or more task configurations and instantiate their heads.
@@ -528,9 +517,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """Initialize model weights and apply freezing based on freeze_shared_encoder config."""
         # Apply parameter freezing based on freeze_shared_encoder config
         if self.freeze_shared_encoder:
-            for p in self.shared.parameters():
+            for p in self.encoder.shared.parameters():
                 p.requires_grad_(False)
-            for p in self.deposit.parameters():
+            for p in self.encoder.deposit.parameters():
                 p.requires_grad_(False)
 
         # Initialize weights
@@ -614,12 +603,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         raw_supervised_losses = {}
         for name, pred_tensor in preds.items():
-            if name not in y_dict_batch or not self.task_configs_map[name].enabled:
-                continue
-
             head = self.task_heads[name]
-            target = y_dict_batch[name]
-            sample_mask = task_masks_batch.get(name)
+
+            if isinstance(head, AutoEncoderHead):
+                target = x
+                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+            elif name not in y_dict_batch or not self.task_configs_map[name].enabled:
+                continue
+            else:
+                target = y_dict_batch[name]
+                sample_mask = task_masks_batch.get(name)
 
             if isinstance(head, KernelRegressionHead):
                 if isinstance(target, list):
@@ -728,12 +721,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         raw_val_supervised_losses = {}
         for name, pred_tensor in preds.items():
-            if name not in y_dict_batch or not self.task_configs_map[name].enabled:
-                continue
-
             head = self.task_heads[name]
-            target = y_dict_batch[name]
-            sample_mask = task_masks_batch.get(name)
+
+            if isinstance(head, AutoEncoderHead):
+                target = x
+                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+            elif name not in y_dict_batch or not self.task_configs_map[name].enabled:
+                continue
+            else:
+                target = y_dict_batch[name]
+                sample_mask = task_masks_batch.get(name)
 
             if isinstance(head, KernelRegressionHead):
                 if isinstance(target, list):
@@ -755,7 +752,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             if raw_loss_t is None:
                 if self.allow_all_missing_in_batch:
                     self._log_debug(f"Task '{name}' has no valid samples in this batch. Skipping loss calculation.")
-                    val_logs[f"val_{name}_all_missing"] = 1.0
+                    val_logs[f"val_{name}_all_missing"] = torch.tensor(1.0, device=x.device)
                     continue
                 raise ValueError(
                     f"Task '{name}' has no valid samples in this batch and allow_all_missing_in_batch is False."
@@ -764,7 +761,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             raw_val_supervised_losses[name] = raw_loss_t
             val_sum_supervised_raw_loss += raw_loss_t.detach()
             val_logs[f"val_{name}_raw_loss"] = raw_loss_t.detach()
-            val_logs[f"val_{name}_all_missing"] = 0.0
+            val_logs[f"val_{name}_all_missing"] = torch.tensor(0.0, device=x.device)
 
         val_logs["val_sum_supervised_raw_loss"] = val_sum_supervised_raw_loss
 
@@ -822,12 +819,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         raw_test_supervised_losses = {}
         for name, pred_tensor in preds.items():
-            if name not in y_dict_batch or not self.task_configs_map[name].enabled:
-                continue
-
             head = self.task_heads[name]
-            target = y_dict_batch[name]
-            sample_mask = task_masks_batch.get(name)
+
+            if isinstance(head, AutoEncoderHead):
+                target = x
+                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+            elif name not in y_dict_batch or not self.task_configs_map[name].enabled:
+                continue
+            else:
+                target = y_dict_batch[name]
+                sample_mask = task_masks_batch.get(name)
 
             if isinstance(head, KernelRegressionHead):
                 if isinstance(target, list):
@@ -849,7 +850,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             if raw_loss_t is None:
                 if self.allow_all_missing_in_batch:
                     self._log_debug(f"Task '{name}' has no valid samples in this batch. Skipping loss calculation.")
-                    test_logs[f"test_{name}_all_missing"] = 1.0
+                    test_logs[f"test_{name}_all_missing"] = torch.tensor(1.0, device=x.device)
                     continue
                 raise ValueError(
                     f"Task '{name}' has no valid samples in this batch and allow_all_missing_in_batch is False."
@@ -858,7 +859,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             raw_test_supervised_losses[name] = raw_loss_t
             test_sum_supervised_raw_loss += raw_loss_t.detach()
             test_logs[f"test_{name}_raw_loss"] = raw_loss_t.detach()
-            test_logs[f"test_{name}_all_missing"] = 0.0
+            test_logs[f"test_{name}_all_missing"] = torch.tensor(0.0, device=x.device)
 
         test_logs["test_sum_supervised_raw_loss"] = test_sum_supervised_raw_loss
 
@@ -1455,3 +1456,307 @@ class FlexibleMultiTaskModel(L.LightningModule):
             logger.warning(f"Error during optimizer state validation: {e}. Removing optimizer states as fallback.")
             checkpoint.pop("optimizer_states", None)
             checkpoint.pop("lr_schedulers", None)
+
+    def optimize_latent(
+        self,
+        task_name: str,
+        initial_input: torch.Tensor,
+        mode: str = "max",
+        steps: int = 200,
+        lr: float = 0.1,
+        ae_task_name: str | None = None,
+        num_restarts: int = 1,
+        perturbation_std: float = 0.0,
+        target_value: torch.Tensor | float | None = None,
+        task_targets: Mapping[str, torch.Tensor | float] | None = None,
+        return_details: bool = False,
+    ) -> dict[str, torch.Tensor | list[float] | list[dict]]:
+        """
+        Optimize inputs to drive one or multiple regression heads toward targets or extremes.
+
+        This method assumes the model is already trained. Starting from a provided batch
+        of inputs ``initial_input`` (shape ``(B, input_dim)``), it optimizes those inputs
+        through the shared encoder to find variants that maximize/minimize a regression
+        head or match one or more target values. The optimized representations can
+        optionally be decoded via an autoencoder head to obtain reconstructed inputs.
+
+        Parameters
+        ----------
+        task_name : str
+            Name of the regression task to optimize (e.g., "density"). Ignored when
+            ``task_targets`` is provided.
+        initial_input : torch.Tensor
+            Starting input tensor to optimize, shape (B, input_dim). This is treated as
+            the optimization variable.
+        mode : str, optional
+            Optimization direction: "max" to maximize or "min" to minimize. Ignored if
+            ``target_value`` or ``task_targets`` is provided. Defaults to "max".
+        steps : int, optional
+            Number of optimization steps per restart. Defaults to 200.
+        lr : float, optional
+            Learning rate for the optimizer. Defaults to 0.1.
+        ae_task_name : str, optional
+            Name of the autoencoder task for reconstruction. If None, only
+            returns the optimized latent. Defaults to None.
+        num_restarts : int, optional
+            Number of random restarts to avoid local optima. If > 1, returns
+            the best result across all restarts. Defaults to 1.
+        perturbation_std : float, optional
+            Standard deviation of Gaussian noise to add to the starting inputs for each
+            restart.
+            Useful for exploring around a good starting point. Defaults to 0.0.
+        target_value : torch.Tensor | float | None, optional
+            If provided, minimize the MSE between the single regression head output and
+            this target. Overrides ``mode`` when set.
+            task_targets : Mapping[str, torch.Tensor | float] | None, optional
+            For multi-target optimization, map regression task names to desired values.
+            When provided, ``mode`` and ``target_value`` are ignored and a joint MSE
+            across tasks is minimized.
+        return_details : bool, optional
+            If True, return a tuple of (result_dict, details_dict) where result_dict
+            contains optimized inputs/scores and details_dict contains initial scores
+            and full trajectories. Defaults to False.
+
+        Returns
+        -------
+        If return_details is False:
+            dict with:
+            - "optimized_input": (B, num_restarts, input_dim) optimized inputs (decoded if AE provided)
+            - "optimized_target": (B, num_restarts, num_target) final per-task outputs per restart
+
+        If return_details is True:
+            tuple(result_dict, details_dict) where:
+            - result_dict: {"optimized_input": (B, R, D), "optimized_score": (B, R, T)}
+            - details_dict: {"initial_score": (B, T), "trajectory": (B, R, steps, T)}
+
+        Raises
+        ------
+        ValueError
+            If task_name is not a regression task or ae_task_name is not an autoencoder task.
+
+        Examples
+        --------
+        # Optimize a given input toward maximum regression output
+        >>> result = model.optimize_latent(
+        ...     task_name="density",
+        ...     initial_input=my_input_batch,
+        ...     mode="max",
+        ...     steps=200,
+        ...     num_restarts=5,  # Try 5 different starting points
+        ...     ae_task_name="reconstruction"
+        ... )
+
+        # Optimize toward a target value starting from a specific input with perturbation
+        >>> result = model.optimize_latent(
+        ...     task_name="density",
+        ...     initial_input=my_input_batch,
+        ...     target_value=5.0,
+        ...     steps=200,
+        ...     perturbation_std=0.1,  # Add noise to explore nearby
+        ...     num_restarts=3,
+        ...     ae_task_name="reconstruction"
+        ... )
+        """
+        # Validate task configurations
+        target_tasks: dict[str, torch.Tensor | float] | None = None
+        if task_targets is not None:
+            if not isinstance(task_targets, Mapping) or len(task_targets) == 0:
+                raise ValueError("task_targets must be a non-empty mapping of task_name -> target_value")
+            target_tasks = dict(task_targets)
+            if target_value is not None:
+                raise ValueError("Use either task_targets (multi-task) or target_value (single task), not both.")
+            for name in target_tasks:
+                if name not in self.task_heads:
+                    raise ValueError(
+                        f"Task '{name}' not found in model. Available tasks: {list(self.task_heads.keys())}"
+                    )
+                cfg = self.task_configs_map[name]
+                if cfg.type != TaskType.REGRESSION:
+                    raise ValueError(
+                        f"Task '{name}' must be a regression task for optimization, got {cfg.type}"
+                    )
+        else:
+            if task_name not in self.task_heads:
+                raise ValueError(
+                    f"Task '{task_name}' not found in model. Available tasks: {list(self.task_heads.keys())}"
+                )
+            task_config = self.task_configs_map[task_name]
+            if task_config.type != TaskType.REGRESSION:
+                raise ValueError(
+                    f"Task '{task_name}' must be a regression task for optimization, got {task_config.type}"
+                )
+
+        if ae_task_name is not None:
+            if ae_task_name not in self.task_heads:
+                raise ValueError(
+                    f"Autoencoder task '{ae_task_name}' not found. Available tasks: {list(self.task_heads.keys())}"
+                )
+            ae_config = self.task_configs_map[ae_task_name]
+            if ae_config.type != TaskType.AUTOENCODER:
+                raise ValueError(f"Task '{ae_task_name}' must be an autoencoder task, got {ae_config.type}")
+
+        if target_tasks is None and mode not in {"max", "min"}:
+            raise ValueError(f"mode must be 'max' or 'min', got '{mode}'")
+
+        if num_restarts < 1:
+            raise ValueError(f"num_restarts must be >= 1, got {num_restarts}")
+
+        # Store original training state
+        was_training = self.training
+        self.eval()
+
+        device = next(self.parameters()).device
+        if initial_input is None:
+            raise ValueError("initial_input is required and represents the inputs to optimize")
+
+        input_tensor = initial_input
+        if input_tensor.ndim == 1:
+            input_tensor = input_tensor.unsqueeze(0)
+        input_tensor = input_tensor.to(device)
+        expected_dim = getattr(self.encoder, "input_dim", None)
+        if expected_dim is not None and input_tensor.shape[1] != expected_dim:
+            raise ValueError(
+                f"initial_input feature dimension mismatch: expected {expected_dim}, got {input_tensor.shape[1]}"
+            )
+
+        # Prepare target tensor(s) if provided
+        target_tensor: torch.Tensor | None = None
+        target_tensor_map: dict[str, torch.Tensor] | None = None
+        if target_tasks is not None:
+            target_tensor_map = {
+                name: torch.as_tensor(val, device=device, dtype=input_tensor.dtype)
+                for name, val in target_tasks.items()
+            }
+        elif target_value is not None:
+            target_tensor = torch.as_tensor(target_value, device=device, dtype=input_tensor.dtype)
+
+        # Helper to reduce predictions to scalar per task/batch
+        def _reduce_pred(pred: torch.Tensor) -> torch.Tensor:
+            if pred.ndim == 1:
+                return pred
+            return pred.mean(dim=tuple(range(1, pred.ndim)))
+
+        tasks_for_optimization = list(target_tasks.keys()) if target_tasks is not None else [task_name]
+        num_targets = len(tasks_for_optimization)
+
+        optimized_inputs: list[torch.Tensor] = []
+        optimized_targets: list[torch.Tensor] = []
+        trajectories: list[torch.Tensor] = []
+        initial_scores_list: list[torch.Tensor] = []
+
+        for restart_idx in range(num_restarts):
+            start_input = input_tensor.clone()
+            if perturbation_std > 0:
+                start_input = start_input + torch.randn_like(start_input) * perturbation_std
+
+            # Record initial score(s)
+            with torch.no_grad():
+                _, initial_task_repr = self.encoder(start_input)
+                initial_vals = []
+                for name in tasks_for_optimization:
+                    pred = self.task_heads[name](initial_task_repr)
+                    initial_vals.append(_reduce_pred(pred).detach())
+                initial_vals = torch.stack(initial_vals, dim=-1)  # (B, T)
+                initial_score = initial_vals  # keep per-task initial scores
+                initial_scores_list.append(initial_score)
+
+            # Create optimizable input
+            optim_input = start_input.detach().clone().requires_grad_(True)
+
+            # Setup optimizer
+            optimizer = optim.Adam([optim_input], lr=lr)
+
+            # Optimization loop
+            step_traj: list[torch.Tensor] = []
+            sign = 1.0 if mode == "max" else -1.0
+
+            for step in range(steps):
+                optimizer.zero_grad()
+
+                # Forward through encoder and task head
+                _, task_repr = self.encoder(optim_input)
+                per_task_values = []
+                loss_terms = []
+                for name in tasks_for_optimization:
+                    pred = self.task_heads[name](task_repr)
+                    reduced = _reduce_pred(pred)
+                    per_task_values.append(reduced)
+                    if target_tensor_map is not None:
+                        tgt = target_tensor_map[name]
+                        expanded_target = tgt
+                        if tgt.ndim == 0:
+                            expanded_target = expanded_target.reshape([1] * pred.ndim)
+                        if expanded_target.shape != pred.shape:
+                            expanded_target = expanded_target.expand(pred.shape)
+                        loss_terms.append(F.mse_loss(pred, expanded_target))
+                    elif target_tensor is not None and name == task_name:
+                        tgt = target_tensor
+                        expanded_target = tgt
+                        if tgt.ndim == 0:
+                            expanded_target = expanded_target.reshape([1] * pred.ndim)
+                        if expanded_target.shape != pred.shape:
+                            expanded_target = expanded_target.expand(pred.shape)
+                        loss_terms.append(F.mse_loss(pred, expanded_target))
+
+                per_task_values_tensor = torch.stack(per_task_values, dim=-1)  # (B, T)
+
+                if loss_terms:
+                    loss = torch.stack(loss_terms).mean()
+                    score_for_history = per_task_values_tensor.detach()
+                else:
+                    aggregate = per_task_values_tensor.mean(dim=-1)  # (B,)
+                    loss = -sign * aggregate.mean()
+                    score_for_history = per_task_values_tensor.detach()
+
+                # Backward and optimize
+                loss.backward()
+                optimizer.step()
+
+                # Record history
+                step_traj.append(score_for_history)
+
+            # Get final optimized values
+            with torch.no_grad():
+                _, optimized_task_repr = self.encoder(optim_input)
+                per_task_final = []
+                for name in tasks_for_optimization:
+                    pred = self.task_heads[name](optimized_task_repr)
+                    per_task_final.append(_reduce_pred(pred).detach())
+                per_task_final_tensor = torch.stack(per_task_final, dim=-1)  # (B, T)
+                # Reconstruct if autoencoder provided
+                reconstructed_input = None
+                if ae_task_name is not None:
+                    reconstructed_input = self.task_heads[ae_task_name](optimized_task_repr)
+
+                optimized_input = reconstructed_input if reconstructed_input is not None else optim_input.detach()
+
+            optimized_inputs.append(optimized_input.detach())  # (B, D)
+            optimized_targets.append(per_task_final_tensor)  # (B, T)
+            traj_tensor = torch.stack(step_traj, dim=0)  # (steps, B, T)
+            trajectories.append(traj_tensor)
+
+        # Restore training state
+        self.train(was_training)
+
+        # Stack outputs
+        opt_input_tensor = torch.stack(optimized_inputs, dim=1)  # (B, R, D)
+        opt_target_tensor = torch.stack(optimized_targets, dim=1)  # (B, R, T)
+        traj_tensor = torch.stack(trajectories, dim=0)  # (R, steps, B, T)
+        traj_tensor = traj_tensor.permute(2, 0, 1, 3)  # (B, R, steps, T)
+        initial_score_tensor = torch.stack(initial_scores_list, dim=0)  # (R, B, T)
+        initial_score_tensor = initial_score_tensor.permute(1, 0, 2)  # (B, R, T)
+
+        if return_details:
+            result_dict = {
+                "optimized_input": opt_input_tensor,
+                "optimized_score": opt_target_tensor,
+            }
+            details_dict = {
+                "initial_score": initial_score_tensor,
+                "trajectory": traj_tensor,
+            }
+            return result_dict, details_dict
+        return {
+            "optimized_input": opt_input_tensor,
+            "optimized_target": opt_target_tensor,
+        }

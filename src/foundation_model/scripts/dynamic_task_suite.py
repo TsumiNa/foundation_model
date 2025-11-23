@@ -273,29 +273,47 @@ class DynamicTaskSuiteRunner:
         return rng.sample(self.config.pretrain_tasks, k=len(self.config.pretrain_tasks))
 
     def _build_encoder_config(self) -> BaseEncoderConfig:
-        hidden_dims = list(self.config.shared_block_dims[1:])
-        if not hidden_dims:
-            raise ValueError("shared_block_dims must include at least one latent dimension.")
         source_config = self.config.encoder_config
         override = self.config.use_deposit_layer
-        if override is not None:
-            if isinstance(source_config, BaseEncoderConfig):
-                updated_config = copy.deepcopy(source_config)
+        input_dim = self.config.shared_block_dims[0]
+
+        if isinstance(source_config, BaseEncoderConfig):
+            updated_config = copy.deepcopy(source_config)
+            if isinstance(updated_config, MLPEncoderConfig):
+                hidden_dims = list(updated_config.hidden_dims)
+                if not hidden_dims or hidden_dims[0] != input_dim:
+                    hidden_dims = [input_dim, *hidden_dims]
+                updated_config.hidden_dims = tuple(hidden_dims)
+            if isinstance(updated_config, TransformerEncoderConfig):
+                updated_config.input_dim = input_dim
+            if isinstance(updated_config, TransformerEncoderConfig):
+                updated_config.d_model = updated_config.d_model or self.config.shared_block_dims[-1]
+            if override is not None:
                 updated_config.use_deposit_layer = override
-                config_payload: BaseEncoderConfig | Mapping[str, Any] | None = updated_config
-            else:
-                mapping_payload: dict[str, Any] = {}
-                if isinstance(source_config, Mapping):
-                    mapping_payload.update(source_config)
-                mapping_payload["use_deposit_layer"] = override
-                config_payload = mapping_payload
+            config_payload: BaseEncoderConfig | Mapping[str, Any] = updated_config
         else:
-            config_payload = source_config
-        return build_encoder_config(
-            config_payload,
-            default_hidden_dims=hidden_dims,
-            default_latent_dim=hidden_dims[-1],
-        )
+            mapping_payload: dict[str, Any] = {}
+            if isinstance(source_config, Mapping):
+                mapping_payload.update(source_config)
+            mapping_type = mapping_payload.get("type", EncoderType.MLP)
+            if not isinstance(mapping_type, EncoderType):
+                mapping_type = EncoderType(str(mapping_type).lower())
+            if mapping_type is EncoderType.MLP:
+                default_hidden = list(self.config.shared_block_dims)
+                if len(default_hidden) < 2:
+                    raise ValueError("shared_block_dims must include input_dim and at least one latent dimension.")
+                mapping_payload.setdefault("hidden_dims", default_hidden)
+            else:
+                mapping_payload.setdefault("input_dim", input_dim)
+                mapping_payload.setdefault("d_model", self.config.shared_block_dims[-1])
+            if override is not None:
+                mapping_payload["use_deposit_layer"] = override
+            config_payload = mapping_payload
+
+        if override is not None:
+            config_payload["use_deposit_layer"] = override
+
+        return build_encoder_config(config_payload)
 
     def _encoder_config_instance(self) -> BaseEncoderConfig:
         return copy.deepcopy(self.encoder_config)
@@ -309,7 +327,6 @@ class DynamicTaskSuiteRunner:
         task_configs = [self._build_regression_task(name, self.pretrain_target_columns[name]) for name in stage_tasks]
         if previous_checkpoint is None:
             model = FlexibleMultiTaskModel(
-                shared_block_dims=list(self.config.shared_block_dims),
                 task_configs=task_configs,
                 encoder_config=self._encoder_config_instance(),
                 enable_learnable_loss_balancer=self.config.enable_learnable_loss,

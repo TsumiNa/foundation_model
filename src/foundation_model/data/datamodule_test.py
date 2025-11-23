@@ -5,10 +5,12 @@ import tempfile
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 from loguru import logger as loguru_logger  # ADDED for loguru bridge
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.model_config import (
+    AutoEncoderTaskConfig,
     ClassificationTaskConfig,
     RegressionTaskConfig,
     TaskType,
@@ -630,6 +632,7 @@ class TestDataModuleDistributedMode:
     def test_train_dataloader_uses_distributed_sampler(self, base_formula_df, attributes_df_full_match):
         """Test that train_dataloader uses DistributedSampler in multi-GPU mode."""
         from unittest.mock import patch
+
         from torch.utils.data.distributed import DistributedSampler
 
         # Patch in foundation_model.data.datamodule where torch.distributed is actually used
@@ -667,6 +670,7 @@ class TestDataModuleDistributedMode:
     def test_val_dataloader_uses_distributed_sampler(self, base_formula_df, attributes_df_full_match):
         """Test that val_dataloader uses DistributedSampler in multi-GPU mode."""
         from unittest.mock import patch
+
         from torch.utils.data.distributed import DistributedSampler
 
         # Patch in foundation_model.data.datamodule where torch.distributed is actually used
@@ -701,6 +705,7 @@ class TestDataModuleDistributedMode:
     def test_test_dataloader_uses_distributed_sampler(self, base_formula_df, attributes_df_full_match):
         """Test that test_dataloader uses DistributedSampler in multi-GPU mode."""
         from unittest.mock import patch
+
         from torch.utils.data.distributed import DistributedSampler
 
         # Patch in foundation_model.data.datamodule where torch.distributed is actually used
@@ -735,6 +740,7 @@ class TestDataModuleDistributedMode:
     def test_predict_dataloader_uses_distributed_sampler(self, base_formula_df, attributes_df_full_match):
         """Test that predict_dataloader uses DistributedSampler in multi-GPU mode."""
         from unittest.mock import patch
+
         from torch.utils.data.distributed import DistributedSampler
 
         # Patch in foundation_model.data.datamodule where torch.distributed is actually used
@@ -918,3 +924,85 @@ class TestDistributedSamplerDataCoverage:
         assert len(unique_indices) == test_dataset_size, (
             f"After deduplication, should have {test_dataset_size} unique samples, got {len(unique_indices)}"
         )
+
+
+def test_datamodule_with_autoencoder_task(tmp_path):
+    # Create dummy data
+    n_samples = 10
+    input_dim = 5
+    formula_desc = pd.DataFrame(
+        torch.randn(n_samples, input_dim).numpy(), index=[f"sample_{i}" for i in range(n_samples)]
+    )
+
+    # Save to file
+    formula_path = tmp_path / "formula.pkl"
+    formula_desc.to_pickle(formula_path)
+
+    # Task Configs
+    ae_task = AutoEncoderTaskConfig(name="ae_task", dims=[input_dim, 4, input_dim], loss_weight=1.0)
+
+    # Initialize DataModule with ONLY AutoEncoder task
+    # attributes_source is None
+    dm = CompoundDataModule(
+        formula_desc_source=str(formula_path), task_configs=[ae_task], attributes_source=None, batch_size=2
+    )
+
+    dm.setup(stage="fit")
+
+    train_loader = dm.train_dataloader()
+    batch = next(iter(train_loader))
+
+    # Batch structure: x, y_dict_batch, task_masks_batch, task_sequence_data_batch
+    x, y_dict, masks, t_seqs = batch
+
+    assert x.shape == (2, input_dim)
+    # y_dict should be empty for AE task
+    assert "ae_task" not in y_dict
+    # masks should be empty for AE task
+    assert "ae_task" not in masks
+
+
+def test_datamodule_with_mixed_tasks(tmp_path):
+    # Create dummy data
+    n_samples = 10
+    input_dim = 5
+    formula_desc = pd.DataFrame(
+        torch.randn(n_samples, input_dim).numpy(), index=[f"sample_{i}" for i in range(n_samples)]
+    )
+
+    attributes = pd.DataFrame(
+        {"target": torch.randn(n_samples).numpy()}, index=[f"sample_{i}" for i in range(n_samples)]
+    )
+
+    # Save to file
+    formula_path = tmp_path / "formula.pkl"
+    formula_desc.to_pickle(formula_path)
+    attr_path = tmp_path / "attr.pkl"
+    attributes.to_pickle(attr_path)
+
+    # Task Configs
+    ae_task = AutoEncoderTaskConfig(name="ae_task", dims=[input_dim, 4, input_dim], loss_weight=1.0)
+    reg_task = RegressionTaskConfig(name="reg_task", dims=[input_dim, 1], data_column="target")
+
+    # Initialize DataModule with mixed tasks
+    dm = CompoundDataModule(
+        formula_desc_source=str(formula_path),
+        task_configs=[ae_task, reg_task],
+        attributes_source=str(attr_path),
+        batch_size=2,
+    )
+
+    dm.setup(stage="fit")
+
+    train_loader = dm.train_dataloader()
+    batch = next(iter(train_loader))
+
+    x, y_dict, masks, t_seqs = batch
+
+    assert x.shape == (2, input_dim)
+    # y_dict should contain reg_task but not ae_task
+    assert "reg_task" in y_dict
+    assert "ae_task" not in y_dict
+
+    assert "reg_task" in masks
+    assert "ae_task" not in masks

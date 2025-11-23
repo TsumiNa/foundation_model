@@ -8,7 +8,7 @@ import torch
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
-from foundation_model.models.model_config import KernelRegressionTaskConfig, RegressionTaskConfig, TaskType
+from foundation_model.models.model_config import KernelRegressionTaskConfig, MLPEncoderConfig, RegressionTaskConfig, TaskType
 
 _PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
 _DATA_PATHS: Final[list[Path]] = [
@@ -61,7 +61,10 @@ def test_full_prediction_flow_produces_kernel_regression_outputs() -> None:
     assert predict_loader is not None
 
     batch = next(iter(predict_loader))
-    model = FlexibleMultiTaskModel(shared_block_dims=[290, 128], task_configs=task_configs)
+    model = FlexibleMultiTaskModel(
+        encoder_config=MLPEncoderConfig(hidden_dims=[290, 128]),
+        task_configs=task_configs,
+    )
 
     with torch.no_grad():
         predictions = model.predict_step(batch, batch_idx=0)

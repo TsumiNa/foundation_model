@@ -1,18 +1,21 @@
 # Recent Updates
 
-### 2025-11-06
+## 2025-11-06
+
 - **Encoder configuration refactor**:
   - Added `EncoderType`, `BaseEncoderConfig`, and concrete `MLPEncoderConfig` / `TransformerEncoderConfig` dataclasses for declarative encoder selection.
   - Updated `FoundationEncoder` and `FlexibleMultiTaskModel` to consume the unified `encoder_config`, covering `[CLS]` and mean-pooling aggregation options.
   - Refreshed `ARCHITECTURE.md`, `README.md`, and sample configs to document how transformer tokens propagate gradients and how to choose between encoder backbones.
 
-### 2025-05-14
+## 2025-05-14
+
 - **Component cleanup**:
   - Removed obsolete `GatedFusion`, `LoRAAdapter`, and `StructureEncoder` modules from the components package.
   - Simplified classification and regression heads to operate without LoRA adapters.
   - Updated documentation to reflect the removal of gated fusion and LoRA features.
 
-### 2025-05-13
+## 2025-05-13
+
 - **Documentation & Code Consistency**:
   - Verified and confirmed that Sequence Heads in `FlexibleMultiTaskModel` correctly receive `h_task` (output from the deposit layer) as per the implementation.
   - Updated diagrams and descriptions in `README.md` and `ARCHITECTURE.md` to accurately reflect that Sequence Heads use `h_task` as their primary input and to use the new `task_sequence_data_batch` variable name.
@@ -38,7 +41,8 @@
   - Updated `configs/model_configs/base_model.yaml` with enhanced base model configuration.
   - Added `ARCHITECTURE.md` for detailed model architecture documentation.
 
-### 2025‑05‑10
+## 2025‑05‑10
+
 - **Code Refactoring & Enhancements**:
   - Added foundation encoder and self-supervised learning components
   - Enhanced data handling in CompoundDataModule and CompoundDataset for multi-task support 
@@ -51,7 +55,8 @@
   - Enhanced docstrings for masked feature modeling and contrastive loss methods
   - Added model configuration and optimizer settings for flexible multi-task model
 
-### 2025‑05‑09
+## 2025‑05‑09
+
 - **Major Code Refactoring**:
   - Implemented a more modular architecture with separate components
   - Created a task head abstraction hierarchy for different task types
@@ -62,10 +67,19 @@
   - Switched from pip to uv for package management
   - Added proper dependency specifications in pyproject.toml
 
-### 2025‑05‑08
+## 2025‑05‑08
+
 - **Dual‑modality encoder** (formula + structure) introduced.
 - New `--pretrain` flag enables contrastive, cross‑reconstruction, masked‑feature, and optional property‑supervision losses.
 - **Encoder control flag** `--freeze_encoder` freezes shared / structure encoders.
 - Added five selectable sequence heads: `rnn`, `vec`, `transformer` (Flash‑Attention), `tcn`, `hybrid`.
 - CLI accepts `--sequence_mode` for custom recipes; each task config now supports `loss_weight` (replacing the legacy global `loss_weights` flag).
 - `FlexibleMultiTaskModel.add_task` now accepts multiple task configs in one call for bulk head registration.
+
+## 2025-11-27
+
+- **optimize_latent features & docs**:
+  - Added multi-target optimization: `task_targets={task: target}` jointly minimizes MSE across multiple regression heads and returns per-task scores.
+  - Reshaped outputs: default returns `optimized_input` (B, R, D) and `optimized_target` (B, R, T); `return_details=True` yields per-task trajectories and initial scores.
+  - Removed `SUMMARY.md` and `DOCUMENTATION_INDEX.md`; consolidated guidance into `README_OPTIMIZATION_CORE.md` (usage, targets/extrema, multi-restart, multi-target; `initial_input` required).
+- **Demo notebook alignment**: `notebooks/advanced_optimization_demo.ipynb` now trains a density task on sample polymer data (`descriptor_path`/`pretrain_data_path`) before optimization, seeds from real descriptors, and updates text/examples accordingly.

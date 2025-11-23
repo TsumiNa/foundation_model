@@ -153,20 +153,17 @@ class FoundationEncoder(nn.Module):
 
     Parameters
     ----------
-    input_dim : int
-        Input feature dimension.
+    encoder_config : BaseEncoderConfig
+        Encoder configuration defining the backbone implementation, latent
+        dimensionality, and input dimension. ``MLPEncoderConfig`` yields the
+        fully connected stack, while ``TransformerEncoderConfig`` enables the
+        transformer backbone.
     deposit_dim : int | None
         Output dimension of the deposit layer.
-    encoder_config : BaseEncoderConfig
-        Encoder configuration defining the backbone implementation and latent
-        dimensionality. ``MLPEncoderConfig`` yields the legacy fully connected
-        stack, while ``TransformerEncoderConfig`` enables the transformer
-        backbone.
     """
 
     def __init__(
         self,
-        input_dim: int,
         encoder_config: BaseEncoderConfig,
         deposit_dim: int | None = None,
     ):
@@ -177,13 +174,19 @@ class FoundationEncoder(nn.Module):
 
         self.encoder_config = encoder_config
         self.use_deposit_layer = encoder_config.use_deposit_layer
+        if isinstance(encoder_config, MLPEncoderConfig):
+            input_dim = encoder_config.input_dim
+        else:
+            input_dim = encoder_config.input_dim
+        self.input_dim = input_dim
 
         if isinstance(encoder_config, MLPEncoderConfig):
             hidden_dims = list(encoder_config.hidden_dims)
-            if not hidden_dims:
-                raise ValueError("MLP encoder requires at least one hidden dimension")
+            # hidden_dims includes input_dim as the first element
+            if len(hidden_dims) < 2:
+                raise ValueError("MLP encoder requires input_dim + at least one hidden/latent dimension")
             self.shared = LinearBlock(
-                [input_dim] + hidden_dims,
+                hidden_dims,
                 normalization=encoder_config.norm,
                 residual=encoder_config.residual,
             )
