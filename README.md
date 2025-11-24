@@ -7,8 +7,8 @@ A multi-task learning model for predicting various material properties.
 The `FlexibleMultiTaskModel` is designed with a modular and extensible architecture. At its core, it features:
 
 1.  A **Foundation Encoder** that processes input features (formula-based, and optionally structure-based) to generate shared representations. This encoder includes mechanisms for multi-modal fusion if structural data is provided.
-2.  An intermediate **Deposit Layer** that acts as a bridge between the shared encoder and task-specific components.
-3.  A collection of **Task-specific Heads** that take representations from the foundation encoder (either directly from the latent space or via the deposit layer) to make predictions for various tasks, such as:
+2.  A **Tanh Activation** that is uniformly applied to latent representations at the model level, providing bounded outputs to task heads.
+3.  A collection of **Task-specific Heads** that take Tanh-activated latent representations from the foundation encoder to make predictions for various tasks, such as:
     *   Regression (e.g., predicting band gap)
     *   Classification (e.g., predicting material stability)
     *   Sequence Prediction (e.g., predicting density of states curves)
@@ -302,7 +302,7 @@ model:
       - name: "temp_dos_transformer" # Example sequence task
         type: "SEQUENCE"
         subtype: "transformer" # Key: Use Transformer head
-        d_in: 256             # Input dimension from encoder deposit layer
+        d_in: 256             # Input dimension (Tanh-activated latent from encoder)
         d_model: 256          # Transformer d_model for the head
         nhead: 4              # Transformer nhead
         # ... other transformer parameters (num_encoder_layers, dim_feedforward, etc.)
@@ -313,7 +313,7 @@ model:
 
 > ℹ️ **How the Transformer encoder trains tokens**
 >
-> * With ``use_cls_token: true`` the deposit layer consumes the contextualised
+> * With ``use_cls_token: true`` the task heads consume the contextualised
 >   ``[CLS]`` embedding. Even though the other feature tokens are not pooled
 >   explicitly, they still receive gradients through the attention connections to
 >   the classifier query because their keys and values inform every ``[CLS]``
@@ -351,7 +351,7 @@ model:
       - name: "temp_dos_vector" # Example sequence task
         type: "SEQUENCE"
         subtype: "vec"       # Key: Use fixed vector output head
-        d_in: 512            # Input dimension from encoder deposit layer
+        d_in: 512            # Input dimension (Tanh-activated latent from encoder)
         seq_len: 256         # Desired output sequence length for the vector
         # ... other vec head parameters ...
       # ... other settings for this task ...
@@ -417,14 +417,14 @@ model:
       - name: "task_A"
         type: "REGRESSION"
         data_column: "target_A" # Maps to 'target_A' column in dummy_attributes.csv
-        dims: [256, 64, 1]      # latent_dim_from_deposit -> hidden -> output
+        dims: [256, 64, 1]      # Tanh-activated latent_dim -> hidden -> output
         optimizer: { lr: 0.001, scheduler_type: "None" }
       - name: "task_B"
         type: "SEQUENCE"
         subtype: "rnn"
         data_column: "series_B_y"  # Maps to 'series_B_y' for y-values
         steps_column: "series_B_x" # Maps to 'series_B_x' for x-values (steps)
-        d_in: 256                  # Should match the model's deposit_dim for sequence heads
+        d_in: 256                  # Should match the model's latent_dim for sequence heads
         hidden: 64
         cell: "gru"
         optimizer: { lr: 0.001, scheduler_type: "None" }

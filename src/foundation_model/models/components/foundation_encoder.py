@@ -19,7 +19,8 @@ import math
 import torch
 import torch.nn as nn
 
-from ..model_config import BaseEncoderConfig, MLPEncoderConfig, TransformerEncoderConfig
+from foundation_model.models.model_config import EncoderConfig, MLPEncoderConfig, TransformerEncoderConfig
+
 from .fc_layers import LinearBlock
 
 
@@ -31,13 +32,13 @@ class _TransformerBackbone(nn.Module):
     and aggregates the contextualized representation either via a learnable
     ``[CLS]`` token or mean pooling.
 
-    When ``use_cls_token`` is enabled the downstream ``deposit`` layer only sees
+    When ``use_cls_token`` is enabled the downstream task heads only see
     the hidden state of the classifier token. The remaining feature tokens still
     participate in training because self-attention allows gradients to flow from
     the ``[CLS]`` query back through the full sequence: every token contributes
     keys and values to the attention updates that the classifier consumes.
     Disabling the ``[CLS]`` token switches to mean pooling, which exposes the
-    aggregated hidden states of all tokens directly to the deposit layer and
+    aggregated hidden states of all tokens directly to the task heads and
     distributes gradients evenly across the sequence.
 
     Both modes therefore provide supervised training signals to every token
@@ -87,6 +88,7 @@ class _TransformerBackbone(nn.Module):
         else:
             self.register_buffer("cls_token", None, persistent=False)
 
+        self.position_encoding: torch.Tensor
         position_encoding = self._build_positional_encoding(
             input_dim + (1 if use_cls_token else 0),
             d_model,
@@ -130,14 +132,14 @@ class _TransformerBackbone(nn.Module):
         hidden = self.transformer(tokens)
 
         if self.use_cls_token:
-            # Gradients from the downstream deposit layer flow into the `[CLS]`
+            # Gradients from the downstream task heads flow into the `[CLS]`
             # token and, via self-attention, influence all feature token
             # representations even though only the classifier embedding is
             # returned here.
             latent = hidden[:, 0, :]
         else:
             # Mean pooling exposes every contextualised feature token to the
-            # deposit layer while still producing a fixed-width latent vector.
+            # task heads while still producing a fixed-width latent vector.
             latent = hidden.mean(dim=1)
 
         return self.output_norm(latent)
@@ -145,11 +147,11 @@ class _TransformerBackbone(nn.Module):
 
 class FoundationEncoder(nn.Module):
     """
-    Foundation model encoder providing shared representations for multi-task learning.
+    Foundation model encoder providing shared latent representations for multi-task learning.
 
     This module encapsulates the core encoding layers that transform input features
-    into a latent representation, followed by a deposit layer that serves as a buffer
-    between the shared encoder and task-specific heads.
+    into a latent representation. Task-specific activation (Tanh) is applied at the
+    FlexibleMultiTaskModel level.
 
     Parameters
     ----------
@@ -158,27 +160,17 @@ class FoundationEncoder(nn.Module):
         dimensionality, and input dimension. ``MLPEncoderConfig`` yields the
         fully connected stack, while ``TransformerEncoderConfig`` enables the
         transformer backbone.
-    deposit_dim : int | None
-        Output dimension of the deposit layer.
     """
 
     def __init__(
         self,
-        encoder_config: BaseEncoderConfig,
-        deposit_dim: int | None = None,
+        encoder_config: EncoderConfig,
     ):
         super().__init__()
-
-        if deposit_dim is not None and deposit_dim <= 0:
-            raise ValueError("deposit_dim must be positive when provided")
-
+        self.shared: LinearBlock | _TransformerBackbone
         self.encoder_config = encoder_config
-        self.use_deposit_layer = encoder_config.use_deposit_layer
-        if isinstance(encoder_config, MLPEncoderConfig):
-            input_dim = encoder_config.input_dim
-        else:
-            input_dim = encoder_config.input_dim
-        self.input_dim = input_dim
+        # Both MLPEncoderConfig and TransformerEncoderConfig define input_dim
+        self.input_dim = encoder_config.input_dim
 
         if isinstance(encoder_config, MLPEncoderConfig):
             hidden_dims = list(encoder_config.hidden_dims)
@@ -193,7 +185,7 @@ class FoundationEncoder(nn.Module):
             latent_dim = hidden_dims[-1]
         elif isinstance(encoder_config, TransformerEncoderConfig):
             self.shared = _TransformerBackbone(
-                input_dim=input_dim,
+                input_dim=encoder_config.input_dim,
                 d_model=encoder_config.d_model,
                 num_layers=encoder_config.num_layers,
                 nhead=encoder_config.nhead,
@@ -206,24 +198,9 @@ class FoundationEncoder(nn.Module):
         else:  # pragma: no cover - defensive branch
             raise TypeError("encoder_config must be an instance of MLPEncoderConfig or TransformerEncoderConfig")
 
-        if deposit_dim is None:
-            deposit_dim = latent_dim
-        elif not self.use_deposit_layer and deposit_dim != latent_dim:
-            raise ValueError("deposit_dim must equal the latent dimension when the deposit layer is disabled")
-
         self.latent_dim = latent_dim
-        self.deposit_dim = deposit_dim
 
-        # Deposit layer serves as a buffer between shared encoder and task heads
-        if self.use_deposit_layer:
-            self.deposit = nn.Sequential(
-                nn.Linear(latent_dim, deposit_dim),
-                nn.Tanh(),
-            )
-        else:
-            self.deposit = nn.Tanh()
-
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through the foundation encoder.
 
@@ -235,12 +212,7 @@ class FoundationEncoder(nn.Module):
         Returns
         -------
         latent : torch.Tensor
-            Latent representation. The trailing dimension equals
-            ``encoder_config.latent_dim``.
-        task_representation : torch.Tensor
-            Task representation after deposit layer, shape (B, deposit_dim).
+            Latent representation, shape (B, latent_dim).
+            Task-specific activation (Tanh) is applied at the FlexibleMultiTaskModel level.
         """
-        latent = self.shared(x)
-        task_representation = self.deposit(latent)
-
-        return latent, task_representation
+        return self.shared(x)

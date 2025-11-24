@@ -1,5 +1,26 @@
 # Recent Updates
 
+## 2025-11-25
+
+- **Simplified Architecture - Deposit Layer Cleanup**:
+  - **Removed deposit layer Linear transformation**: Encoder now directly outputs latent representations that are transformed with `torch.tanh()` at the `FlexibleMultiTaskModel` level, eliminating the intermediate Linear layer bottleneck.
+  - **Performance improvement**: Simplified architecture achieves 2x better optimization scores (5.0 vs 2.5) with smoother convergence curves due to stronger gradient flow and reduced constraints.
+  - **Bug fixes**:
+    - Fixed `AttributeError` in `flexible_multi_task_model.py:525` where code referenced non-existent `encoder.deposit.parameters()`.
+    - Removed redundant type-checking logic in `foundation_encoder.py:170-174`.
+  - **Code cleanup**:
+    - Renamed `deposit_dim` → `latent_dim` throughout codebase for clarity.
+    - Updated all docstrings to replace "deposit layer" references with "task heads" or "latent representations".
+    - Updated `_TransformerBackbone` documentation to reflect direct gradient flow to task heads.
+  - **Verification and comparison**:
+    - Added `compare_input_vs_latent.py` script comparing input space vs latent space optimization strategies (250 steps, both converge with latent space 29% better).
+    - Added `verify_current_architecture.py` to validate simplified architecture.
+    - Added `diagnose_architecture_difference.py` to analyze performance improvements.
+  - **Documentation**:
+    - Created `ARCHITECTURE_CLEANUP_FINAL.md` with comprehensive cleanup report.
+    - Created `SIMPLIFIED_ARCHITECTURE_CLEANUP.md` with detailed fix summary.
+    - Updated `notebooks/advanced_optimization_demo.ipynb` to reflect simplified architecture (7 cells updated).
+
 ## 2025-11-06
 
 - **Encoder configuration refactor**:

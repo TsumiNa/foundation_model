@@ -31,13 +31,10 @@ class BaseEncoderConfig:
     """Base class for encoder configuration objects."""
 
     type: EncoderType
-    use_deposit_layer: bool = True
 
     def __post_init__(self) -> None:  # pragma: no cover - simple normalization
         if not isinstance(self.type, EncoderType):
             self.type = EncoderType(str(self.type).lower())
-        if not isinstance(self.use_deposit_layer, bool):
-            raise TypeError("BaseEncoderConfig.use_deposit_layer must be a boolean value")
 
     @property
     def latent_dim(self) -> int:
@@ -85,25 +82,18 @@ class TransformerEncoderConfig(BaseEncoderConfig):
     the self-attention blocks.
     """
 
-    d_model: int
-    num_layers: int = 2
+    input_dim: int
+    d_model: int = 128
+    num_layers: int = 3
     nhead: int = 4
     dim_feedforward: int | None = None
     dropout: float = 0.1
     use_cls_token: bool = True
     apply_layer_norm: bool = True
     type: EncoderType = EncoderType.TRANSFORMER
-    input_dim: int = 0
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        try:
-            input_dim_int = int(self.input_dim)
-        except (TypeError, ValueError) as exc:
-            raise TypeError("TransformerEncoderConfig.input_dim must be convertible to int") from exc
-        if isinstance(self.input_dim, bool) or input_dim_int <= 0:
-            raise ValueError("TransformerEncoderConfig.input_dim must be a positive integer")
-        self.input_dim = input_dim_int
         if self.d_model <= 0:
             raise ValueError("TransformerEncoderConfig.d_model must be positive")
         if self.num_layers <= 0:
@@ -128,7 +118,7 @@ def build_encoder_config(config: BaseEncoderConfig | Mapping[str, Any]) -> Encod
     For Transformer, ``input_dim`` must be provided explicitly.
     """
 
-    if isinstance(config, BaseEncoderConfig):
+    if isinstance(config, EncoderConfig):
         return config
 
     if not isinstance(config, Mapping):
