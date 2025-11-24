@@ -14,7 +14,10 @@ DEFAULT_CONFIG="${REPO_ROOT}/samples/dynamic_task_suite_config.toml"
 
 CONFIG_FILE="${1:-${DEFAULT_CONFIG}}"
 shift || true
-EXTRA_ARGS=("$@")
+EXTRA_ARGS=()
+if [[ $# -gt 0 ]]; then
+  EXTRA_ARGS=("$@")
+fi
 
 if [[ ! -f "${CONFIG_FILE}" ]]; then
   echo "Config file not found: ${CONFIG_FILE}" >&2
@@ -77,4 +80,4 @@ PY
   OUTPUT_OVERRIDE=(--output-dir "${OUTPUT_BASE}_${DATE_SUFFIX}")
 fi
 
-python3 -m foundation_model.scripts.dynamic_task_suite --config-file "${CONFIG_FILE}" "${OUTPUT_OVERRIDE[@]}" "${EXTRA_ARGS[@]}"
+python3 -m foundation_model.scripts.dynamic_task_suite --config-file "${CONFIG_FILE}" "${OUTPUT_OVERRIDE[@]+"${OUTPUT_OVERRIDE[@]}"}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
