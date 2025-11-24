@@ -41,13 +41,13 @@ def model_config_mixed_tasks():
     Focuses on a simple setup without structure fusion or self-supervised learning.
     """
     shared_dims = [64, 128, 256]  # Input -> hidden -> latent
-    deposit_dim = shared_dims[-1]  # Input to task heads
+    latent_dim = shared_dims[-1]  # Tanh-activated latent representation (input to task heads)
 
     task_configs_list = [
         RegressionTaskConfig(
             name="regr_task_1",
             type=TaskType.REGRESSION,
-            dims=[deposit_dim, 64, 1],
+            dims=[latent_dim, 64, 1],
             data_column="regr_task_1",
             optimizer=OptimizerConfig(lr=1e-4, scheduler_type="None"),
             loss_weight=1.0,
@@ -55,7 +55,7 @@ def model_config_mixed_tasks():
         ClassificationTaskConfig(
             name="clf_task_1",
             type=TaskType.CLASSIFICATION,
-            dims=[deposit_dim, 64, 3],
+            dims=[latent_dim, 64, 3],
             data_column="clf_task_1_classification_value",
             num_classes=3,
             optimizer=OptimizerConfig(lr=1e-4, scheduler_type="None"),
@@ -64,7 +64,7 @@ def model_config_mixed_tasks():
         RegressionTaskConfig(
             name="regr_task_2",
             type=TaskType.REGRESSION,
-            dims=[deposit_dim, 32, 2],
+            dims=[latent_dim, 32, 2],
             data_column="regr_task_2",
             optimizer=OptimizerConfig(lr=1e-4, scheduler_type="None"),
             loss_weight=0.5,
@@ -135,7 +135,6 @@ def test_model_initialization(model_config_mixed_tasks):
 
     assert model.encoder is not None, "Encoder should be initialized"
     assert hasattr(model.encoder, "shared"), "Encoder should have 'shared' attribute"
-    assert hasattr(model.encoder, "deposit"), "Encoder should have 'deposit' attribute"
 
     assert isinstance(model.task_heads, nn.ModuleDict), "task_heads should be an nn.ModuleDict"
 
@@ -430,7 +429,7 @@ def test_model_configure_optimizers(model_config_mixed_tasks):
         all_optimized_param_ids.update(current_opt_param_ids)
 
         # Check if this optimizer handles encoder parameters
-        # model.encoder contains all encodable parts (shared, deposit, struct_enc, fusion)
+        # model.encoder contains all encodable parts (shared, struct_enc, fusion)
         encoder_params_ids = {id(p) for p in model.encoder.parameters() if p.requires_grad}
         log_sigma_param_ids = {id(p) for p in model.task_log_sigmas.parameters() if p.requires_grad}
         encoder_related_ids = encoder_params_ids.union(log_sigma_param_ids)

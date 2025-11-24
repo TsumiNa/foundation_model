@@ -99,7 +99,6 @@ class SuiteConfig:
     freeze_shared_encoder: bool = True
     enable_learnable_loss: bool = False
     quiet_model_logging: bool = True
-    use_deposit_layer: bool | None = None
     shared_block_dims: Sequence[int] = (190, 256, 128)
     encoder_config: Mapping[str, Any] | BaseEncoderConfig | None = None
     head_hidden_dim: int = 64
@@ -141,8 +140,6 @@ class SuiteConfig:
                 raise ValueError(f"task_sequence contains tasks {invalid} not present in the pretrain task list")
         if len(self.shared_block_dims) < 2:
             raise ValueError("shared_block_dims must include input dimension and at least one latent dimension.")
-        if self.use_deposit_layer is not None and not isinstance(self.use_deposit_layer, bool):
-            raise TypeError("use_deposit_layer must be a boolean when provided.")
         if self.head_lr is not None and self.head_lr <= 0:
             raise ValueError("head_lr must be positive when provided.")
 
@@ -274,7 +271,6 @@ class DynamicTaskSuiteRunner:
 
     def _build_encoder_config(self) -> BaseEncoderConfig:
         source_config = self.config.encoder_config
-        override = self.config.use_deposit_layer
         input_dim = self.config.shared_block_dims[0]
 
         if isinstance(source_config, BaseEncoderConfig):
@@ -288,8 +284,6 @@ class DynamicTaskSuiteRunner:
                 updated_config.input_dim = input_dim
             if isinstance(updated_config, TransformerEncoderConfig):
                 updated_config.d_model = updated_config.d_model or self.config.shared_block_dims[-1]
-            if override is not None:
-                updated_config.use_deposit_layer = override
             config_payload: BaseEncoderConfig | Mapping[str, Any] = updated_config
         else:
             mapping_payload: dict[str, Any] = {}
@@ -306,12 +300,7 @@ class DynamicTaskSuiteRunner:
             else:
                 mapping_payload.setdefault("input_dim", input_dim)
                 mapping_payload.setdefault("d_model", self.config.shared_block_dims[-1])
-            if override is not None:
-                mapping_payload["use_deposit_layer"] = override
             config_payload = mapping_payload
-
-        if override is not None:
-            config_payload["use_deposit_layer"] = override
 
         return build_encoder_config(config_payload)
 
@@ -1030,17 +1019,6 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
         action="store_false",
         help="Enable verbose model logging.",
     )
-    deposit_group = parser.add_mutually_exclusive_group()
-    deposit_group.add_argument(
-        "--disable-deposit-layer",
-        action="store_true",
-        help="Remove the deposit Linear layer and pass shared features through Tanh directly.",
-    )
-    deposit_group.add_argument(
-        "--enable-deposit-layer",
-        action="store_true",
-        help="Force-enable the deposit Linear layer even if a config file disables it.",
-    )
     parser.add_argument(
         "--val-split",
         type=float,
@@ -1116,15 +1094,6 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
                         "Failed to parse --encoder-config. Provide a JSON object or path to a JSON file; "
                         f"received: {parsed.encoder_config!r}"
                     ) from None
-    config_deposit_preference = config_extras.get("use_deposit_layer")
-    if parsed.disable_deposit_layer:
-        deposit_override: bool | None = False
-    elif parsed.enable_deposit_layer:
-        deposit_override = True
-    elif isinstance(config_deposit_preference, bool):
-        deposit_override = config_deposit_preference
-    else:
-        deposit_override = None
 
     return SuiteConfig(
         descriptor_path=parsed.descriptor_path,
@@ -1137,7 +1106,6 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
         freeze_shared_encoder=parsed.freeze_shared_encoder,
         enable_learnable_loss=parsed.enable_learnable_loss,
         quiet_model_logging=parsed.quiet_logging,
-        use_deposit_layer=deposit_override,
         shared_block_dims=tuple(parsed.shared_block_dims),
         encoder_config=encoder_config_value,
         head_hidden_dim=parsed.head_hidden_dim,

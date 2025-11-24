@@ -59,31 +59,11 @@ def test_parse_arguments_respects_overrides(tmp_path: Path):
         str(tmp_path / "outputs"),
         "--head-lr",
         "5e-4",
-        "--disable-deposit-layer",
     ]
 
     suite_config = parse_arguments(args)
 
     assert suite_config.head_lr == pytest.approx(5e-4)
-    assert suite_config.use_deposit_layer is False
-
-
-def test_parse_arguments_enable_deposit_layer(tmp_path: Path):
-    args = [
-        "--descriptor-path",
-        str(tmp_path / "descriptors.parquet"),
-        "--pretrain-data-path",
-        str(tmp_path / "pretrain.parquet"),
-        "--finetune-data-path",
-        str(tmp_path / "finetune.parquet"),
-        "--output-dir",
-        str(tmp_path / "outputs"),
-        "--enable-deposit-layer",
-    ]
-
-    suite_config = parse_arguments(args)
-
-    assert suite_config.use_deposit_layer is True
 
 
 def test_parse_arguments_from_toml_config(tmp_path: Path):
@@ -100,7 +80,6 @@ def test_parse_arguments_from_toml_config(tmp_path: Path):
             finetune_data_path = "{finetune_path}"
             output_dir = "{output_dir}"
             head_lr = 0.0005
-            use_deposit_layer = false
             shared_block_dims = [190, 256, 128]
             encoder_config = {{ type = "transformer", d_model = 256, nhead = 4 }}
             pretrain_tasks = ["density", "Rg"]
@@ -114,7 +93,6 @@ def test_parse_arguments_from_toml_config(tmp_path: Path):
 
     assert suite_config.descriptor_path == descriptor_path
     assert suite_config.head_lr == pytest.approx(5e-4)
-    assert suite_config.use_deposit_layer is False
     assert suite_config.pretrain_tasks == ["density", "Rg"]
     assert suite_config.finetune_tasks == ["density"]
 
@@ -139,7 +117,6 @@ def test_config_file_overridden_by_cli(tmp_path: Path):
             output_dir = "{output_dir}"
             head_hidden_dim = 128
             head_lr = 0.0005
-            use_deposit_layer = false
             """
         ).strip(),
         encoding="utf-8",
@@ -151,13 +128,11 @@ def test_config_file_overridden_by_cli(tmp_path: Path):
             str(config_path),
             "--head-hidden-dim",
             "64",
-            "--enable-deposit-layer",
         ]
     )
 
     assert suite_config.head_hidden_dim == 64
     assert suite_config.head_lr == pytest.approx(5e-4)
-    assert suite_config.use_deposit_layer is True
 
 
 # ============================================================================
