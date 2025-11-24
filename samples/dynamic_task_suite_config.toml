@@ -171,8 +171,8 @@ swap_train_val_split = 0.0
 # test_all = false
 
 accelerator = "auto"
-# devices = "auto"
-devices = "0, 1, 2"
+devices = "auto"
+# devices = "0, 1, 2"
 early_stopping_patience = 50
 
 # Logging settings

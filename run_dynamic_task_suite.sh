@@ -29,7 +29,7 @@ DATE_SUFFIX="$(date +"%y%m%d")"
 
 function has_flag() {
   local flag="$1"
-  for arg in "${EXTRA_ARGS[@]}"; do
+  for arg in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
     if [[ "${arg}" == "${flag}" || "${arg}" == ${flag}=* ]]; then
       return 0
     fi
