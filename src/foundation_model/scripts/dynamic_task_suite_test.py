@@ -2,6 +2,7 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import pytest
 
 from foundation_model.models.model_config import OptimizerConfig
@@ -231,31 +232,46 @@ class TestPredictionOrdering:
 class TestDistributedIndexMapping:
     """Test dataset index mapping for distributed prediction."""
 
+    @staticmethod
+    def _distributed_sampler_indices(dataset_size: int, world_size: int, rank: int) -> list[int]:
+        """Helper that mirrors torch DistributedSampler output for comparison."""
+        from torch.utils.data.distributed import DistributedSampler
+
+        dataset: Any = list(range(dataset_size))
+        sampler: Any = DistributedSampler(
+            dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=False,
+            drop_last=False,
+        )
+        return list(iter(sampler))
+
     def test_index_calculation_for_ranks(self):
         """Test that each rank gets correct dataset indices."""
-        total_size = 100
+        dataset_size = 100
         world_size = 3
+        num_samples = (dataset_size + world_size - 1) // world_size
+        total_size = num_samples * world_size
+        base_indices = list(range(dataset_size))
+        if len(base_indices) < total_size:
+            base_indices.extend(base_indices[: total_size - len(base_indices)])
 
         # Simulate index calculation for each rank
         for rank in range(world_size):
-            indices_for_rank = list(range(rank, total_size, world_size))
-
-            # Verify rank 0 gets: 0, 3, 6, 9, ...
-            # Verify rank 1 gets: 1, 4, 7, 10, ...
-            # Verify rank 2 gets: 2, 5, 8, 11, ...
-            assert all(idx % world_size == rank for idx in indices_for_rank), (
-                f"Rank {rank} should only get indices where idx % world_size == rank"
+            indices_for_rank = base_indices[rank:total_size:world_size]
+            assert len(indices_for_rank) == num_samples, (
+                f"Rank {rank} should have {num_samples} samples, got {len(indices_for_rank)}"
             )
 
-            # Verify expected count
-            expected_count = (total_size + world_size - 1 - rank) // world_size
-            assert len(indices_for_rank) == expected_count, (
-                f"Rank {rank} should have {expected_count} indices, got {len(indices_for_rank)}"
+            expected_from_sampler = self._distributed_sampler_indices(dataset_size, world_size, rank)
+            assert indices_for_rank == expected_from_sampler, (
+                f"Rank {rank} indices mismatch DistributedSampler: {indices_for_rank} vs {expected_from_sampler}"
             )
 
     def test_index_mapping_with_uneven_distribution(self):
         """Test index mapping when dataset size is not divisible by world_size."""
-        total_size = 101  # 101 % 3 = 2
+        dataset_size = 101  # 101 % 3 = 2
         world_size = 3
 
         # Collect all indices from all ranks
@@ -263,14 +279,12 @@ class TestDistributedIndexMapping:
         samples_per_rank = []
 
         for rank in range(world_size):
-            indices_for_rank = list(range(rank, total_size, world_size))
-
-            # DistributedSampler pads to make equal sizes
-            num_samples = (total_size + world_size - 1) // world_size  # Ceiling division
-            if len(indices_for_rank) < num_samples:
-                # Pad with indices from the beginning
-                padding_needed = num_samples - len(indices_for_rank)
-                indices_for_rank.extend(indices_for_rank[:padding_needed])
+            num_samples = (dataset_size + world_size - 1) // world_size
+            total_size = num_samples * world_size
+            base_indices = list(range(dataset_size))
+            if len(base_indices) < total_size:
+                base_indices.extend(base_indices[: total_size - len(base_indices)])
+            indices_for_rank = base_indices[rank:total_size:world_size]
 
             samples_per_rank.append(len(indices_for_rank))
             all_indices.extend(indices_for_rank)
@@ -280,10 +294,10 @@ class TestDistributedIndexMapping:
             "All ranks should process equal number of samples (with padding)"
         )
 
-        # After deduplication, should have exactly total_size unique indices
+        # After deduplication, should cover exactly dataset_size unique indices
         unique_indices = set(all_indices)
-        assert len(unique_indices) == total_size, (
-            f"After deduplication, should have {total_size} unique samples, got {len(unique_indices)}"
+        assert len(unique_indices) == dataset_size, (
+            f"After deduplication, should have {dataset_size} unique samples, got {len(unique_indices)}"
         )
 
     def test_batch_index_slicing(self):
@@ -319,14 +333,14 @@ class TestEndToEndPredictionFlow:
         # Each rank processes different samples but with padding
         rank_predictions = {}
 
-        for rank in range(world_size):
-            indices = list(range(rank, total_samples, world_size))
+        num_samples = (total_samples + world_size - 1) // world_size
+        total_size = num_samples * world_size
+        base_indices = list(range(total_samples))
+        if len(base_indices) < total_size:
+            base_indices.extend(base_indices[: total_size - len(base_indices)])
 
-            # Add padding to make equal sizes
-            num_samples = (total_samples + world_size - 1) // world_size
-            if len(indices) < num_samples:
-                padding_needed = num_samples - len(indices)
-                indices.extend(indices[:padding_needed])
+        for rank in range(world_size):
+            indices = base_indices[rank:total_size:world_size]
 
             # Simulate predictions for this rank
             predictions = []
@@ -383,3 +397,83 @@ class TestEndToEndPredictionFlow:
             assert row["dataset_index"] == i, f"Row {i} should have dataset_index={i}, got {row['dataset_index']}"
             assert row["sample_index"] == i, f"Row {i} should have sample_index={i}, got {row['sample_index']}"
             assert row["actual"] == float(i), f"Row {i} should have actual={i}, got {row['actual']}"
+
+        # Build aggregated metrics from deduplicated rows
+        aggregated = {}
+        for row in deduplicated_rows:
+            task = str(row["task"])
+            entry = aggregated.setdefault(task, {"preds": [], "targets": []})
+            entry["preds"].append(row["predicted"])
+            entry["targets"].append(row["actual"])
+
+        assert aggregated["task1"]["targets"] == [float(i) for i in range(total_samples)]
+        assert aggregated["task1"]["preds"] == [float(i) + 0.1 for i in range(total_samples)]
+
+    def test_metrics_deduplicate_padding(self):
+        """Ensure metrics aggregation ignores duplicates introduced by padding."""
+        total_samples = 5
+        world_size = 2
+        num_samples = (total_samples + world_size - 1) // world_size
+        total_size = num_samples * world_size
+
+        base_indices = list(range(total_samples))
+        if len(base_indices) < total_size:
+            base_indices.extend(base_indices[: total_size - len(base_indices)])
+
+        all_rank_predictions = []
+        for rank in range(world_size):
+            indices_for_rank = base_indices[rank:total_size:world_size]
+            predictions = []
+            for idx in indices_for_rank:
+                predictions.append(
+                    {
+                        "task": "task1",
+                        "dataset_index": idx,
+                        "actual": float(idx),
+                        "predicted": float(idx) + 0.1,
+                    }
+                )
+            all_rank_predictions.extend(predictions)
+
+        seen = set()
+        deduplicated_rows = []
+        for row in all_rank_predictions:
+            key = (row["task"], row["dataset_index"])
+            if key in seen:
+                continue
+            seen.add(key)
+            deduplicated_rows.append(row)
+
+        deduplicated_rows.sort(key=lambda r: (str(r["task"]), int(r["dataset_index"])))
+
+        aggregated = {}
+        for row in deduplicated_rows:
+            entry = aggregated.setdefault(row["task"], {"preds": [], "targets": []})
+            entry["preds"].append(row["predicted"])
+            entry["targets"].append(row["actual"])
+
+        assert len(deduplicated_rows) == total_samples
+        assert aggregated["task1"]["targets"] == [float(i) for i in range(total_samples)]
+        assert aggregated["task1"]["preds"] == [float(i) + 0.1 for i in range(total_samples)]
+
+
+class TestDistributedPredictionFiles:
+    """Validate per-rank prediction file merging helpers."""
+
+    def test_merge_rank_prediction_rows(self, tmp_path):
+        output_dir = tmp_path
+        rows_rank0 = [
+            {"task": "task1", "dataset_index": 0, "actual": 0.0, "predicted": 0.1},
+            {"task": "task1", "dataset_index": 3, "actual": 3.0, "predicted": 3.1},
+        ]
+        rows_rank1 = [
+            {"task": "task1", "dataset_index": 1, "actual": 1.0, "predicted": 1.1},
+            {"task": "task1", "dataset_index": 2, "actual": 2.0, "predicted": 2.1},
+        ]
+        pd.DataFrame(rows_rank0).to_parquet(output_dir / "predictions_rank000.parquet", index=False)
+        pd.DataFrame(rows_rank1).to_parquet(output_dir / "predictions_rank001.parquet", index=False)
+
+        merged = DynamicTaskSuiteRunner._merge_rank_prediction_rows(output_dir, world_size=2)
+
+        assert len(merged) == 4
+        assert all((output_dir / f"predictions_rank00{i}.parquet").exists() is False for i in range(2))

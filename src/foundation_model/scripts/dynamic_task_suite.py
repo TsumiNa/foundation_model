@@ -314,12 +314,19 @@ class DynamicTaskSuiteRunner:
     ) -> tuple[FlexibleMultiTaskModel, CompoundDataModule]:
         datamodule = self._build_pretrain_datamodule(stage_tasks)
         task_configs = [self._build_regression_task(name, self.pretrain_target_columns[name]) for name in stage_tasks]
+
+        # Scale learning rate with world_size (Linear Scaling Rule)
+        base_lr = 5e-2
+        is_distributed = dist is not None and dist.is_available() and dist.is_initialized()
+        world_size = dist.get_world_size() if is_distributed else 1
+        scaled_lr = base_lr * world_size
+
         if previous_checkpoint is None:
             model = FlexibleMultiTaskModel(
                 task_configs=task_configs,
                 encoder_config=self._encoder_config_instance(),
                 enable_learnable_loss_balancer=self.config.enable_learnable_loss,
-                shared_block_optimizer=OptimizerConfig(lr=5e-2),
+                shared_block_optimizer=OptimizerConfig(lr=scaled_lr),
             )
         else:
             model = FlexibleMultiTaskModel.load_from_checkpoint(
@@ -344,6 +351,13 @@ class DynamicTaskSuiteRunner:
         stage_tasks: Sequence[str],
     ) -> dict[str, Any]:
         records: list[dict[str, Any]] = []
+
+        # Scale learning rate with world_size (Linear Scaling Rule)
+        base_lr = 5e-2
+        is_distributed = dist is not None and dist.is_available() and dist.is_initialized()
+        world_size = dist.get_world_size() if is_distributed else 1
+        scaled_lr = base_lr * world_size
+
         for finetune_name in self.config.finetune_tasks:
             finetune_model = FlexibleMultiTaskModel.load_from_checkpoint(
                 checkpoint_path=checkpoint_path,
@@ -351,7 +365,7 @@ class DynamicTaskSuiteRunner:
                 enable_learnable_loss_balancer=self.config.enable_learnable_loss,
                 freeze_shared_encoder=self.config.freeze_shared_encoder,
                 encoder_config=self._encoder_config_instance(),
-                shared_block_optimizer=OptimizerConfig(lr=5e-2),
+                shared_block_optimizer=OptimizerConfig(lr=scaled_lr),
             )
             active = list(finetune_model.task_heads.keys())
             if active:
@@ -433,6 +447,7 @@ class DynamicTaskSuiteRunner:
             max_epochs=max_epochs,
             accelerator=self.config.accelerator,
             devices=self.config.devices,
+            sync_batchnorm=True,  # Synchronize BatchNorm statistics across GPUs
             callbacks=[checkpoint_cb, early_stopping],
             logger=[csv_logger, tensorboard_logger],
             log_every_n_steps=self.config.log_every_n_steps,
@@ -535,14 +550,14 @@ class DynamicTaskSuiteRunner:
         # Get sample indices for this rank (for proper ordering in distributed mode)
         sampler = test_loader.sampler
         if sampler is not None and hasattr(sampler, "dataset"):
-            # DistributedSampler case: get the indices this rank will process
-            total_size = len(sampler.dataset)
-            indices_for_rank = list(range(rank, total_size, world_size))
-            # Handle padding: DistributedSampler may add extra samples
+            # Mirror DistributedSampler padding to maintain original dataset ordering
+            dataset_size = len(sampler.dataset)
             num_samples = len(sampler)
-            if num_samples > len(indices_for_rank):
-                # Wrap around to fill the padding
-                indices_for_rank.extend(indices_for_rank[: num_samples - len(indices_for_rank)])
+            total_size = num_samples * world_size
+            base_indices = list(range(dataset_size))
+            if len(base_indices) < total_size:
+                base_indices.extend(base_indices[: total_size - len(base_indices)])
+            indices_for_rank = base_indices[rank:total_size:world_size]
         else:
             # Non-distributed case: process all samples in order
             indices_for_rank = list(range(len(test_loader.dataset)))
@@ -552,7 +567,6 @@ class DynamicTaskSuiteRunner:
         model.to(device)
         model.eval()
 
-        aggregated: dict[str, dict[str, list[float]]] = {}
         prediction_rows: list[dict[str, float | int | str | None]] = []
         global_sample_idx = 0  # Track position in indices_for_rank
 
@@ -615,35 +629,20 @@ class DynamicTaskSuiteRunner:
 
                 global_sample_idx += batch_size
 
-        payload = {
-            "prediction_rows": prediction_rows,
-            "aggregated": aggregated,
-        }
-
         if is_distributed:
-            gather_buffer: list[dict[str, Any] | None] = [None] * world_size
-            dist.all_gather_object(gather_buffer, payload)
-        else:
-            gather_buffer = [payload]
+            rank_prediction_path = output_dir / f"predictions_rank{rank:03d}.parquet"
+            if prediction_rows:
+                pd.DataFrame(prediction_rows).to_parquet(rank_prediction_path, index=False)
+            elif rank_prediction_path.exists():
+                rank_prediction_path.unlink()
+            dist.barrier()
+            if rank != 0:
+                model.to(original_device)
+                model.train(was_training)
+                return
+            prediction_rows = self._merge_rank_prediction_rows(output_dir, world_size)
 
-        merged_prediction_rows: list[dict[str, float | int | str | None]] = []
-        merged_aggregated: dict[str, dict[str, list[float]]] = {}
-        for item in gather_buffer:
-            if not item:
-                continue
-            merged_prediction_rows.extend(item.get("prediction_rows", []))
-            for task_name, entry in item.get("aggregated", {}).items():
-                merged_entry = merged_aggregated.setdefault(task_name, {"preds": [], "targets": []})
-                merged_entry["preds"].extend(entry.get("preds", []))
-                merged_entry["targets"].extend(entry.get("targets", []))
-
-        if is_distributed and rank != 0:
-            model.to(original_device)
-            model.train(was_training)
-            return
-
-        prediction_rows = merged_prediction_rows
-        aggregated = merged_aggregated
+        aggregated: dict[str, dict[str, list[float]]] = {}
 
         if prediction_rows:
             # Deduplicate by (task, dataset_index) - keep first occurrence
@@ -672,6 +671,16 @@ class DynamicTaskSuiteRunner:
                 sample_counters[task_name] = current_index + 1
 
             prediction_rows = deduplicated_rows
+            aggregated = {}
+            for row in deduplicated_rows:
+                task_name = str(row.get("task"))
+                entry = aggregated.setdefault(task_name, {"preds": [], "targets": []})
+                actual_val = row.get("actual")
+                pred_val = row.get("predicted")
+                if actual_val is None or pred_val is None:
+                    continue
+                entry["targets"].append(float(actual_val))
+                entry["preds"].append(float(pred_val))
 
         metrics: dict[str, dict[str, float | int | None]] = {}
         for name in stage_tasks:
@@ -756,6 +765,19 @@ class DynamicTaskSuiteRunner:
 
         model.to(original_device)
         model.train(was_training)
+
+    @staticmethod
+    def _merge_rank_prediction_rows(output_dir: Path, world_size: int) -> list[dict[str, float | int | str | None]]:
+        """Load per-rank prediction files, concatenate, and clean up temporary artifacts."""
+        combined_rows: list[dict[str, float | int | str | None]] = []
+        for rank in range(world_size):
+            rank_path = output_dir / f"predictions_rank{rank:03d}.parquet"
+            if not rank_path.exists():
+                continue
+            df = pd.read_parquet(rank_path)
+            combined_rows.extend(df.to_dict(orient="records"))
+            rank_path.unlink(missing_ok=True)
+        return combined_rows
 
     def _load_datasets(self) -> None:
         config = self.config
@@ -1282,10 +1304,23 @@ def _infer_devices(devices_arg: str | int | None) -> str | int | list[int] | Non
 
 
 def main() -> None:
+    # Configure logging for distributed training - only rank 0 outputs to console
+    is_distributed = dist is not None and dist.is_available() and dist.is_initialized()
+    rank = dist.get_rank() if is_distributed else 0
+
+    if rank != 0:
+        # Non-rank 0 processes: silence loguru output to avoid duplication
+        fm_logger.remove()
+        # Add a no-op handler to prevent errors if fm_logger is called
+        fm_logger.add(lambda _: None, level="INFO")
+
     config = parse_arguments()
     runner = DynamicTaskSuiteRunner(config)
     summary_path = runner.run()
-    fm_logger.info(f"Experiment summary written to {summary_path}")
+
+    # Only rank 0 prints final summary
+    if rank == 0:
+        fm_logger.info(f"Experiment summary written to {summary_path}")
 
 
 if __name__ == "__main__":

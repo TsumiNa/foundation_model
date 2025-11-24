@@ -1,5 +1,22 @@
 # Recent Updates
 
+## 2025-11-27 (Multi-GPU reliability)
+
+- **Distributed training fixes**:
+  - `CompoundDataModule` now records its `DistributedSampler` and calls `set_epoch` every epoch, restoring proper shuffling in DDP runs.
+  - Lightning `Trainer` construction in `dynamic_task_suite.py` enables `sync_batchnorm` and scales learning rates with `world_size`, keeping gradient statistics consistent regardless of the number of GPUs.
+- **Prediction + metrics correctness**:
+  - `FlexibleMultiTaskModel` switches to `torchmetrics.R2Score` with stage-scoped modules, deduplicates DistributedSampler padding, and logs aggregated R² per task without bias.
+  - Prediction plotting writes per-rank Parquet shards that are merged on rank 0, eliminating OOM risks while guaranteeing deterministic ordering and deduplication.
+- **Testing & diagnostics**:
+  - Added exhaustive tests in `dynamic_task_suite_test.py` for deduplication, sampler index math, and per-rank file merging.
+  - Created troubleshooting scripts (`diagnose_multi_gpu.py`, `verify_multi_gpu_fixes.py`, `test_set_epoch_fix.py`) plus written analyses (`MULTI_GPU_FIXES_SUMMARY.md`, `multi_gpu_analysis.md`, `multi_gpu_additional_issues.md`) documenting the investigation and verification steps.
+- **optimize_latent features & docs**:
+  - Added multi-target optimization: `task_targets={task: target}` jointly minimizes MSE across multiple regression heads and returns per-task scores.
+  - Reshaped outputs: default returns `optimized_input` (B, R, D) and `optimized_target` (B, R, T); `return_details=True` yields per-task trajectories and initial scores.
+  - Removed `SUMMARY.md` and `DOCUMENTATION_INDEX.md`; consolidated guidance into `README_OPTIMIZATION_CORE.md` (usage, targets/extrema, multi-restart, multi-target; `initial_input` required).
+- **Demo notebook alignment**: `notebooks/advanced_optimization_demo.ipynb` now trains a density task on sample polymer data (`descriptor_path`/`pretrain_data_path`) before optimization, seeds from real descriptors, and updates text/examples accordingly.
+
 ## 2025-11-25
 
 - **Simplified Architecture - Deposit Layer Cleanup**:
@@ -66,7 +83,7 @@
 
 - **Code Refactoring & Enhancements**:
   - Added foundation encoder and self-supervised learning components
-  - Enhanced data handling in CompoundDataModule and CompoundDataset for multi-task support 
+  - Enhanced data handling in CompoundDataModule and CompoundDataset for multi-task support
   - Updated modality dropout handling and adjusted self-supervised loss computation
   - Removed LoRA parameters from model and task head, integrated freezing logic into optimizer config
   - Updated deposit layer handling and improved documentation for task-specific representations
@@ -96,11 +113,3 @@
 - Added five selectable sequence heads: `rnn`, `vec`, `transformer` (Flash‑Attention), `tcn`, `hybrid`.
 - CLI accepts `--sequence_mode` for custom recipes; each task config now supports `loss_weight` (replacing the legacy global `loss_weights` flag).
 - `FlexibleMultiTaskModel.add_task` now accepts multiple task configs in one call for bulk head registration.
-
-## 2025-11-27
-
-- **optimize_latent features & docs**:
-  - Added multi-target optimization: `task_targets={task: target}` jointly minimizes MSE across multiple regression heads and returns per-task scores.
-  - Reshaped outputs: default returns `optimized_input` (B, R, D) and `optimized_target` (B, R, T); `return_details=True` yields per-task trajectories and initial scores.
-  - Removed `SUMMARY.md` and `DOCUMENTATION_INDEX.md`; consolidated guidance into `README_OPTIMIZATION_CORE.md` (usage, targets/extrema, multi-restart, multi-target; `initial_input` required).
-- **Demo notebook alignment**: `notebooks/advanced_optimization_demo.ipynb` now trains a density task on sample polymer data (`descriptor_path`/`pretrain_data_path`) before optimization, seeds from real descriptors, and updates text/examples accordingly.

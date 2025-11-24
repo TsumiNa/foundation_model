@@ -743,6 +743,55 @@ def test_model_registered_tasks_info_property(model_config_mixed_tasks):
         assert df_info.loc[i, "enabled"] == task_cfg_from_model.enabled
 
 
+def test_stage_index_tracker_masks_duplicates(model_config_mixed_tasks):
+    """Ensure distributed index tracker flags duplicates introduced by sampler padding."""
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=config.shared_block_optimizer,
+    )
+    tracker = {"indices": [0, 1, 0, 2], "cursor": 0, "seen": set()}
+    model._stage_index_trackers["val"] = tracker
+
+    mask_info = model._get_batch_valid_mask(stage="val", batch_size=2, device=torch.device("cpu"))
+    assert mask_info is not None
+    mask_tensor, mask_flags = mask_info
+    assert mask_tensor.tolist() == [True, True]
+    assert mask_flags == [True, True]
+
+    mask_info = model._get_batch_valid_mask(stage="val", batch_size=2, device=torch.device("cpu"))
+    assert mask_info is not None
+    mask_tensor, mask_flags = mask_info
+    assert mask_tensor.tolist() == [False, True]
+    assert mask_flags == [False, True]
+
+
+def test_r2_metric_updates_respect_masks(model_config_mixed_tasks):
+    """Validate that masked samples do not influence the logged R² metric."""
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=config.shared_block_optimizer,
+    )
+    preds = torch.tensor([[1.0], [3.0], [5.0]])
+    targets = torch.tensor([[1.0], [10.0], [5.0]])
+    sample_mask = torch.tensor([[1], [0], [1]], dtype=torch.bool)
+
+    model._update_r2_metric(
+        stage="val",
+        task_name="regr_task_1",
+        preds=preds,
+        targets=targets,
+        sample_mask=sample_mask,
+    )
+
+    assert "regr_task_1" in model._metrics_updated["val"]
+    computed = model.val_r2_metrics["regr_task_1"].compute()
+    assert torch.isclose(computed, torch.tensor(1.0))
+
+
 # Helper for creating dummy dataframes
 def create_dummy_dataframe(num_samples, num_features, index_prefix="sample_"):
     data = np.random.rand(num_samples, num_features)

@@ -16,6 +16,7 @@ Tensor shape legend (used across all docstrings):
 
 from __future__ import annotations
 
+import math
 from collections import namedtuple
 from collections.abc import Mapping, Sequence
 from typing import Any, List, Optional
@@ -25,11 +26,17 @@ import numpy as np
 import pandas as pd  # Added
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
+import torch.optim as optim
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from loguru import logger  # Replaced logging with loguru
 from torch.optim.lr_scheduler import LRScheduler  # Changed from _LRScheduler
+from torchmetrics.regression import R2Score
+
+try:  # pragma: no cover - optional distributed import
+    import torch.distributed as dist
+except Exception:  # noqa: BLE001 - keep fallback for CPU-only environments
+    dist = None
 
 from .components.foundation_encoder import FoundationEncoder
 from .model_config import (
@@ -164,6 +171,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Set to manual optimization as we handle multiple optimizers
         self.automatic_optimization = False
 
+        # Distributed metric tracking
+        self.val_r2_metrics = nn.ModuleDict()
+        self.test_r2_metrics = nn.ModuleDict()
+        self._metrics_updated: dict[str, set[str]] = {"val": set(), "test": set()}
+        self._stage_index_trackers: dict[str, dict[str, Any] | None] = {"val": None, "test": None}
+        self._init_stage_metrics()
+
         logger.info("Initializing FlexibleMultiTaskModel...")
         logger.info("Registered Task Heads:")
         task_info_df = self.registered_tasks_info
@@ -212,6 +226,162 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     def _log_warning(self, message: str) -> None:
         logger.warning(message)
+
+    def _init_stage_metrics(self) -> None:
+        """Initialize per-task R² metrics for validation and test stages."""
+        for cfg in self.task_configs:
+            if not getattr(cfg, "enabled", True) or cfg.type != TaskType.REGRESSION:
+                continue
+            # R2Score in torchmetrics>=1.4.0 auto-detects output dimensions from first update
+            # No need to specify num_outputs parameter
+            self.val_r2_metrics[cfg.name] = R2Score()
+            self.test_r2_metrics[cfg.name] = R2Score()
+
+    def _reset_stage_metrics(self, stage: str) -> None:
+        metrics = self.val_r2_metrics if stage == "val" else self.test_r2_metrics
+        for metric in metrics.values():
+            metric.reset()
+        self._metrics_updated[stage] = set()
+
+    def _init_stage_index_tracker(self, stage: str) -> None:
+        dataset_len = None
+        if self.trainer is not None and getattr(self.trainer, "datamodule", None) is not None:
+            dataset = getattr(self.trainer.datamodule, f"{stage}_dataset", None)
+            if dataset is not None:
+                dataset_len = len(dataset)
+        self._stage_index_trackers[stage] = self._build_index_tracker(dataset_len)
+
+    def _build_index_tracker(self, dataset_len: int | None) -> dict[str, Any] | None:
+        if dataset_len is None:
+            return None
+        is_distributed = dist is not None and dist.is_available() and dist.is_initialized()
+        if not is_distributed:
+            return None
+        world_size = dist.get_world_size()
+        rank = dist.get_rank()
+        num_samples = math.ceil(dataset_len / world_size)
+        total_size = num_samples * world_size
+        base_indices = list(range(dataset_len))
+        if len(base_indices) < total_size:
+            base_indices.extend(base_indices[: total_size - len(base_indices)])
+        indices_for_rank = base_indices[rank:total_size:world_size]
+        return {"indices": indices_for_rank, "cursor": 0, "seen": set()}
+
+    def _get_batch_valid_mask(
+        self,
+        *,
+        stage: str,
+        batch_size: int,
+        device: torch.device,
+    ) -> tuple[torch.Tensor, list[bool]] | None:
+        tracker = self._stage_index_trackers.get(stage)
+        if not tracker:
+            return None
+        start = tracker["cursor"]
+        end = start + batch_size
+        indices = tracker["indices"]
+        batch_indices = indices[start:end]
+        tracker["cursor"] = min(end, len(indices))
+        if len(batch_indices) < batch_size and indices:
+            batch_indices.extend(indices[-1:] * (batch_size - len(batch_indices)))
+        seen: set[int] = tracker["seen"]
+        valid_flags: list[bool] = []
+        for idx in batch_indices:
+            if idx in seen:
+                valid_flags.append(False)
+            else:
+                seen.add(idx)
+                valid_flags.append(True)
+        if not valid_flags:
+            return None
+        mask_tensor = torch.tensor(valid_flags, dtype=torch.bool, device=device)
+        return mask_tensor, valid_flags
+
+    def _apply_stage_valid_mask(
+        self,
+        *,
+        sample_mask: torch.Tensor | list[torch.Tensor] | None,
+        target: torch.Tensor | list[torch.Tensor],
+        batch_valid_mask: torch.Tensor | None,
+        batch_valid_list: list[bool] | None,
+        is_sequence: bool,
+    ) -> torch.Tensor | list[torch.Tensor] | None:
+        """Apply distributed duplicate filtering to per-task masks."""
+        if batch_valid_mask is None and batch_valid_list is None:
+            return sample_mask
+
+        if is_sequence:
+            if not isinstance(target, list) or batch_valid_list is None:
+                return sample_mask
+            if sample_mask is None:
+                sample_mask = [torch.ones_like(seq, dtype=torch.bool) for seq in target]
+            assert isinstance(sample_mask, list)
+            adjusted_masks: list[torch.Tensor] = []
+            for valid, mask in zip(batch_valid_list, sample_mask):
+                if valid:
+                    adjusted_masks.append(mask)
+                else:
+                    adjusted_masks.append(torch.zeros_like(mask, dtype=torch.bool))
+            return adjusted_masks
+
+        if batch_valid_mask is None:
+            return sample_mask
+        if sample_mask is None:
+            sample_mask = torch.ones_like(target, dtype=torch.bool)
+        if not isinstance(sample_mask, torch.Tensor):
+            raise TypeError("Expected tensor mask for non-sequence task.")
+        valid_tensor = batch_valid_mask
+        while valid_tensor.ndim < sample_mask.ndim:
+            valid_tensor = valid_tensor.unsqueeze(-1)
+        return sample_mask & valid_tensor
+
+    def _update_r2_metric(
+        self,
+        *,
+        stage: str,
+        task_name: str,
+        preds: torch.Tensor,
+        targets: torch.Tensor,
+        sample_mask: torch.Tensor | None,
+    ) -> None:
+        metrics = self.val_r2_metrics if stage == "val" else self.test_r2_metrics
+        metric = metrics._modules.get(task_name)
+        if metric is None:
+            return
+        if sample_mask is None:
+            mask_bool = torch.ones_like(targets, dtype=torch.bool)
+        else:
+            mask_bool = sample_mask.to(dtype=torch.bool)
+        preds_flat = preds.reshape(preds.shape[0], -1)
+        targets_flat = targets.reshape(targets.shape[0], -1)
+        mask_flat = mask_bool.reshape(mask_bool.shape[0], -1)
+        if mask_flat.shape[1] > 1:
+            row_mask = mask_flat.all(dim=1)
+        else:
+            row_mask = mask_flat.squeeze(-1)
+        if not torch.any(row_mask):
+            return
+        valid_preds = preds_flat[row_mask]
+        valid_targets = targets_flat[row_mask]
+        if valid_preds.numel() == 0:
+            return
+        metric.update(valid_preds.detach().to(torch.float32), valid_targets.detach().to(torch.float32))
+        self._metrics_updated[stage].add(task_name)
+
+    def _log_stage_r2_metrics(self, stage: str) -> None:
+        metrics = self.val_r2_metrics if stage == "val" else self.test_r2_metrics
+        for name in self._metrics_updated[stage]:
+            metric = metrics._modules.get(name)
+            if metric is None:
+                continue
+            self.log(
+                f"{stage}_{name}_r2",
+                metric,
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=True,
+            )
 
     @staticmethod
     def _normalize_loss_weight(weight_value: float | None, task_name: str) -> float:
@@ -727,6 +897,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
         val_sum_supervised_raw_loss = torch.zeros_like(final_val_loss)
 
         preds = self(x, task_sequence_data_batch)
+        valid_mask_info = self._get_batch_valid_mask(stage="val", batch_size=x.shape[0], device=x.device)
+        if valid_mask_info is None:
+            batch_valid_mask = None
+            batch_valid_list: list[bool] | None = None
+        else:
+            batch_valid_mask, batch_valid_list = valid_mask_info
 
         raw_val_supervised_losses = {}
         for name, pred_tensor in preds.items():
@@ -740,6 +916,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
             else:
                 target = y_dict_batch[name]
                 sample_mask = task_masks_batch.get(name)
+
+            sample_mask = self._apply_stage_valid_mask(
+                sample_mask=sample_mask,
+                target=target,
+                batch_valid_mask=batch_valid_mask,
+                batch_valid_list=batch_valid_list,
+                is_sequence=isinstance(head, KernelRegressionHead),
+            )
 
             if isinstance(head, KernelRegressionHead):
                 if isinstance(target, list):
@@ -792,6 +976,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 val_logs[f"val_{name}_final_loss_contrib"] = final_task_loss_component.detach()
             val_logs[f"val_{name}_static_weight"] = torch.tensor(static_weight, device=x.device)
 
+            self._update_r2_metric(
+                stage="val",
+                task_name=name,
+                preds=pred_tensor,
+                targets=target,
+                sample_mask=sample_mask,
+            )
+
         val_logs["val_final_supervised_loss"] = val_supervised_loss_contribution.detach()
         final_val_loss = final_val_loss + val_supervised_loss_contribution
 
@@ -825,6 +1017,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
         test_sum_supervised_raw_loss = torch.zeros_like(final_test_loss)
 
         preds = self(x, task_sequence_data_batch)
+        valid_mask_info = self._get_batch_valid_mask(stage="test", batch_size=x.shape[0], device=x.device)
+        if valid_mask_info is None:
+            batch_valid_mask = None
+            batch_valid_list: list[bool] | None = None
+        else:
+            batch_valid_mask, batch_valid_list = valid_mask_info
 
         raw_test_supervised_losses = {}
         for name, pred_tensor in preds.items():
@@ -838,6 +1036,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
             else:
                 target = y_dict_batch[name]
                 sample_mask = task_masks_batch.get(name)
+
+            sample_mask = self._apply_stage_valid_mask(
+                sample_mask=sample_mask,
+                target=target,
+                batch_valid_mask=batch_valid_mask,
+                batch_valid_list=batch_valid_list,
+                is_sequence=isinstance(head, KernelRegressionHead),
+            )
 
             if isinstance(head, KernelRegressionHead):
                 if isinstance(target, list):
@@ -890,6 +1096,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 test_logs[f"test_{name}_final_loss_contrib"] = final_task_loss_component.detach()
             test_logs[f"test_{name}_static_weight"] = torch.tensor(static_weight, device=x.device)
 
+            self._update_r2_metric(
+                stage="test",
+                task_name=name,
+                preds=pred_tensor,
+                targets=target,
+                sample_mask=sample_mask,
+            )
+
         test_logs["test_final_supervised_loss"] = test_supervised_loss_contribution.detach()
         final_test_loss = final_test_loss + test_supervised_loss_contribution
 
@@ -899,6 +1113,24 @@ class FlexibleMultiTaskModel(L.LightningModule):
         )
 
         return None
+
+    def on_validation_epoch_start(self) -> None:
+        super().on_validation_epoch_start()
+        self._reset_stage_metrics("val")
+        self._init_stage_index_tracker("val")
+
+    def on_validation_epoch_end(self) -> None:
+        super().on_validation_epoch_end()
+        self._log_stage_r2_metrics("val")
+
+    def on_test_epoch_start(self) -> None:
+        super().on_test_epoch_start()
+        self._reset_stage_metrics("test")
+        self._init_stage_index_tracker("test")
+
+    def on_test_epoch_end(self) -> None:
+        super().on_test_epoch_end()
+        self._log_stage_r2_metrics("test")
 
     def predict_step(
         self,
@@ -1588,9 +1820,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     )
                 cfg = self.task_configs_map[name]
                 if cfg.type != TaskType.REGRESSION:
-                    raise ValueError(
-                        f"Task '{name}' must be a regression task for optimization, got {cfg.type}"
-                    )
+                    raise ValueError(f"Task '{name}' must be a regression task for optimization, got {cfg.type}")
         else:
             if task_name not in self.task_heads:
                 raise ValueError(

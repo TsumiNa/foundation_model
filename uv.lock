@@ -541,6 +541,7 @@ dependencies = [
     { name = "tensorboard" },
     { name = "torch" },
     { name = "torch-tb-profiler" },
+    { name = "torchmetrics" },
 ]
 
 [package.dev-dependencies]
@@ -573,6 +574,7 @@ requires-dist = [
     { name = "tensorboard", specifier = ">=2.19.0" },
     { name = "torch", specifier = ">=2.1.0,<2.9.0" },
     { name = "torch-tb-profiler", specifier = ">=0.4.3" },
+    { name = "torchmetrics", specifier = ">=1.4.0" },
 ]
 
 [package.metadata.requires-dev]

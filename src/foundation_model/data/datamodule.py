@@ -420,7 +420,24 @@ class CompoundDataModule(L.LightningDataModule):
             # self.attributes_df remains None. self.formula_df uses the original master_index.
             logger.info(f"formula_df (master) length: {len(master_index)}")
 
+        # Initialize sampler reference for distributed training
+        self._train_sampler = None
+
         logger.info(f"DataModule initialized with {len(self.task_configs)} task configurations.")
+
+    def on_train_epoch_start(self):
+        """
+        Called at the beginning of each training epoch.
+        Updates the DistributedSampler's epoch to ensure different shuffling patterns.
+        """
+        if hasattr(self, "_train_sampler") and self._train_sampler is not None:
+            if hasattr(self._train_sampler, "set_epoch"):
+                # Access the trainer's current epoch
+                # Lightning automatically injects self.trainer when this DataModule is used
+                if hasattr(self, "trainer") and self.trainer is not None:
+                    epoch = self.trainer.current_epoch
+                    self._train_sampler.set_epoch(epoch)
+                    logger.debug(f"Set DistributedSampler epoch to {epoch}")
 
     def _seed_for(self, purpose: str) -> int | None:
         """Return a deterministic seed for the given purpose derived from the base random_seed."""
@@ -899,9 +916,12 @@ class CompoundDataModule(L.LightningDataModule):
                 drop_last=False,  # Keep all samples
             )
             shuffle = False  # shuffle and sampler are mutually exclusive
+            # Store reference for on_train_epoch_start hook
+            self._train_sampler = sampler
         else:
             sampler = None
             shuffle = True
+            self._train_sampler = None
 
         return DataLoader(
             self.train_dataset,
