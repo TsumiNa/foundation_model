@@ -568,6 +568,7 @@ class DynamicTaskSuiteRunner:
         model.eval()
 
         prediction_rows: list[dict[str, float | int | str | None]] = []
+        aggregated: dict[str, dict[str, list[float]]] = {}
         global_sample_idx = 0  # Track position in indices_for_rank
 
         with torch.no_grad():
@@ -641,8 +642,6 @@ class DynamicTaskSuiteRunner:
                 model.train(was_training)
                 return
             prediction_rows = self._merge_rank_prediction_rows(output_dir, world_size)
-
-        aggregated: dict[str, dict[str, list[float]]] = {}
 
         if prediction_rows:
             # Deduplicate by (task, dataset_index) - keep first occurrence
