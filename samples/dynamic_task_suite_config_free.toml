@@ -5,7 +5,7 @@
 descriptor_path = "data/amorphous_polymer_FFDescriptor_20250730.parquet"
 pretrain_data_path = "data/amorphous_polymer_non_PI_properties_20250730.parquet"
 finetune_data_path = "data/amorphous_polymer_PI_properties_20250730.parquet"
-output_dir = "artifacts/polymers_pretrain_finetune_runs"
+output_dir = "artifacts/polymers_pretrain_finetune_all_layers_runs"
 
 # Optional: set to the scaler generated during preprocessing.
 scaler_path = "data/amorphous_polymer_properties_scaler_20250730.pkl.z"
@@ -172,10 +172,10 @@ swap_train_val_split = 0.0
 
 accelerator = "auto"
 # devices = "auto"
-devices = "0, 1"
+devices = "2, 3"
 early_stopping_patience = 50
 
 # Logging settings
 enable_learnable_loss = true
-freeze_shared_encoder = true
+freeze_shared_encoder = false
 quiet_model_logging = true
