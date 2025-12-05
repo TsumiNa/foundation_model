@@ -2,7 +2,9 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
+import joblib
 import pandas as pd
+import pandas.testing as pdt
 import pytest
 
 from foundation_model.models.model_config import OptimizerConfig
@@ -22,6 +24,14 @@ def _make_suite_config(tmp_path: Path, **overrides) -> SuiteConfig:
     }
     base_kwargs.update(overrides)
     return SuiteConfig(**base_kwargs)
+
+
+class DummyScaler:
+    def __init__(self, label: str):
+        self.label = label
+
+    def inverse_transform(self, values):  # pragma: no cover - simple passthrough
+        return values
 
 
 def test_build_regression_task_with_head_lr(tmp_path: Path):
@@ -134,6 +144,107 @@ def test_config_file_overridden_by_cli(tmp_path: Path):
 
     assert suite_config.head_hidden_dim == 64
     assert suite_config.head_lr == pytest.approx(5e-4)
+
+
+def test_load_datasets_uses_phase_specific_descriptors(tmp_path: Path):
+    pre_desc_path = tmp_path / "pre_desc.parquet"
+    fin_desc_path = tmp_path / "fin_desc.parquet"
+    pretrain_descriptor = pd.DataFrame({"feat": [1.0, 2.0]}, index=[0, 1])
+    finetune_descriptor = pd.DataFrame({"feat": [9.0, 8.0]}, index=[10, 11])
+    pretrain_targets = pd.DataFrame({"density": [0.2, 0.3]}, index=[0, 1])
+    finetune_targets = pd.DataFrame({"Tg": [100.0, 110.0]}, index=[10, 11])
+    pre_desc_path.parent.mkdir(parents=True, exist_ok=True)
+    pretrain_descriptor.to_parquet(pre_desc_path)
+    finetune_descriptor.to_parquet(fin_desc_path)
+    pretrain_targets_path = tmp_path / "pre_targets.parquet"
+    finetune_targets_path = tmp_path / "fin_targets.parquet"
+    pretrain_targets.to_parquet(pretrain_targets_path)
+    finetune_targets.to_parquet(finetune_targets_path)
+
+    config = _make_suite_config(
+        tmp_path,
+        descriptor_path=pre_desc_path,
+        pretrain_descriptor_path=pre_desc_path,
+        finetune_descriptor_path=fin_desc_path,
+        pretrain_data_path=pretrain_targets_path,
+        finetune_data_path=finetune_targets_path,
+        pretrain_tasks=["density"],
+        finetune_tasks=["Tg"],
+        use_normalized_targets=False,
+    )
+
+    runner = DynamicTaskSuiteRunner(config)
+    runner._load_datasets()
+
+    assert runner.pretrain_features is not None
+    assert runner.finetune_features is not None
+    pdt.assert_frame_equal(runner.pretrain_features, pretrain_descriptor)
+    pdt.assert_frame_equal(runner.finetune_features, finetune_descriptor)
+
+
+def test_load_datasets_accepts_phase_specific_scalers(tmp_path: Path):
+    pre_desc_path = tmp_path / "pre_desc.parquet"
+    fin_desc_path = tmp_path / "fin_desc.parquet"
+    pretrain_descriptor = pd.DataFrame({"feat": [1.0, 2.0]}, index=[0, 1])
+    finetune_descriptor = pd.DataFrame({"feat": [9.0, 8.0]}, index=[10, 11])
+    pretrain_targets = pd.DataFrame({"density (normalized)": [0.2, 0.3]}, index=[0, 1])
+    finetune_targets = pd.DataFrame({"Tg (normalized)": [100.0, 110.0]}, index=[10, 11])
+    pretrain_descriptor.to_parquet(pre_desc_path)
+    finetune_descriptor.to_parquet(fin_desc_path)
+    pretrain_targets_path = tmp_path / "pre_targets.parquet"
+    finetune_targets_path = tmp_path / "fin_targets.parquet"
+    pretrain_targets.to_parquet(pretrain_targets_path)
+    finetune_targets.to_parquet(finetune_targets_path)
+
+    global_scaler_path = tmp_path / "scalers.joblib"
+    pretrain_scaler_path = tmp_path / "pre_scalers.joblib"
+    finetune_scaler_path = tmp_path / "fin_scalers.joblib"
+    joblib.dump({"density": DummyScaler("global"), "Tg": DummyScaler("global")}, global_scaler_path)
+    joblib.dump({"density": DummyScaler("pre")}, pretrain_scaler_path)
+    joblib.dump({"Tg": DummyScaler("fin")}, finetune_scaler_path)
+
+    config = _make_suite_config(
+        tmp_path,
+        descriptor_path=pre_desc_path,
+        pretrain_descriptor_path=pre_desc_path,
+        finetune_descriptor_path=fin_desc_path,
+        pretrain_data_path=pretrain_targets_path,
+        finetune_data_path=finetune_targets_path,
+        scaler_path=global_scaler_path,
+        pretrain_scaler_path=pretrain_scaler_path,
+        finetune_scaler_path=finetune_scaler_path,
+        pretrain_tasks=["density"],
+        finetune_tasks=["Tg"],
+    )
+
+    runner = DynamicTaskSuiteRunner(config)
+    runner._load_datasets()
+
+    assert isinstance(runner.property_scalers["density"], DummyScaler)
+    assert runner.property_scalers["density"].label == "pre"
+    assert isinstance(runner.property_scalers["Tg"], DummyScaler)
+    assert runner.property_scalers["Tg"].label == "fin"
+
+
+def test_finetune_datamodule_retains_split_column(tmp_path: Path):
+    config = _make_suite_config(tmp_path)
+    runner = DynamicTaskSuiteRunner(config)
+
+    index = pd.Index(["a", "b", "c", "d"], name="sample")
+    runner.finetune_features = pd.DataFrame({"feat": [1.0, 2.0, 3.0, 4.0]}, index=index)
+    runner.finetune_targets = pd.DataFrame(
+        {
+            "Density (normalized)": [0.1, 0.2, 0.3, 0.4],
+            "split": ["train", "test", "val", "test"],
+        },
+        index=index,
+    )
+    runner.finetune_target_columns = {"Density": "Density (normalized)"}
+
+    dm = runner._build_finetune_datamodule("Density")
+    dm.setup(stage="test")
+
+    assert set(dm.test_idx) == {"b", "d"}
 
 
 # ============================================================================

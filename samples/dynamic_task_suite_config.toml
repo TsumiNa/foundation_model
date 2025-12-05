@@ -2,13 +2,19 @@
 # Replace the placeholder paths below with the absolute locations of
 # your descriptor and target parquet files on the HPC system.
 
-descriptor_path = "data/amorphous_polymer_FFDescriptor_20250730.parquet"
+# descriptor_path = "data/amorphous_polymer_FFDescriptor_20250730.parquet"
 pretrain_data_path = "data/amorphous_polymer_non_PI_properties_20250730.parquet"
-finetune_data_path = "data/amorphous_polymer_PI_properties_20250730.parquet"
+finetune_data_path = "data/PolyInfo_properties_20250712.parquet"
 output_dir = "artifacts/radonpy_polyinfo_pretrain_finetune_runs"
 
+# Optional overrides when descriptor/scaler files differ between stages.
+pretrain_descriptor_path = "data/amorphous_polymer_FFDescriptor_20250730.parquet"
+finetune_descriptor_path = "data/PolyInfo_FFDescriptor_20250712.parquet"
+
 # Optional: set to the scaler generated during preprocessing.
-scaler_path = "data/amorphous_polymer_properties_scaler_20250730.pkl.z"
+# scaler_path = "data/amorphous_polymer_properties_scaler_20250730.pkl.z"
+pretrain_scaler_path = "data/amorphous_polymer_properties_scaler_20250730.pkl.z"
+finetune_scaler_path = "data/PolyInfo_properties_scaler_20250712.pkl.z"
 
 # Model and training hyperparameters
 shared_block_dims = [190, 256, 128]
@@ -17,8 +23,8 @@ use_deposit_layer = true
 head_hidden_dim = 64
 head_lr = 0.01
 num_pretrain_runs = 50
-pretrain_max_epochs = 1000
-finetune_max_epochs = 1000
+pretrain_max_epochs = 10
+finetune_max_epochs = 10
 batch_size = 256
 num_workers = 0
 log_every_n_steps = 50
@@ -195,8 +201,8 @@ swap_train_val_split = 0.0
 # test_all = false
 
 accelerator = "auto"
-# devices = "auto"
-devices = "0, 1"
+devices = "auto"
+# devices = "0, 1"
 early_stopping_patience = 50
 
 # Logging settings

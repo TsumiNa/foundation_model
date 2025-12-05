@@ -89,11 +89,15 @@ DEFAULT_FINETUNE_TASKS: list[str] = [
 
 @dataclass
 class SuiteConfig:
-    descriptor_path: Path
+    descriptor_path: Path | None
     pretrain_data_path: Path
     finetune_data_path: Path
     output_dir: Path
+    pretrain_descriptor_path: Path | None = None
+    finetune_descriptor_path: Path | None = None
     scaler_path: Path | None = None
+    pretrain_scaler_path: Path | None = None
+    finetune_scaler_path: Path | None = None
     use_normalized_targets: bool = True
     keep_normalized_targets: bool = False
     freeze_shared_encoder: bool = True
@@ -142,6 +146,10 @@ class SuiteConfig:
             raise ValueError("shared_block_dims must include input dimension and at least one latent dimension.")
         if self.head_lr is not None and self.head_lr <= 0:
             raise ValueError("head_lr must be positive when provided.")
+        if self.descriptor_path is None and self.pretrain_descriptor_path is None:
+            raise ValueError("Provide either descriptor_path or pretrain_descriptor_path.")
+        if self.descriptor_path is None and self.finetune_descriptor_path is None:
+            raise ValueError("Provide either descriptor_path or finetune_descriptor_path.")
 
 
 class DynamicTaskSuiteRunner:
@@ -466,7 +474,10 @@ class DynamicTaskSuiteRunner:
         if self.pretrain_features is None or self.pretrain_targets is None:
             raise RuntimeError("Pretrain data is not loaded.")
         target_columns = [self.pretrain_target_columns[name] for name in task_names]
-        stage_targets = self.pretrain_targets.loc[:, target_columns]
+        columns = list(dict.fromkeys(target_columns))
+        if "split" in self.pretrain_targets.columns:
+            columns.append("split")
+        stage_targets = self.pretrain_targets.loc[:, columns]
         return CompoundDataModule(
             formula_desc_source=self.pretrain_features,
             attributes_source=stage_targets,
@@ -485,7 +496,10 @@ class DynamicTaskSuiteRunner:
         if self.finetune_features is None or self.finetune_targets is None:
             raise RuntimeError("Finetune data is not loaded.")
         column = self.finetune_target_columns[task_name]
-        target_frame = self.finetune_targets.loc[:, [column]]
+        columns = [column]
+        if "split" in self.finetune_targets.columns:
+            columns.append("split")
+        target_frame = self.finetune_targets.loc[:, columns]
         return CompoundDataModule(
             formula_desc_source=self.finetune_features,
             attributes_source=target_frame,
@@ -780,12 +794,24 @@ class DynamicTaskSuiteRunner:
 
     def _load_datasets(self) -> None:
         config = self.config
-        descriptor_df = pd.read_parquet(config.descriptor_path)
+
+        pretrain_descriptor_path = config.pretrain_descriptor_path or config.descriptor_path
+        finetune_descriptor_path = config.finetune_descriptor_path or config.descriptor_path
+        if pretrain_descriptor_path is None or finetune_descriptor_path is None:
+            raise ValueError("Descriptor paths must be provided for both pretrain and finetune stages.")
+
+        descriptor_cache: dict[Path, pd.DataFrame] = {}
+
+        def _load_descriptor(path: Path) -> pd.DataFrame:
+            if path not in descriptor_cache:
+                descriptor_cache[path] = pd.read_parquet(path)
+            return descriptor_cache[path]
+
+        pretrain_descriptor_df = _load_descriptor(pretrain_descriptor_path)
+        finetune_descriptor_df = _load_descriptor(finetune_descriptor_path)
+
         pretrain_df = pd.read_parquet(config.pretrain_data_path)
         finetune_df = pd.read_parquet(config.finetune_data_path)
-
-        property_names = sorted(set(config.pretrain_tasks) | set(config.finetune_tasks))
-        self.property_scalers = self._load_scalers(property_names)
 
         self.pretrain_target_columns = {
             name: self._target_column(name, config.use_normalized_targets) for name in config.pretrain_tasks
@@ -800,8 +826,8 @@ class DynamicTaskSuiteRunner:
         if missing_pretrain:
             raise KeyError(f"Pretrain table missing target columns: {missing_pretrain}")
 
-        available_finetune = []
-        missing_finetune = []
+        available_finetune: list[str] = []
+        missing_finetune: list[str] = []
         for name, column in finetune_target_columns.items():
             if column in finetune_df.columns:
                 available_finetune.append(name)
@@ -819,16 +845,35 @@ class DynamicTaskSuiteRunner:
         self.finetune_target_columns = {name: finetune_target_columns[name] for name in available_finetune}
         self.config.finetune_tasks = available_finetune
 
-        common_pretrain_index = descriptor_df.index.intersection(pretrain_df.index)
-        pretrain_features = descriptor_df.loc[common_pretrain_index]
-        pretrain_targets = pretrain_df.loc[common_pretrain_index, list(self.pretrain_target_columns.values())]
+        self.property_scalers = self._load_scalers(
+            pretrain_tasks=set(self.config.pretrain_tasks),
+            finetune_tasks=set(self.config.finetune_tasks),
+        )
+
+        def _attribute_slice(source_df: pd.DataFrame, indices: pd.Index, columns: Sequence[str]) -> pd.DataFrame:
+            unique_columns = list(dict.fromkeys(columns))
+            if "split" in source_df.columns and "split" not in unique_columns:
+                unique_columns.append("split")
+            return source_df.loc[indices, unique_columns]
+
+        common_pretrain_index = pretrain_descriptor_df.index.intersection(pretrain_df.index)
+        pretrain_features = pretrain_descriptor_df.loc[common_pretrain_index]
+        pretrain_targets = _attribute_slice(
+            pretrain_df,
+            common_pretrain_index,
+            list(self.pretrain_target_columns.values()),
+        )
         if config.pretrain_sample and config.pretrain_sample < len(pretrain_features):
             pretrain_features = pretrain_features.sample(n=config.pretrain_sample, random_state=42)
             pretrain_targets = pretrain_targets.loc[pretrain_features.index]
 
-        common_finetune_index = descriptor_df.index.intersection(finetune_df.index)
-        finetune_features = descriptor_df.loc[common_finetune_index]
-        finetune_targets = finetune_df.loc[common_finetune_index, list(self.finetune_target_columns.values())]
+        common_finetune_index = finetune_descriptor_df.index.intersection(finetune_df.index)
+        finetune_features = finetune_descriptor_df.loc[common_finetune_index]
+        finetune_targets = _attribute_slice(
+            finetune_df,
+            common_finetune_index,
+            list(self.finetune_target_columns.values()),
+        )
         if config.finetune_sample and config.finetune_sample < len(finetune_features):
             finetune_features = finetune_features.sample(n=config.finetune_sample, random_state=13)
             finetune_targets = finetune_targets.loc[finetune_features.index]
@@ -843,17 +888,49 @@ class DynamicTaskSuiteRunner:
         fm_logger.info(f"Finetune feature matrix: {finetune_features.shape}")
         fm_logger.info(f"Finetune target matrix: {finetune_targets.shape}")
 
-    def _load_scalers(self, property_names: Iterable[str]) -> dict[str, Any]:
+    def _load_scalers(
+        self,
+        *,
+        pretrain_tasks: Iterable[str],
+        finetune_tasks: Iterable[str],
+    ) -> dict[str, Any]:
         if not self.config.use_normalized_targets:
             return {}
-        if self.config.scaler_path is None:
-            raise ValueError("scaler_path must be provided when use_normalized_targets is True.")
-        if not self.config.scaler_path.exists():
-            raise FileNotFoundError(f"Scaler file not found: {self.config.scaler_path}")
-        scalers = joblib.load(self.config.scaler_path)
-        missing = [name for name in property_names if name not in scalers]
+
+        pretrain_set = set(pretrain_tasks)
+        finetune_set = set(finetune_tasks)
+        all_tasks = pretrain_set | finetune_set
+        if not all_tasks:
+            return {}
+
+        sources: list[tuple[Path, set[str]]] = []
+        if self.config.scaler_path is not None:
+            sources.append((self.config.scaler_path, all_tasks))
+        if self.config.pretrain_scaler_path is not None:
+            sources.append((self.config.pretrain_scaler_path, pretrain_set))
+        if self.config.finetune_scaler_path is not None:
+            sources.append((self.config.finetune_scaler_path, finetune_set))
+
+        if not sources:
+            raise ValueError(
+                "Provide at least one scaler path (global or per-phase) when use_normalized_targets is True."
+            )
+
+        scalers: dict[str, Any] = {}
+        covered: set[str] = set()
+        for path, target_names in sources:
+            if not path.exists():
+                raise FileNotFoundError(f"Scaler file not found: {path}")
+            loaded = joblib.load(path)
+            for name in target_names:
+                if name in loaded:
+                    scalers[name] = loaded[name]
+                    covered.add(name)
+
+        missing = sorted(all_tasks - covered)
         if missing:
-            raise KeyError(f"Scaler file missing entries for: {missing}")
+            raise KeyError(f"Scaler file(s) missing entries for: {missing}")
+
         return scalers
 
     def _maybe_inverse_transform(self, property_name: str, values: np.ndarray) -> np.ndarray:
@@ -922,6 +999,18 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
         help="Path to the shared descriptor parquet.",
     )
     parser.add_argument(
+        "--pretrain-descriptor-path",
+        type=Path,
+        default=None,
+        help="Path to the pretrain-only descriptor parquet (overrides --descriptor-path).",
+    )
+    parser.add_argument(
+        "--finetune-descriptor-path",
+        type=Path,
+        default=None,
+        help="Path to the finetune-only descriptor parquet (overrides --descriptor-path).",
+    )
+    parser.add_argument(
         "--pretrain-data-path",
         type=Path,
         default=None,
@@ -937,6 +1026,16 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
         "--scaler-path",
         type=Path,
         help="Path to the joblib scaler used for normalized targets.",
+    )
+    parser.add_argument(
+        "--pretrain-scaler-path",
+        type=Path,
+        help="Optional scaler file applied to pretrain tasks (overrides --scaler-path entries).",
+    )
+    parser.add_argument(
+        "--finetune-scaler-path",
+        type=Path,
+        help="Optional scaler file applied to finetune tasks (overrides --scaler-path entries).",
     )
     parser.add_argument(
         "--output-dir",
@@ -1084,11 +1183,16 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
 
     parsed = parser.parse_args(args=args)
 
-    required_fields = ["descriptor_path", "pretrain_data_path", "finetune_data_path", "output_dir"]
+    required_fields = ["pretrain_data_path", "finetune_data_path", "output_dir"]
     missing = [field for field in required_fields if getattr(parsed, field) is None]
     if missing:
         missing_flags = ", ".join(f"--{field.replace('_', '-')}" for field in missing)
         raise SystemExit(f"Missing required arguments: {missing_flags}. Provide them via CLI or config file.")
+
+    if parsed.descriptor_path is None and parsed.pretrain_descriptor_path is None:
+        raise SystemExit("Provide either --descriptor-path or --pretrain-descriptor-path")
+    if parsed.descriptor_path is None and parsed.finetune_descriptor_path is None:
+        raise SystemExit("Provide either --descriptor-path or --finetune-descriptor-path")
 
     pretrain_tasks = parsed.pretrain_tasks or list(DEFAULT_PRETRAIN_TASKS)
     finetune_tasks = parsed.finetune_tasks or list(DEFAULT_FINETUNE_TASKS)
@@ -1121,6 +1225,10 @@ def parse_arguments(args: Sequence[str] | None = None) -> SuiteConfig:
         pretrain_data_path=parsed.pretrain_data_path,
         finetune_data_path=parsed.finetune_data_path,
         scaler_path=parsed.scaler_path,
+        pretrain_descriptor_path=parsed.pretrain_descriptor_path,
+        finetune_descriptor_path=parsed.finetune_descriptor_path,
+        pretrain_scaler_path=parsed.pretrain_scaler_path,
+        finetune_scaler_path=parsed.finetune_scaler_path,
         output_dir=parsed.output_dir,
         use_normalized_targets=not parsed.disable_normalized_targets,
         keep_normalized_targets=parsed.keep_normalized_targets,
