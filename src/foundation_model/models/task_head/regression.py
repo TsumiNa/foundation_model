@@ -47,6 +47,7 @@ class RegressionHead(BaseTaskHead):
             normalization=norm,
             residual=residual,
             dim_output_layer=head_internal_dims[-1],  # Output layer size is the last element of head_internal_dims
+            output_active=None,
         )
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:

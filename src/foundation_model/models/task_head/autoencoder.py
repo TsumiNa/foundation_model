@@ -46,6 +46,7 @@ class AutoEncoderHead(BaseTaskHead):
             normalization=norm,
             residual=residual,
             dim_output_layer=head_internal_dims[-1],
+            output_active=torch.nn.Sigmoid(),
         )
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:

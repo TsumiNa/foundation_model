@@ -94,10 +94,14 @@ class LinearBlock(nn.Module):
         if counter < 1:
             raise ValueError("shared_layer_dims must have at least 2 elements")
 
+        # Determine the activation for the last layer of the main loop
+        # If we have an appended output layer, the loop's last layer is internal -> layer_activation
+        # Otherwise, the loop's last layer is the final output -> output_active
+        loop_final_active = layer_activation if dim_output_layer is not None else output_active
+
         if residual:
             self.layers = nn.Sequential(
                 *[
-                    # Add residual block after each layer
                     nn.Sequential(
                         LinearLayer(
                             shared_layer_dims[i],
@@ -109,22 +113,7 @@ class LinearBlock(nn.Module):
                             shared_layer_dims[i + 1],
                             normalization=normalization,
                             layer_activation=layer_activation,
-                            output_active=None,
-                        ),
-                    )
-                    if i == counter - 1 and output_active is None
-                    else nn.Sequential(
-                        LinearLayer(
-                            shared_layer_dims[i],
-                            shared_layer_dims[i + 1],
-                            normalization=normalization,
-                            activation=layer_activation,
-                        ),
-                        ResidualBlock(
-                            shared_layer_dims[i + 1],
-                            normalization=normalization,
-                            layer_activation=layer_activation,
-                            output_active=output_active,
+                            output_active=loop_final_active if i == counter - 1 else layer_activation,
                         ),
                     )
                     for i in range(counter)
@@ -137,14 +126,7 @@ class LinearBlock(nn.Module):
                         shared_layer_dims[i],
                         shared_layer_dims[i + 1],
                         normalization=normalization,
-                        activation=None,
-                    )
-                    if i == counter - 1 and output_active is None
-                    else LinearLayer(
-                        shared_layer_dims[i],
-                        shared_layer_dims[i + 1],
-                        normalization=normalization,
-                        activation=layer_activation,
+                        activation=loop_final_active if i == counter - 1 else layer_activation,
                     )
                     for i in range(counter)
                 ]
@@ -158,7 +140,7 @@ class LinearBlock(nn.Module):
                     shared_layer_dims[-1],
                     dim_output_layer,
                     normalization=False,
-                    activation=None,
+                    activation=output_active,
                 ),
             )
 
