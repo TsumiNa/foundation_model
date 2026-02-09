@@ -132,26 +132,32 @@ class KernelRegressionHead(BaseTaskHead):
         shared_x_hidden = config.x_dim[1:]
         beta_dims = _build_dims(config.x_dim[0], config.beta_hidden_dims, shared_x_hidden)
         self.beta_net = LinearBlock(
-            beta_dims + [self.n_kernels],
+            beta_dims,
             normalization=config.norm,
             residual=config.residual,
+            dim_output_layer=self.n_kernels,
+            output_active=None,
         )
 
         # --- μ₁(X) branch ---
         mu1_dims = _build_dims(config.x_dim[0], config.mu1_hidden_dims, shared_x_hidden)
         self.mu1_net = LinearBlock(
-            mu1_dims + [1],
+            mu1_dims,
             normalization=config.norm,
             residual=config.residual,
+            dim_output_layer=1,
+            output_active=None,
         )
 
         # --- μ₂(t) branch ---
         shared_t_hidden = config.t_dim
         mu2_dims = _build_dims(t_input_dim, config.mu2_hidden_dims, shared_t_hidden)
         self.mu2_net = LinearBlock(
-            mu2_dims + [1],
+            mu2_dims,
             normalization=config.norm,
             residual=config.residual,
+            dim_output_layer=1,
+            output_active=None,
         )
 
         # --- μ₃(X, t) branch (optional) ---
@@ -160,9 +166,11 @@ class KernelRegressionHead(BaseTaskHead):
             mu3_hidden = config.mu3_hidden_dims if config.mu3_hidden_dims is not None else shared_x_hidden
             mu3_dims = _build_dims(config.x_dim[0] + t_input_dim, mu3_hidden, shared_x_hidden)
             self.mu3_net = LinearBlock(
-                mu3_dims + [1],
+                mu3_dims,
                 normalization=config.norm,
                 residual=config.residual,
+                dim_output_layer=1,
+                output_active=None,
             )
         else:
             self.mu3_net = None
