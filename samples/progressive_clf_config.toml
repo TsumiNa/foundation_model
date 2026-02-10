@@ -1,0 +1,71 @@
+# Progressive Pretrain → Classification Finetune Configuration
+#
+# Usage:
+#   fm-progressive-clf --config-file samples/progressive_clf_config.toml
+#   python -m foundation_model.scripts.multi_task_progressive_clf --config-file samples/progressive_clf_config.toml
+#
+# CLI arguments override values in this file.
+
+# === Data paths ===
+data_path = "data/qc_ac_te_mp_dos_reformat_20250615_enforce_quaternary_test.pd.parquet"
+descriptor_path = "data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet"
+preprocessing_path = "data/preprocessing_objects_20250615.pkl.z"
+# output_dir = "logs/multi_task_suite/my_experiment"  # default: logs/multi_task_suite/<timestamp>
+output_dir = "artifacts/multi_task_suite_260206"  # default: logs/multi_task_suite/<timestamp>
+
+# === Training schedule ===
+n_runs = 2
+pretrain_max_epochs = 100
+finetune_max_epochs = 100
+batch_size = 128
+early_stopping_patience = 50
+log_every_n_steps = 50
+
+# === Reproducibility ===
+random_seed_base = 1729
+datamodule_random_seed = 42
+
+# === Model architecture ===
+latent_dim = 128
+head_hidden_dim = 64
+head_lr = 0.005
+n_kernel = 15
+kr_lr = 5e-4
+kr_decay = 5e-5
+
+# === Source tasks (pretrain) ===
+# All available tasks are used by default.
+# Uncomment and edit to use a subset.
+#
+# Regression tasks:
+#   density, efermi, final_energy, formation_energy,
+#   total_magnetization, volume,
+#   dielectric_total, dielectric_ionic, dielectric_electronic
+#
+# Kernel regression tasks:
+#   electrical_resistivity, power_factor, seebeck_coefficient,
+#   thermal_conductivity, zt, magnetic_susceptibility, dos_density
+#
+source_tasks = [
+    "density",
+    "efermi",
+    "final_energy",
+    "formation_energy",
+    "total_magnetization",
+    "volume",
+    "dielectric_total",
+    "dielectric_ionic",
+    "dielectric_electronic",
+    "electrical_resistivity",
+    "power_factor",
+    "seebeck_coefficient",
+    "thermal_conductivity",
+    # "zt",
+    # "magnetic_susceptibility",
+    "dos_density",
+]
+
+# === Hardware ===
+accelerator = "auto" # "auto" → MPS on Mac Silicon, "gpu" on CUDA servers
+devices = "auto"
+num_workers = 0

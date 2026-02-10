@@ -40,6 +40,7 @@ classifiers = [
 [project.scripts]
 fm-trainer = "foundation_model.scripts.train:cli_main"
 fm-pretrain-suite = "foundation_model.scripts.dynamic_task_suite:main"
+fm-progressive-clf = "foundation_model.scripts.multi_task_progressive_clf:main"
 
 [build-system]
 requires = ["hatchling"]
