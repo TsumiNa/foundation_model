@@ -46,24 +46,24 @@ kr_decay = 5e-5
 #   electrical_resistivity, power_factor, seebeck_coefficient,
 #   thermal_conductivity, zt, magnetic_susceptibility, dos_density
 #
-source_tasks = [
-    "density",
-    "efermi",
-    "final_energy",
-    "formation_energy",
-    "total_magnetization",
-    "volume",
-    "dielectric_total",
-    "dielectric_ionic",
-    "dielectric_electronic",
-    "electrical_resistivity",
-    "power_factor",
-    "seebeck_coefficient",
-    "thermal_conductivity",
-    "zt",
-    "magnetic_susceptibility",
-    "dos_density",
-]
+# source_tasks = [
+#     "density",
+#     "efermi",
+#     "final_energy",
+#     "formation_energy",
+#     "total_magnetization",
+#     "volume",
+#     "dielectric_total",
+#     "dielectric_ionic",
+#     "dielectric_electronic",
+#     "electrical_resistivity",
+#     "power_factor",
+#     "seebeck_coefficient",
+#     "thermal_conductivity",
+#     "zt",
+#     "magnetic_susceptibility",
+#     "dos_density",
+# ]
 
 # === Hardware ===
 accelerator = "auto" # "auto" → MPS on Mac Silicon, "gpu" on CUDA servers
