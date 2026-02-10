@@ -60,8 +60,8 @@ source_tasks = [
     "power_factor",
     "seebeck_coefficient",
     "thermal_conductivity",
-    # "zt",
-    # "magnetic_susceptibility",
+    "zt",
+    "magnetic_susceptibility",
     "dos_density",
 ]
 
