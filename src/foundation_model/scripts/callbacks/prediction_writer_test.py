@@ -107,6 +107,8 @@ def test_prediction_writer_multi_gpu_integration(tmp_path: Path) -> None:
     from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
     from foundation_model.models.model_config import KernelRegressionTaskConfig, TaskType
 
+    import pandas as pd
+
     task_configs = [
         KernelRegressionTaskConfig(
             name="dos",
@@ -118,18 +120,26 @@ def test_prediction_writer_multi_gpu_integration(tmp_path: Path) -> None:
             t_encoding_method="fc",
             norm=True,
             residual=False,
-            weight=1.0,
+            loss_weight=1.0,
             enabled=True,
+            predict_idx="all",
         )
     ]
 
+    descriptor_df = pd.read_parquet(_INTEGRATION_DATA_PATHS[0])
+    attributes_df = pd.read_parquet(_INTEGRATION_DATA_PATHS[1])
+
+    def descriptor_fn(compositions):
+        present = [c for c in compositions if c in descriptor_df.index]
+        return descriptor_df.loc[present]
+
     datamodule = CompoundDataModule(
-        formula_desc_source=str(_INTEGRATION_DATA_PATHS[0]),
-        attributes_source=str(_INTEGRATION_DATA_PATHS[1]),
         task_configs=task_configs,
+        descriptor_fn=descriptor_fn,
+        task_frames={cfg.name: attributes_df for cfg in task_configs},
+        composition_column="id",  # join key is the 'id' index (mp-*)
         batch_size=256,
         num_workers=0,
-        predict_idx="all",
         val_split=0.1,
         test_split=0.1,
         random_seed=42,

@@ -16,16 +16,26 @@ from foundation_model.models.model_config import (
 
 
 @pytest.fixture
-def sample_formula_desc_df():
-    """Returns a sample formula descriptor DataFrame."""
+def sample_compositions():
+    return [f"id_{i}" for i in range(5)]
+
+
+@pytest.fixture
+def sample_descriptors():
+    """Descriptor features indexed by composition."""
     return pd.DataFrame(
-        {"feat_0": [0.1, 0.2, 0.3, 0.4, 0.5], "feat_1": [1.1, 1.2, 1.3, 1.4, 1.5]}, index=[f"id_{i}" for i in range(5)]
+        {"feat_0": [0.1, 0.2, 0.3, 0.4, 0.5], "feat_1": [1.1, 1.2, 1.3, 1.4, 1.5]},
+        index=[f"id_{i}" for i in range(5)],
     )
 
 
 @pytest.fixture
 def sample_attributes_df():
-    """Returns a sample attributes DataFrame with various data types and NaNs."""
+    """A combined attributes frame (indexed by composition) shared across tasks in tests.
+
+    The dataset reads only each task's own ``data_column`` / ``t_column`` from its frame, so a
+    single combined frame can serve as every task's frame without cross-talk.
+    """
     data = {
         # Regression task
         "task_reg_regression_value": [1.0, 2.0, np.nan, 4.0, 5.0],
@@ -66,16 +76,30 @@ def sample_task_configs():
     ]
 
 
+def _task_frames(task_configs, attributes_df):
+    """Build a per-task frame mapping that shares the combined attributes frame."""
+    return {cfg.name: attributes_df for cfg in task_configs}
+
+
+def _make_dataset(compositions, descriptors, task_configs, attributes_df, **kwargs):
+    return CompoundDataset(
+        compositions=compositions,
+        descriptors=descriptors,
+        task_frames=_task_frames(task_configs, attributes_df),
+        task_configs=task_configs,
+        **kwargs,
+    )
+
+
 # --- Test Cases ---
 
 
-def test_dataset_initialization_basic(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
-    """Test basic initialization with formula and attributes."""
-    dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
-        dataset_name="test_basic",
+def test_dataset_initialization_basic(
+    sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs
+):
+    """Test basic initialization with descriptors and per-task frames."""
+    dataset = _make_dataset(
+        sample_compositions, sample_descriptors, sample_task_configs, sample_attributes_df, dataset_name="test_basic"
     )
     assert len(dataset) == 5
     assert dataset.x_formula.shape == (5, 2)
@@ -86,31 +110,27 @@ def test_dataset_initialization_basic(sample_formula_desc_df, sample_attributes_
     assert "task_disabled" not in dataset.enabled_task_names  # Check disabled task
 
 
-def test_task_data_processing_regression(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+def test_task_data_processing_regression(
+    sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs
+):
     """Verify y_dict and masks for a regression task."""
-    dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
-        dataset_name="test_reg_processing",
+    dataset = _make_dataset(
+        sample_compositions, sample_descriptors, sample_task_configs, sample_attributes_df, dataset_name="test_reg"
     )
     task_name = "task_reg"
     assert task_name in dataset.y_dict
     assert dataset.y_dict[task_name].shape == (5, 1)
-    # Expected values (NaNs become 0)
     expected_y = torch.tensor([[1.0], [2.0], [0.0], [4.0], [5.0]], dtype=torch.float32)
     assert torch.allclose(dataset.y_dict[task_name], expected_y)
 
     assert task_name in dataset.task_masks_dict
     assert dataset.task_masks_dict[task_name].dtype == torch.bool
-    # Expected mask (True where not NaN)
     expected_mask = torch.tensor([[True], [True], [False], [True], [True]], dtype=torch.bool)
     assert torch.equal(dataset.task_masks_dict[task_name], expected_mask)
 
 
-def test_task_data_processing_sequence(sample_formula_desc_df, sample_attributes_df):
-    """Verify y_dict, temps_dict, and masks for a sequence task."""
-    # Create a task config that only includes valid tasks for this test
+def test_task_data_processing_sequence(sample_compositions, sample_descriptors, sample_attributes_df):
+    """Verify y_dict, t_sequences_dict, and masks for a sequence task."""
     valid_task_configs = [
         RegressionTaskConfig(name="task_reg", type=TaskType.REGRESSION, data_column="task_reg_regression_value"),
         KernelRegressionTaskConfig(
@@ -120,75 +140,80 @@ def test_task_data_processing_sequence(sample_formula_desc_df, sample_attributes
             t_column="task_seq_temps",
         ),
     ]
-    dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=valid_task_configs,
-        dataset_name="test_seq_processing",
+    dataset = _make_dataset(
+        sample_compositions, sample_descriptors, valid_task_configs, sample_attributes_df, dataset_name="test_seq"
     )
     task_name = "task_seq"
     assert task_name in dataset.y_dict
-    # For KernelRegression, y_dict stores List[Tensor]
     assert isinstance(dataset.y_dict[task_name], list)
-    assert len(dataset.y_dict[task_name]) == 5  # 5 samples
-    # Check first sample
+    assert len(dataset.y_dict[task_name]) == 5
     expected_y_first = torch.tensor([0.1, 0.2, 0.3], dtype=torch.float32)
     assert torch.allclose(dataset.y_dict[task_name][0], expected_y_first)
-    # Check third sample (all NaN becomes 0)
     expected_y_third = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
     assert torch.allclose(dataset.y_dict[task_name][2], expected_y_third)
 
     assert task_name in dataset.t_sequences_dict
-    # For KernelRegression, t_sequences_dict stores List[Tensor], so check the first sample
-    assert len(dataset.t_sequences_dict[task_name]) == 5  # 5 samples
-    expected_temps = torch.tensor([10, 20, 30], dtype=torch.float32)  # Single sample
+    assert len(dataset.t_sequences_dict[task_name]) == 5
+    expected_temps = torch.tensor([10, 20, 30], dtype=torch.float32)
     assert torch.allclose(dataset.t_sequences_dict[task_name][0], expected_temps)
 
     assert task_name in dataset.task_masks_dict
-    # For KernelRegression, task_masks_dict also stores List[Tensor]
     assert isinstance(dataset.task_masks_dict[task_name], list)
     assert len(dataset.task_masks_dict[task_name]) == 5
-    # Check that first sample mask is all True (valid data)
     assert torch.all(dataset.task_masks_dict[task_name][0])
-    # Check that third sample mask is all False (all NaN data)
     assert torch.all(~dataset.task_masks_dict[task_name][2])
 
 
-def test_task_data_processing_missing_columns(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+def test_task_data_processing_missing_columns(
+    sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs
+):
     """Test behavior when expected attribute columns for a task are missing."""
-    configs_with_missing = sample_task_configs + [
-        RegressionTaskConfig(
-            name="task_fully_missing_data_col",
-            type=TaskType.REGRESSION,
-            data_column="non_existent_column",
-        )
-    ]
-    dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=configs_with_missing,
+    extra = RegressionTaskConfig(
+        name="task_fully_missing_data_col",
+        type=TaskType.REGRESSION,
+        data_column="non_existent_column",
+    )
+    configs_with_missing = sample_task_configs + [extra]
+    dataset = _make_dataset(
+        sample_compositions,
+        sample_descriptors,
+        configs_with_missing,
+        sample_attributes_df,
         dataset_name="test_missing_cols",
     )
     placeholder = dataset.y_dict["task_fully_missing_data_col"]
-    assert placeholder.shape[0] == len(sample_attributes_df)
+    assert placeholder.shape[0] == len(sample_compositions)
     assert torch.allclose(placeholder, torch.zeros_like(placeholder))
     assert not dataset.task_masks_dict["task_fully_missing_data_col"].any()
 
 
-def test_nan_masking(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
-    """Test that NaNs in attributes correctly generate masks."""
-    # (already covered in specific task tests, but good to have a focused one)
+def test_task_frame_missing_compositions_are_masked(sample_compositions, sample_descriptors, sample_attributes_df):
+    """Compositions absent from a task's frame are reindexed to NaN and masked out."""
+    configs = [RegressionTaskConfig(name="task_reg", data_column="task_reg_regression_value")]
+    # Task frame only covers the first two compositions.
+    partial_frame = sample_attributes_df.loc[["id_0", "id_1"]]
     dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
-        dataset_name="test_nan_masking",
+        compositions=sample_compositions,
+        descriptors=sample_descriptors,
+        task_frames={"task_reg": partial_frame},
+        task_configs=configs,
+        dataset_name="test_partial_frame",
     )
-    # Regression task 'task_reg'
+    mask = dataset.task_masks_dict["task_reg"].squeeze()
+    # id_0, id_1 valid; id_2..id_4 absent from frame -> masked False.
+    assert mask.tolist() == [True, True, False, False, False]
+    # y for absent compositions is the 0.0 placeholder.
+    assert dataset.y_dict["task_reg"][3].item() == 0.0
+
+
+def test_nan_masking(sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs):
+    """Test that NaNs in attributes correctly generate masks."""
+    dataset = _make_dataset(
+        sample_compositions, sample_descriptors, sample_task_configs, sample_attributes_df, dataset_name="test_nan"
+    )
     expected_mask_reg = torch.tensor([[True], [True], [False], [True], [True]], dtype=torch.bool)
     assert torch.equal(dataset.task_masks_dict["task_reg"], expected_mask_reg)
 
-    # Sequence task 'task_seq' (mask based on all-NaN sequences)
     expected_mask_seq = torch.tensor([True, True, False, True, True], dtype=torch.bool)
     seq_masks = dataset.task_masks_dict["task_seq"]
     assert isinstance(seq_masks, list)
@@ -196,19 +221,19 @@ def test_nan_masking(sample_formula_desc_df, sample_attributes_df, sample_task_c
     assert torch.equal(actual_seq_mask, expected_mask_seq)
 
 
-def test_ratio_masking_train(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+def test_ratio_masking_train(sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs):
     """Test task_masking_ratios for a training dataset."""
-    task_name_to_mask = "task_reg"  # This task has 4 valid samples initially
-    masking_ratios = {task_name_to_mask: 0.5}  # Keep 50% of valid samples
+    task_name_to_mask = "task_reg"  # 4 valid samples initially
+    masking_ratios = {task_name_to_mask: 0.5}
 
-    # Seed for reproducibility of np.random.choice
     np.random.seed(42)
-    dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
+    dataset = _make_dataset(
+        sample_compositions,
+        sample_descriptors,
+        sample_task_configs,
+        sample_attributes_df,
         task_masking_ratios=masking_ratios,
-        is_predict_set=False,  # Training mode
+        is_predict_set=False,
         dataset_name="test_ratio_mask_train",
     )
 
@@ -218,43 +243,43 @@ def test_ratio_masking_train(sample_formula_desc_df, sample_attributes_df, sampl
     final_mask = dataset.task_masks_dict[task_name_to_mask].squeeze()
     num_finally_valid = torch.sum(final_mask).item()
 
-    # Expected number to keep is 50% of 4 = 2
-    assert num_finally_valid == int(np.round(num_originally_valid * 0.5))  # Should be 2
-    # Ensure that the False from NaN is still False
+    assert num_finally_valid == int(np.round(num_originally_valid * 0.5))  # 2
     assert not final_mask[2].item()
-    # Ensure that only originally True items could have been set to False
     assert torch.all(final_mask <= original_valid_mask)
 
 
-def test_ratio_masking_predict(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+def test_ratio_masking_predict(sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs):
     """Test task_masking_ratios is ignored for a predict dataset."""
     task_name_to_mask = "task_reg"
     masking_ratios = {task_name_to_mask: 0.5}
 
-    dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
+    dataset = _make_dataset(
+        sample_compositions,
+        sample_descriptors,
+        sample_task_configs,
+        sample_attributes_df,
         task_masking_ratios=masking_ratios,
-        is_predict_set=True,  # Predict mode
+        is_predict_set=True,
         dataset_name="test_ratio_mask_predict",
     )
-    # Mask should only be based on NaNs, not the ratio
     expected_mask = torch.tensor([[True], [True], [False], [True], [True]], dtype=torch.bool)
     assert torch.equal(dataset.task_masks_dict[task_name_to_mask], expected_mask)
 
 
-def test_task_masking_seed_controls_rng(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+def test_task_masking_seed_controls_rng(
+    sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs
+):
     """Ensure task_masking_seed makes masking deterministic."""
     task_name = "task_reg"
     masking_ratio = 0.5
     masking_ratios = {task_name: masking_ratio}
     masking_seed = 123
 
-    dataset_seeded = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
+    dataset_seeded = _make_dataset(
+        sample_compositions,
+        sample_descriptors,
+        sample_task_configs,
+        sample_attributes_df,
         task_masking_ratios=masking_ratios,
         task_masking_seed=masking_seed,
         is_predict_set=False,
@@ -273,12 +298,12 @@ def test_task_masking_seed_controls_rng(sample_formula_desc_df, sample_attribute
         expected_mask[indices_to_drop] = False
     assert np.array_equal(final_mask, expected_mask)
 
-    # Changing the global NumPy RNG should not affect the seeded behavior
     np.random.seed(999)
-    dataset_seeded_repeat = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
+    dataset_seeded_repeat = _make_dataset(
+        sample_compositions,
+        sample_descriptors,
+        sample_task_configs,
+        sample_attributes_df,
         task_masking_ratios=masking_ratios,
         task_masking_seed=masking_seed,
         is_predict_set=False,
@@ -288,65 +313,60 @@ def test_task_masking_seed_controls_rng(sample_formula_desc_df, sample_attribute
     assert np.array_equal(final_mask, repeated_mask)
 
 
-def test_getitem_predict_mode(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+def test_getitem_predict_mode(sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs):
     """Test __getitem__ when is_predict_set=True."""
-    dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
+    dataset = _make_dataset(
+        sample_compositions,
+        sample_descriptors,
+        sample_task_configs,
+        sample_attributes_df,
         is_predict_set=True,
         dataset_name="test_getitem_predict",
     )
     model_input_x, y_dict, masks_dict, temps_dict = dataset[0]
 
-    assert isinstance(model_input_x, torch.Tensor)  # Should be just x_formula as no structure is used here
+    assert isinstance(model_input_x, torch.Tensor)
     assert torch.allclose(model_input_x, dataset.x_formula[0])
     assert "task_reg" in y_dict
     assert "task_reg" in masks_dict
 
 
-def test_getitem_train_mode_no_structure(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+def test_getitem_train_mode_no_structure(
+    sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs
+):
     """Test __getitem__ for training without structure."""
-    dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
+    dataset = _make_dataset(
+        sample_compositions,
+        sample_descriptors,
+        sample_task_configs,
+        sample_attributes_df,
         is_predict_set=False,
-        dataset_name="test_getitem_train_no_struct",
+        dataset_name="test_getitem_train",
     )
     model_input_x, _, _, _ = dataset[0]
     assert isinstance(model_input_x, torch.Tensor)
     assert torch.allclose(model_input_x, dataset.x_formula[0])
 
 
-def test_attribute_names_property(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+def test_attribute_names_property(sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs):
     """Test the attribute_names property."""
-    dataset = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
-        dataset_name="test_attr_names",
+    dataset = _make_dataset(
+        sample_compositions, sample_descriptors, sample_task_configs, sample_attributes_df, dataset_name="test_attr"
     )
     expected_names = ["task_reg", "task_seq", "task_another_reg"]
     assert sorted(dataset.attribute_names) == sorted(expected_names)
 
 
-def test_input_dtypes_conversion(sample_attributes_df, sample_task_configs):
-    """Test that input DataFrames with different dtypes are converted to float32."""
-    formula_int_df = pd.DataFrame(
-        {
-            "feat_0": [1, 2, 3, 4, 5],
-            "feat_1": [11, 12, 13, 14, 15],
-        },
+def test_input_dtypes_conversion(sample_compositions, sample_attributes_df, sample_task_configs):
+    """Test that descriptor DataFrames with int dtypes are converted to float32."""
+    descriptors_int = pd.DataFrame(
+        {"feat_0": [1, 2, 3, 4, 5], "feat_1": [11, 12, 13, 14, 15]},
         index=[f"id_{i}" for i in range(5)],
         dtype=np.int32,
     )
 
-    dataset = CompoundDataset(
-        formula_desc=formula_int_df,
-        attributes=sample_attributes_df,
-        task_configs=sample_task_configs,
-        dataset_name="test_dtypes",
+    dataset = _make_dataset(
+        sample_compositions, descriptors_int, sample_task_configs, sample_attributes_df, dataset_name="test_dtypes"
     )
 
     assert dataset.x_formula.dtype == torch.float32
@@ -366,122 +386,125 @@ def test_input_dtypes_conversion(sample_attributes_df, sample_task_configs):
         assert temps_list[0].dtype == torch.float32, f"Task {task_name} t_sequences_dict dtype mismatch"
 
 
-# TODO: Add more tests:
-# - Edge case: empty formula_desc or attributes (should raise error or handle gracefully if allowed by design)
-# - Edge case: task_configs list is empty (should raise error)
-# - Test sequence data where individual items in the list/array are not all numbers
-#   (e.g. strings, though unlikely)
-# - Test when `temps` column is missing for a sequence task.
-
-
-def test_empty_inputs_raise_error(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
-    """Test that empty DataFrames or task_configs list raise ValueError."""
+def test_empty_inputs_raise_error(sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs):
+    """Test that empty/invalid inputs raise the expected errors."""
     empty_df = pd.DataFrame()
-    non_empty_formula_df = sample_formula_desc_df
-    non_empty_attributes_df = sample_attributes_df
-    non_empty_task_configs = sample_task_configs
 
-    with pytest.raises(ValueError, match="formula_desc DataFrame cannot be empty."):
+    with pytest.raises(ValueError, match="descriptors DataFrame cannot be empty."):
         CompoundDataset(
-            formula_desc=empty_df,
-            attributes=non_empty_attributes_df,
-            task_configs=non_empty_task_configs,
-            dataset_name="test_empty_formula",
+            compositions=sample_compositions,
+            descriptors=empty_df,
+            task_frames=_task_frames(sample_task_configs, sample_attributes_df),
+            task_configs=sample_task_configs,
+            dataset_name="test_empty_descriptors",
         )
 
-    with pytest.raises(ValueError, match="attributes DataFrame cannot be empty."):
+    with pytest.raises(ValueError, match="compositions cannot be empty."):
         CompoundDataset(
-            formula_desc=non_empty_formula_df,
-            attributes=empty_df,
-            task_configs=non_empty_task_configs,
-            dataset_name="test_empty_attributes",
+            compositions=[],
+            descriptors=sample_descriptors,
+            task_frames=_task_frames(sample_task_configs, sample_attributes_df),
+            task_configs=sample_task_configs,
+            dataset_name="test_empty_compositions",
         )
 
     with pytest.raises(ValueError, match="task_configs list cannot be empty."):
         CompoundDataset(
-            formula_desc=non_empty_formula_df,
-            attributes=non_empty_attributes_df,
-            task_configs=[],  # Empty task_configs
+            compositions=sample_compositions,
+            descriptors=sample_descriptors,
+            task_frames={},
+            task_configs=[],
             dataset_name="test_empty_task_configs",
         )
 
-    # Test case where formula_desc or attributes_df might be None (though type hints suggest DataFrame)
-    # This is more about robust handling if None is somehow passed.
-    # The class currently expects DataFrames, so this might be redundant
-    # if type checking is strict.
-    with pytest.raises(TypeError, match="formula_desc must be pd.DataFrame or np.ndarray"):
+    with pytest.raises(TypeError, match="descriptors must be a pd.DataFrame"):
         CompoundDataset(
-            formula_desc=None,  # type: ignore
-            attributes=non_empty_attributes_df,
-            task_configs=non_empty_task_configs,
-            dataset_name="test_none_formula",
+            compositions=sample_compositions,
+            descriptors=None,  # type: ignore
+            task_frames=_task_frames(sample_task_configs, sample_attributes_df),
+            task_configs=sample_task_configs,
+            dataset_name="test_none_descriptors",
         )
 
 
-def test_sequence_data_with_non_numeric(sample_formula_desc_df, sample_attributes_df, sample_task_configs, caplog):
-    """Test that non-numeric data in sequence series is handled by creating NaNs, then converted by nan_to_num."""
+def test_missing_descriptor_composition_raises(sample_descriptors, sample_attributes_df, sample_task_configs):
+    """A composition without a descriptor row must raise a clear error."""
+    compositions = [f"id_{i}" for i in range(5)] + ["id_missing"]
+    with pytest.raises(ValueError, match="missing 1 composition"):
+        CompoundDataset(
+            compositions=compositions,
+            descriptors=sample_descriptors,  # only id_0..id_4
+            task_frames=_task_frames(sample_task_configs, sample_attributes_df),
+            task_configs=sample_task_configs,
+            dataset_name="test_missing_desc",
+        )
+
+
+def test_sequence_data_with_non_numeric(
+    sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs
+):
+    """Non-numeric sequence data is parsed to NaN then nan_to_num'd to 0."""
     attributes_bad_seq = sample_attributes_df.copy()
     attributes_bad_seq["task_seq_sequence_series"] = attributes_bad_seq["task_seq_sequence_series"].astype("object")
     attributes_bad_seq.at["id_0", "task_seq_sequence_series"] = [0.1, "not_a_number", 0.3]
 
-    dataset_bad_seq = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=attributes_bad_seq,
-        task_configs=sample_task_configs,
-        dataset_name="test_bad_seq_data",
+    dataset_bad_seq = _make_dataset(
+        sample_compositions, sample_descriptors, sample_task_configs, attributes_bad_seq, dataset_name="test_bad_seq"
     )
-    # Check that the problematic entry became [0.1, 0.0, 0.3] after nan_to_num(nan=0.0)
-    # The middle "not_a_number" should have been parsed as np.nan by _parse_structured_element, then 0.0
     assert torch.allclose(dataset_bad_seq.y_dict["task_seq"][0], torch.tensor([0.1, 0.0, 0.3], dtype=torch.float32))
 
     attributes_bad_temps = sample_attributes_df.copy()
     attributes_bad_temps["task_seq_temps"] = attributes_bad_temps["task_seq_temps"].astype("object")
     attributes_bad_temps.at["id_0", "task_seq_temps"] = [10, "bad_temp", 30]
 
-    dataset_bad_temps = CompoundDataset(
-        formula_desc=sample_formula_desc_df,
-        attributes=attributes_bad_temps,
-        task_configs=sample_task_configs,
-        dataset_name="test_bad_temps_data",
+    dataset_bad_temps = _make_dataset(
+        sample_compositions,
+        sample_descriptors,
+        sample_task_configs,
+        attributes_bad_temps,
+        dataset_name="test_bad_temps",
     )
-    # Check that the problematic entry became [10, 0, 30]
     assert torch.allclose(
         dataset_bad_temps.t_sequences_dict["task_seq"][0], torch.tensor([10.0, 0.0, 30.0], dtype=torch.float32)
     )
 
 
-def test_missing_specified_t_column_raises_error(sample_formula_desc_df, sample_attributes_df, sample_task_configs):
+def test_missing_specified_t_column_raises_error(
+    sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs
+):
     """Test ValueError if a specified t_column is missing for a KernelRegression task."""
     attributes_no_temps = sample_attributes_df.drop(columns=["task_seq_temps"])
 
-    # sample_task_configs already has task_seq configured with t_column="task_seq_temps"
-
     with pytest.raises(
-        ValueError, match="T-parameter column 'task_seq_temps' for task 'task_seq' not found in attributes data."
+        ValueError, match="T-parameter column 'task_seq_temps' for task 'task_seq' not found in task data."
     ):
-        CompoundDataset(
-            formula_desc=sample_formula_desc_df,
-            attributes=attributes_no_temps,
-            task_configs=sample_task_configs,
-            dataset_name="test_missing_specified_t_column",
+        _make_dataset(
+            sample_compositions,
+            sample_descriptors,
+            sample_task_configs,
+            attributes_no_temps,
+            dataset_name="test_missing_t",
         )
 
 
-def test_kernel_regression_task_no_t_column_specified(sample_formula_desc_df, sample_attributes_df, caplog):
-    """Test behavior when t_column is not specified for a KernelRegression task (uses placeholder)."""
-    caplog.set_level(logging.INFO)  # Set caplog level to INFO
+def test_kernel_regression_task_no_t_column_specified(
+    sample_compositions, sample_descriptors, sample_attributes_df, caplog
+):
+    """Test behavior when t_column is not specified for a KernelRegression task."""
+    caplog.set_level(logging.INFO)
 
     task_configs_no_t_spec = [
         RegressionTaskConfig(name="task_reg", type=TaskType.REGRESSION, data_column="task_reg_regression_value"),
         KernelRegressionTaskConfig(
             name="task_seq", type=TaskType.KERNEL_REGRESSION, data_column="task_seq_sequence_series", t_column=""
-        ),  # t_column is empty
+        ),
     ]
 
     with pytest.raises(ValueError, match="t_column for KernelRegression task 'task_seq' must be specified."):
-        CompoundDataset(
-            formula_desc=sample_formula_desc_df,
-            attributes=sample_attributes_df,  # attributes_df still has "task_seq_temps" but it won't be used
-            task_configs=task_configs_no_t_spec,
+        _make_dataset(
+            sample_compositions,
+            sample_descriptors,
+            task_configs_no_t_spec,
+            sample_attributes_df,
             dataset_name="test_no_t_column_spec",
         )

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
+import pandas as pd
 import pytest
 import torch
 
@@ -33,6 +34,7 @@ def test_full_prediction_flow_produces_kernel_regression_outputs() -> None:
             data_column="Density (normalized)",
             dims=[128, 64, 32, 1],
             enabled=True,
+            predict_idx="all",
         ),
         KernelRegressionTaskConfig(
             name="dos",
@@ -43,16 +45,25 @@ def test_full_prediction_flow_produces_kernel_regression_outputs() -> None:
             t_dim=[32, 16],
             t_encoding_method="fc",
             enabled=True,
+            predict_idx="all",
         ),
     ]
 
+    # Descriptor frame and attributes frame are both composition-indexed parquet files.
+    descriptor_df = pd.read_parquet(_DATA_PATHS[0])
+    attributes_df = pd.read_parquet(_DATA_PATHS[1])
+
+    def descriptor_fn(compositions):
+        present = [c for c in compositions if c in descriptor_df.index]
+        return descriptor_df.loc[present]
+
     datamodule = CompoundDataModule(
-        formula_desc_source=str(_DATA_PATHS[0]),
-        attributes_source=str(_DATA_PATHS[1]),
         task_configs=task_configs,
+        descriptor_fn=descriptor_fn,
+        task_frames={cfg.name: attributes_df for cfg in task_configs},
+        composition_column="id",  # join key is the 'id' index (mp-*), not the 'composition' formula column
         batch_size=8,
         num_workers=0,
-        predict_idx="all",
     )
     datamodule.setup(stage="predict")
     assert datamodule.predict_dataset is not None
