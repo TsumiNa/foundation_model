@@ -311,18 +311,25 @@ class PredictionDataFrameWriter(BasePredictionWriter):
             logger.warning("Processed DataFrame is empty. No data saved.")
             return
 
-        # Attach composition keys when the DataModule exposes them and the row count matches
-        # the predicted compositions (single-process predict preserves order). In distributed
-        # runs the gathered order may differ, so we only index when the lengths line up.
+        # Attach composition keys only for single-process prediction, where dataloader order is
+        # preserved and matches datamodule.predict_compositions. In distributed runs
+        # _gather_distributed_predictions merges rank-by-rank without restoring dataset order, so
+        # row i no longer corresponds to predict_compositions[i] even when lengths match.
         compositions = getattr(getattr(trainer, "datamodule", None), "predict_compositions", None)
-        if compositions:
+        world_size = getattr(trainer, "world_size", 1) or 1
+        if compositions and world_size == 1:
             if len(compositions) == len(df):
                 df.index = pd.Index(compositions, name="composition")
             else:
                 logger.warning(
                     f"Not attaching composition index: {len(compositions)} predict compositions "
-                    f"but {len(df)} prediction rows (likely distributed gathering or deduplication)."
+                    f"but {len(df)} prediction rows (likely deduplication)."
                 )
+        elif compositions:
+            logger.info(
+                "Not attaching composition index under distributed prediction "
+                f"(world_size={world_size}); gathered row order is not guaranteed to match compositions."
+            )
 
         logger.info(f"Final DataFrame shape: {df.shape}")
 

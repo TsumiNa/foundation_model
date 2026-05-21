@@ -472,13 +472,16 @@ class DynamicTaskSuiteRunner:
 
     @staticmethod
     def _make_descriptor_fn(features: pd.DataFrame):
-        """Build a descriptor_fn that looks up precomputed descriptor rows by composition."""
-        feats = features.copy()
-        feats.index = feats.index.astype(str)
+        """Build a descriptor_fn that looks up precomputed descriptor rows by composition.
+
+        Avoids copying the (potentially large) descriptor matrix: only an index label map is
+        built. The DataModule's descriptor cache stringifies the returned index.
+        """
+        label_by_str = {str(idx): idx for idx in features.index}
 
         def descriptor_fn(compositions):
-            present = [c for c in compositions if c in feats.index]
-            return feats.loc[present]
+            labels = [label_by_str[c] for c in compositions if c in label_by_str]
+            return features.loc[labels]
 
         return descriptor_fn
 

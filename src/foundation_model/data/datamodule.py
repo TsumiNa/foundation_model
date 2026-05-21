@@ -200,6 +200,13 @@ class CompoundDataModule(L.LightningDataModule):
             raise ValueError("descriptor_fn must be provided.")
         if not 0.0 <= swap_train_val_split <= 1.0:
             raise ValueError("swap_train_val_split must be between 0.0 and 1.0 inclusive.")
+        for split_name, split_value in (("val_split", val_split), ("test_split", test_split)):
+            if not 0.0 <= split_value <= 1.0:
+                raise ValueError(f"{split_name} must be between 0.0 and 1.0 inclusive, got {split_value}.")
+        if val_split + test_split > 1.0:
+            raise ValueError(
+                f"val_split + test_split must not exceed 1.0 (got {val_split} + {test_split} = {val_split + test_split})."
+            )
 
         self.task_configs = list(task_configs)
         self.descriptor_fn = descriptor_fn
@@ -265,12 +272,19 @@ class CompoundDataModule(L.LightningDataModule):
     def _composition_column_for(self, cfg: TaskConfig) -> str:
         return cfg.composition_column or self.composition_column
 
-    def _normalize_frame(self, frame: pd.DataFrame, composition_column: str) -> pd.DataFrame:
-        """Return a copy indexed by string composition keys."""
+    def _normalize_frame(self, frame: pd.DataFrame, composition_column: str, *, task_name: str = "") -> pd.DataFrame:
+        """Return a copy indexed by string composition keys, deduped keep-first."""
         frame = frame.copy()
         if composition_column in frame.columns:
             frame = frame.set_index(composition_column)
         frame.index = frame.index.astype(str)
+        duplicated = frame.index.duplicated(keep="first")
+        if duplicated.any():
+            logger.warning(
+                f"Task '{task_name or '<task>'}': in-memory frame has {int(duplicated.sum())} duplicate "
+                "composition(s); keeping the first occurrence of each."
+            )
+            frame = frame[~duplicated]
         return frame
 
     def _resolved_task_masking_ratios(self) -> Dict[str, float]:
@@ -296,7 +310,7 @@ class CompoundDataModule(L.LightningDataModule):
         for cfg in self._supervised_tasks():
             comp_col = self._composition_column_for(cfg)
             if cfg.name in self._input_task_frames:
-                frame = self._normalize_frame(self._input_task_frames[cfg.name], comp_col)
+                frame = self._normalize_frame(self._input_task_frames[cfg.name], comp_col, task_name=cfg.name)
                 logger.info(f"Task '{cfg.name}': using provided in-memory frame ({len(frame)} rows).")
             elif cfg.data_files:
                 frame = load_task_frame(cfg.data_files, comp_col, task_name=cfg.name)

@@ -98,6 +98,22 @@ def test_init_rejects_bad_swap_ratio(descriptors_df, reg_cls_configs):
         build_dm(descriptors_df, configs=reg_cls_configs, swap_train_val_split=1.5)
 
 
+@pytest.mark.parametrize("kwargs", [{"val_split": -0.1}, {"test_split": 1.5}, {"val_split": 0.6, "test_split": 0.6}])
+def test_init_rejects_bad_split_bounds(descriptors_df, reg_cls_configs, kwargs):
+    with pytest.raises(ValueError, match="split"):
+        build_dm(descriptors_df, configs=reg_cls_configs, **kwargs)
+
+
+def test_in_memory_frame_dedupes_duplicate_compositions(descriptors_df):
+    configs = [RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1])]
+    # Duplicate composition "s0" with conflicting values; keep-first must win.
+    frame = pd.DataFrame({"task1": [10.0, 99.0, 20.0]}, index=pd.Index(["s0", "s0", "s1"], name="composition"))
+    dm = build_dm(descriptors_df, task_frames={"task1": frame}, configs=configs, test_all=True)
+    dm.setup(stage="test")
+    assert dm._task_frames["task1"].loc["s0", "task1"] == 10.0
+    assert not dm._task_frames["task1"].index.duplicated().any()
+
+
 # --- sources & descriptors --------------------------------------------------
 
 
