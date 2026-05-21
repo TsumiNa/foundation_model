@@ -186,13 +186,18 @@ class OptimizerConfig:
     frequency: int = 1  # Frequency of monitoring
 
 
+# Allowed string selectors for ``BaseTaskConfig.predict_idx``. Any other string is rejected;
+# an explicit composition subset must be passed as a sequence of composition keys.
+PREDICT_IDX_LITERALS = frozenset({"train", "val", "test", "all"})
+
+
 @dataclass
 class BaseTaskConfig:
     """Base configuration for all task types."""
 
     name: str  # Name of the task
     type: TaskType  # Type of the task (will be overridden by subclasses with a default)
-    data_column: str = ""  # Column name in attributes_df for primary task data
+    data_column: str = ""  # Column name for primary task data (currently in attributes_df; per-task file after PR3)
 
     # Default fields below are now keyword-only
     enabled: bool = field(default=True, kw_only=True)  # Whether the task is enabled
@@ -201,6 +206,57 @@ class BaseTaskConfig:
 
     # Optimizer configuration
     optimizer: Optional[OptimizerConfig] = field(default=None, kw_only=True)  # Optimizer configuration for this task
+
+    # --- Per-task data-source configuration (composition-keyed refactor) ---
+    # Path(s) to this task's own data file(s) (csv / pd.xz / parquet). A single path may be
+    # given as a string; multiple files are concatenated by rows. Normalized to a tuple.
+    data_files: str | Sequence[str] = field(default=(), kw_only=True)
+    # Name of the composition key column inside this task's file(s); overrides the
+    # CompoundDataModule global default when set.
+    composition_column: Optional[str] = field(default=None, kw_only=True)
+    # Name of the optional split column inside this task's file(s) ("train"/"val"/"test").
+    split_column: str = field(default="split", kw_only=True)
+    # Random keep-ratio applied to this task's valid samples during training (None disables).
+    task_masking_ratio: Optional[float] = field(default=None, kw_only=True)
+    # Composition subset to predict for this task: a literal in PREDICT_IDX_LITERALS, an
+    # explicit sequence of composition keys, or None (defaults handled by the DataModule).
+    predict_idx: Sequence[str] | str | None = field(default=None, kw_only=True)
+
+    def __post_init__(self) -> None:
+        # Normalize data_files to a tuple of path strings.
+        if isinstance(self.data_files, str):
+            self.data_files = (self.data_files,)
+        else:
+            self.data_files = tuple(str(path) for path in self.data_files)
+
+        # Validate the random keep-ratio bounds.
+        if self.task_masking_ratio is not None and not 0.0 <= self.task_masking_ratio <= 1.0:
+            raise ValueError(
+                f"Task '{self.name}': task_masking_ratio must be in [0.0, 1.0], got {self.task_masking_ratio}."
+            )
+
+        # Normalize / validate predict_idx.
+        self.predict_idx = self._normalize_predict_idx(self.predict_idx)
+
+    def _normalize_predict_idx(self, value: Sequence[str] | str | None) -> str | tuple[str, ...] | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            if value not in PREDICT_IDX_LITERALS:
+                raise ValueError(
+                    f"Task '{self.name}': predict_idx string must be one of "
+                    f"{sorted(PREDICT_IDX_LITERALS)}, got '{value}'. "
+                    "Pass an explicit composition subset as a sequence of strings."
+                )
+            return value
+        try:
+            items = list(value)
+        except TypeError as exc:
+            raise TypeError(
+                f"Task '{self.name}': predict_idx must be None, one of {sorted(PREDICT_IDX_LITERALS)}, "
+                "or a sequence of composition keys."
+            ) from exc
+        return tuple(str(item) for item in items)
 
 
 @dataclass
