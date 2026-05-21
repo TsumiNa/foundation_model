@@ -33,7 +33,9 @@ from scipy.spatial import distance_matrix
 # Element-level descriptors of shape (94, 58), indexed "H" ~ "Pu".
 _ELEMENT_FEATURES_PATH = os.path.join(os.path.dirname(__file__), "element_features.csv")
 element_features: pd.DataFrame = pd.read_csv(_ELEMENT_FEATURES_PATH, index_col=0)
-elements: list[str] = list(element_features.index)
+#: Default element layout ("H" ~ "Pu") used when none is supplied.
+DEFAULT_ELEMENTS: list[str] = list(element_features.index)
+elements = DEFAULT_ELEMENTS  # backwards-compatible alias
 
 Method = Literal["md", "1d"]
 Sigma = float | Literal["auto"]
@@ -60,7 +62,7 @@ def formula_to_composition(
         Atomic fractions aligned to ``elements``.
     """
     if elements is None:
-        elements = globals()["elements"]
+        elements = DEFAULT_ELEMENTS
 
     if isinstance(formula, str):
         comp = Composition(formula)
@@ -111,8 +113,8 @@ class KMD:
     ) -> None:
         if method not in ("md", "1d"):
             raise ValueError(f'method must be "md" or "1d", got {method!r}.')
-        if method == "1d" and n_grids is None:
-            raise ValueError('n_grids is required when method="1d".')
+        if method == "1d" and (n_grids is None or n_grids < 2):
+            raise ValueError('n_grids must be an integer >= 2 when method="1d".')
 
         self.method: Method = method
         self.n_grids = n_grids

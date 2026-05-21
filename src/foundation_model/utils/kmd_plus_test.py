@@ -65,9 +65,10 @@ def test_invalid_method_raises(component_features):
         KMD(component_features, method="nope")  # type: ignore[arg-type]
 
 
-def test_1d_requires_n_grids(component_features):
+@pytest.mark.parametrize("n_grids", [None, 1])
+def test_1d_requires_valid_n_grids(component_features, n_grids):
     with pytest.raises(ValueError, match="n_grids"):
-        KMD(component_features, method="1d")
+        KMD(component_features, method="1d", n_grids=n_grids)
 
 
 @pytest.mark.parametrize("method,kwargs", [("1d", {"n_grids": 10}), ("md", {})])
@@ -92,8 +93,11 @@ def test_call_matches_transform(method, kwargs, weight, component_features):
     "method,kwargs",
     [
         ("1d", {"n_grids": 12}),
+        ("1d", {"n_grids": 12, "sigma": 0.1}),
+        ("1d", {"n_grids": 12, "scale": False}),
         ("md", {}),
         ("md", {"sigma": 0.5}),
+        ("md", {"scale": False}),
     ],
 )
 def test_inverse_reconstructs_weights(method, kwargs, weight, component_features):
@@ -111,15 +115,42 @@ def test_inverse_caches_gram(component_features, weight):
     assert kmd._gram is not None
 
 
+def test_inverse_rejects_non_invertible_kernel(weight):
+    # Duplicate components make the Gram matrix singular -> inverse must error.
+    cf = np.zeros((6, 3))
+    cf[:3] = np.eye(3)
+    cf[3:] = np.eye(3)  # rows 3-5 duplicate rows 0-2
+    kmd = KMD(cf, method="1d", n_grids=4, scale=False)
+    with pytest.raises(ValueError, match="not invertible"):
+        kmd.inverse(np.zeros((1, kmd._kernel.shape[1])))
+
+
 # --- stats_descriptor --------------------------------------------------------
 
 
-def test_stats_descriptor_shape_and_mean(weight, component_features):
+def test_stats_descriptor_blocks(weight, component_features):
     sd = stats_descriptor(weight, component_features)
-    n_features = component_features.shape[1]
-    assert sd.shape == (weight.shape[0], n_features * 4)
-    # First block is the weighted mean.
-    np.testing.assert_allclose(sd[:, :n_features], weight @ component_features)
+    nf = component_features.shape[1]
+    assert sd.shape == (weight.shape[0], nf * 4)
+
+    cf = np.asarray(component_features)
+    mean = weight @ cf
+    np.testing.assert_allclose(sd[:, :nf], mean)
+    # var block: weighted variance about the weighted mean.
+    var = np.array([weight[i] @ (cf - mean[i]) ** 2 for i in range(weight.shape[0])])
+    np.testing.assert_allclose(sd[:, nf : 2 * nf], var)
+    # max/min pooling over the present (non-zero-weight) components.
+    for i in range(weight.shape[0]):
+        present = cf[weight[i] != 0]
+        np.testing.assert_allclose(sd[i, 2 * nf : 3 * nf], present.max(axis=0))
+        np.testing.assert_allclose(sd[i, 3 * nf : 4 * nf], present.min(axis=0))
+
+
+def test_stats_descriptor_respects_stats_order(weight, component_features):
+    nf = component_features.shape[1]
+    sd = stats_descriptor(weight, component_features, stats=("min", "mean"))
+    assert sd.shape == (weight.shape[0], nf * 2)
+    np.testing.assert_allclose(sd[:, nf:], weight @ np.asarray(component_features))
 
 
 def test_stats_descriptor_rejects_unknown_stat(weight, component_features):
