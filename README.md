@@ -197,8 +197,10 @@ data:
 
 **Splitting.** A single composition-level train/val/test split is derived by overlaying every
 task file's `split` column (precedence `test > val > train`; conflicts warn). Compositions
-without a label fall back to a representative random split (`MultiTaskSplitter`) that keeps each
-task represented across all three sets. `test_all=True` assigns everything to test.
+without a label fall back to a representation-aware random split (`MultiTaskSplitter`) that
+prioritizes rare tasks to improve their val/test representation and preserves the overall
+val/test proportions (it does not guarantee every tiny task appears in every split).
+`test_all=True` assigns everything to test.
 
 **Prediction.** Each task's `predict_idx` selects a composition subset; the predict set is their
 union, exposed as `datamodule.predict_compositions` and attached as the output index by

@@ -294,8 +294,10 @@ def resolve_splits(
     """Derive a single composition-level train/val/test split.
 
     Per-task ``split`` columns are overlaid (precedence ``test > val > train``; conflicts are
-    warned). Compositions with no label from any task fall back to a proportional random
-    split. With ``test_all=True`` every composition is assigned to ``test``.
+    warned). Compositions with no label from any task fall back to a representation-aware
+    random split (:class:`~foundation_model.data.splitter.MultiTaskSplitter`), which
+    prioritizes rare tasks and preserves global val/test proportions. With ``test_all=True``
+    every composition is assigned to ``test``.
 
     Parameters
     ----------
@@ -307,7 +309,8 @@ def resolve_splits(
         Per-task name of the split column to read (tasks absent from the map, or whose
         column is missing from their frame, contribute no labels).
     val_split, test_split : float
-        Random-fallback proportions for unlabeled compositions.
+        Random-fallback proportions for unlabeled compositions (overall val/test fractions,
+        preserved globally by MultiTaskSplitter's cumulative allocation).
     random_seed : int | None
         Seed for the random fallback.
     test_all : bool

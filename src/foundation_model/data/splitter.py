@@ -10,24 +10,28 @@ import pandas as pd
 
 
 class MultiTaskSplitter:
-    """Split compositions into train/val/test while keeping every task represented.
+    """Split compositions into train/val/test, prioritizing rare tasks for representation.
 
     Operates on a composition-indexed **availability matrix** (rows = compositions, columns =
-    tasks, truthy where the task has data for that composition). Tasks are allocated rarest
-    first, so a scarce task secures representation in the validation and test splits before
-    common tasks consume the shared pool. Compositions available to no task are split
-    proportionally at the end.
+    tasks, truthy where the task has data for that composition). Compositions are grouped into
+    chunks rarest-task-first (then a leftover chunk for compositions available to no task), and
+    the holdout (val/test) budget is allocated across chunks with a **cumulative** rounding
+    scheme so global proportions are preserved — many tiny chunks no longer round individually
+    to zero and collapse val/test. Processing rare tasks first gives them first claim on that
+    budget, which *improves* their representation in val/test.
 
-    Used as the random fallback in
+    Note: this does not *guarantee* every task appears in every split — a task with very few
+    compositions, or small ratios, may still round to zero for that task (the global val/test
+    proportions are preserved regardless). Used as the random fallback in
     :func:`foundation_model.data.composition_sources.resolve_splits` for compositions that
     carry no explicit ``split`` label.
 
     Parameters
     ----------
     val_ratio : float, default=0.1
-        Fraction of each task's compositions assigned to validation.
+        Overall fraction of compositions assigned to validation.
     test_ratio : float, default=0.1
-        Fraction of each task's compositions assigned to test.
+        Overall fraction of compositions assigned to test.
     random_state : int | None, optional
         Seed for deterministic shuffling.
     """
@@ -46,28 +50,30 @@ class MultiTaskSplitter:
         self.test_ratio = test_ratio
         self.random_state = random_state
 
-    def _allocate(
-        self,
-        compositions: List[str],
-        rng: np.random.Generator,
-        train: List[str],
-        val: List[str],
-        test: List[str],
-    ) -> None:
-        """Shuffle ``compositions`` and append proportional shares to train/val/test."""
-        n = len(compositions)
-        if n == 0:
-            return
-        order = rng.permutation(n)
-        shuffled = [compositions[i] for i in order]
-        n_test = min(int(round(n * self.test_ratio)), n)
-        n_val = min(int(round(n * self.val_ratio)), n - n_test)
-        test.extend(shuffled[:n_test])
-        val.extend(shuffled[n_test : n_test + n_val])
-        train.extend(shuffled[n_test + n_val :])
+    def _chunks(self, availability: pd.DataFrame, index: List[str]) -> List[List[str]]:
+        """Group compositions rarest-task-first, then a leftover chunk for the rest."""
+        assigned: set[str] = set()
+        chunks: List[List[str]] = []
+        if availability.shape[1] > 0:
+            mask = availability.astype(bool)
+            mask.index = pd.Index(index)
+            counts = mask.sum(axis=0).sort_values()  # rarest task first
+            for task in counts.index:
+                column = mask[task]
+                avail = [comp for comp in index if column.loc[comp] and comp not in assigned]
+                if avail:
+                    chunks.append(avail)
+                    assigned.update(avail)
+        leftover = [comp for comp in index if comp not in assigned]
+        if leftover:
+            chunks.append(leftover)
+        return chunks
 
     def split(self, availability: pd.DataFrame) -> Tuple[List[str], List[str], List[str]]:
         """Split the availability matrix into train/val/test composition lists.
+
+        Holdout counts are accumulated across chunks (cumulative rounding) so global val/test
+        proportions are preserved even when chunks are tiny.
 
         Parameters
         ----------
@@ -86,19 +92,26 @@ class MultiTaskSplitter:
         train: List[str] = []
         val: List[str] = []
         test: List[str] = []
-        assigned: set[str] = set()
 
-        if availability.shape[1] > 0:
-            mask = availability.astype(bool)
-            mask.index = pd.Index(index)
-            # Rarest tasks first so scarce tasks secure val/test representation.
-            counts = mask.sum(axis=0).sort_values()
-            for task in counts.index:
-                column = mask[task]
-                avail = [comp for comp in index if column.loc[comp] and comp not in assigned]
-                self._allocate(avail, rng, train, val, test)
-                assigned.update(avail)
+        # Running float targets + already-allocated integer counts implement cumulative
+        # (largest-remainder) rounding, preventing many small chunks from each rounding to 0.
+        cum_test = 0.0
+        cum_val = 0.0
+        alloc_test = 0
+        alloc_val = 0
+        for chunk in self._chunks(availability, index):
+            n = len(chunk)
+            order = rng.permutation(n)
+            shuffled = [chunk[i] for i in order]
 
-        leftover = [comp for comp in index if comp not in assigned]
-        self._allocate(leftover, rng, train, val, test)
+            cum_test += n * self.test_ratio
+            cum_val += n * self.val_ratio
+            n_test = max(0, min(int(round(cum_test)) - alloc_test, n))
+            n_val = max(0, min(int(round(cum_val)) - alloc_val, n - n_test))
+            alloc_test += n_test
+            alloc_val += n_val
+
+            test.extend(shuffled[:n_test])
+            val.extend(shuffled[n_test : n_test + n_val])
+            train.extend(shuffled[n_test + n_val :])
         return train, val, test

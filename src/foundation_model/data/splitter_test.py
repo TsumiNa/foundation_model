@@ -67,6 +67,24 @@ def test_rare_task_is_represented_in_each_split():
     assert sorted(train + val + test) == sorted(avail.index)
 
 
+def test_many_size_one_chunks_preserve_global_holdouts():
+    """Disjoint single-composition tasks must not collapse all holdouts to train (PR12 P1)."""
+    # 20 tasks, each owning exactly one distinct composition -> 20 size-1 chunks.
+    n = 20
+    rows = {}
+    for i in range(n):
+        flags = [False] * n
+        flags[i] = True
+        rows[f"t{i}"] = flags
+    avail = _availability(rows)
+    train, val, test = MultiTaskSplitter(val_ratio=0.1, test_ratio=0.1, random_state=0).split(avail)
+    # Per-chunk independent rounding would give 0 here; cumulative allocation preserves ~10%.
+    assert len(test) == 2
+    assert len(val) == 2
+    assert len(train) == 16
+    assert sorted(train + val + test) == sorted(avail.index)
+
+
 def test_no_columns_splits_proportionally():
     avail = pd.DataFrame(index=pd.Index([f"c{i}" for i in range(10)], name="composition"))
     train, val, test = MultiTaskSplitter(val_ratio=0.1, test_ratio=0.1, random_state=0).split(avail)
