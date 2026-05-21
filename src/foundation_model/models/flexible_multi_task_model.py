@@ -124,9 +124,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         autoencoder_nonnegative: bool = False,
     ):
         super().__init__()
-        # task_configs and encoder_config are dataclasses containing Union[str, Sequence[str]]
-        # fields that OmegaConf cannot serialize; exclude them and rely on checkpoint state_dict.
-        self.save_hyperparameters(ignore=["task_configs", "encoder_config"])
+        # logger=False: saves all hparams to checkpoint (pickle, not OmegaConf) but skips
+        # logger.log_hyperparams(), which is where OmegaConf chokes on Union[str, Sequence[str]].
+        self.save_hyperparameters(logger=False)
 
         # Store the new parameters
         self.enable_learnable_loss_balancer = enable_learnable_loss_balancer
@@ -151,6 +151,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         # Auto-create reconstruction head if requested
         if enable_autoencoder:
+            _AE_NAME = "__reconstruction__"
+            if _AE_NAME in self.task_configs_map:
+                raise ValueError(
+                    f"Task name '{_AE_NAME}' is reserved for the built-in autoencoder head; "
+                    "rename the conflicting task."
+                )
             ae_cfg = _AEConfig(
                 dims=self._derive_ae_dims(self.encoder_config),
                 nonnegative=autoencoder_nonnegative,
@@ -1809,6 +1815,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
             if _AE_TASK not in self.task_heads:
                 raise ValueError(
                     "optimize_space='latent' requires the model to be built with enable_autoencoder=True."
+                )
+            if not isinstance(self.task_heads[_AE_TASK], AutoEncoderHead):
+                raise ValueError(
+                    f"Task '{_AE_TASK}' exists but is not an AutoEncoderHead; "
+                    "latent-space optimization requires the built-in reconstruction head."
                 )
 
         if target_tasks is None and mode not in {"max", "min"}:

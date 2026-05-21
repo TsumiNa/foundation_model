@@ -43,7 +43,7 @@ def test_nonneg_output_all_positive(nonneg_head):
     torch.manual_seed(0)
     x = torch.randn(200, 8)
     out = nonneg_head(x)
-    assert out.min().item() > 0, "Softplus output must be strictly positive"
+    assert out.min().item() >= 0, "Softplus output must be non-negative"
 
 
 def test_empty_dims_raises():

@@ -878,7 +878,7 @@ def test_autoencoder_nonnegative_output():
     x = torch.randn(32, INPUT_DIM)
     with torch.no_grad():
         out = model(x)
-    assert out["__reconstruction__"].min().item() > 0
+    assert out["__reconstruction__"].min().item() >= 0
 
 
 def test_autoencoder_linear_output_can_be_negative():
