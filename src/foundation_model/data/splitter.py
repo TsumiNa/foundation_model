@@ -1,166 +1,117 @@
-import warnings
-from typing import Optional, Tuple
+# Copyright 2025 TsumiNa.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Composition-level multi-task train/val/test splitter."""
+
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 
 class MultiTaskSplitter:
-    """
-    A data splitter for multi-task learning that ensures all tasks have representation
-    in train/val/test splits while handling NaN values and limited data scenarios.
+    """Split compositions into train/val/test, prioritizing rare tasks for representation.
+
+    Operates on a composition-indexed **availability matrix** (rows = compositions, columns =
+    tasks, truthy where the task has data for that composition). Compositions are grouped into
+    chunks rarest-task-first (then a leftover chunk for compositions available to no task), and
+    the holdout (val/test) budget is allocated across chunks with a **cumulative** rounding
+    scheme so global proportions are preserved — many tiny chunks no longer round individually
+    to zero and collapse val/test. Processing rare tasks first gives them first claim on that
+    budget, which *improves* their representation in val/test.
+
+    Note: this does not *guarantee* every task appears in every split — a task with very few
+    compositions, or small ratios, may still round to zero for that task (the global val/test
+    proportions are preserved regardless). Used as the random fallback in
+    :func:`foundation_model.data.composition_sources.resolve_splits` for compositions that
+    carry no explicit ``split`` label.
+
+    Parameters
+    ----------
+    val_ratio : float, default=0.1
+        Overall fraction of compositions assigned to validation.
+    test_ratio : float, default=0.1
+        Overall fraction of compositions assigned to test.
+    random_state : int | None, optional
+        Seed for deterministic shuffling.
     """
 
     def __init__(
         self,
-        train_ratio: float = 0.8,
         val_ratio: float = 0.1,
         test_ratio: float = 0.1,
         random_state: Optional[int] = None,
     ):
-        """
-        Initialize the splitter with desired split ratios.
-
-        Parameters
-        ----------
-        train_ratio : float, default=0.8
-            Ratio of data to use for training
-        val_ratio : float, default=0.1
-            Ratio of data to use for validation
-        test_ratio : float, default=0.1
-            Ratio of data to use for testing
-        random_state : int, optional
-            Random seed for reproducibility
-        """
-        # Validate ratios
-        total_ratio = train_ratio + val_ratio + test_ratio
-        if not np.isclose(total_ratio, 1.0):
-            raise ValueError(
-                f"Split ratios must sum to 1.0, got {total_ratio} ({train_ratio}, {val_ratio}, {test_ratio})"
-            )
-
-        self.train_ratio = train_ratio
+        if val_ratio < 0.0 or test_ratio < 0.0:
+            raise ValueError("val_ratio and test_ratio must be non-negative.")
+        if val_ratio + test_ratio > 1.0:
+            raise ValueError(f"val_ratio + test_ratio must not exceed 1.0 (got {val_ratio} + {test_ratio}).")
         self.val_ratio = val_ratio
         self.test_ratio = test_ratio
         self.random_state = random_state
 
-        if random_state is not None:
-            np.random.seed(random_state)
+    def _chunks(self, availability: pd.DataFrame, index: List[str]) -> List[List[str]]:
+        """Group compositions rarest-task-first, then a leftover chunk for the rest."""
+        assigned: set[str] = set()
+        chunks: List[List[str]] = []
+        if availability.shape[1] > 0:
+            mask = availability.astype(bool)
+            mask.index = pd.Index(index)
+            counts = mask.sum(axis=0).sort_values()  # rarest task first
+            for task in counts.index:
+                column = mask[task]
+                avail = [comp for comp in index if column.loc[comp] and comp not in assigned]
+                if avail:
+                    chunks.append(avail)
+                    assigned.update(avail)
+        leftover = [comp for comp in index if comp not in assigned]
+        if leftover:
+            chunks.append(leftover)
+        return chunks
 
-    def _get_task_data_counts(self, data: pd.DataFrame) -> pd.Series:
-        """
-        Count number of non-NaN values for each task.
+    def split(self, availability: pd.DataFrame) -> Tuple[List[str], List[str], List[str]]:
+        """Split the availability matrix into train/val/test composition lists.
 
-        Parameters
-        ----------
-        data : pd.DataFrame
-            DataFrame containing task data with possible NaN values
-
-        Returns
-        -------
-        pd.Series
-            Series containing non-NaN counts for each task, sorted ascending
-        """
-        return data.notna().sum().sort_values()
-
-    def _get_required_counts(self, total_count: int) -> Tuple[int, int, int]:
-        """
-        Calculate required counts for each split based on ratios.
-
-        Parameters
-        ----------
-        total_count : int
-            Total number of samples available
-
-        Returns
-        -------
-        Tuple[int, int, int]
-            Required counts for train, val, and test splits
-        """
-        train_count = int(np.floor(total_count * self.train_ratio))
-        val_count = int(np.floor(total_count * self.val_ratio))
-        test_count = total_count - train_count - val_count
-        return train_count, val_count, test_count
-
-    def split(self, data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Split data ensuring all tasks have representation in splits.
+        Holdout counts are accumulated across chunks (cumulative rounding) so global val/test
+        proportions are preserved even when chunks are tiny.
 
         Parameters
         ----------
-        data : pd.DataFrame
-            DataFrame where each column is a task and may contain NaN values
+        availability : pd.DataFrame
+            Indexed by composition; each column is a task with truthy values where the task
+            has data for that composition. May have zero columns (then every composition is
+            split proportionally).
 
         Returns
         -------
-        Tuple[np.ndarray, np.ndarray, np.ndarray]
-            Arrays of indices for train, validation, and test splits
+        Tuple[List[str], List[str], List[str]]
+            ``(train, val, test)`` composition keys (each composition appears exactly once).
         """
-        # Get task counts and sort by available data (ascending)
-        task_counts = self._get_task_data_counts(data)
+        rng = np.random.default_rng(self.random_state)
+        index = [str(c) for c in availability.index]
+        train: List[str] = []
+        val: List[str] = []
+        test: List[str] = []
 
-        # Initialize split sets for train/val/test
-        train_indices = set()
-        val_indices = set()
-        test_indices = set()
+        # Running float targets + already-allocated integer counts implement cumulative
+        # (largest-remainder) rounding, preventing many small chunks from each rounding to 0.
+        cum_test = 0.0
+        cum_val = 0.0
+        alloc_test = 0
+        alloc_val = 0
+        for chunk in self._chunks(availability, index):
+            n = len(chunk)
+            order = rng.permutation(n)
+            shuffled = [chunk[i] for i in order]
 
-        # Track allocated indices for each task
-        allocated_indices = set()
+            cum_test += n * self.test_ratio
+            cum_val += n * self.val_ratio
+            n_test = max(0, min(int(round(cum_test)) - alloc_test, n))
+            n_val = max(0, min(int(round(cum_val)) - alloc_val, n - n_test))
+            alloc_test += n_test
+            alloc_val += n_val
 
-        for task, count in task_counts.items():
-            # Get valid indices for this task (non-NaN values)
-            task_valid_indices = np.where(data[task].notna())[0]
-
-            # Remove already allocated indices
-            available_indices = np.array([idx for idx in task_valid_indices if idx not in allocated_indices])
-
-            if len(available_indices) == 0:
-                warnings.warn(f"Task {task} has no unallocated data points. Using already allocated indices.")
-                available_indices = task_valid_indices
-
-            # Shuffle available indices
-            np.random.shuffle(available_indices)
-
-            # Calculate required counts
-            train_needed, val_needed, test_needed = self._get_required_counts(len(available_indices))
-
-            # Calculate target samples for val/test
-            available_count = len(available_indices)
-            val_target = int(np.floor(available_count * self.val_ratio))
-            test_target = int(np.floor(available_count * self.test_ratio))
-            holdout_size = val_target + test_target
-
-            # First allocate validation and test sets
-            if holdout_size > 0:
-                # Reserve validation set
-                if self.val_ratio > 0:
-                    val_indices.update(available_indices[-val_target:])
-
-                # Reserve test set (can overlap with val if needed)
-                if self.test_ratio > 0:
-                    test_indices.update(available_indices[:test_target])
-
-                # Remaining data goes to train (ensuring no overlap with val/test)
-                if self.val_ratio > 0:
-                    train_indices.update(available_indices[:-val_target])
-                else:
-                    train_indices.update(available_indices[test_target:])
-            else:
-                # No validation or test needed, use all for training
-                train_indices.update(available_indices)
-
-            # Update allocated indices
-            allocated_indices.update(available_indices)
-
-        # Convert sets to sorted arrays
-        train_indices_arr = np.array(sorted(train_indices))
-        val_indices_arr = np.array(sorted(val_indices))
-        test_indices_arr = np.array(sorted(test_indices))
-
-        # Verify we have data in required splits
-        if len(train_indices_arr) == 0:
-            raise ValueError("No training data available after splitting")
-        if self.val_ratio > 0 and len(val_indices_arr) == 0:
-            raise ValueError("No validation data available after splitting")
-
-        return train_indices_arr, val_indices_arr, test_indices_arr
+            test.extend(shuffled[:n_test])
+            val.extend(shuffled[n_test : n_test + n_val])
+            train.extend(shuffled[n_test + n_val :])
+        return train, val, test

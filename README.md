@@ -137,58 +137,84 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#loss-calculation-and-weighting) for a deep
 - Configurable data splitting ratios
 - Property-specific sampling fractions
 
-### Input Data: `attributes_source` Column Naming
+### Input Data: composition-keyed per-task sources
 
-When providing data through the `attributes_source` (typically an `attributes.csv` file or a Pandas DataFrame), it is essential to configure your tasks to point to the correct data columns. This is done via the `data_column` field in each task's configuration and, for sequence tasks, the optional `steps_column`.
+`CompoundDataModule` is **composition-keyed**: each task owns its own data file(s), joined to
+the others by a shared **composition** column. There is no monolithic attributes file — adding
+a new property task means adding one file plus one task config. Descriptors are computed on
+demand from the union of compositions via a user-supplied `descriptor_fn` (results are cached
+per unique composition).
 
-**1. Primary Data Column (`data_column`):**
-   - **Applies to**: `RegressionTaskConfig`, `ClassificationTaskConfig`, `SequenceTaskConfig`.
-   - **Field in Config**: `data_column: str`
-   - **Purpose**: Specifies the exact name of the column in your `attributes_source` file/DataFrame that contains the primary data for the task.
-     - For regression and classification tasks: This column holds the target values.
-     - For sequence tasks: This column holds the main sequence data (e.g., the y-values of a spectrum or time series).
-   - **Example**:
-     ```yaml
-     # In your task configuration list:
-     # - name: "band_gap_prediction"
-     #   type: REGRESSION
-     #   data_column: "actual_band_gap_values" # Points to 'actual_band_gap_values' column in attributes.csv
-     #   ... other task parameters
-     #
-     # - name: "xrd_pattern_analysis"
-     #   type: SEQUENCE
-     #   data_column: "xrd_intensity_series" # Points to 'xrd_intensity_series' column for sequence y-values
-     #   steps_column: "xrd_two_theta_angles" # See below
-     #   ... other task parameters
-     ```
+**DataModule wiring:**
 
-**2. Sequence Steps Column (`steps_column`):**
-   - **Applies to**: `SequenceTaskConfig` only.
-   - **Field in Config**: `steps_column: str` (optional, defaults to `""`)
-   - **Purpose**: Specifies the exact name of the column in your `attributes_source` that contains the steps or x-axis values corresponding to the sequence data (e.g., temperature points, time steps, 2-theta angles).
-   - **Behavior**:
-     - If specified and the column exists: This data will be loaded and passed to the sequence task head (available in `temps_dict` within `CompoundDataset`).
-     - If specified but the column does *not* exist in `attributes_source`: A `ValueError` will be raised during data loading, as this explicitly requested data is missing.
-     - If left as an empty string (default): No specific steps column is loaded. `CompoundDataset` will provide a placeholder (e.g., zeros) for the steps data. The sequence model head should be prepared to handle this (e.g., by assuming a default step interval like `torch.arange(sequence_length)`).
-   - **Example**:
-     ```yaml
-     # - name: "temperature_dependent_property"
-     #   type: SEQUENCE
-     #   data_column: "property_vs_temp_series"
-     #   steps_column: "temperature_points" # Points to 'temperature_points' column for x-axis of the sequence
-     #   ...
-     ```
+```yaml
+data:
+  class_path: foundation_model.data.datamodule.CompoundDataModule
+  init_args:
+    # Computes descriptors from compositions. PrecomputedDescriptorSource looks them up from a
+    # composition-indexed file; supply your own callable to compute them instead.
+    descriptor_fn:
+      class_path: foundation_model.data.composition_sources.PrecomputedDescriptorSource
+      init_args:
+        path: "data/descriptors.parquet"
+        composition_column: null   # null => use the file's index as the composition key
+    composition_column: "composition"   # the join key shared across all task files
+    # default_data_files: "data/all_targets.parquet"  # optional shared fallback for tasks
+    #                                                  # that don't declare their own data_files
+    val_split: 0.1
+    test_split: 0.1
+    random_seed: 42
+    batch_size: 64
+```
 
-**Important Considerations:**
-*   **Exact Column Names**: The values provided for `data_column` and `steps_column` must exactly match the column headers in your `attributes_source` data file.
-*   **Data Format in CSV**: If your `attributes_source` is a CSV file and a column contains list-like data (e.g., for sequence series, multi-dimensional regression targets, or sequence steps), these should be stored as strings that Python's `ast.literal_eval` can parse (e.g., `"[1.0, 2.5, 3.0]"`).
-*   **Missing `data_column` Data**: If a `data_column` is specified in a task config but the column is not found in `attributes_source`, or if the column exists but contains many NaNs, the corresponding samples for that task will be masked out (i.e., not used for training or loss calculation for that specific task). Placeholders (e.g., zeros or -1 for classification) will be used for the target values in `y_dict`.
-*   **`attributes_source` is `None`**:
-    *   If `attributes_source` is not provided to `CompoundDataModule` (typically for prediction scenarios where only input features like `formula_desc_source` are given):
-        *   Any task specifying a `data_column` will have its targets treated as placeholders by `CompoundDataset`.
-        *   If a `SequenceTaskConfig` specifies a non-empty `steps_column`, `CompoundDataModule` will raise a `ValueError` because `attributes_source` is required to load this essential steps data, even for prediction.
+**Per-task data** is configured on each task config (`BaseTaskConfig`):
 
-This explicit column mapping approach provides clarity and flexibility in defining how your task configurations link to your data.
+| Field | Purpose |
+|-------|---------|
+| `data_files` | This task's own source file(s) (`csv` / `parquet` / `pd.xz` / `pkl`), concatenated by rows |
+| `data_column` | Column inside that file holding the target values |
+| `t_column` | (Kernel regression) column holding the sequence x-axis (energy / temperature / time) |
+| `composition_column` | Per-task override of the global composition column |
+| `split_column` | Optional in-file `train` / `val` / `test` labels (default `"split"`) |
+| `task_masking_ratio` | Optional keep-ratio applied to this task's valid training samples |
+| `predict_idx` | Composition subset to predict: a literal `train`/`val`/`test`/`all` or an explicit list |
+
+```yaml
+# In model.init_args.task_configs (linked into the datamodule automatically):
+- name: band_gap
+  type: REGRESSION
+  data_files: "data/band_gap.parquet"
+  data_column: "Band gap"
+  # split_column: "split"        # optional
+  # task_masking_ratio: 0.9      # optional
+  # predict_idx: "test"          # optional
+- name: dos
+  type: KernelRegression
+  data_files: "data/dos.parquet"
+  data_column: "DOS density"
+  t_column: "DOS energy"
+```
+
+**Splitting.** A single composition-level train/val/test split is derived by overlaying every
+task file's `split` column (precedence `test > val > train`; conflicts warn). Compositions
+without a label fall back to a representation-aware random split (`MultiTaskSplitter`) that
+prioritizes rare tasks to improve their val/test representation and preserves the overall
+val/test proportions (it does not guarantee every tiny task appears in every split).
+`test_all=True` assigns everything to test.
+
+**Prediction.** Each task's `predict_idx` selects a composition subset; the predict set is their
+union, exposed as `datamodule.predict_compositions` and attached as the output index by
+`PredictionDataFrameWriter` (single-process runs).
+
+**Important considerations:**
+*   **Exact column names**: `data_column` / `t_column` / `composition_column` must match the
+    source columns exactly. The composition key may be a column or the file's index name.
+*   **List-valued cells**: sequences / multi-dim targets stored in CSV must be strings parseable
+    by `ast.literal_eval`, e.g. `"[1.0, 2.5, 3.0]"`.
+*   **Missing data**: compositions absent from a task's file (or with NaN targets) are **masked
+    out** for that task rather than dropped; placeholders fill `y_dict`.
+*   **Missing descriptors**: compositions for which `descriptor_fn` produces no valid descriptor
+    are dropped from all splits (with a warning).
 
 ## Quick Examples
 
@@ -361,15 +387,16 @@ These examples should provide a more accurate reflection of how to use `train.py
 
 ### Training with Local Data and YAML Configuration (Scaling Law Demo)
 
-This section demonstrates how to train the `FlexibleMultiTaskModel` using local data files (CSV) and a YAML configuration, highlighting how to explore scaling laws by adjusting data availability for specific tasks using `CompoundDataModule`'s `task_masking_ratios`.
+This section demonstrates training `FlexibleMultiTaskModel` from local files with a YAML
+config, and how to explore scaling laws by varying a task's data via its per-task
+`task_masking_ratio`. Each task owns its own file, joined to the descriptors by a
+**composition** column.
 
-**1. Prepare Dummy Data Files:**
+**1. Prepare local data files:**
 
-Create the following CSV files in your project, for example, under an `examples/data/` directory:
-
-*   `examples/data/dummy_formula_descriptors.csv`:
+*   `examples/data/descriptors.csv` — composition-indexed descriptor features:
     ```csv
-    id,comp_feat_1,comp_feat_2
+    composition,comp_feat_1,comp_feat_2
     mat_1,0.1,0.5
     mat_2,0.2,0.6
     mat_3,0.3,0.7
@@ -382,130 +409,99 @@ Create the following CSV files in your project, for example, under an `examples/
     mat_10,0.55,0.95
     ```
 
-*   `examples/data/dummy_attributes.csv`:
-    This file defines the tasks, their target values, and the train/validation/test split. Column names are generic; the mapping to tasks is done in the YAML configuration.
+*   `examples/data/task_A.csv` — a regression task's own file (composition + target + split):
     ```csv
-    id,target_A,series_B_y,series_B_x,split
-    mat_1,1.0,"[0.1,0.2,0.3]","[10,20,30]",train
-    mat_2,2.0,"[0.4,0.5,0.6]","[10,20,30]",train
-    mat_3,3.0,"[0.7,0.8,0.9]","[10,20,30]",train
-    mat_4,1.5,"[0.15,0.25,0.35]","[10,20,30]",train
-    mat_5,2.5,"[0.45,0.55,0.65]","[10,20,30]",train
-    mat_6,3.5,"[0.75,0.85,0.95]","[10,20,30]",train
-    mat_7,4.0,"[0.9,1.0,1.1]","[10,20,30]",val
-    mat_8,4.5,"[1.1,1.2,1.3]","[10,20,30]",val
-    mat_9,5.0,"[1.2,1.3,1.4]","[10,20,30]",test
-    mat_10,5.5,"[1.3,1.4,1.5]","[10,20,30]",test
+    composition,target_A,split
+    mat_1,1.0,train
+    mat_2,2.0,train
+    mat_3,3.0,train
+    mat_4,1.5,train
+    mat_5,2.5,train
+    mat_6,3.5,train
+    mat_7,4.0,val
+    mat_8,4.5,val
+    mat_9,5.0,test
+    mat_10,5.5,test
     ```
-    *Note: For sequence tasks, series data and x-axis (steps) data are represented as strings of lists. `CompoundDataset` will parse these.*
 
-**2. Create YAML Configuration File:**
+*   `examples/data/task_dos.csv` — a kernel-regression task with sequence target + x-axis.
+    List-valued cells are strings parseable by `ast.literal_eval`:
+    ```csv
+    composition,dos_y,dos_x,split
+    mat_1,"[0.1,0.2,0.3]","[10,20,30]",train
+    mat_2,"[0.4,0.5,0.6]","[10,20,30]",train
+    mat_9,"[1.2,1.3,1.4]","[10,20,30]",test
+    mat_10,"[1.3,1.4,1.5]","[10,20,30]",test
+    ```
+    Compositions absent from a task's file (e.g. `mat_3` for `task_dos`) are simply masked
+    out for that task — no need to align files by hand.
 
-Create a YAML file, for example, `examples/configs/demo_scaling_law.yaml`. This example uses the `init_args` structure expected by `LightningCLI`.
+**2. Create the YAML configuration (`examples/configs/demo_scaling_law.yaml`):**
 
 ```yaml
-# examples/configs/demo_scaling_law.yaml
-experiment_name: "scaling_law_demo" # Can be overridden by CLI
-seed_everything: 42 # For reproducibility
+seed_everything: 42
 
-# --- Model Configuration (for FlexibleMultiTaskModel) ---
 model:
-  class_path: foundation_model.models.FlexibleMultiTaskModel
+  class_path: foundation_model.models.flexible_multi_task_model.FlexibleMultiTaskModel
   init_args:
-    shared_block_dims: [2, 128, 256] # Input (dummy_formula_descriptors.csv has 2 features) -> hidden -> latent
+    encoder_config:
+      type: mlp
+      hidden_dims: [2, 128, 256] # hidden_dims[0] == input feature count; [-1] == latent_dim
+      norm: true
     task_configs:
       - name: "task_A"
-        type: "REGRESSION"
-        data_column: "target_A" # Maps to 'target_A' column in dummy_attributes.csv
-        dims: [256, 64, 1]      # Tanh-activated latent_dim -> hidden -> output
+        type: REGRESSION
+        data_files: "examples/data/task_A.csv"
+        data_column: "target_A"
+        dims: [256, 64, 1]            # [latent_dim, hidden, output]
+        task_masking_ratio: 1.0       # vary this to study the scaling law
         optimizer: { lr: 0.001, scheduler_type: "None" }
-      - name: "task_B"
-        type: "SEQUENCE"
-        subtype: "rnn"
-        data_column: "series_B_y"  # Maps to 'series_B_y' for y-values
-        steps_column: "series_B_x" # Maps to 'series_B_x' for x-values (steps)
-        d_in: 256                  # Should match the model's latent_dim for sequence heads
-        hidden: 64
-        cell: "gru"
+      - name: "dos"
+        type: KernelRegression
+        data_files: "examples/data/task_dos.csv"
+        data_column: "dos_y"
+        t_column: "dos_x"
+        x_dim: [256, 64]
+        t_dim: [16, 8]
         optimizer: { lr: 0.001, scheduler_type: "None" }
-    # Add other model.init_args as needed, e.g.:
-    # encoder_config:
-    #   type: mlp
-    #   hidden_dims: [128, 256]
-    #   norm: true
-    #   residual: false
-    shared_block_optimizer: { lr: 0.001, scheduler_type: "None", freeze_parameters: false }
 
-# --- Data Module Configuration (for CompoundDataModule) ---
-data: # Renamed from datamodule for consistency with LightningCLI v2.0+ common practice
-  class_path: foundation_model.data.CompoundDataModule
+data:
+  class_path: foundation_model.data.datamodule.CompoundDataModule
   init_args:
-    formula_desc_source: "examples/data/dummy_formula_descriptors.csv"
-    attributes_source: "examples/data/dummy_attributes.csv"
-    task_configs: ${model.init_args.task_configs} # Dynamically uses task_configs from model
+    descriptor_fn:
+      class_path: foundation_model.data.composition_sources.PrecomputedDescriptorSource
+      init_args:
+        path: "examples/data/descriptors.csv"
+        composition_column: "composition"
+    composition_column: "composition"
+    task_configs: ${model.init_args.task_configs} # linked from the model
     batch_size: 2
     num_workers: 0
-    # train_ratio, val_ratio, test_split are used if 'split' column is NOT in attributes_source
-    # val_split: 0.1 
-    # test_split: 0.1
-    # random_seed: 42
-    # task_masking_ratios: 0.9  # Or provide {"task_A": 0.9, "task_B": 0.5} for per-task control
-    task_masking_ratios:
-      task_A: 1.0 # Experiment with this: 1.0, 0.5, 0.25 etc. for task_A
-      # task_B: 1.0 # Can also apply to other tasks
+    # val_split / test_split / random_seed apply only to compositions lacking a split label
 
-# --- Trainer Configuration (PyTorch Lightning) ---
 trainer:
-  default_root_dir: "results/logs/${experiment_name}" # Organizes logs by experiment name
-  max_epochs: 20 # Adjust as needed for a meaningful demo
+  default_root_dir: "results/logs/scaling_law_demo"
+  max_epochs: 20
   accelerator: "cpu"
   devices: 1
   logger:
     - class_path: lightning.pytorch.loggers.CSVLogger
-      init_args:
-        save_dir: "${trainer.default_root_dir}"
-        name: "" # Logs will be in ${trainer.default_root_dir}/version_X
-    - class_path: lightning.pytorch.loggers.TensorBoardLogger
-      init_args:
-        save_dir: "${trainer.default_root_dir}"
-        name: ""
-  # callbacks:
-  #   - class_path: lightning.pytorch.callbacks.ModelCheckpoint
-  #     init_args:
-  #       monitor: "val_total_loss" # Or a specific task's validation loss
-  #       mode: "min"
-  #   - class_path: lightning.pytorch.callbacks.EarlyStopping
-  #     init_args:
-  #       monitor: "val_total_loss"
-  #       patience: 5
-  #       mode: "min"
+      init_args: { save_dir: "${trainer.default_root_dir}", name: "" }
 ```
-*The `train.py` script, using `LightningCLI`, will parse this YAML. Ensure `train.py` is set up to correctly pass `init_args` to the respective classes.*
 
-**3. Run Training:**
-
-Assuming you have a training script (e.g., `train_flexible.py`) that uses PyTorch Lightning's `CLI` or a similar mechanism to parse the YAML and CLI arguments:
+**3. Run training:**
 
 ```bash
-python src/foundation_model/scripts/train_flexible.py --config examples/configs/demo_scaling_law.yaml
+fm-trainer fit --config examples/configs/demo_scaling_law.yaml
 ```
-*(If using the existing `train.py`, it would require significant modification to load `FlexibleMultiTaskModel` and `CompoundDataModule` from such a YAML configuration.)*
 
-**4. Demonstrating Scaling Law with `task_masking_ratios`:**
+**4. Demonstrating the scaling law via `task_masking_ratio`:**
 
-The `task_masking_ratios` parameter in `CompoundDataModule` (set via the YAML) controls the fraction of *valid* (non-NaN) samples used for each specified task during training. A ratio of `1.0` uses all valid samples, `0.5` uses 50%, and so on. This allows you to simulate different dataset sizes for specific tasks.
-
-To observe a scaling law for `task_A`:
-1.  **Run 1 (Full Data for task_A):**
-    In `demo_scaling_law.yaml`, ensure `task_masking_ratios: { task_A: 1.0 }`. Train the model and note the final validation loss for `task_A`.
-2.  **Run 2 (Reduced Data for task_A):**
-    Modify `demo_scaling_law.yaml` to `task_masking_ratios: { task_A: 0.5 }` (using 50% of `task_A`'s valid training data). Retrain the model (preferably from scratch or ensure fair comparison) and note the final validation loss for `task_A`.
-3.  **Run 3 (Further Reduced Data for task_A):**
-    Modify to `task_masking_ratios: { task_A: 0.2 }` (using 20% of `task_A`'s valid training data). Retrain and note the loss.
-
-**Expected Observation:** Generally, as the `task_masking_ratios` for `task_A` decreases (less data used), the final validation loss for `task_A` is expected to be higher, demonstrating the scaling law principle that model performance often improves with more data. Plotting these losses against the data fraction (1.0, 0.5, 0.2) can visualize this relationship.
-
-This setup provides a controlled way to study the impact of data quantity on individual task performance within a multi-task learning framework.
+Each task's `task_masking_ratio` controls the fraction of its *valid* (non-NaN) training
+samples used (`1.0` = all, `0.5` = half, …), simulating different dataset sizes per task.
+Re-run training with `task_A`'s `task_masking_ratio` set to `1.0`, then `0.5`, then `0.2`, and
+record the final `val_task_A_*` loss each time. As the ratio drops, the validation loss for
+`task_A` generally rises — the expected scaling-law behavior — while other tasks are unaffected.
 
 ## Update History
 

@@ -23,9 +23,10 @@ from __future__ import annotations
 from typing import Callable, Mapping, Sequence
 
 import joblib  # type: ignore[import-untyped]
-import numpy as np
 import pandas as pd
 from loguru import logger
+
+from .splitter import MultiTaskSplitter
 
 DescriptorFn = Callable[[list[str]], pd.DataFrame]
 
@@ -280,34 +281,6 @@ class DescriptorCache:
         return computed.loc[valid], dropped
 
 
-def _random_split(
-    compositions: Sequence[str],
-    *,
-    val_split: float,
-    test_split: float,
-    rng: np.random.Generator,
-) -> dict[str, str]:
-    """Assign train/val/test labels to ``compositions`` by proportional random split."""
-    comps = list(compositions)
-    n = len(comps)
-    if n == 0:
-        return {}
-    order = rng.permutation(n)
-    shuffled = [comps[i] for i in order]
-    n_test = int(round(n * test_split))
-    n_val = int(round(n * val_split))
-    n_test = min(n_test, n)
-    n_val = min(n_val, n - n_test)
-    labels: dict[str, str] = {}
-    for comp in shuffled[:n_test]:
-        labels[comp] = "test"
-    for comp in shuffled[n_test : n_test + n_val]:
-        labels[comp] = "val"
-    for comp in shuffled[n_test + n_val :]:
-        labels[comp] = "train"
-    return labels
-
-
 def resolve_splits(
     task_frames: Mapping[str, pd.DataFrame],
     master_index: Sequence[str],
@@ -321,8 +294,10 @@ def resolve_splits(
     """Derive a single composition-level train/val/test split.
 
     Per-task ``split`` columns are overlaid (precedence ``test > val > train``; conflicts are
-    warned). Compositions with no label from any task fall back to a proportional random
-    split. With ``test_all=True`` every composition is assigned to ``test``.
+    warned). Compositions with no label from any task fall back to a representation-aware
+    random split (:class:`~foundation_model.data.splitter.MultiTaskSplitter`), which
+    prioritizes rare tasks and preserves global val/test proportions. With ``test_all=True``
+    every composition is assigned to ``test``.
 
     Parameters
     ----------
@@ -334,7 +309,8 @@ def resolve_splits(
         Per-task name of the split column to read (tasks absent from the map, or whose
         column is missing from their frame, contribute no labels).
     val_split, test_split : float
-        Random-fallback proportions for unlabeled compositions.
+        Random-fallback proportions for unlabeled compositions (overall val/test fractions,
+        preserved globally by MultiTaskSplitter's cumulative allocation).
     random_seed : int | None
         Seed for the random fallback.
     test_all : bool
@@ -381,8 +357,20 @@ def resolve_splits(
 
     unlabeled = [comp for comp in master if comp not in labels]
     if unlabeled:
-        rng = np.random.default_rng(random_seed)
-        labels.update(_random_split(unlabeled, val_split=val_split, test_split=test_split, rng=rng))
+        # Build a composition-availability matrix and split it so each task keeps
+        # representation across train/val/test (proportional for tasks/compositions with none).
+        availability = pd.DataFrame(
+            {task: [comp in frame.index for comp in unlabeled] for task, frame in task_frames.items()},
+            index=pd.Index(unlabeled, name="composition"),
+        )
+        splitter = MultiTaskSplitter(val_ratio=val_split, test_ratio=test_split, random_state=random_seed)
+        train_c, val_c, test_c = splitter.split(availability)
+        for comp in train_c:
+            labels[comp] = "train"
+        for comp in val_c:
+            labels[comp] = "val"
+        for comp in test_c:
+            labels[comp] = "test"
 
     resolved = [labels[comp] for comp in master]
     return pd.Series(resolved, index=pd.Index(master, name="composition"), dtype=object)
