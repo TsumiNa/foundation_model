@@ -35,15 +35,19 @@ data_files: str | Sequence[str] = ()      # per-task source file(s); concatenate
 composition_column: str | None = None      # override DataModule's global default
 split_column: str = "split"                 # optional split column name inside the file(s)
 task_masking_ratio: float | None = None      # replaces DataModule.task_masking_ratios
-predict_idx: Sequence[str] | str | None = None  # composition subset / "train|val|test|all" / file path
+predict_idx: Sequence[str] | str | None = None  # composition subset, or "train|val|test|all" literal
 ```
 
 - `data_column` / `t_column` keep their meaning, but now reference columns **inside the
   task's own file(s)**.
 - `AutoEncoderTaskConfig` needs no `data_files` (its target is the input `x`); it "rides
   along" whatever compositions are present in the batch.
-- Validation: a non-AE supervised task with empty `data_files` is an error; ratios must be
-  in `[0, 1]`; `predict_idx` string literals restricted to `{train,val,test,all}`.
+- Validation split: dataclass-level `__post_init__` (PR1) enforces ratio bounds in `[0, 1]`
+  and `predict_idx` string literals restricted to `{train,val,test,all}` (an explicit
+  composition subset is passed as a sequence of keys; file-path mode is not in scope).
+  The "non-AE supervised task must declare `data_files`" check lives in the **data layer
+  (PR2/PR3)**, not the dataclass, because the old `attributes_source` path must keep working
+  through PR1/PR2.
 
 ### 3.2 DataModule signature (`data/datamodule.py`)
 
@@ -136,7 +140,9 @@ are written. Add composition keys to the written output for downstream joins.
 ### PR1 — Config surface (additive, green)
 - Add the new `BaseTaskConfig` fields + `__post_init__` validation.
 - **Tests**: `model_config_test.py` (new/extended) — field defaults, ratio bounds,
-  predict_idx literal validation, AE-without-files allowed, supervised-without-files errors.
+  predict_idx literal validation, AE-without-files allowed, and backward-compatible
+  construction. PR1 does **not** enforce "supervised task must have `data_files`" — that
+  check is deferred to PR2/PR3 so the old `attributes_source` path stays green.
 - No behavior change anywhere else; tree stays green.
 
 ### PR2 — Composition data layer (new module, green, pure unit tests)

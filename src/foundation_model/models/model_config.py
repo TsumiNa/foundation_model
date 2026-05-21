@@ -197,7 +197,7 @@ class BaseTaskConfig:
 
     name: str  # Name of the task
     type: TaskType  # Type of the task (will be overridden by subclasses with a default)
-    data_column: str = ""  # Column name (inside this task's data file) for primary task data
+    data_column: str = ""  # Column name for primary task data (currently in attributes_df; per-task file after PR3)
 
     # Default fields below are now keyword-only
     enabled: bool = field(default=True, kw_only=True)  # Whether the task is enabled
