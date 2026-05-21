@@ -1,16 +1,13 @@
 # Copyright 2025 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Dict, List, Sequence
+from typing import Dict, List, Mapping, Sequence
 
-import joblib
 import lightning as L
 import numpy as np
 import pandas as pd
 import torch
-from jsonargparse.typing import Path_fr
 from loguru import logger
-from sklearn.model_selection import train_test_split  # For data splitting
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
@@ -22,7 +19,16 @@ from foundation_model.models.model_config import (
     TaskType,
 )
 
+from .composition_sources import (
+    DescriptorCache,
+    DescriptorFn,
+    build_composition_universe,
+    load_task_frame,
+    resolve_splits,
+)
 from .dataset import CompoundDataset
+
+TaskConfig = RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig | AutoEncoderTaskConfig
 
 
 class CollateFnWithTaskInfo:
@@ -105,216 +111,120 @@ def create_collate_fn_with_task_info(task_configs):
 
 class CompoundDataModule(L.LightningDataModule):
     """
-    A PyTorch Lightning DataModule for managing compound data with multiple task configurations.
+    PyTorch Lightning DataModule for composition-keyed, per-task data sources.
 
-    This DataModule handles the loading, alignment, and splitting of chemical compound data
-    (formula descriptors and attributes) for training machine learning models with multiple
-    tasks. It supports regression, classification, and kernel regression tasks, with features
-    including data masking, train/validation swapping, and flexible prediction dataset selection.
+    Each task owns its own data file(s) (or an in-memory frame), joined to the others by a
+    **composition** column. Descriptors are computed on demand from the union of compositions
+    via a user-supplied ``descriptor_fn`` (results cached per unique composition). Adding a
+    new property task means adding one more file + one more task config — no monolithic
+    attributes file to rebuild.
 
-    Key Features
-    ------------
-    - Multi-task learning support (regression, classification, kernel regression)
-    - Flexible data loading from multiple formats (DataFrame, pickle, CSV, parquet)
-    - Automatic data alignment between formula descriptors and attributes
-    - Configurable train/validation/test splitting with multiple strategies
-    - Optional random masking for data augmentation
-    - Train/validation bootstrap-style sample swapping
-    - Distributed training support with DistributedSampler
-    - Extended predict dataset selection (by name, combination, or custom indices)
+    Data assembly (performed once, lazily, in :meth:`setup`)
+    -------------------------------------------------------
+    1. Load each enabled non-AUTOENCODER task's data (in-memory ``task_frames`` override, else
+       ``cfg.data_files``), indexed by composition.
+    2. Build the composition universe = union of all task compositions plus any compositions
+       named by explicit per-task ``predict_idx`` sequences (so predict-only compositions get
+       descriptors too).
+    3. Compute descriptors via ``descriptor_fn`` (cached); drop compositions with no valid
+       descriptor. The survivors form the master composition index.
+    4. Resolve a single composition-level train/val/test split by overlaying each task's
+       ``split`` column (precedence ``test > val > train``) with a random fallback.
+    5. Build per-stage :class:`CompoundDataset` instances; each reindexes the per-task frames
+       to its split's compositions.
 
-    Data Alignment
-    --------------
-    The `formula_desc_source` index serves as the master reference for all data alignment.
-    If `attributes_source` is provided, it will be reindexed to match the formula descriptors.
-    Samples with all NaN values after alignment are automatically removed.
+    Prediction
+    ----------
+    Each task's ``predict_idx`` selects a composition subset (literal ``train``/``val``/``test``/
+    ``all``, an explicit sequence, or ``None`` → the test split, falling back to all). The
+    predict set is the union of these subsets, exposed in order as
+    :attr:`predict_compositions` so a prediction writer can attach composition keys.
 
-    Splitting Strategies
-    --------------------
-    The module supports three splitting strategies (in priority order):
-    1. **test_all=True**: All data assigned to test set (train/val empty)
-    2. **'split' column**: Uses pre-defined splits from attributes_source
-    3. **Random splitting**: Uses val_split and test_split ratios
-
-    Reproducibility
-    ---------------
-    All random operations (splitting, masking, swapping) are controlled by deterministic
-    seeds derived from the base `random_seed` parameter, ensuring full reproducibility.
-
-    Distributed Training
-    --------------------
-    Automatically detects distributed training environments and uses DistributedSampler
-    to ensure proper data partitioning across multiple GPUs.
-
-    Examples
-    --------
-    Basic usage with random splitting:
-
-    >>> from foundation_model.data.datamodule import CompoundDataModule
-    >>> from foundation_model.data.task_config import RegressionTaskConfig
-    >>>
-    >>> task_configs = [
-    ...     RegressionTaskConfig(name="bandgap", data_column="bandgap", enabled=True)
-    ... ]
-    >>>
-    >>> dm = CompoundDataModule(
-    ...     formula_desc_source="descriptors.pkl",
-    ...     attributes_source="attributes.csv",
-    ...     task_configs=task_configs,
-    ...     val_split=0.1,
-    ...     test_split=0.2,
-    ...     batch_size=32
-    ... )
-    >>>
-    >>> dm.setup(stage="fit")
-    >>> train_loader = dm.train_dataloader()
-
-    Using pre-defined splits:
-
-    >>> # attributes.csv should contain a 'split' column with values: 'train', 'val', 'test'
-    >>> dm = CompoundDataModule(
-    ...     formula_desc_source="descriptors.pkl",
-    ...     attributes_source="attributes.csv",  # Must have 'split' column
-    ...     task_configs=task_configs,
-    ...     batch_size=32
-    ... )
-
-    Prediction with specific datasets:
-
-    >>> # Predict on test set
-    >>> dm = CompoundDataModule(
-    ...     formula_desc_source="descriptors.pkl",
-    ...     task_configs=task_configs,
-    ...     predict_idx="test"
-    ... )
-    >>>
-    >>> # Predict on combined train and validation sets
-    >>> dm = CompoundDataModule(
-    ...     formula_desc_source="descriptors.pkl",
-    ...     task_configs=task_configs,
-    ...     predict_idx=["train", "val"]
-    ... )
-    >>>
-    >>> # Predict on custom indices
-    >>> custom_indices = pd.Index(["compound_1", "compound_2", "compound_3"])
-    >>> dm = CompoundDataModule(
-    ...     formula_desc_source="descriptors.pkl",
-    ...     task_configs=task_configs,
-    ...     predict_idx=custom_indices
-    ... )
-
-    With data masking and swapping:
-
-    >>> dm = CompoundDataModule(
-    ...     formula_desc_source="descriptors.pkl",
-    ...     attributes_source="attributes.csv",
-    ...     task_configs=task_configs,
-    ...     task_masking_ratios=0.8,  # Keep 80% of data per task
-    ...     swap_train_val_split=0.1,  # Swap 10% of samples between train/val
-    ...     random_seed=42
-    ... )
-
-    Notes
-    -----
-    - When `attributes_source` is None, only prediction mode is fully supported for
-        non-sequence tasks, as supervised training requires target attributes.
-    - Kernel regression tasks requiring a t_column will raise an error if
-        `attributes_source` is None.
-    - Empty datasets will result in None dataloaders to prevent training errors.
+    Parameters
+    ----------
+    task_configs : Sequence[TaskConfig]
+        Task configurations. Per-task ``data_files`` / ``composition_column`` / ``split_column``
+        / ``task_masking_ratio`` / ``predict_idx`` drive data loading.
+    descriptor_fn : Callable[[list[str]], pd.DataFrame]
+        Maps composition keys to a composition-indexed descriptor frame.
+    task_frames : Mapping[str, pd.DataFrame] | None, optional
+        In-memory per-task frames (indexed by composition or carrying the composition column),
+        used instead of ``cfg.data_files`` for the named tasks. Convenient for programmatic /
+        test usage.
+    default_data_files : str | Sequence[str] | None, optional
+        Shared fallback data file(s) used for any enabled task that has neither an in-memory
+        frame nor its own ``cfg.data_files``. Supports the legacy "one file holds all targets"
+        case from a YAML/CLI config without repeating the path on every task.
+    composition_column : str, optional
+        Global default composition column name; overridable per task via
+        ``cfg.composition_column``. Defaults to ``"composition"``.
+    random_seed : int | None, optional
+        Base seed for all stochastic operations (split, masking, swap). Defaults to 42.
+    val_split, test_split : float, optional
+        Random-fallback proportions for compositions lacking a ``split`` label. Defaults 0.1.
+    test_all : bool, optional
+        If True, every composition is assigned to the test set. Defaults to False.
+    swap_train_val_split : float, optional
+        Fraction of samples to exchange between train and validation after splitting. Defaults 0.
+    batch_size, num_workers : int, optional
+        DataLoader settings.
 
     See Also
     --------
-    foundation_model.data.dataset.CompoundDataset : The underlying dataset class
-    foundation_model.data.task_config : Task configuration classes
+    foundation_model.data.dataset.CompoundDataset
+    foundation_model.data.composition_sources
     """
 
     def __init__(
         self,
-        formula_desc_source: pd.DataFrame | Path_fr,  # type: ignore
-        task_configs: Sequence[
-            RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig | AutoEncoderTaskConfig
-        ],
-        attributes_source: pd.DataFrame | Path_fr | None = None,  # type: ignore
-        task_masking_ratios: float | Dict[str, float] | None = None,
+        task_configs: Sequence[TaskConfig],
+        descriptor_fn: DescriptorFn,
+        *,
+        task_frames: Mapping[str, pd.DataFrame] | None = None,
+        default_data_files: str | Sequence[str] | None = None,
+        composition_column: str = "composition",
         random_seed: int | None = 42,
         val_split: float = 0.1,
         test_split: float = 0.1,
         test_all: bool = False,
         swap_train_val_split: float = 0.0,
-        predict_idx: pd.Index | np.ndarray | List | str | List[str] | None = None,  # Extended functionality
         batch_size: int = 32,
         num_workers: int = 0,
     ):
-        """
-        Initialize the data module.
-        The `formula_desc_source` and its index are treated as the primary reference for data alignment.
-
-        Parameters
-        ----------
-        formula_desc_source : pd.DataFrame | np.ndarray | str
-            Formula descriptors (DataFrame, NumPy array, or path to pickle/CSV/parquet). Its index is the master reference.
-        task_configs : List
-            List of task configurations.
-        attributes_source : pd.DataFrame | str | None, optional
-            Source for task target attributes, sequence data, temperature data, and 'split' column.
-            Can be a DataFrame, NumPy array, or a path to a pickle/CSV/parquet file.
-            Defaults to None. If None, the DataModule can only be used for prediction with non-sequence tasks,
-            as sequence tasks typically require input columns (e.g., for series or temperatures) from this source.
-            If provided, it will be aligned with `formula_desc_source`.
-        task_masking_ratios : float | Dict[str, float] | None, optional
-            Random masking ratios for training data.
-            Accepts either a mapping of task name to keep-ratio, or a single float applied to every enabled task.
-            Defaults to None (no additional masking).
-        random_seed : int | None, optional
-            Base seed controlling all stochastic operations (test split, validation split, task masking, train/val swap).
-            Derived seeds are generated deterministically per operation to preserve reproducibility. Defaults to 42.
-        val_split : float, optional
-            Proportion of non-test data (derived from `attributes_source` if available, or `formula_desc_source` otherwise)
-            to use for validation. Defaults to 0.1. Only applicable if `attributes_source` is provided and no 'split' column is used.
-        test_split : float, optional
-            Proportion of data (derived from `attributes_source` if available, or `formula_desc_source` otherwise)
-            to use for testing. Defaults to 0.1. Only applicable if `attributes_source` is provided and no 'split' column is used.
-        test_all : bool, optional
-            If True, all data (after alignment) is used for the test set. `train_idx` and `val_idx` will be empty.
-            This overrides `test_split` and 'split' column logic if `attributes_source` is provided. Defaults to False.
-        swap_train_val_split : float, optional
-            Fraction of samples to exchange between the train and validation splits after they are formed.
-            Supports values in [0, 1]. Set to >0 to enable bootstrap-style resampling of train/val while keeping
-            overall split sizes unchanged. Defaults to 0.0.
-        predict_idx : pd.Index | np.ndarray | List | str | List[str] | None, optional
-            Specific indices to use for the prediction set. Can be:
-            - pd.Index, np.ndarray, List: Specific indices that must be present in `formula_desc_source`
-            - str: One of "test", "val", "train", "all" to use the corresponding dataset
-            - List[str]: Combination of datasets, e.g., ["train", "val"] to combine train and validation sets
-            If provided, `setup(stage='predict')` will use these indices directly.
-            If None (default), `predict_idx` will be derived during `setup(stage='predict')` from `test_idx` (if available and not empty)
-            or otherwise from the full set of available indices from `formula_desc_source`.
-            Note: If a specified dataset (e.g., "test") doesn't exist or is empty, an error will be raised.
-        batch_size : int, optional
-            Batch size for dataloaders. Defaults to 32.
-        num_workers : int, optional
-            Number of workers for dataloaders. Defaults to 0.
-        """
         super().__init__()
         logger.info("Initializing CompoundDataModule...")
 
-        # Explicitly assign parameters to self for clarity and linter compatibility
-        self.task_configs = task_configs
-        self.task_masking_ratios = task_masking_ratios
+        if not task_configs:
+            raise ValueError("task_configs cannot be empty.")
+        if descriptor_fn is None:
+            raise ValueError("descriptor_fn must be provided.")
+        if not 0.0 <= swap_train_val_split <= 1.0:
+            raise ValueError("swap_train_val_split must be between 0.0 and 1.0 inclusive.")
+        for split_name, split_value in (("val_split", val_split), ("test_split", test_split)):
+            if not 0.0 <= split_value <= 1.0:
+                raise ValueError(f"{split_name} must be between 0.0 and 1.0 inclusive, got {split_value}.")
+        if val_split + test_split > 1.0:
+            raise ValueError(
+                f"val_split + test_split must not exceed 1.0 (got {val_split} + {test_split} = {val_split + test_split})."
+            )
+
+        self.task_configs = list(task_configs)
+        self.descriptor_fn = descriptor_fn
+        self._input_task_frames = dict(task_frames) if task_frames is not None else {}
+        if default_data_files is None:
+            self.default_data_files: tuple[str, ...] = ()
+        elif isinstance(default_data_files, str):
+            self.default_data_files = (default_data_files,)
+        else:
+            self.default_data_files = tuple(str(p) for p in default_data_files)
+        self.composition_column = composition_column
         self.random_seed = random_seed
         self.val_split = val_split
         self.test_split = test_split
         self.test_all = test_all
-        if not 0.0 <= swap_train_val_split <= 1.0:
-            raise ValueError("swap_train_val_split must be between 0.0 and 1.0 inclusive.")
         self.swap_train_val_split = swap_train_val_split
-        # Store user-provided predict_idx without converting to pd.Index yet
-        # We'll handle string/list conversion in setup() method
-        self.init_predict_idx = predict_idx
         self.batch_size = batch_size
         self.num_workers = num_workers
-        self.structure_df: pd.DataFrame | None = None
-        self.actual_with_structure = False
 
         self._seed_offsets: Dict[str, int] = {
             "train_split": 0,
@@ -323,714 +233,314 @@ class CompoundDataModule(L.LightningDataModule):
             "swap": 30_000,
         }
 
+        # Populated by _prepare_sources()
+        self._sources_ready = False
+        self._descriptor_cache = DescriptorCache(descriptor_fn)
+        self.descriptors: pd.DataFrame | None = None
+        self._task_frames: Dict[str, pd.DataFrame] = {}
+        self.master_index: List[str] = []
+        self.split_series: pd.Series | None = None
+        self.train_idx: List[str] = []
+        self.val_idx: List[str] = []
+        self.test_idx: List[str] = []
+        self.predict_compositions: List[str] = []
+        self.train_dataset: CompoundDataset | None = None
+        self.val_dataset: CompoundDataset | None = None
+        self.test_dataset: CompoundDataset | None = None
+        self.predict_dataset: CompoundDataset | None = None
+        self._train_sampler: DistributedSampler | None = None
+
         self.save_hyperparameters(
-            ignore=[
-                "formula_desc_source",
-                "attributes_source",
-                "predict_idx",
-                "task_configs",
-            ]  # ADDED "task_configs"
+            ignore=["task_configs", "descriptor_fn", "task_frames"],
         )
-
-        # --- Load Data ---
-        logger.info("--- Loading Data ---")
-        source_to_load = str(formula_desc_source) if isinstance(formula_desc_source, Path_fr) else formula_desc_source  # type: ignore
-        self.formula_df = self._load_data(source_to_load, "formula_desc")
-        if self.formula_df is None or self.formula_df.empty:
-            raise ValueError("formula_desc_source must be successfully loaded and cannot be empty.")
-        logger.info(f"Initial loaded formula_df length: {len(self.formula_df)}")
-
-        # Formula_df is the primary reference. Clean it first.
-        self.formula_df.dropna(how="all", inplace=True)
-        if self.formula_df.empty:  # Check again after dropna
-            raise ValueError("formula_df became empty after removing rows with all NaNs.")
-        master_index = self.formula_df.index
-        logger.info(
-            f"Formula_df length after initial dropna: {len(self.formula_df)}. This index is now the master reference."
-        )
-
-        # Handle optional attributes_source
-        self.attributes_df = None
-        if attributes_source is not None:
-            source_to_load_attrs = (
-                str(attributes_source) if isinstance(attributes_source, Path_fr) else attributes_source  # type: ignore
-            )
-            self.attributes_df = self._load_data(source_to_load_attrs, "attributes")
-            if self.attributes_df is None or self.attributes_df.empty:
-                # If source was provided but failed to load or was empty, it's an error.
-                raise ValueError("attributes_source was provided but could not be loaded or is empty.")
-            logger.info(f"Initial loaded attributes_df length: {len(self.attributes_df)}")
-
-            # --- Align DataFrames ---
-            logger.info(f"--- Aligning DataFrames by formula_df index (master_index length: {len(master_index)}) ---")
-
-            # Align attributes_df to master_index (from formula_df)
-            original_attributes_len = len(self.attributes_df)
-            self.attributes_df = self.attributes_df.reindex(master_index)
-            if len(self.attributes_df) != original_attributes_len:
-                logger.warning(
-                    f"Attributes_df reindexed. Original length: {original_attributes_len}, new length: {len(self.attributes_df)}."
-                )
-            if self.attributes_df.isnull().values.any():
-                logger.warning(
-                    "attributes_df contains NaN values after reindexing. This is expected if some properties are missing for certain samples."
-                )
-            self.attributes_df.dropna(how="all", inplace=True)
-            if self.attributes_df.empty:
-                raise ValueError(
-                    "attributes_df became empty after reindexing and removing rows with all NaNs. Check index compatibility with formula_df."
-                )
-
-            # Update master_index based on intersection after attributes_df processing
-            common_index_after_attrs = master_index.intersection(self.attributes_df.index)
-            if common_index_after_attrs.empty:
-                raise ValueError(
-                    "No common_index found between formula_df and attributes_df after processing. Data is not alignable."
-                )
-            if len(common_index_after_attrs) < len(master_index):
-                logger.warning(
-                    f"Master index (from formula_df) reduced from {len(master_index)} to {len(common_index_after_attrs)} after aligning with attributes_df. "
-                    "Some formula_df entries might not have corresponding attributes_df entries or vice-versa after NaN removal."
-                )
-            master_index = common_index_after_attrs
-
-            self.formula_df = self.formula_df.loc[master_index]
-            self.attributes_df = self.attributes_df.loc[master_index]  # attributes_df is now aligned
-            logger.info(f"Length after aligning formula_df and attributes_df: {len(master_index)}")
-        else:  # attributes_source is None
-            logger.info(
-                "attributes_source is None. Proceeding without attributes_df. This is only supported if no sequence tasks require it."
-            )
-            # Validate that no task requires attributes_df if it's None,
-            # especially if a KernelRegression task specifies a t_column.
-            for cfg in self.task_configs:
-                if cfg.enabled and cfg.type == TaskType.KERNEL_REGRESSION:
-                    # Type check and cast to access KernelRegression-specific attributes
-                    if isinstance(cfg, KernelRegressionTaskConfig) and hasattr(cfg, "t_column") and cfg.t_column:
-                        logger.error(
-                            f"Task '{cfg.name}' is a KernelRegression task that specifies a 't_column' ('{cfg.t_column}'), "
-                            f"but attributes_source is None. attributes_source is required to load this t-parameter data."
-                        )
-                        raise ValueError(
-                            f"attributes_source cannot be None when KernelRegression task '{cfg.name}' requires a t_column ('{cfg.t_column}')."
-                        )
-            # If we reach here, attributes_source is None, and no enabled KernelRegressionTaskConfig requires a t_column.
-            # Other tasks (or KernelRegression tasks without a t_column) will have their data_column handled by CompoundDataset
-            # (likely resulting in placeholders if data_column was specified).
-            # self.attributes_df remains None. self.formula_df uses the original master_index.
-            logger.info(f"formula_df (master) length: {len(master_index)}")
-
-        # Initialize sampler reference for distributed training
-        self._train_sampler = None
 
         logger.info(f"DataModule initialized with {len(self.task_configs)} task configurations.")
 
-    def on_train_epoch_start(self):
-        """
-        Called at the beginning of each training epoch.
-        Updates the DistributedSampler's epoch to ensure different shuffling patterns.
-        """
-        if hasattr(self, "_train_sampler") and self._train_sampler is not None:
-            if hasattr(self._train_sampler, "set_epoch"):
-                # Access the trainer's current epoch
-                # Lightning automatically injects self.trainer when this DataModule is used
-                if hasattr(self, "trainer") and self.trainer is not None:
-                    epoch = self.trainer.current_epoch
-                    self._train_sampler.set_epoch(epoch)
-                    logger.debug(f"Set DistributedSampler epoch to {epoch}")
+    # ------------------------------------------------------------------ helpers
 
     def _seed_for(self, purpose: str) -> int | None:
         """Return a deterministic seed for the given purpose derived from the base random_seed."""
         if self.random_seed is None:
             return None
         offset = self._seed_offsets.get(purpose, 0)
-        # Modulo 2**32 to keep value within 32-bit integer range expected by numpy/sklearn
         return (self.random_seed + offset) % (2**32)
 
-    def _resolved_task_masking_ratios(self) -> Dict[str, float] | None:
-        """
-        Normalize task_masking_ratios input to a dictionary keyed by task name.
+    def _supervised_tasks(self) -> List[TaskConfig]:
+        """Enabled tasks that load external data (everything except AUTOENCODER)."""
+        return [cfg for cfg in self.task_configs if cfg.enabled and cfg.type != TaskType.AUTOENCODER]
 
-        Returns
-        -------
-        Dict[str, float] | None
-            Mapping of task names to keep ratios, or None when masking is disabled.
-        """
-        ratios = self.task_masking_ratios
-        if ratios is None:
-            return None
-        if isinstance(ratios, dict):
-            return ratios
+    def _composition_column_for(self, cfg: TaskConfig) -> str:
+        return cfg.composition_column or self.composition_column
 
-        try:
-            ratio_value = float(ratios)
-        except (TypeError, ValueError) as exc:  # pragma: no cover - defensive, should not happen with type hints
-            raise TypeError("task_masking_ratios must be a dict, float, or None.") from exc
+    def _normalize_frame(self, frame: pd.DataFrame, composition_column: str, *, task_name: str = "") -> pd.DataFrame:
+        """Return a copy indexed by string composition keys, deduped keep-first."""
+        frame = frame.copy()
+        if composition_column in frame.columns:
+            frame = frame.set_index(composition_column)
+        frame.index = frame.index.astype(str)
+        duplicated = frame.index.duplicated(keep="first")
+        if duplicated.any():
+            logger.warning(
+                f"Task '{task_name or '<task>'}': in-memory frame has {int(duplicated.sum())} duplicate "
+                "composition(s); keeping the first occurrence of each."
+            )
+            frame = frame[~duplicated]
+        return frame
 
-        return {cfg.name: ratio_value for cfg in self.task_configs if getattr(cfg, "enabled", True)}
+    def _resolved_task_masking_ratios(self) -> Dict[str, float]:
+        """Per-task keep ratios sourced from each config's task_masking_ratio."""
+        ratios: Dict[str, float] = {}
+        for cfg in self.task_configs:
+            ratio = getattr(cfg, "task_masking_ratio", None)
+            if getattr(cfg, "enabled", True) and ratio is not None:
+                ratios[cfg.name] = float(ratio)
+        return ratios
 
-    def _resolve_predict_idx(self, full_idx: pd.Index) -> pd.Index:
-        """
-        Resolve predict_idx based on its type and validate dataset existence.
+    # ------------------------------------------------------------------ sources
 
-        # Added 2025/7/2: Extended predict_idx functionality to support string literals
-        # and list of strings for easier dataset selection (e.g., "test", ["train", "val"])
+    def _prepare_sources(self) -> None:
+        """Load task frames, compute descriptors, and resolve the global split (idempotent)."""
+        if self._sources_ready:
+            return
 
-        Parameters
-        ----------
-        full_idx : pd.Index
-            The full index of available data
+        logger.info("--- Preparing composition-keyed data sources ---")
 
-        Returns
-        -------
-        pd.Index
-            Resolved predict indices
-
-        Raises
-        ------
-        ValueError
-            If specified dataset doesn't exist or is empty
-        """
-        if self.init_predict_idx is None:
-            # Default behavior: use test_idx if available, otherwise full_idx
-            return self.test_idx if not self.test_idx.empty else full_idx
-
-        # Handle string literals
-        if isinstance(self.init_predict_idx, str):
-            dataset_name = self.init_predict_idx
-            if dataset_name == "all":
-                logger.info("predict_idx='all': Using all available data for prediction")
-                return full_idx
-            elif dataset_name == "test":
-                if self.test_idx.empty:
-                    logger.error(f"predict_idx='{dataset_name}' specified but test dataset is empty")
-                    raise ValueError(f"Test dataset is empty. Cannot use predict_idx='{dataset_name}'")
+        # 1. Load each supervised task's frame (in-memory override or data_files).
+        self._task_frames = {}
+        for cfg in self._supervised_tasks():
+            comp_col = self._composition_column_for(cfg)
+            if cfg.name in self._input_task_frames:
+                frame = self._normalize_frame(self._input_task_frames[cfg.name], comp_col, task_name=cfg.name)
+                logger.info(f"Task '{cfg.name}': using provided in-memory frame ({len(frame)} rows).")
+            elif cfg.data_files:
+                frame = load_task_frame(cfg.data_files, comp_col, task_name=cfg.name)
+                logger.info(f"Task '{cfg.name}': loaded {len(frame)} rows from {len(cfg.data_files)} file(s).")
+            elif self.default_data_files:
+                frame = load_task_frame(self.default_data_files, comp_col, task_name=cfg.name)
                 logger.info(
-                    f"predict_idx='{dataset_name}': Using test dataset for prediction ({len(self.test_idx)} samples)"
+                    f"Task '{cfg.name}': loaded {len(frame)} rows from shared default_data_files "
+                    f"({len(self.default_data_files)} file(s))."
                 )
-                return self.test_idx
-            elif dataset_name == "val":
-                if self.val_idx.empty:
-                    logger.error(f"predict_idx='{dataset_name}' specified but validation dataset is empty")
-                    raise ValueError(f"Validation dataset is empty. Cannot use predict_idx='{dataset_name}'")
-                logger.info(
-                    f"predict_idx='{dataset_name}': Using validation dataset for prediction ({len(self.val_idx)} samples)"
-                )
-                return self.val_idx
-            elif dataset_name == "train":
-                if self.train_idx.empty:
-                    logger.error(f"predict_idx='{dataset_name}' specified but train dataset is empty")
-                    raise ValueError(f"Train dataset is empty. Cannot use predict_idx='{dataset_name}'")
-                logger.info(
-                    f"predict_idx='{dataset_name}': Using train dataset for prediction ({len(self.train_idx)} samples)"
-                )
-                return self.train_idx
             else:
-                logger.error(
-                    f"Invalid predict_idx string: '{dataset_name}'. Must be one of 'test', 'val', 'train', 'all'"
-                )
-                raise ValueError(
-                    f"Invalid predict_idx string: '{dataset_name}'. Must be one of 'test', 'val', 'train', 'all'"
-                )
-
-        # Handle list of strings
-        elif isinstance(self.init_predict_idx, list) and all(isinstance(item, str) for item in self.init_predict_idx):
-            dataset_names = self.init_predict_idx
-            combined_idx = pd.Index([])
-
-            for dataset_name in dataset_names:
-                if dataset_name == "test":
-                    if self.test_idx.empty:
-                        logger.error(f"predict_idx contains '{dataset_name}' but test dataset is empty")
-                        raise ValueError(f"Test dataset is empty. Cannot use '{dataset_name}' in predict_idx")
-                    combined_idx = combined_idx.union(self.test_idx)
-                elif dataset_name == "val":
-                    if self.val_idx.empty:
-                        logger.error(f"predict_idx contains '{dataset_name}' but validation dataset is empty")
-                        raise ValueError(f"Validation dataset is empty. Cannot use '{dataset_name}' in predict_idx")
-                    combined_idx = combined_idx.union(self.val_idx)
-                elif dataset_name == "train":
-                    if self.train_idx.empty:
-                        logger.error(f"predict_idx contains '{dataset_name}' but train dataset is empty")
-                        raise ValueError(f"Train dataset is empty. Cannot use '{dataset_name}' in predict_idx")
-                    combined_idx = combined_idx.union(self.train_idx)
-                else:
-                    logger.error(
-                        f"Invalid dataset name in predict_idx list: '{dataset_name}'. Must be one of 'test', 'val', 'train'"
-                    )
-                    raise ValueError(
-                        f"Invalid dataset name in predict_idx list: '{dataset_name}'. Must be one of 'test', 'val', 'train'"
-                    )
-
-            logger.info(f"predict_idx={dataset_names}: Combined datasets for prediction ({len(combined_idx)} samples)")
-            return combined_idx
-
-        # Handle traditional types (pd.Index, np.ndarray, List of indices)
-        else:
-            # Convert to pd.Index for validation
-            if isinstance(self.init_predict_idx, np.ndarray):
-                predict_indices = pd.Index(self.init_predict_idx)
-            elif isinstance(self.init_predict_idx, list):
-                predict_indices = pd.Index(self.init_predict_idx)
-            elif isinstance(self.init_predict_idx, pd.Index):
-                predict_indices = self.init_predict_idx
-            else:
-                logger.error(f"Unsupported predict_idx type: {type(self.init_predict_idx)}")
-                raise ValueError(f"Unsupported predict_idx type: {type(self.init_predict_idx)}")
-
-            # Validate indices against formula_df
-            valid_predict_indices = predict_indices.intersection(self.formula_df.index)
-            if len(valid_predict_indices) != len(predict_indices):
                 logger.warning(
-                    f"User-provided predict_idx contains indices not found in the loaded formula_df. "
-                    f"Original: {len(predict_indices)}, Valid: {len(valid_predict_indices)}. Using valid subset."
+                    f"Task '{cfg.name}': no in-memory frame, data_files, or default_data_files; it will only "
+                    "contribute placeholder (masked) targets. Provide a data source for supervised training."
                 )
-            if valid_predict_indices.empty:
-                logger.warning(
-                    "User-provided predict_idx resulted in an empty set after validation. Returning empty index."
-                )
-                return pd.Index([])
+                continue
+            self._task_frames[cfg.name] = frame
 
-            logger.info(
-                f"predict_idx: Using user-provided indices for prediction ({len(valid_predict_indices)} samples)"
+        # 2. Composition universe = task compositions plus explicit predict_idx compositions.
+        extra: List[str] = []
+        for cfg in self._supervised_tasks():
+            pid = cfg.predict_idx
+            if isinstance(pid, (list, tuple)):
+                extra.extend(str(c) for c in pid)
+        universe = build_composition_universe(self._task_frames, extra_compositions=extra)
+        if not universe:
+            raise ValueError(
+                "No compositions found across task data sources. Provide data_files / task_frames "
+                "or explicit predict_idx composition sequences."
             )
-            return valid_predict_indices
+        logger.info(f"Composition universe size: {len(universe)}")
 
-    def _load_data(self, source: pd.DataFrame | str, name: str) -> pd.DataFrame | None:
-        """Helper to load data from various sources."""
-        logger.debug(f"Attempting to load '{name}' from source type: {type(source)}")
-        if source is None:
-            logger.warning(f"Source for '{name}' is None.")
-            return None
-        try:
-            df = None
-            if isinstance(source, str):
-                logger.info(f"Loading '{name}' data from path: {source}")
-                if source.endswith(".pkl"):
-                    df = joblib.load(source)
-                elif source.endswith((".pd", ".pd.z", ".pd.xz")):
-                    df = pd.read_pickle(source)
-                elif source.endswith(".pd.parquet"):
-                    df = pd.read_parquet(source)
-                elif source.endswith(".csv"):
-                    df = pd.read_csv(source, index_col=0)  # Assuming first column as index
-                else:
-                    logger.error(
-                        f"Unsupported file type for '{name}': {source}. Must be .pkl, .pd, .pd.z, .pd.xz, .pd.parquet, or .csv."
-                    )
-                    raise ValueError(f"Unsupported file type for {name}: {source}.")
-            elif isinstance(source, pd.DataFrame):
-                logger.info(f"Using provided pd.DataFrame for '{name}' data.")
-                df = source.copy()  # Use a copy
-            else:
-                logger.error(f"Unsupported data type for '{name}': {type(source)}.")
-                raise TypeError(f"Unsupported data type for {name}: {type(source)}.")
-
-            if df is not None:
-                logger.info(f"Successfully loaded '{name}'. Shape: {df.shape}")
-            return df
-
-        except FileNotFoundError:
-            logger.error(f"File not found for '{name}': {source}")
-            return None
-        except (ValueError, TypeError) as e:  # Catch specific errors to re-raise
-            # These are intentionally raised for unsupported types/files, so let them propagate
-            raise e
-        except Exception as e:  # Catch other, unexpected exceptions
-            logger.error(f"Unexpected error loading '{name}' data from {source}: {e}", exc_info=True)
-            return None
-
-    def _get_attributes_for_indices(self, indices: pd.Index) -> pd.DataFrame:
-        """Return attribute rows matching the provided indices."""
-        if self.attributes_df is not None:
-            return self.attributes_df.loc[indices]
-        if self.formula_df is not None:
-            return pd.DataFrame(index=self.formula_df.loc[indices].index)
-        return pd.DataFrame()
-
-    def _build_fit_datasets(self, log_prefix: str = "--- Creating 'fit' stage datasets (train/val) ---") -> None:
-        """Construct train and validation datasets based on current indices."""
-        logger.info(log_prefix)
-        if not self.train_idx.empty:
-            logger.info(f"Creating train_dataset with {len(self.train_idx)} samples.")
-            train_masking_ratios = self._resolved_task_masking_ratios()
-            self.train_dataset = CompoundDataset(
-                formula_desc=self.formula_df.loc[self.train_idx],
-                attributes=self._get_attributes_for_indices(self.train_idx),
-                task_configs=self.task_configs,
-                task_masking_ratios=train_masking_ratios,
-                task_masking_seed=self._seed_for("task_masking"),
-                is_predict_set=False,
-                dataset_name="train_dataset",
+        # 3. Descriptors (cached); drop compositions without a valid descriptor.
+        self.descriptors, dropped = self._descriptor_cache.resolve(universe)
+        if dropped:
+            logger.warning(
+                f"{len(dropped)} composition(s) dropped: descriptor_fn produced no valid descriptor "
+                f"(e.g. {', '.join(dropped[:5])})."
             )
-        else:
-            logger.warning("Train index is empty. train_dataset will be None.")
-            self.train_dataset = None
+        if self.descriptors.empty:
+            raise ValueError("descriptor_fn produced no valid descriptors for any composition.")
+        self.master_index = [str(c) for c in self.descriptors.index]
+        logger.info(f"Master composition index size (with valid descriptors): {len(self.master_index)}")
 
-        if not self.val_idx.empty:
-            logger.info(f"Creating val_dataset with {len(self.val_idx)} samples.")
-            self.val_dataset = CompoundDataset(
-                formula_desc=self.formula_df.loc[self.val_idx],
-                attributes=self._get_attributes_for_indices(self.val_idx),
-                task_configs=self.task_configs,
-                task_masking_ratios=None,
-                task_masking_seed=self._seed_for("task_masking"),
-                is_predict_set=False,
-                dataset_name="val_dataset",
-            )
-        else:
-            logger.warning("Validation index is empty. val_dataset will be None.")
-            self.val_dataset = None
+        # 4. Resolve a single composition-level split.
+        split_columns = {
+            cfg.name: cfg.split_column for cfg in self._supervised_tasks() if cfg.name in self._task_frames
+        }
+        self.split_series = resolve_splits(
+            self._task_frames,
+            self.master_index,
+            split_columns,
+            val_split=self.val_split,
+            test_split=self.test_split,
+            random_seed=self._seed_for("test_split"),
+            test_all=self.test_all,
+        )
+        labels = self.split_series
+        self.train_idx = [c for c in self.master_index if labels[c] == "train"]
+        self.val_idx = [c for c in self.master_index if labels[c] == "val"]
+        self.test_idx = [c for c in self.master_index if labels[c] == "test"]
+
+        self._apply_train_val_swap(self.swap_train_val_split, self._seed_for("swap"))
+
+        logger.info(f"Split sizes: Train={len(self.train_idx)}, Val={len(self.val_idx)}, Test={len(self.test_idx)}")
+        self._sources_ready = True
 
     def _apply_train_val_swap(self, swap_ratio: float, random_seed: int | None) -> None:
         """Randomly exchange a fraction of samples between train and validation splits."""
         if swap_ratio <= 0.0:
             return
-
-        if not hasattr(self, "train_idx") or not hasattr(self, "val_idx"):
-            raise RuntimeError("Data splits are not initialized. Call setup(stage='fit') before applying swap.")
-
         train_count = len(self.train_idx)
         val_count = len(self.val_idx)
-
         if train_count == 0 or val_count == 0:
             logger.warning(
-                "swap_train_val_split skipped because one of the splits is empty "
-                f"(train={train_count}, val={val_count})."
+                f"swap_train_val_split skipped because one split is empty (train={train_count}, val={val_count})."
             )
             return
-
         n_swap = int(min(train_count, val_count) * swap_ratio)
         if n_swap == 0:
-            logger.info(
-                "swap_train_val_split computed zero samples to swap "
-                f"(swap_ratio={swap_ratio}, min_size={min(train_count, val_count)})."
-            )
+            logger.info(f"swap_train_val_split computed zero samples to swap (swap_ratio={swap_ratio}).")
             return
 
         rng = np.random.default_rng(random_seed)
-        train_choices = rng.choice(self.train_idx.to_numpy(), size=n_swap, replace=False)
-        val_choices = rng.choice(self.val_idx.to_numpy(), size=n_swap, replace=False)
+        train_choice = rng.choice(np.array(self.train_idx), size=n_swap, replace=False).tolist()
+        val_choice = rng.choice(np.array(self.val_idx), size=n_swap, replace=False).tolist()
+        train_swap_set = set(train_choice)
+        val_swap_set = set(val_choice)
+        train_remaining = [c for c in self.train_idx if c not in train_swap_set]
+        val_remaining = [c for c in self.val_idx if c not in val_swap_set]
+        self.train_idx = train_remaining + val_choice
+        self.val_idx = val_remaining + train_choice
+        logger.info(f"Swapped {n_swap} samples between train and validation (swap_ratio={swap_ratio}).")
 
-        train_swap = pd.Index(train_choices)
-        val_swap = pd.Index(val_choices)
-
-        train_remaining = self.train_idx[~self.train_idx.isin(train_swap)]
-        val_remaining = self.val_idx[~self.val_idx.isin(val_swap)]
-
-        self.train_idx = pd.Index(list(train_remaining) + list(val_swap))
-        self.val_idx = pd.Index(list(val_remaining) + list(train_swap))
-
-        if self.attributes_df is not None and "split" in self.attributes_df.columns:
-            self.attributes_df.loc[train_swap, "split"] = "val"
-            self.attributes_df.loc[val_swap, "split"] = "train"
-
-        logger.info(
-            f"Swapped {n_swap} samples between train and validation splits "
-            f"(swap_ratio={swap_ratio}, random_seed={random_seed})."
+    def _build_dataset(
+        self,
+        compositions: Sequence[str],
+        *,
+        is_predict: bool,
+        dataset_name: str,
+        apply_masking: bool,
+    ) -> CompoundDataset | None:
+        if len(compositions) == 0:
+            logger.warning(f"{dataset_name}: no compositions; dataset will be None.")
+            return None
+        assert self.descriptors is not None
+        masking = self._resolved_task_masking_ratios() if apply_masking else None
+        return CompoundDataset(
+            compositions=list(compositions),
+            descriptors=self.descriptors,
+            task_frames=self._task_frames,
+            task_configs=self.task_configs,
+            task_masking_ratios=masking,
+            task_masking_seed=self._seed_for("task_masking"),
+            is_predict_set=is_predict,
+            dataset_name=dataset_name,
         )
+
+    def _resolve_predict_compositions(self) -> List[str]:
+        """Union of each task's predict_idx subset, preserving master-index order."""
+        master_set = set(self.master_index)
+        default_pool = list(self.test_idx) if len(self.test_idx) > 0 else list(self.master_index)
+        selected: set[str] = set()
+
+        for cfg in self._supervised_tasks():
+            pid = cfg.predict_idx
+            if pid is None:
+                subset = default_pool
+            elif isinstance(pid, str):
+                if pid == "all":
+                    subset = list(self.master_index)
+                elif pid == "train":
+                    subset = list(self.train_idx)
+                elif pid == "val":
+                    subset = list(self.val_idx)
+                else:  # "test"
+                    subset = list(self.test_idx)
+            else:  # explicit sequence of composition keys
+                requested = [str(c) for c in pid]
+                subset = [c for c in requested if c in master_set]
+                missing = [c for c in requested if c not in master_set]
+                if missing:
+                    logger.warning(
+                        f"Task '{cfg.name}': {len(missing)} predict_idx composition(s) have no descriptor "
+                        f"and are skipped (e.g. {', '.join(missing[:5])})."
+                    )
+            selected.update(subset)
+
+        return [c for c in self.master_index if c in selected]
+
+    # ------------------------------------------------------------------ lightning
+
+    def on_train_epoch_start(self):
+        """Update the DistributedSampler epoch so shuffling differs across epochs."""
+        if getattr(self, "_train_sampler", None) is not None and hasattr(self._train_sampler, "set_epoch"):
+            if getattr(self, "trainer", None) is not None:
+                self._train_sampler.set_epoch(self.trainer.current_epoch)
 
     def setup(self, stage: str | None = None):
-        """Prepare datasets for different stages (fit, test, predict)."""
+        """Prepare datasets for the requested stage (fit, test, predict)."""
         logger.info(f"--- Setting up DataModule for stage: {stage} ---")
-        if self.formula_df is None:  # attributes_df can now be None
-            logger.error("formula_df is None. Cannot proceed with setup.")
-            raise ValueError("formula_df not loaded properly.")
-
-        # Determine full_idx based on whether attributes_df exists
-        if self.attributes_df is not None:
-            full_idx = self.attributes_df.index  # Should be same as formula_df.index at this point
-        else:  # attributes_df is None, use formula_df.index as the source of all samples
-            full_idx = self.formula_df.index
-        logger.info(
-            f"Total samples available before splitting (from {'attributes_df' if self.attributes_df is not None else 'formula_df'} index): {len(full_idx)}"
-        )
-
-        if self.test_all:
-            self.train_idx = pd.Index([])
-            self.val_idx = pd.Index([])
-            self.test_idx = full_idx
-            logger.info("Data split strategy: Using all data for testing (test_all=True).")
-        # Splitting logic relies on attributes_df for 'split' column or for random splits if attributes_df exists
-        elif self.attributes_df is not None and "split" in self.attributes_df.columns:
-            logger.info("Data split strategy: Using 'split' column from attributes_df.")
-            split_counts = self.attributes_df["split"].value_counts()
-            logger.info(f"Value counts in 'split' column: {split_counts.to_dict()}")
-            if not all(s_type in ["train", "val", "test"] for s_type in split_counts.index):
-                logger.error(f"Invalid values in 'split' column: {split_counts.index.tolist()}")
-                raise ValueError("Invalid values in 'split' column. Must be 'train', 'val', or 'test'.")
-
-            self.train_idx = self.attributes_df[self.attributes_df["split"] == "train"].index
-            self.val_idx = self.attributes_df[self.attributes_df["split"] == "val"].index
-            self.test_idx = self.attributes_df[self.attributes_df["split"] == "test"].index
-
-            if self.val_idx.empty and not self.train_idx.empty:  # and self.attributes_df is not None implicitly
-                logger.warning("No 'val' samples in 'split' column. Splitting 10% of 'train' for validation.")
-                self.train_idx, self.val_idx = train_test_split(
-                    self.train_idx,
-                    test_size=0.1,
-                    random_state=self._seed_for("train_split"),
-                    shuffle=True,
-                )
-        elif (
-            self.attributes_df is not None
-        ):  # Random split only if attributes_df exists to provide a basis for splitting
-            logger.info(
-                "Data split strategy: Performing random train/val/test splits based on full_idx (derived from attributes_df)."
-            )
-            logger.info(f"Test split ratio: {self.test_split}, Validation split ratio (of non-test): {self.val_split}")
-            if self.test_split >= 1.0:
-                logger.info(f"test_split is {self.test_split}, assigning all data to test set.")
-                self.test_idx = full_idx
-                train_val_idx = pd.Index([])
-            elif self.test_split > 0:
-                train_val_idx, self.test_idx = train_test_split(
-                    full_idx,  # full_idx here is from attributes_df.index
-                    test_size=self.test_split,
-                    random_state=self._seed_for("test_split"),
-                    shuffle=True,
-                )
-                logger.info(
-                    f"Split full data ({len(full_idx)}) into train_val ({len(train_val_idx)}) and test ({len(self.test_idx)}) "
-                    f"using derived seed {self._seed_for('test_split')} (base random_seed={self.random_seed})."
-                )
-            else:  # test_split is 0
-                train_val_idx = full_idx
-                self.test_idx = pd.Index([])
-                logger.info("test_split is 0. All data used for train_val.")
-
-            if self.val_split > 0 and len(train_val_idx) > 0:
-                effective_val_split = self.val_split
-                if (1.0 - self.test_split) > 1e-6:  # Avoid division by zero
-                    effective_val_split = self.val_split / (1.0 - self.test_split)
-
-                if effective_val_split >= 1.0:
-                    logger.info(
-                        f"Calculated effective_val_split ({effective_val_split:.3f}) >= 1.0. Assigning all train_val to validation."
-                    )
-                    self.val_idx = train_val_idx
-                    self.train_idx = pd.Index([])
-                else:
-                    self.train_idx, self.val_idx = train_test_split(
-                        train_val_idx,
-                        test_size=effective_val_split,
-                        random_state=self._seed_for("train_split"),
-                        shuffle=True,
-                    )
-                    logger.info(
-                        f"Split train_val ({len(train_val_idx)}) into train ({len(self.train_idx)}) and val ({len(self.val_idx)}) "
-                        f"using derived seed {self._seed_for('train_split')} (base random_seed={self.random_seed}), "
-                        f"effective_val_split {effective_val_split:.3f}."
-                    )
-            elif len(train_val_idx) > 0:  # val_split is 0
-                self.train_idx = train_val_idx
-                self.val_idx = pd.Index([])
-                logger.info("val_split is 0. All remaining train_val data used for train. Validation set is empty.")
-            else:  # train_val_idx is empty
-                self.train_idx = pd.Index([])
-                self.val_idx = pd.Index([])
-                logger.info("train_val_idx is empty. Train and Validation sets are empty.")
-        else:  # attributes_df is None, so no basis for 'split' column or random splitting.
-            # All data is effectively for prediction or a single use case if not test_all.
-            logger.info("attributes_df is None. No 'split' column or random splitting applied. All data in full_idx.")
-            if not self.test_all:  # If test_all is true, it's already handled.
-                # If not test_all, and no other split info, assume all for train, no val/test.
-                # This might need adjustment based on how predict_idx is handled later.
-                self.train_idx = full_idx
-                self.val_idx = pd.Index([])
-                self.test_idx = pd.Index([])
-                logger.info("Using all data for train_idx as attributes_df is None and not test_all.")
-            # If self.test_all is True, self.test_idx is already full_idx, train/val are empty.
-
-        # Optional bootstrap-style train/val swapping
-        self._apply_train_val_swap(self.swap_train_val_split, self._seed_for("swap"))
-
-        logger.info(
-            f"Final dataset sizes after splitting: Train={len(self.train_idx)}, Validation={len(self.val_idx)}, Test={len(self.test_idx)}"
-        )
+        self._prepare_sources()
 
         if stage == "fit" or stage is None:
-            self._build_fit_datasets()
+            logger.info("--- Creating 'fit' stage datasets (train/val) ---")
+            self.train_dataset = self._build_dataset(
+                self.train_idx, is_predict=False, dataset_name="train_dataset", apply_masking=True
+            )
+            self.val_dataset = self._build_dataset(
+                self.val_idx, is_predict=False, dataset_name="val_dataset", apply_masking=False
+            )
 
         if stage == "test" or stage is None:
             logger.info("--- Creating 'test' stage dataset ---")
-            if not self.test_idx.empty and self.attributes_df is not None:
-                logger.info(f"Creating test_dataset with {len(self.test_idx)} samples.")
-                self.test_dataset = CompoundDataset(
-                    formula_desc=self.formula_df.loc[self.test_idx],
-                    attributes=self._get_attributes_for_indices(self.test_idx),
-                    task_configs=self.task_configs,
-                    task_masking_ratios=None,  # No masking for test
-                    task_masking_seed=self._seed_for("task_masking"),
-                    is_predict_set=False,  # Typically False for test, model might output targets for metrics
-                    dataset_name="test_dataset",
-                )
-            elif self.attributes_df is None and not self.test_idx.empty:
-                logger.warning(
-                    "attributes_df is None; skipping test_dataset creation because supervised targets are unavailable."
-                )
-                self.test_dataset = None
-            else:
-                logger.info("Test index is empty. test_dataset will be None.")
-                self.test_dataset = None
+            self.test_dataset = self._build_dataset(
+                self.test_idx, is_predict=False, dataset_name="test_dataset", apply_masking=False
+            )
 
         if stage == "predict":
             logger.info("--- Creating 'predict' stage dataset ---")
-            # Use the new resolver method to handle all predict_idx types
-            self.predict_idx = self._resolve_predict_idx(full_idx)
-
-            if not self.predict_idx.empty:
-                self.predict_dataset = CompoundDataset(
-                    formula_desc=self.formula_df.loc[self.predict_idx],
-                    attributes=self._get_attributes_for_indices(self.predict_idx),
-                    task_configs=self.task_configs,
-                    task_masking_ratios=None,  # No masking for predict
-                    task_masking_seed=self._seed_for("task_masking"),
-                    is_predict_set=True,
-                    dataset_name="predict_dataset",
-                )
-            else:
-                logger.warning("Predict index is empty after processing. predict_dataset will be None.")
-                self.predict_dataset = None
+            self.predict_compositions = self._resolve_predict_compositions()
+            self.predict_dataset = self._build_dataset(
+                self.predict_compositions, is_predict=True, dataset_name="predict_dataset", apply_masking=False
+            )
         logger.info(f"--- DataModule setup for stage '{stage}' complete ---")
 
-    def train_dataloader(self):
-        if not hasattr(self, "train_dataset") or self.train_dataset is None:
-            logger.warning("train_dataloader: Train dataset is None or not initialized. Returning None.")
-            return None
-        if len(self.train_dataset) == 0:
-            logger.warning("train_dataloader: Train dataset is empty (length 0). Returning None.")
-            return None
+    # ------------------------------------------------------------------ dataloaders
 
-        # Create custom collate function for KernelRegression tasks
+    def _make_loader(self, dataset, *, shuffle: bool, track_sampler: bool):
         collate_fn = create_collate_fn_with_task_info(self.task_configs)
-
-        # Detect distributed training environment
         use_ddp = torch.distributed.is_available() and torch.distributed.is_initialized()
-
+        sampler: DistributedSampler | None
         if use_ddp:
-            # Use DistributedSampler for multi-GPU training
-            sampler = DistributedSampler(
-                self.train_dataset,
-                shuffle=True,
-                drop_last=False,  # Keep all samples
-            )
-            shuffle = False  # shuffle and sampler are mutually exclusive
-            # Store reference for on_train_epoch_start hook
-            self._train_sampler = sampler
+            sampler = DistributedSampler(dataset, shuffle=shuffle, drop_last=False)
+            loader_shuffle = False
         else:
             sampler = None
-            shuffle = True
-            self._train_sampler = None
-
+            loader_shuffle = shuffle
+        if track_sampler:
+            self._train_sampler = sampler
         return DataLoader(
-            self.train_dataset,
+            dataset,
             batch_size=self.batch_size,
-            shuffle=shuffle,
+            shuffle=loader_shuffle,
             sampler=sampler,
             num_workers=self.num_workers,
             pin_memory=True,
             collate_fn=collate_fn,
         )
+
+    def train_dataloader(self):
+        if self.train_dataset is None or len(self.train_dataset) == 0:
+            logger.warning("train_dataloader: Train dataset is None or empty. Returning None.")
+            return None
+        return self._make_loader(self.train_dataset, shuffle=True, track_sampler=True)
 
     def val_dataloader(self):
-        if not hasattr(self, "val_dataset") or self.val_dataset is None:
-            logger.info("val_dataloader: Validation dataset is None or not initialized. Returning None.")
+        if self.val_dataset is None or len(self.val_dataset) == 0:
+            logger.info("val_dataloader: Validation dataset is None or empty. Returning None.")
             return None
-        if len(self.val_dataset) == 0:
-            logger.info("val_dataloader: Validation dataset is empty (length 0). Returning None.")
-            return None
-
-        # Create custom collate function for KernelRegression tasks
-        collate_fn = create_collate_fn_with_task_info(self.task_configs)
-
-        # Detect distributed training environment
-        use_ddp = torch.distributed.is_available() and torch.distributed.is_initialized()
-
-        if use_ddp:
-            # Use DistributedSampler for multi-GPU validation
-            sampler = DistributedSampler(
-                self.val_dataset,
-                shuffle=False,  # Don't shuffle validation data
-                drop_last=False,  # Keep all samples
-            )
-        else:
-            sampler = None
-
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            sampler=sampler,
-            num_workers=self.num_workers,
-            pin_memory=True,
-            collate_fn=collate_fn,
-        )
+        return self._make_loader(self.val_dataset, shuffle=False, track_sampler=False)
 
     def test_dataloader(self):
-        if not hasattr(self, "test_dataset") or self.test_dataset is None:
-            logger.info("test_dataloader: Test dataset is None or not initialized. Returning None.")
+        if self.test_dataset is None or len(self.test_dataset) == 0:
+            logger.info("test_dataloader: Test dataset is None or empty. Returning None.")
             return None
-        if len(self.test_dataset) == 0:
-            logger.info("test_dataloader: Test dataset is empty (length 0). Returning None.")
-            return None
-
-        # Create custom collate function for KernelRegression tasks
-        collate_fn = create_collate_fn_with_task_info(self.task_configs)
-
-        # Detect distributed training environment
-        use_ddp = torch.distributed.is_available() and torch.distributed.is_initialized()
-
-        if use_ddp:
-            # Use DistributedSampler for multi-GPU testing
-            sampler = DistributedSampler(
-                self.test_dataset,
-                shuffle=False,  # Don't shuffle test data
-                drop_last=False,  # Keep all samples
-            )
-        else:
-            sampler = None
-
-        return DataLoader(
-            self.test_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            sampler=sampler,
-            num_workers=self.num_workers,
-            pin_memory=True,
-            collate_fn=collate_fn,
-        )
+        return self._make_loader(self.test_dataset, shuffle=False, track_sampler=False)
 
     def predict_dataloader(self):
-        if not hasattr(self, "predict_dataset") or self.predict_dataset is None:
-            logger.info("predict_dataloader: Predict dataset is None or not initialized. Returning None.")
+        if self.predict_dataset is None or len(self.predict_dataset) == 0:
+            logger.info("predict_dataloader: Predict dataset is None or empty. Returning None.")
             return None
-        if len(self.predict_dataset) == 0:
-            logger.info("predict_dataloader: Predict dataset is empty (length 0). Returning None.")
-            return None
-
-        # Create custom collate function for KernelRegression tasks
-        collate_fn = create_collate_fn_with_task_info(self.task_configs)
-
-        # Detect distributed training environment
-        use_ddp = torch.distributed.is_available() and torch.distributed.is_initialized()
-
-        if use_ddp:
-            # Use DistributedSampler for multi-GPU prediction
-            sampler = DistributedSampler(
-                self.predict_dataset,
-                shuffle=False,  # Don't shuffle prediction data
-                drop_last=False,  # Keep all samples
-            )
-        else:
-            sampler = None
-
-        return DataLoader(
-            self.predict_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            sampler=sampler,
-            num_workers=self.num_workers,
-            pin_memory=True,
-            collate_fn=collate_fn,
-        )
+        return self._make_loader(self.predict_dataset, shuffle=False, track_sampler=False)

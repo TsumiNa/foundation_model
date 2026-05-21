@@ -1,170 +1,189 @@
-import logging
-import os
-import tempfile
+# Copyright 2025 TsumiNa.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Tests for the composition-keyed CompoundDataModule (refactor PR3)."""
+
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 import pytest
-import torch
-from loguru import logger as loguru_logger  # ADDED for loguru bridge
+from loguru import logger
+from torch.utils.data.distributed import DistributedSampler
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.model_config import (
     AutoEncoderTaskConfig,
     ClassificationTaskConfig,
     RegressionTaskConfig,
-    TaskType,
 )
 
-
-def _expected_swapped_indices(train_idx, val_idx, swap_ratio, seed):
-    """Replicate the swapping logic used by CompoundDataModule."""
-    if swap_ratio <= 0.0:
-        return pd.Index(train_idx), pd.Index(val_idx)
-
-    train_idx = pd.Index(train_idx)
-    val_idx = pd.Index(val_idx)
-
-    n_swap = int(min(len(train_idx), len(val_idx)) * swap_ratio)
-    if n_swap == 0:
-        return train_idx, val_idx
-
-    rng = np.random.default_rng(seed)
-    train_swap = pd.Index(rng.choice(train_idx.to_numpy(), size=n_swap, replace=False))
-    val_swap = pd.Index(rng.choice(val_idx.to_numpy(), size=n_swap, replace=False))
-
-    train_swap_set = set(train_swap)
-    val_swap_set = set(val_swap)
-
-    train_remaining = [idx for idx in train_idx if idx not in train_swap_set]
-    val_remaining = [idx for idx in val_idx if idx not in val_swap_set]
-
-    new_train = pd.Index(train_remaining + list(val_swap))
-    new_val = pd.Index(val_remaining + list(train_swap))
-    return new_train, new_val
-
-
-# --- Fixtures ---
-@pytest.fixture
-def base_formula_df():  # 20 samples s0-s19
-    return pd.DataFrame({"f1": np.random.rand(20), "f2": np.random.rand(20)}, index=[f"s{i}" for i in range(20)])
+COMPOSITIONS = [f"s{i}" for i in range(20)]
 
 
 @pytest.fixture
-def formula_df_subset():  # 15 samples, s0-s14
-    return pd.DataFrame({"f1": np.random.rand(15), "f2": np.random.rand(15)}, index=[f"s{i}" for i in range(15)])
+def loguru_messages():
+    """Capture loguru INFO+ messages (caplog only sees stdlib logging)."""
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, level="INFO", format="{message}")
+    try:
+        yield messages
+    finally:
+        logger.remove(sink_id)
+
+
+def make_descriptor_fn(descriptor_df, call_log=None):
+    """Build a descriptor_fn that looks up rows from a precomputed descriptor frame."""
+
+    def fn(compositions):
+        if call_log is not None:
+            call_log.append(list(compositions))
+        present = [c for c in compositions if c in descriptor_df.index]
+        return descriptor_df.loc[present]
+
+    return fn
 
 
 @pytest.fixture
-def attributes_df_full_match():  # 20 samples s0-s19, with split col
-    data = {
-        "task1_regression_value": np.random.rand(20),
-        "task_cls_classification_value": np.random.randint(0, 3, size=20),
-        "split": ["train"] * 10 + ["val"] * 5 + ["test"] * 5,
-    }
-    return pd.DataFrame(data, index=[f"s{i}" for i in range(20)])
+def descriptors_df():
+    rng = np.random.default_rng(0)
+    return pd.DataFrame({"f1": rng.random(20), "f2": rng.random(20)}, index=list(COMPOSITIONS))
 
 
 @pytest.fixture
-def attributes_df_partial_match():  # 18 samples, s2-s19, with split col
-    data = {
-        "task1_regression_value": np.random.rand(18),
-        "task_cls_classification_value": np.random.randint(0, 3, size=18),
-        "split": ["train"] * 9 + ["val"] * 5 + ["test"] * 4,
-    }
-    return pd.DataFrame(data, index=[f"s{i}" for i in range(2, 20)])
-
-
-@pytest.fixture
-def attributes_df_no_split_full_match():  # 20 samples, s0-s19, no split col
-    data = {
-        "task1_regression_value": np.random.rand(20),
-        "task_cls_classification_value": np.random.randint(0, 3, size=20),
-    }
-    return pd.DataFrame(data, index=[f"s{i}" for i in range(20)])
-
-
-@pytest.fixture
-def sample_task_configs_dm():
+def reg_cls_configs():
     return [
-        RegressionTaskConfig(
-            name="task1", type=TaskType.REGRESSION, data_column="task1_regression_value", dims=[256, 128, 1]
-        ),
-        ClassificationTaskConfig(
-            name="task_cls", type=TaskType.CLASSIFICATION, data_column="task_cls_classification_value", num_classes=3
-        ),
+        RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1]),
+        ClassificationTaskConfig(name="task_cls", data_column="task_cls", num_classes=3, dims=[2, 16, 3]),
     ]
 
 
-@pytest.fixture
-def sample_task_configs_no_seq_dm():
-    return [
-        RegressionTaskConfig(
-            name="task1", type=TaskType.REGRESSION, data_column="task1_regression_value", dims=[256, 128, 1]
-        ),
-        ClassificationTaskConfig(
-            name="task_cls", type=TaskType.CLASSIFICATION, data_column="task_cls_classification_value", num_classes=3
-        ),
+def _reg_cls_frames(split=None):
+    rng = np.random.default_rng(1)
+    data1 = {"task1": rng.random(20)}
+    data_cls = {"task_cls": rng.integers(0, 3, size=20)}
+    if split is not None:
+        data1["split"] = split
+        data_cls["split"] = split
+    return {
+        "task1": pd.DataFrame(data1, index=list(COMPOSITIONS)),
+        "task_cls": pd.DataFrame(data_cls, index=list(COMPOSITIONS)),
+    }
+
+
+def build_dm(descriptors_df, task_frames=None, configs=None, call_log=None, **kwargs):
+    return CompoundDataModule(
+        task_configs=configs,
+        descriptor_fn=make_descriptor_fn(descriptors_df, call_log),
+        task_frames=task_frames,
+        **kwargs,
+    )
+
+
+# --- init validation --------------------------------------------------------
+
+
+def test_init_requires_descriptor_fn(reg_cls_configs):
+    with pytest.raises(ValueError, match="descriptor_fn must be provided"):
+        CompoundDataModule(task_configs=reg_cls_configs, descriptor_fn=None)  # type: ignore[arg-type]
+
+
+def test_init_requires_task_configs(descriptors_df):
+    with pytest.raises(ValueError, match="task_configs cannot be empty"):
+        CompoundDataModule(task_configs=[], descriptor_fn=make_descriptor_fn(descriptors_df))
+
+
+def test_init_rejects_bad_swap_ratio(descriptors_df, reg_cls_configs):
+    with pytest.raises(ValueError, match="swap_train_val_split"):
+        build_dm(descriptors_df, configs=reg_cls_configs, swap_train_val_split=1.5)
+
+
+@pytest.mark.parametrize("kwargs", [{"val_split": -0.1}, {"test_split": 1.5}, {"val_split": 0.6, "test_split": 0.6}])
+def test_init_rejects_bad_split_bounds(descriptors_df, reg_cls_configs, kwargs):
+    with pytest.raises(ValueError, match="split"):
+        build_dm(descriptors_df, configs=reg_cls_configs, **kwargs)
+
+
+def test_in_memory_frame_dedupes_duplicate_compositions(descriptors_df):
+    configs = [RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1])]
+    # Duplicate composition "s0" with conflicting values; keep-first must win.
+    frame = pd.DataFrame({"task1": [10.0, 99.0, 20.0]}, index=pd.Index(["s0", "s0", "s1"], name="composition"))
+    dm = build_dm(descriptors_df, task_frames={"task1": frame}, configs=configs, test_all=True)
+    dm.setup(stage="test")
+    assert dm._task_frames["task1"].loc["s0", "task1"] == 10.0
+    assert not dm._task_frames["task1"].index.duplicated().any()
+
+
+# --- sources & descriptors --------------------------------------------------
+
+
+def test_in_memory_task_frames_drive_setup(descriptors_df, reg_cls_configs):
+    dm = build_dm(descriptors_df, task_frames=_reg_cls_frames(), configs=reg_cls_configs, test_all=True)
+    dm.setup(stage="test")
+    assert dm.descriptors is not None
+    assert len(dm.descriptors) == 20
+    assert len(dm.test_idx) == 20
+    assert dm.test_dataset is not None and len(dm.test_dataset) == 20
+
+
+def test_descriptor_fn_caches_across_stages(descriptors_df, reg_cls_configs):
+    call_log: list[list[str]] = []
+    dm = build_dm(descriptors_df, task_frames=_reg_cls_frames(), configs=reg_cls_configs, call_log=call_log)
+    dm.setup(stage="fit")
+    dm.setup(stage="test")
+    dm.setup(stage="predict")
+    # Sources are prepared once; descriptor_fn invoked a single time over the universe.
+    assert len(call_log) == 1
+    assert sorted(call_log[0]) == sorted(COMPOSITIONS)
+
+
+def test_dropped_composition_without_descriptor(descriptors_df, reg_cls_configs, loguru_messages):
+    # Descriptor frame missing s19 -> it should be dropped from the master index.
+    partial = descriptors_df.drop(index=["s19"])
+    dm = build_dm(partial, task_frames=_reg_cls_frames(), configs=reg_cls_configs, test_all=True)
+    dm.setup(stage="test")
+    assert "s19" not in dm.master_index
+    assert len(dm.master_index) == 19
+    assert any("dropped" in m for m in loguru_messages)
+
+
+def test_data_files_loading(tmp_path, descriptors_df):
+    frame = pd.DataFrame({"composition": list(COMPOSITIONS), "task1": np.arange(20.0)})
+    path = tmp_path / "task1.parquet"
+    frame.to_parquet(path)
+    configs = [RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1], data_files=str(path))]
+    dm = build_dm(descriptors_df, configs=configs, test_all=True)
+    dm.setup(stage="test")
+    assert "task1" in dm._task_frames
+    assert len(dm._task_frames["task1"]) == 20
+
+
+def test_default_data_files_shared_across_tasks(tmp_path, descriptors_df):
+    """A single shared file fills in tasks that declare no data_files of their own."""
+    shared = pd.DataFrame({"composition": list(COMPOSITIONS), "task1": np.arange(20.0), "task2": np.arange(20.0)})
+    path = tmp_path / "shared.parquet"
+    shared.to_parquet(path)
+    configs = [
+        RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1]),
+        RegressionTaskConfig(name="task2", data_column="task2", dims=[2, 16, 1]),
     ]
-
-
-@pytest.fixture
-def temp_files_dir():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield tmpdir
-
-
-# --- Test Cases ---
-
-
-def test_datamodule_init_with_dfs(base_formula_df, attributes_df_full_match, sample_task_configs_dm):
     dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=attributes_df_full_match,
-        task_configs=sample_task_configs_dm,
+        task_configs=configs,
+        descriptor_fn=make_descriptor_fn(descriptors_df),
+        default_data_files=str(path),
+        test_all=True,
     )
-    assert dm.formula_df is not None
-    assert dm.attributes_df is not None
-    assert len(dm.formula_df) == 20
-    assert len(dm.attributes_df) == 20
-    assert dm.formula_df.index.equals(attributes_df_full_match.index)
+    dm.setup(stage="test")
+    assert set(dm._task_frames) == {"task1", "task2"}
+    assert len(dm._task_frames["task1"]) == 20
 
 
-def test_datamodule_alignment_formula_master(base_formula_df, attributes_df_partial_match, sample_task_configs_dm):
-    """Test alignment when formula_df is master and attributes_df is partial."""
-    # base_formula_df (s0-s19)
-    # attributes_df_partial_match (s2-s19)
-    # Expected final common index: s2-s19
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df.copy(),
-        attributes_source=attributes_df_partial_match.copy(),
-        task_configs=sample_task_configs_dm,
-    )
-    expected_final_index = base_formula_df.index.intersection(attributes_df_partial_match.index)  # s2-s19
-    assert dm.formula_df.index.equals(expected_final_index)
-    assert dm.attributes_df.index.equals(expected_final_index)
-    assert len(dm.formula_df) == 18
-    assert len(dm.attributes_df) == 18
+# --- splitting --------------------------------------------------------------
 
 
-def test_datamodule_init_attributes_none_non_sequence(base_formula_df, sample_task_configs_no_seq_dm):
-    """Test init with attributes_source=None and only non-sequence tasks."""
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=None,
-        task_configs=sample_task_configs_no_seq_dm,
-    )
-    assert dm.formula_df is not None
-    assert dm.attributes_df is None
-    assert len(dm.formula_df) == 20
-
-
-def test_datamodule_setup_split_column(base_formula_df, attributes_df_full_match, sample_task_configs_dm):
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=attributes_df_full_match,
-        task_configs=sample_task_configs_dm,
-    )
+def test_split_column_resolution(descriptors_df, reg_cls_configs):
+    split = ["train"] * 10 + ["val"] * 5 + ["test"] * 5
+    dm = build_dm(descriptors_df, task_frames=_reg_cls_frames(split=split), configs=reg_cls_configs)
     dm.setup(stage="fit")
     assert len(dm.train_idx) == 10
     assert len(dm.val_idx) == 5
@@ -172,837 +191,210 @@ def test_datamodule_setup_split_column(base_formula_df, attributes_df_full_match
     assert len(dm.test_idx) == 5
 
 
-def test_datamodule_setup_random_split(base_formula_df, attributes_df_no_split_full_match, sample_task_configs_dm):
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=attributes_df_no_split_full_match,
-        task_configs=sample_task_configs_dm,
+def test_random_split_counts(descriptors_df, reg_cls_configs):
+    dm = build_dm(
+        descriptors_df,
+        task_frames=_reg_cls_frames(),  # no split column -> random fallback
+        configs=reg_cls_configs,
         val_split=0.2,
         test_split=0.1,
+        random_seed=42,
     )
-    dm.setup(stage="fit")  # test_split=0.1 -> 2 test, 18 train_val. val_split=0.2 -> 0.2/0.9 * 18 = 4 val. 14 train.
-    assert len(dm.test_idx) == 2
-    assert len(dm.val_idx) == 4
+    dm.setup(stage="fit")
+    assert len(dm.test_idx) == 2  # round(20 * 0.1)
+    assert len(dm.val_idx) == 4  # round(20 * 0.2)
     assert len(dm.train_idx) == 14
 
 
-def test_datamodule_setup_attributes_none_splitting(base_formula_df, sample_task_configs_no_seq_dm):
-    """Test splitting when attributes_source is None (all data should go to train if not test_all)."""
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=None,
-        task_configs=sample_task_configs_no_seq_dm,
-        val_split=0.1,  # These should be ignored as no basis for random split from attributes
-        test_split=0.1,
-    )
-    dm.setup("fit")
-    assert len(dm.train_idx) == 20  # All data from formula_df
-    assert dm.val_idx.empty
-    assert dm.test_idx.empty
-
-    dm_test_all = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=None,
-        task_configs=sample_task_configs_no_seq_dm,
-        test_all=True,
-    )
-    dm_test_all.setup("test")
-    assert len(dm_test_all.test_idx) == 20
-    assert dm_test_all.train_idx.empty
-    assert dm_test_all.val_idx.empty
-
-
-def test_swap_train_val_split_applied(base_formula_df, attributes_df_full_match, sample_task_configs_dm):
-    swap_ratio = 0.4
-
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=attributes_df_full_match,
-        task_configs=sample_task_configs_dm,
-        swap_train_val_split=swap_ratio,
+def test_swap_train_val_applied(descriptors_df, reg_cls_configs):
+    split = ["train"] * 10 + ["val"] * 5 + ["test"] * 5
+    dm = build_dm(
+        descriptors_df,
+        task_frames=_reg_cls_frames(split=split),
+        configs=reg_cls_configs,
+        swap_train_val_split=0.4,
         random_seed=123,
     )
-
-    original_train = attributes_df_full_match[attributes_df_full_match["split"] == "train"].index
-    original_val = attributes_df_full_match[attributes_df_full_match["split"] == "val"].index
-    expected_train, expected_val = _expected_swapped_indices(
-        original_train, original_val, swap_ratio, dm._seed_for("swap")
-    )
-
     dm.setup(stage="fit")
-
-    assert list(dm.train_idx) == list(expected_train)
-    assert list(dm.val_idx) == list(expected_val)
-
-    # Ensure split labels were updated accordingly
-    assert all(dm.attributes_df.loc[idx, "split"] == "train" for idx in dm.train_idx)
-    assert all(dm.attributes_df.loc[idx, "split"] == "val" for idx in dm.val_idx)
-    assert all(dm.attributes_df.loc[idx, "split"] == "test" for idx in dm.test_idx)
+    # Sizes are preserved by the swap; contents change.
+    assert len(dm.train_idx) == 10
+    assert len(dm.val_idx) == 5
+    assert set(dm.train_idx).isdisjoint(set(dm.test_idx))
 
 
-def test_swap_train_val_split_zero_no_change(base_formula_df, attributes_df_full_match, sample_task_configs_dm):
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=attributes_df_full_match,
-        task_configs=sample_task_configs_dm,
-        swap_train_val_split=0.0,
+def test_swap_zero_no_change(descriptors_df, reg_cls_configs):
+    split = ["train"] * 10 + ["val"] * 5 + ["test"] * 5
+    dm = build_dm(
+        descriptors_df, task_frames=_reg_cls_frames(split=split), configs=reg_cls_configs, swap_train_val_split=0.0
     )
-
-    original_train = attributes_df_full_match[attributes_df_full_match["split"] == "train"].index
-    original_val = attributes_df_full_match[attributes_df_full_match["split"] == "val"].index
-
     dm.setup(stage="fit")
-
-    assert list(dm.train_idx) == list(original_train)
-    assert list(dm.val_idx) == list(original_val)
-
-
-def test_datamodule_setup_with_user_predict_idx(base_formula_df, sample_task_configs_no_seq_dm, caplog):
-    """Test setup(stage='predict') with user-provided predict_idx."""
-
-    # --- Loguru to caplog bridge (local to this test) ---
-    class PropagateHandler(logging.Handler):
-        def emit(self, record):
-            logging.getLogger(record.name).handle(record)
-
-    handler_id = loguru_logger.add(PropagateHandler(), format="{message}", level="WARNING")
-    # --- End bridge ---
-
-    try:
-        user_indices = pd.Index([f"s{i}" for i in range(5)])  # s0-s4
-        dm = CompoundDataModule(
-            formula_desc_source=base_formula_df,  # s0-s19
-            attributes_source=None,  # Test with no attributes
-            task_configs=sample_task_configs_no_seq_dm,
-            predict_idx=user_indices,
-        )
-        dm.setup(stage="predict")
-        assert dm.predict_idx.equals(user_indices)
-        assert len(dm.predict_dataset) == 5
-
-        # Test with partially valid predict_idx
-        user_indices_mixed = pd.Index(
-            [f"s{i}" for i in range(3)] + ["non_existent_1", "s19"]
-        )  # s0,s1,s2,non_existent_1,s19
-        expected_valid_mixed = pd.Index(["s0", "s1", "s2", "s19"])
-        caplog.clear()
-        dm_mixed = CompoundDataModule(
-            formula_desc_source=base_formula_df,
-            attributes_source=None,
-            task_configs=sample_task_configs_no_seq_dm,
-            predict_idx=user_indices_mixed,
-        )
-        dm_mixed.setup(stage="predict")
-        assert dm_mixed.predict_idx.equals(expected_valid_mixed)
-        assert len(dm_mixed.predict_dataset) == 4
-        assert any(
-            "User-provided predict_idx contains indices not found" in rec.message
-            for rec in caplog.records  # Corrected from 'record' to 'rec' if that was the var name
-            if rec.levelname == "WARNING"
-        )
-
-        # Test with all invalid predict_idx
-        user_indices_invalid = pd.Index(["invalid1", "invalid2"])
-        caplog.clear()
-        dm_invalid = CompoundDataModule(
-            formula_desc_source=base_formula_df,
-            attributes_source=None,
-            task_configs=sample_task_configs_no_seq_dm,
-            predict_idx=user_indices_invalid,
-        )
-        dm_invalid.setup(stage="predict")
-        assert dm_invalid.predict_idx.empty
-        assert dm_invalid.predict_dataset is None
-        assert any(
-            "User-provided predict_idx resulted in an empty set" in rec.message
-            for rec in caplog.records  # Corrected from 'record' to 'rec' if that was the var name
-            if rec.levelname == "WARNING"
-        )
-    finally:
-        loguru_logger.remove(handler_id)  # Clean up the handler
+    assert list(dm.train_idx) == COMPOSITIONS[:10]
+    assert list(dm.val_idx) == COMPOSITIONS[10:15]
 
 
-def test_datamodule_setup_predict_idx_fallback(
-    base_formula_df, attributes_df_no_split_full_match, sample_task_configs_dm
-):
-    """Test predict_idx fallback logic when init_predict_idx is None."""
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=attributes_df_no_split_full_match,  # s0-s19
-        task_configs=sample_task_configs_dm,
-        test_split=0.1,  # test_idx will be 2 samples
-        val_split=0,  # ensure train_val is not further split for simplicity here
+# --- masking ----------------------------------------------------------------
+
+
+def test_masking_ratio_from_config(descriptors_df):
+    configs = [
+        RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1], task_masking_ratio=0.5),
+        ClassificationTaskConfig(name="task_cls", data_column="task_cls", num_classes=3, dims=[2, 16, 3]),
+    ]
+    dm = build_dm(
+        descriptors_df, task_frames=_reg_cls_frames(), configs=configs, test_all=False, test_split=0.0, val_split=0.0
     )
-    dm.setup("test")  # Populates test_idx
-    dm.setup("predict")
-    assert dm.predict_idx.equals(dm.test_idx)
-    assert len(dm.predict_idx) == 2  # 0.1 * 20
-
-    dm_no_test = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=attributes_df_no_split_full_match,
-        task_configs=sample_task_configs_dm,
-        test_split=0.0,  # test_idx will be empty
-    )
-    dm_no_test.setup("test")
-    dm_no_test.setup("predict")
-    assert dm_no_test.predict_idx.equals(base_formula_df.index)  # Fallback to full_idx (from formula_df)
-    assert len(dm_no_test.predict_idx) == 20
+    dm.setup(stage="fit")
+    assert dm.train_dataset is not None
+    assert dm.train_dataset.task_masking_ratios == {"task1": 0.5}
+    # Validation/test/predict never apply training masking.
+    dm.setup(stage="test")
+    if dm.test_dataset is not None:
+        assert dm.test_dataset.task_masking_ratios is None
 
 
-def test_datamodule_init_empty_formula_raises_error(sample_task_configs_dm):
-    with pytest.raises(ValueError, match="formula_desc_source must be successfully loaded and cannot be empty."):
-        CompoundDataModule(formula_desc_source=pd.DataFrame(), task_configs=sample_task_configs_dm)
+# --- prediction -------------------------------------------------------------
 
 
-def test_datamodule_init_attributes_provided_but_empty_raises_error(base_formula_df, sample_task_configs_dm):
-    with pytest.raises(ValueError, match="attributes_source was provided but could not be loaded or is empty."):
-        CompoundDataModule(
-            formula_desc_source=base_formula_df,
-            attributes_source=pd.DataFrame(),  # Provided but empty
-            task_configs=sample_task_configs_dm,
-        )
+def test_predict_default_is_test_split(descriptors_df, reg_cls_configs):
+    split = ["train"] * 10 + ["val"] * 5 + ["test"] * 5
+    dm = build_dm(descriptors_df, task_frames=_reg_cls_frames(split=split), configs=reg_cls_configs)
+    dm.setup(stage="fit")  # populate splits
+    dm.setup(stage="predict")
+    assert sorted(dm.predict_compositions) == sorted(COMPOSITIONS[15:20])
+    assert dm.predict_dataset is not None and len(dm.predict_dataset) == 5
 
 
-def test_datamodule_dataloaders_created(base_formula_df, attributes_df_full_match, sample_task_configs_dm):
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=attributes_df_full_match,
-        task_configs=sample_task_configs_dm,
-    )
-    dm.setup()  # Setup all stages
+def test_predict_literal_all(descriptors_df):
+    configs = [RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1], predict_idx="all")]
+    dm = build_dm(descriptors_df, task_frames={"task1": _reg_cls_frames()["task1"]}, configs=configs)
+    dm.setup(stage="predict")
+    assert sorted(dm.predict_compositions) == sorted(COMPOSITIONS)
+
+
+def test_predict_explicit_subset_union(descriptors_df):
+    configs = [
+        RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1], predict_idx=["s0", "s1"]),
+        RegressionTaskConfig(name="task2", data_column="task2", dims=[2, 16, 1], predict_idx=["s2", "s3"]),
+    ]
+    frames = {
+        "task1": pd.DataFrame({"task1": np.arange(20.0)}, index=list(COMPOSITIONS)),
+        "task2": pd.DataFrame({"task2": np.arange(20.0)}, index=list(COMPOSITIONS)),
+    }
+    dm = build_dm(descriptors_df, task_frames=frames, configs=configs)
+    dm.setup(stage="predict")
+    # Union of the two per-task subsets, in master order.
+    assert dm.predict_compositions == ["s0", "s1", "s2", "s3"]
+
+
+def test_predict_explicit_subset_with_predict_only_composition(descriptors_df):
+    # s99 has no task target but is a requested predict composition; it must still get a descriptor.
+    desc = pd.concat([descriptors_df, pd.DataFrame({"f1": [0.5], "f2": [0.5]}, index=["s99"])])
+    configs = [RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1], predict_idx=["s0", "s99"])]
+    dm = build_dm(desc, task_frames={"task1": _reg_cls_frames()["task1"]}, configs=configs)
+    dm.setup(stage="predict")
+    assert set(dm.predict_compositions) == {"s0", "s99"}
+
+
+# --- dataloaders ------------------------------------------------------------
+
+
+def test_dataloaders_created(descriptors_df, reg_cls_configs):
+    split = ["train"] * 10 + ["val"] * 5 + ["test"] * 5
+    dm = build_dm(descriptors_df, task_frames=_reg_cls_frames(split=split), configs=reg_cls_configs)
+    dm.setup()
     assert dm.train_dataloader() is not None
     assert dm.val_dataloader() is not None
     assert dm.test_dataloader() is not None
-    dm.setup(stage="predict")  # Ensure predict_dataset is created
+    dm.setup(stage="predict")
     assert dm.predict_dataloader() is not None
 
 
-# Keep other existing tests like load_data_from_paths, load_data_numpy_array, etc.
-# They might need fixture updates if they used base_attributes_df directly.
-# For brevity, I'm focusing on the core logic changes.
-# The test_datamodule_empty_dataset_returns_none_dataloader should still be relevant.
-# test_datamodule_task_masking_ratios_propagation needs attributes_df_full_match.
-# test_datamodule_structure_usage_in_dataset needs attributes_df_full_match.
+def test_empty_dataset_returns_none_dataloader(descriptors_df, reg_cls_configs):
+    dm = build_dm(descriptors_df, task_frames=_reg_cls_frames(), configs=reg_cls_configs)
+    dm.train_dataset = None
+    dm.val_dataset = None
+    dm.test_dataset = None
+    dm.predict_dataset = None
+    assert dm.train_dataloader() is None
+    assert dm.val_dataloader() is None
+    assert dm.test_dataloader() is None
+    assert dm.predict_dataloader() is None
 
 
-def test_datamodule_load_data_from_paths(
-    temp_files_dir, base_formula_df, attributes_df_full_match, sample_task_configs_dm
-):
-    formula_pkl_path = os.path.join(temp_files_dir, "formula.pkl")
-    attributes_csv_path = os.path.join(temp_files_dir, "attributes.csv")
-    base_formula_df.to_pickle(formula_pkl_path)
-    attributes_df_full_match.to_csv(attributes_csv_path)
-
-    dm = CompoundDataModule(
-        formula_desc_source=formula_pkl_path,
-        attributes_source=attributes_csv_path,
-        task_configs=sample_task_configs_dm,
-    )
-    assert dm.formula_df is not None
-    pd.testing.assert_frame_equal(dm.formula_df, base_formula_df, check_dtype=False)
-    assert dm.attributes_df is not None
-    # Check that the loaded attributes_df matches the original
-    pd.testing.assert_frame_equal(dm.attributes_df, attributes_df_full_match, check_dtype=False)
+# --- task type behavior -----------------------------------------------------
 
 
-def test_datamodule_task_masking_ratios_propagation(base_formula_df, attributes_df_full_match, sample_task_configs_dm):
-    mask_ratios = {"task1": 0.5}
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=attributes_df_full_match,
-        task_configs=sample_task_configs_dm,
-        task_masking_ratios=mask_ratios,
-    )
-    dm.setup(stage="fit")
-    assert dm.train_dataset is not None
-    assert dm.train_dataset.task_masking_ratios == mask_ratios
-    assert dm.val_dataset is not None
-    assert dm.val_dataset.task_masking_ratios is None
+def test_autoencoder_rides_along_with_supervised(descriptors_df):
+    configs = [
+        AutoEncoderTaskConfig(name="ae_task", dims=[2, 4, 2]),
+        RegressionTaskConfig(name="reg_task", data_column="reg_task", dims=[2, 16, 1]),
+    ]
+    frames = {"reg_task": pd.DataFrame({"reg_task": np.arange(20.0)}, index=list(COMPOSITIONS))}
+    dm = build_dm(descriptors_df, task_frames=frames, configs=configs, test_all=True)
     dm.setup(stage="test")
-    assert dm.test_dataset is not None
-    assert dm.test_dataset.task_masking_ratios is None
-    dm.setup(stage="predict")
-    assert dm.predict_dataset is not None
-    assert dm.predict_dataset.task_masking_ratios is None
-
-
-def test_datamodule_task_masking_ratio_float_applies_all_tasks(
-    base_formula_df, attributes_df_full_match, sample_task_configs_dm
-):
-    mask_ratio = 0.25
-    dm = CompoundDataModule(
-        formula_desc_source=base_formula_df,
-        attributes_source=attributes_df_full_match,
-        task_configs=sample_task_configs_dm,
-        task_masking_ratios=mask_ratio,
-    )
-    dm.setup(stage="fit")
-    assert dm.train_dataset is not None
-    expected = {cfg.name: mask_ratio for cfg in sample_task_configs_dm if getattr(cfg, "enabled", True)}
-    assert dm.train_dataset.task_masking_ratios == expected
-
-
-def test_datamodule_empty_dataset_returns_none_dataloader(base_formula_df, sample_task_configs_no_seq_dm, caplog):
-    # --- Loguru to caplog bridge (local to this test) ---
-    class PropagateHandler(logging.Handler):
-        def emit(self, record):
-            logging.getLogger(record.name).handle(record)
-
-    handler_id = loguru_logger.add(PropagateHandler(), format="{message}", level="INFO")
-    # --- End bridge ---
-
-    try:
-        # Initialize DM with valid, non-empty formula_df to pass __init__
-        dm = CompoundDataModule(
-            formula_desc_source=base_formula_df,
-            attributes_source=None,  # attributes_source can be None
-            task_configs=sample_task_configs_no_seq_dm,
-        )
-
-        # Manually set dataset attributes to None to directly test dataloader guard clauses.
-        # This bypasses the setup logic for creating these datasets, focusing only on the dataloader methods' behavior.
-        dm.train_dataset = None
-        dm.val_dataset = None
-        dm.test_dataset = None
-        dm.predict_dataset = None  # predict_dataset is also an attribute that can be None
-
-        assert dm.train_dataloader() is None, "Train dataloader should be None when train_dataset is None"
-        assert any(
-            "train_dataloader: Train dataset is None or not initialized" in rec.message
-            for rec in caplog.records
-            if rec.levelname == "WARNING"
-        ), "Expected log for None train_dataset not found"
-        caplog.clear()
-
-        assert dm.val_dataloader() is None, "Validation dataloader should be None when val_dataset is None"
-        assert any(
-            "val_dataloader: Validation dataset is None or not initialized" in rec.message
-            for rec in caplog.records
-            if rec.levelname == "INFO"
-        ), "Expected log for None val_dataset not found"
-        caplog.clear()
-
-        assert dm.test_dataloader() is None, "Test dataloader should be None when test_dataset is None"
-        assert any(
-            "test_dataloader: Test dataset is None or not initialized" in rec.message
-            for rec in caplog.records
-            if rec.levelname == "INFO"
-        ), "Expected log for None test_dataset not found"
-        caplog.clear()
-
-        assert dm.predict_dataloader() is None, "Predict dataloader should be None when predict_dataset is None"
-        assert any(
-            "predict_dataloader: Predict dataset is None or not initialized" in rec.message
-            for rec in caplog.records
-            if rec.levelname == "INFO"
-        ), "Expected log for None predict_dataset not found"
-    finally:
-        loguru_logger.remove(handler_id)  # Clean up the handler
-
-
-# ============================================================================
-# Tests for DistributedSampler support (multi-GPU training)
-# ============================================================================
-
-
-class TestDataModuleSingleGPUMode:
-    """Test DataModule behavior in single GPU/CPU mode (no DistributedSampler)."""
-
-    def test_train_dataloader_no_sampler_single_gpu(self, base_formula_df, attributes_df_full_match):
-        """Test that train_dataloader doesn't use sampler in single GPU mode."""
-        from unittest.mock import patch
-
-        # Mock distributed environment as NOT initialized
-        with patch("torch.distributed.is_available", return_value=False):
-            with patch("torch.distributed.is_initialized", return_value=False):
-                dm = CompoundDataModule(
-                    formula_desc_source=base_formula_df,
-                    attributes_source=attributes_df_full_match,
-                    task_configs=[
-                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-                    ],
-                    batch_size=4,
-                    num_workers=0,
-                    val_split=0.2,
-                    test_split=0.2,
-                    random_seed=42,
-                )
-
-                dm.setup(stage="fit")
-                train_loader = dm.train_dataloader()
-
-                # Verify no DistributedSampler is used
-                # Note: PyTorch DataLoader creates a RandomSampler internally when shuffle=True
-                from torch.utils.data.distributed import DistributedSampler
-
-                assert not isinstance(train_loader.sampler, DistributedSampler), (
-                    "Single GPU should not use DistributedSampler"
-                )
-
-    def test_val_dataloader_no_sampler_single_gpu(self, base_formula_df, attributes_df_full_match):
-        """Test that val_dataloader doesn't use sampler in single GPU mode."""
-        from unittest.mock import patch
-
-        with patch("torch.distributed.is_available", return_value=False):
-            with patch("torch.distributed.is_initialized", return_value=False):
-                dm = CompoundDataModule(
-                    formula_desc_source=base_formula_df,
-                    attributes_source=attributes_df_full_match,
-                    task_configs=[
-                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-                    ],
-                    batch_size=4,
-                    num_workers=0,
-                    val_split=0.2,
-                    test_split=0.2,
-                    random_seed=42,
-                )
-
-                dm.setup(stage="fit")
-                val_loader = dm.val_dataloader()
-
-                from torch.utils.data.distributed import DistributedSampler
-
-                assert not isinstance(val_loader.sampler, DistributedSampler), (
-                    "Single GPU validation should not use DistributedSampler"
-                )
-
-    def test_test_dataloader_no_sampler_single_gpu(self, base_formula_df, attributes_df_full_match):
-        """Test that test_dataloader doesn't use sampler in single GPU mode."""
-        from unittest.mock import patch
-
-        with patch("torch.distributed.is_available", return_value=False):
-            with patch("torch.distributed.is_initialized", return_value=False):
-                dm = CompoundDataModule(
-                    formula_desc_source=base_formula_df,
-                    attributes_source=attributes_df_full_match,
-                    task_configs=[
-                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-                    ],
-                    batch_size=4,
-                    num_workers=0,
-                    val_split=0.2,
-                    test_split=0.2,
-                    random_seed=42,
-                )
-
-                dm.setup(stage="test")
-                test_loader = dm.test_dataloader()
-
-                from torch.utils.data.distributed import DistributedSampler
-
-                assert not isinstance(test_loader.sampler, DistributedSampler), (
-                    "Single GPU test should not use DistributedSampler"
-                )
-
-    def test_predict_dataloader_no_sampler_single_gpu(self, base_formula_df, attributes_df_full_match):
-        """Test that predict_dataloader doesn't use DistributedSampler in single GPU mode."""
-        from unittest.mock import patch
-
-        with patch("torch.distributed.is_available", return_value=False):
-            with patch("torch.distributed.is_initialized", return_value=False):
-                dm = CompoundDataModule(
-                    formula_desc_source=base_formula_df,
-                    attributes_source=attributes_df_full_match,
-                    task_configs=[
-                        RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-                    ],
-                    batch_size=4,
-                    num_workers=0,
-                    predict_idx="all",
-                    val_split=0.2,
-                    test_split=0.2,
-                    random_seed=42,
-                )
-
-                dm.setup(stage="predict")
-                predict_loader = dm.predict_dataloader()
-
-                from torch.utils.data.distributed import DistributedSampler
-
-                assert not isinstance(predict_loader.sampler, DistributedSampler), (
-                    "Single GPU predict should not use DistributedSampler"
-                )
-
-
-class TestDataModuleDistributedMode:
-    """Test DataModule behavior in distributed (multi-GPU) mode."""
-
-    def test_train_dataloader_uses_distributed_sampler(self, base_formula_df, attributes_df_full_match):
-        """Test that train_dataloader uses DistributedSampler in multi-GPU mode."""
-        from unittest.mock import patch
-
-        from torch.utils.data.distributed import DistributedSampler
-
-        # Patch in foundation_model.data.datamodule where torch.distributed is actually used
-        with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
-            with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
-                with patch("torch.distributed.get_rank", return_value=0):
-                    with patch("torch.distributed.get_world_size", return_value=2):
-                        dm = CompoundDataModule(
-                            formula_desc_source=base_formula_df,
-                            attributes_source=attributes_df_full_match,
-                            task_configs=[
-                                RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-                            ],
-                            batch_size=4,
-                            num_workers=0,
-                            val_split=0.2,
-                            test_split=0.2,
-                            random_seed=42,
-                        )
-
-                        dm.setup(stage="fit")
-                        train_loader = dm.train_dataloader()
-
-                        # Verify DistributedSampler is used
-                        assert train_loader.sampler is not None, "Multi-GPU should use sampler"
-                        assert isinstance(train_loader.sampler, DistributedSampler), (
-                            "Should use DistributedSampler in multi-GPU mode"
-                        )
-
-                        # Verify sampler settings
-                        sampler = train_loader.sampler
-                        assert sampler.shuffle is True, "Training sampler should shuffle"
-                        assert sampler.drop_last is False, "Should keep all samples (drop_last=False)"
-
-    def test_val_dataloader_uses_distributed_sampler(self, base_formula_df, attributes_df_full_match):
-        """Test that val_dataloader uses DistributedSampler in multi-GPU mode."""
-        from unittest.mock import patch
-
-        from torch.utils.data.distributed import DistributedSampler
-
-        # Patch in foundation_model.data.datamodule where torch.distributed is actually used
-        with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
-            with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
-                with patch("torch.distributed.get_rank", return_value=0):
-                    with patch("torch.distributed.get_world_size", return_value=2):
-                        dm = CompoundDataModule(
-                            formula_desc_source=base_formula_df,
-                            attributes_source=attributes_df_full_match,
-                            task_configs=[
-                                RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-                            ],
-                            batch_size=4,
-                            num_workers=0,
-                            val_split=0.2,
-                            test_split=0.2,
-                            random_seed=42,
-                        )
-
-                        dm.setup(stage="fit")
-                        val_loader = dm.val_dataloader()
-
-                        assert val_loader.sampler is not None
-                        assert isinstance(val_loader.sampler, DistributedSampler)
-
-                        # Verify sampler settings for validation
-                        sampler = val_loader.sampler
-                        assert sampler.shuffle is False, "Validation sampler should not shuffle"
-                        assert sampler.drop_last is False, "Should keep all samples"
-
-    def test_test_dataloader_uses_distributed_sampler(self, base_formula_df, attributes_df_full_match):
-        """Test that test_dataloader uses DistributedSampler in multi-GPU mode."""
-        from unittest.mock import patch
-
-        from torch.utils.data.distributed import DistributedSampler
-
-        # Patch in foundation_model.data.datamodule where torch.distributed is actually used
-        with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
-            with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
-                with patch("torch.distributed.get_rank", return_value=0):
-                    with patch("torch.distributed.get_world_size", return_value=2):
-                        dm = CompoundDataModule(
-                            formula_desc_source=base_formula_df,
-                            attributes_source=attributes_df_full_match,
-                            task_configs=[
-                                RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-                            ],
-                            batch_size=4,
-                            num_workers=0,
-                            val_split=0.2,
-                            test_split=0.2,
-                            random_seed=42,
-                        )
-
-                        dm.setup(stage="test")
-                        test_loader = dm.test_dataloader()
-
-                        assert test_loader.sampler is not None
-                        assert isinstance(test_loader.sampler, DistributedSampler)
-
-                        # Verify sampler settings for test
-                        sampler = test_loader.sampler
-                        assert sampler.shuffle is False, "Test sampler should not shuffle"
-                        assert sampler.drop_last is False, "Should keep all samples"
-
-    def test_predict_dataloader_uses_distributed_sampler(self, base_formula_df, attributes_df_full_match):
-        """Test that predict_dataloader uses DistributedSampler in multi-GPU mode."""
-        from unittest.mock import patch
-
-        from torch.utils.data.distributed import DistributedSampler
-
-        # Patch in foundation_model.data.datamodule where torch.distributed is actually used
-        with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
-            with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
-                with patch("torch.distributed.get_rank", return_value=0):
-                    with patch("torch.distributed.get_world_size", return_value=2):
-                        dm = CompoundDataModule(
-                            formula_desc_source=base_formula_df,
-                            attributes_source=attributes_df_full_match,
-                            task_configs=[
-                                RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-                            ],
-                            batch_size=4,
-                            num_workers=0,
-                            predict_idx="all",  # Predict on all data
-                            val_split=0.2,
-                            test_split=0.2,
-                            random_seed=42,
-                        )
-
-                        dm.setup(stage="predict")
-                        predict_loader = dm.predict_dataloader()
-
-                        assert predict_loader.sampler is not None
-                        assert isinstance(predict_loader.sampler, DistributedSampler)
-
-                        # Verify sampler settings for predict
-                        sampler = predict_loader.sampler
-                        assert sampler.shuffle is False, "Predict sampler should not shuffle"
-                        assert sampler.drop_last is False, "Should keep all samples"
-
-
-class TestDistributedSamplerDataCoverage:
-    """Test that DistributedSampler covers all data correctly across ranks."""
-
-    def test_all_samples_covered_across_ranks(self, base_formula_df, attributes_df_full_match):
-        """Test that all samples are covered when combining all ranks."""
-        from unittest.mock import patch
-
-        world_size = 3  # Simulate 3 GPUs
-
-        # Setup datamodule first (without distributed mode)
-        dm = CompoundDataModule(
-            formula_desc_source=base_formula_df,
-            attributes_source=attributes_df_full_match,
-            task_configs=[
-                RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-            ],
-            batch_size=4,
-            num_workers=0,
-            val_split=0.2,
-            test_split=0.2,
-            random_seed=42,
-        )
-
-        dm.setup(stage="test")
-
-        # Simulate getting samplers for different ranks
-        all_indices = []
-        for rank in range(world_size):
-            # Patch in foundation_model.data.datamodule for each rank
-            with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
-                with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
-                    with patch("torch.distributed.get_rank", return_value=rank):
-                        with patch("torch.distributed.get_world_size", return_value=world_size):
-                            test_loader = dm.test_dataloader()
-                            sampler = test_loader.sampler
-
-                            # Get indices for this rank
-                            indices = list(sampler)
-                            all_indices.extend(indices)
-
-        # Remove duplicates (from padding)
-        unique_indices = sorted(set(all_indices))
-        test_dataset_size = len(dm.test_dataset)
-
-        # Verify all samples are covered
-        assert len(unique_indices) == test_dataset_size, (
-            f"All {test_dataset_size} samples should be covered, but only {len(unique_indices)} unique indices found"
-        )
-        assert unique_indices == list(range(test_dataset_size)), "Should cover indices 0 to n-1"
-
-    def test_no_overlap_between_ranks_except_padding(self, base_formula_df, attributes_df_full_match):
-        """Test that different ranks process different data (except for padding)."""
-        from unittest.mock import patch
-
-        world_size = 3
-
-        # Setup datamodule first (without distributed mode)
-        dm = CompoundDataModule(
-            formula_desc_source=base_formula_df,
-            attributes_source=attributes_df_full_match,
-            task_configs=[
-                RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-            ],
-            batch_size=4,
-            num_workers=0,
-            val_split=0.2,
-            test_split=0.2,
-            random_seed=42,
-        )
-
-        dm.setup(stage="test")
-        test_dataset_size = len(dm.test_dataset)
-
-        rank_indices = {}
-        for rank in range(world_size):
-            # Patch in foundation_model.data.datamodule for each rank
-            with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
-                with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
-                    with patch("torch.distributed.get_rank", return_value=rank):
-                        with patch("torch.distributed.get_world_size", return_value=world_size):
-                            test_loader = dm.test_dataloader()
-                            sampler = test_loader.sampler
-                            rank_indices[rank] = list(sampler)
-
-        # Check overlap - should only be padding at the end
-        for rank_a in range(world_size):
-            for rank_b in range(rank_a + 1, world_size):
-                overlap = set(rank_indices[rank_a]) & set(rank_indices[rank_b])
-                # Overlap should only occur due to padding
-                if len(overlap) > 0:
-                    # Verify overlapping indices are due to padding (repeated from beginning)
-                    assert all(idx < (test_dataset_size % world_size) for idx in overlap), (
-                        "Overlap should only be padding indices"
-                    )
-
-    def test_uneven_dataset_distribution(self):
-        """Test correct handling when dataset size is not divisible by world_size."""
-        from unittest.mock import patch
-
-        # Create data with 17 samples (17 % 3 = 2, so 2 samples will be padded)
-        formula_df = pd.DataFrame(
-            {"f1": np.random.rand(17), "f2": np.random.rand(17)}, index=[f"s{i}" for i in range(17)]
-        )
-        attr_df = pd.DataFrame({"r1": np.random.rand(17)}, index=[f"s{i}" for i in range(17)])
-
-        world_size = 3
-
-        # Setup datamodule first (without distributed mode)
-        dm = CompoundDataModule(
-            formula_desc_source=formula_df,
-            attributes_source=attr_df,
-            task_configs=[
-                RegressionTaskConfig(name="r1", data_column="r1", dims=[2, 16, 1]),
-            ],
-            batch_size=4,
-            num_workers=0,
-            val_split=0.2,
-            test_split=0.2,
-            random_seed=42,
-        )
-
-        dm.setup(stage="test")
-        test_dataset_size = len(dm.test_dataset)
-
-        # Collect indices from all ranks
-        all_indices = []
-        samples_per_rank = []
-
-        for rank in range(world_size):
-            # Patch in foundation_model.data.datamodule for each rank
-            with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
-                with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
-                    with patch("torch.distributed.get_rank", return_value=rank):
-                        with patch("torch.distributed.get_world_size", return_value=world_size):
-                            test_loader = dm.test_dataloader()
-                            sampler = test_loader.sampler
-                            indices = list(sampler)
-                            samples_per_rank.append(len(indices))
-                            all_indices.extend(indices)
-
-        # Each rank should have equal samples (with padding)
-        assert all(count == samples_per_rank[0] for count in samples_per_rank), (
-            "All ranks should process equal number of samples (with padding)"
-        )
-
-        # After deduplication, should have exactly test_dataset_size samples
-        unique_indices = set(all_indices)
-        assert len(unique_indices) == test_dataset_size, (
-            f"After deduplication, should have {test_dataset_size} unique samples, got {len(unique_indices)}"
-        )
-
-
-def test_datamodule_with_autoencoder_task(tmp_path):
-    # Create dummy data
-    n_samples = 10
-    input_dim = 5
-    formula_desc = pd.DataFrame(
-        torch.randn(n_samples, input_dim).numpy(), index=[f"sample_{i}" for i in range(n_samples)]
-    )
-
-    # Save to file
-    formula_path = tmp_path / "formula.pkl"
-    formula_desc.to_pickle(formula_path)
-
-    # Task Configs
-    ae_task = AutoEncoderTaskConfig(name="ae_task", dims=[input_dim, 4, input_dim], loss_weight=1.0)
-
-    # Initialize DataModule with ONLY AutoEncoder task
-    # attributes_source is None
-    dm = CompoundDataModule(
-        formula_desc_source=str(formula_path), task_configs=[ae_task], attributes_source=None, batch_size=2
-    )
-
-    dm.setup(stage="fit")
-
-    train_loader = dm.train_dataloader()
-    batch = next(iter(train_loader))
-
-    # Batch structure: x, y_dict_batch, task_masks_batch, task_sequence_data_batch
-    x, y_dict, masks, t_seqs = batch
-
-    assert x.shape == (2, input_dim)
-    # y_dict should be empty for AE task
-    assert "ae_task" not in y_dict
-    # masks should be empty for AE task
-    assert "ae_task" not in masks
-
-
-def test_datamodule_with_mixed_tasks(tmp_path):
-    # Create dummy data
-    n_samples = 10
-    input_dim = 5
-    formula_desc = pd.DataFrame(
-        torch.randn(n_samples, input_dim).numpy(), index=[f"sample_{i}" for i in range(n_samples)]
-    )
-
-    attributes = pd.DataFrame(
-        {"target": torch.randn(n_samples).numpy()}, index=[f"sample_{i}" for i in range(n_samples)]
-    )
-
-    # Save to file
-    formula_path = tmp_path / "formula.pkl"
-    formula_desc.to_pickle(formula_path)
-    attr_path = tmp_path / "attr.pkl"
-    attributes.to_pickle(attr_path)
-
-    # Task Configs
-    ae_task = AutoEncoderTaskConfig(name="ae_task", dims=[input_dim, 4, input_dim], loss_weight=1.0)
-    reg_task = RegressionTaskConfig(name="reg_task", dims=[input_dim, 1], data_column="target")
-
-    # Initialize DataModule with mixed tasks
-    dm = CompoundDataModule(
-        formula_desc_source=str(formula_path),
-        task_configs=[ae_task, reg_task],
-        attributes_source=str(attr_path),
-        batch_size=2,
-    )
-
-    dm.setup(stage="fit")
-
-    train_loader = dm.train_dataloader()
-    batch = next(iter(train_loader))
-
-    x, y_dict, masks, t_seqs = batch
-
-    assert x.shape == (2, input_dim)
-    # y_dict should contain reg_task but not ae_task
+    loader = dm.test_dataloader()
+    x, y_dict, masks, _ = next(iter(loader))
+    assert x.shape[1] == 2
+    # AE task contributes no target/mask; the supervised task does.
+    assert "reg_task" in y_dict and "ae_task" not in y_dict
+    assert "reg_task" in masks and "ae_task" not in masks
+
+
+def test_mixed_tasks_batch_structure(descriptors_df):
+    configs = [
+        AutoEncoderTaskConfig(name="ae_task", dims=[2, 4, 2]),
+        RegressionTaskConfig(name="reg_task", data_column="reg_task", dims=[2, 16, 1]),
+    ]
+    frames = {"reg_task": pd.DataFrame({"reg_task": np.arange(20.0)}, index=list(COMPOSITIONS))}
+    dm = build_dm(descriptors_df, task_frames=frames, configs=configs, batch_size=4, test_all=True)
+    dm.setup(stage="test")
+    x, y_dict, masks, t_seqs = next(iter(dm.test_dataloader()))
+    assert x.shape == (4, 2)
     assert "reg_task" in y_dict
-    assert "ae_task" not in y_dict
 
-    assert "reg_task" in masks
-    assert "ae_task" not in masks
+
+# --- DistributedSampler coverage --------------------------------------------
+
+
+def _ddp_dm(descriptors_df):
+    split = ["train"] * 10 + ["val"] * 5 + ["test"] * 5
+    return build_dm(
+        descriptors_df,
+        task_frames=_reg_cls_frames(split=split),
+        configs=[RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1])],
+        batch_size=4,
+    )
+
+
+def test_single_gpu_no_distributed_sampler(descriptors_df):
+    with patch("torch.distributed.is_available", return_value=False):
+        with patch("torch.distributed.is_initialized", return_value=False):
+            dm = _ddp_dm(descriptors_df)
+            dm.setup(stage="fit")
+            loader = dm.train_dataloader()
+            assert not isinstance(loader.sampler, DistributedSampler)
+
+
+def test_multi_gpu_uses_distributed_sampler(descriptors_df):
+    with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
+        with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
+            with patch("torch.distributed.get_rank", return_value=0):
+                with patch("torch.distributed.get_world_size", return_value=2):
+                    dm = _ddp_dm(descriptors_df)
+                    dm.setup(stage="fit")
+                    loader = dm.train_dataloader()
+                    assert isinstance(loader.sampler, DistributedSampler)
+                    assert loader.sampler.shuffle is True
+                    assert loader.sampler.drop_last is False
+
+
+def test_multi_gpu_val_sampler_no_shuffle(descriptors_df):
+    with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
+        with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
+            with patch("torch.distributed.get_rank", return_value=0):
+                with patch("torch.distributed.get_world_size", return_value=2):
+                    dm = _ddp_dm(descriptors_df)
+                    dm.setup(stage="fit")
+                    loader = dm.val_dataloader()
+                    assert isinstance(loader.sampler, DistributedSampler)
+                    assert loader.sampler.shuffle is False

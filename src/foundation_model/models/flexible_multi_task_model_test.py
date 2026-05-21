@@ -534,15 +534,20 @@ def dummy_compound_datamodule(model_config_mixed_tasks, tmp_path):
         splits.extend(["train"] * (num_samples - len(splits)))  # Add remaining to train
     attributes_df["split"] = splits[:num_samples]
 
+    def descriptor_fn(compositions):
+        present = [c for c in compositions if c in formula_df.index]
+        return formula_df.loc[present]
+
+    # Each supervised task reads its own data_column from the shared attributes frame
+    # (composition-indexed). AUTOENCODER tasks need no frame.
+    task_frames = {cfg.name: attributes_df for cfg in config.task_configs if cfg.type != TaskType.AUTOENCODER}
+
     dm = CompoundDataModule(
-        formula_desc_source=formula_df,
-        attributes_source=attributes_df,
         task_configs=config.task_configs,
+        descriptor_fn=descriptor_fn,
+        task_frames=task_frames,
         batch_size=batch_size,
         num_workers=0,
-        # test_all=False, # Default
-        # val_split and test_split are used if 'split' column is not present.
-        # Since we provide 'split', these will be ignored by the DataModule's logic.
     )
     dm.setup()  # Call setup to prepare datasets
     return dm

@@ -1,5 +1,5 @@
 import ast  # For safely evaluating string representations of lists/arrays
-from typing import Dict, List
+from typing import Dict, List, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -86,12 +86,43 @@ def _parse_structured_element(
 
 
 class CompoundDataset(Dataset):
+    """Composition-keyed dataset for the multi-task model.
+
+    Alignment happens at construction: ``descriptors`` and every per-task frame are reindexed
+    to ``compositions`` (the sample order / dataset length for this split). Compositions absent
+    from a task's frame become NaN rows and are masked out for that task. ``__getitem__`` then
+    fetches positionally from these aligned structures, yielding the unchanged batch tuple
+    ``(x_formula, y_dict, task_masks_dict, t_sequences_dict)``.
+
+    Parameters
+    ----------
+    compositions : Sequence[str]
+        Composition keys defining the sample order and dataset length for this split.
+    descriptors : pd.DataFrame
+        Descriptor features indexed by composition. Must cover every entry in ``compositions``.
+    task_frames : Mapping[str, pd.DataFrame]
+        Per-task data frames indexed by composition (each holding the task's ``data_column``,
+        optional ``t_column``, etc.). Tasks absent here (or AUTOENCODER tasks) get placeholders.
+    task_configs : Sequence
+        Task configuration objects.
+    task_masking_ratios : Mapping[str, float] | None
+        Optional per-task keep ratios applied during training only.
+    task_masking_seed : int | None
+        Seed for deterministic random task masking.
+    is_predict_set : bool
+        When True, disables random task masking (masks come from NaN presence only).
+    dataset_name : str
+        Label used in log messages.
+    """
+
     def __init__(
         self,
-        formula_desc: pd.DataFrame | np.ndarray,
-        attributes: pd.DataFrame,  # Contains targets, series, temps, masks
-        task_configs: List,  # List of task configuration objects
-        task_masking_ratios: Dict[str, float] | None = None,
+        compositions: Sequence[str],
+        descriptors: pd.DataFrame,
+        task_frames: Mapping[str, pd.DataFrame],
+        task_configs: List,
+        *,
+        task_masking_ratios: Mapping[str, float] | None = None,
         task_masking_seed: int | None = None,
         is_predict_set: bool = False,
         dataset_name: str = "dataset",
@@ -105,41 +136,46 @@ class CompoundDataset(Dataset):
         if self._task_masking_rng is not None:
             logger.info(f"[{self.dataset_name}] Task masking RNG seeded with {task_masking_seed}.")
 
-        # --- Input Validation (remains largely the same) ---
-        if not isinstance(formula_desc, (pd.DataFrame, np.ndarray)):
-            logger.error(f"[{self.dataset_name}] formula_desc type error: {type(formula_desc)}")
-            raise TypeError("formula_desc must be pd.DataFrame or np.ndarray")
-        if hasattr(formula_desc, "empty") and formula_desc.empty:
-            raise ValueError("formula_desc DataFrame cannot be empty.")
-        if isinstance(formula_desc, np.ndarray) and formula_desc.size == 0:
-            raise ValueError("formula_desc np.ndarray cannot be empty.")
-
-        if not isinstance(attributes, pd.DataFrame):
-            logger.error(f"[{self.dataset_name}] attributes type error: {type(attributes)}")
-            raise TypeError("attributes must be pd.DataFrame")
-
-        if not self.is_predict_set:
-            if len(attributes.index) == 0 and len(attributes.columns) == 0 and len(formula_desc) > 0:
-                logger.error(f"[{self.dataset_name}] attributes is a 0x0 DataFrame, but formula_desc has samples.")
-                raise ValueError("attributes DataFrame cannot be empty when formula_desc is not.")
-            if len(attributes.index) == 0 and len(attributes.columns) > 0 and len(formula_desc) > 0:
-                logger.error(f"[{self.dataset_name}] attributes has columns but 0 rows (empty index).")
-                raise ValueError("attributes DataFrame has columns but an empty index (no samples).")
+        # --- Input validation ---
+        if not isinstance(descriptors, pd.DataFrame):
+            logger.error(f"[{self.dataset_name}] descriptors type error: {type(descriptors)}")
+            raise TypeError("descriptors must be a pd.DataFrame")
         if not task_configs:
             raise ValueError("task_configs list cannot be empty.")
 
-        # Convert formula_desc to tensor
-        if isinstance(formula_desc, pd.DataFrame):
-            self.x_formula = torch.tensor(formula_desc.values, dtype=torch.float32)
-        else:  # np.ndarray
-            self.x_formula = torch.tensor(formula_desc, dtype=torch.float32)
+        self.compositions: List[str] = [str(c) for c in compositions]
+        if len(self.compositions) == 0:
+            raise ValueError("compositions cannot be empty.")
+        if descriptors.empty:
+            raise ValueError("descriptors DataFrame cannot be empty.")
 
+        # --- Align descriptors to the composition order ---
+        descriptor_index = descriptors.index.astype(str)
+        descriptors = descriptors.copy()
+        descriptors.index = descriptor_index
+        missing_desc = [c for c in self.compositions if c not in descriptors.index]
+        if missing_desc:
+            preview = ", ".join(missing_desc[:5])
+            raise ValueError(
+                f"[{self.dataset_name}] descriptors is missing {len(missing_desc)} composition(s) "
+                f"required by this split (e.g. {preview})."
+            )
+        x_formula_df = descriptors.loc[self.compositions]
+        self.x_formula = torch.tensor(x_formula_df.values, dtype=torch.float32)
         self.x_struct: torch.Tensor | None = None
         logger.info(f"[{self.dataset_name}] Final x_formula shape: {self.x_formula.shape}")
+
+        # --- Reindex each provided task frame to the composition order ---
+        self._aligned_frames: Dict[str, pd.DataFrame] = {}
+        for task_name, frame in task_frames.items():
+            if frame is None:
+                continue
+            frame = frame.copy()
+            frame.index = frame.index.astype(str)
+            self._aligned_frames[task_name] = frame.reindex(self.compositions)
+
         self.y_dict: Dict[str, torch.Tensor | List[torch.Tensor]] = {}
-        self.t_sequences_dict: Dict[
-            str, torch.Tensor | List[torch.Tensor]
-        ] = {}  # For t-parameter sequences of KernelRegression tasks
+        self.t_sequences_dict: Dict[str, torch.Tensor | List[torch.Tensor]] = {}
         self.task_masks_dict: Dict[str, torch.Tensor | List[torch.Tensor]] = {}
         self.enabled_task_names: List[str] = []
 
@@ -154,9 +190,10 @@ class CompoundDataset(Dataset):
 
             if task_type == TaskType.AUTOENCODER:
                 # AutoEncoder tasks use the input features as target, so no external data loading is needed.
-                # We skip y_dict and task_masks_dict population for this task.
                 # The model handles target generation (x) and masking (ones) internally.
                 continue
+
+            task_frame = self._aligned_frames.get(task_name)
 
             # --- Primary Data Loading (y_dict) using cfg.data_column ---
             data_col_for_task = cfg.data_column
@@ -165,7 +202,7 @@ class CompoundDataset(Dataset):
             if not data_col_for_task:  # Not specified
                 logger.error(f"[{self.dataset_name}] Task '{task_name}': data_column is not specified in config.")
                 raise ValueError(f"data_column for task '{task_name}' must be specified.")
-            elif data_col_for_task not in attributes.columns:  # Specified but not found
+            elif task_frame is None or data_col_for_task not in task_frame.columns:  # Specified but not found
                 if self.is_predict_set:
                     logger.debug(
                         f"[{self.dataset_name}] Task '{task_name}': data_column '{data_col_for_task}' not found. "
@@ -175,12 +212,12 @@ class CompoundDataset(Dataset):
                     logger.warning(
                         f"[{self.dataset_name}] Task '{task_name}': data_column '{data_col_for_task}' not found. Using placeholder values."
                     )
-                raw_column_data = pd.Series([np.nan] * len(attributes), index=attributes.index)
+                raw_column_data = pd.Series([np.nan] * len(self.compositions), index=self.compositions)
             else:
                 logger.debug(
                     f"[{self.dataset_name}] Task '{task_name}': Loading data from column '{data_col_for_task}'."
                 )
-                raw_column_data = attributes[data_col_for_task]
+                raw_column_data = task_frame[data_col_for_task]
 
             # Process data differently based on task type
 
@@ -216,19 +253,19 @@ class CompoundDataset(Dataset):
                 if not t_col_for_task:  # Not specified
                     logger.error(f"[{self.dataset_name}] Task '{task_name}': t_column is not specified in config.")
                     raise ValueError(f"t_column for KernelRegression task '{task_name}' must be specified.")
-                elif t_col_for_task not in attributes.columns:  # Specified but not found
+                elif task_frame is None or t_col_for_task not in task_frame.columns:  # Specified but not found
                     logger.error(
                         f"[{self.dataset_name}] Task '{task_name}': t_column '{t_col_for_task}' "
-                        f"is specified in config but not found in attributes DataFrame."
+                        f"is specified in config but not found in the task data frame."
                     )
                     raise ValueError(
-                        f"T-parameter column '{t_col_for_task}' for task '{task_name}' not found in attributes data."
+                        f"T-parameter column '{t_col_for_task}' for task '{task_name}' not found in task data."
                     )
                 else:  # Column exists, load data
                     logger.debug(
                         f"[{self.dataset_name}] Task '{task_name}': Loading t-parameters from column '{t_col_for_task}'."
                     )
-                    raw_t_data = attributes[t_col_for_task]
+                    raw_t_data = task_frame[t_col_for_task]
                     current_task_t_list = []
                     for element in raw_t_data:
                         # For KernelRegression, we expect variable-length sequences, so don't use expected_t_len
@@ -300,7 +337,6 @@ class CompoundDataset(Dataset):
             num_valid_after_nan_mask = np.sum(final_mask_np)
 
             if self.task_masking_ratios and task_name in self.task_masking_ratios and not self.is_predict_set:
-                # ... (random masking logic remains the same as original) ...
                 ratio_to_keep = self.task_masking_ratios[task_name]
                 logger.info(
                     f"[{self.dataset_name}] Task '{task_name}': Applying random masking "
@@ -321,8 +357,6 @@ class CompoundDataset(Dataset):
                                 valid_indices, size=len(valid_indices) - num_to_keep, replace=False
                             )
                             final_mask_np[indices_to_set_false] = False
-                    # ... (logging for masking)
-                # ... (handle ratio_to_keep == 0.0 or >= 1.0)
 
             if task_type == TaskType.KERNEL_REGRESSION:
                 # For KernelRegression, store masks as List[Tensor] to match y_dict format

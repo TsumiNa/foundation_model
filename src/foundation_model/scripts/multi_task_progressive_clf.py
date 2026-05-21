@@ -330,6 +330,21 @@ class ProgressiveClfRunner:
                 columns.add(tc.t_column)
         return columns
 
+    @staticmethod
+    def _make_descriptor_fn(features: pd.DataFrame):
+        """Build a descriptor_fn that looks up precomputed descriptor rows by composition.
+
+        Avoids copying the (potentially large) descriptor matrix: only an index label map is
+        built. The DataModule's descriptor cache stringifies the returned index.
+        """
+        label_by_str = {str(idx): idx for idx in features.index}
+
+        def descriptor_fn(compositions):
+            labels = [label_by_str[c] for c in compositions if c in label_by_str]
+            return features.loc[labels]
+
+        return descriptor_fn
+
     def _build_pretrain_datamodule(self, task_cfgs: list) -> CompoundDataModule:
         columns = list(self._get_task_columns(task_cfgs))
         if "split" in self.all_data.columns:
@@ -338,9 +353,10 @@ class ProgressiveClfRunner:
         attributes = self.all_data[columns].copy()
 
         return CompoundDataModule(
-            formula_desc_source=self.desc_trans,
-            attributes_source=attributes,
             task_configs=list(task_cfgs),
+            descriptor_fn=self._make_descriptor_fn(self.desc_trans),
+            task_frames={tc.name: attributes for tc in task_cfgs},
+            composition_column=self.desc_trans.index.name or "composition",
             random_seed=self.config.datamodule_random_seed,
             batch_size=self.config.batch_size,
             num_workers=self.config.num_workers,
@@ -354,9 +370,10 @@ class ProgressiveClfRunner:
         attributes = self.all_data[columns].dropna(subset=[data_col]).copy()
 
         return CompoundDataModule(
-            formula_desc_source=self.desc_trans,
-            attributes_source=attributes,
             task_configs=[self.finetune_task_config],
+            descriptor_fn=self._make_descriptor_fn(self.desc_trans),
+            task_frames={self.finetune_task_config.name: attributes},
+            composition_column=self.desc_trans.index.name or "composition",
             random_seed=self.config.datamodule_random_seed,
             batch_size=self.config.batch_size,
             num_workers=self.config.num_workers,

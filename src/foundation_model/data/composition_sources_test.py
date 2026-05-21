@@ -11,6 +11,7 @@ from loguru import logger
 
 from foundation_model.data.composition_sources import (
     DescriptorCache,
+    PrecomputedDescriptorSource,
     build_composition_universe,
     load_task_frame,
     read_data_file,
@@ -101,6 +102,16 @@ def test_load_task_frame_missing_composition_column_raises(tmp_path):
     df.to_csv(path, index=False)
     with pytest.raises(ValueError, match="composition column 'composition' not found"):
         load_task_frame([str(path)], "composition", task_name="t")
+
+
+def test_load_task_frame_uses_index_when_named_like_composition(tmp_path):
+    """A file already indexed by the composition column (e.g. parquet) is accepted."""
+    df = pd.DataFrame({"y": [1.0, 2.0]}, index=pd.Index(["A", "B"], name="id"))
+    path = tmp_path / "t.parquet"
+    df.to_parquet(path)
+    frame = load_task_frame([str(path)], "id", task_name="t")
+    assert list(frame.index) == ["A", "B"]
+    assert list(frame["y"]) == [1.0, 2.0]
 
 
 def test_load_task_frame_empty_files_raises():
@@ -198,6 +209,32 @@ def test_descriptor_cache_rejects_non_dataframe():
     cache = DescriptorCache(lambda comps: [1, 2, 3])  # type: ignore[arg-type,return-value]
     with pytest.raises(TypeError, match="must return a pandas DataFrame"):
         cache.compute(["a"])
+
+
+# --- PrecomputedDescriptorSource --------------------------------------------
+
+
+@pytest.mark.parametrize("comp_col", [None, "id"])
+def test_precomputed_descriptor_source_indexed_file(tmp_path, comp_col):
+    """Looks up descriptors from a composition-indexed file; missing comps omitted."""
+    df = pd.DataFrame({"d0": [1.0, 2.0, 3.0]}, index=pd.Index(["A", "B", "C"], name="id"))
+    path = tmp_path / "desc.parquet"
+    df.to_parquet(path)
+    source = PrecomputedDescriptorSource(str(path), composition_column=comp_col)
+    out = source(["C", "A", "missing"])
+    assert list(out.index) == ["C", "A"]
+    assert out.loc["C", "d0"] == 3.0
+
+
+def test_precomputed_descriptor_source_column_file(tmp_path):
+    """Looks up descriptors from a file where composition is a column."""
+    df = pd.DataFrame({"id": ["A", "B"], "d0": [1.0, 2.0]})
+    path = tmp_path / "desc.csv"
+    df.to_csv(path, index=False)
+    source = PrecomputedDescriptorSource(str(path), composition_column="id")
+    out = source(["A"])
+    assert list(out.index) == ["A"]
+    assert out.loc["A", "d0"] == 1.0
 
 
 # --- resolve_splits ---------------------------------------------------------
