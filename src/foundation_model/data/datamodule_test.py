@@ -142,6 +142,26 @@ def test_data_files_loading(tmp_path, descriptors_df):
     assert len(dm._task_frames["task1"]) == 20
 
 
+def test_default_data_files_shared_across_tasks(tmp_path, descriptors_df):
+    """A single shared file fills in tasks that declare no data_files of their own."""
+    shared = pd.DataFrame({"composition": list(COMPOSITIONS), "task1": np.arange(20.0), "task2": np.arange(20.0)})
+    path = tmp_path / "shared.parquet"
+    shared.to_parquet(path)
+    configs = [
+        RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1]),
+        RegressionTaskConfig(name="task2", data_column="task2", dims=[2, 16, 1]),
+    ]
+    dm = CompoundDataModule(
+        task_configs=configs,
+        descriptor_fn=make_descriptor_fn(descriptors_df),
+        default_data_files=str(path),
+        test_all=True,
+    )
+    dm.setup(stage="test")
+    assert set(dm._task_frames) == {"task1", "task2"}
+    assert len(dm._task_frames["task1"]) == 20
+
+
 # --- splitting --------------------------------------------------------------
 
 

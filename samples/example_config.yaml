@@ -29,36 +29,40 @@ model:
       # You can merge task configurations from other YAML files:
       - ${file(src/foundation_model/configs/legacy_ac_qc_starry_tasks.yaml):tasks}
       - ${file(src/foundation_model/configs/legacy_mp_tasks.yaml):tasks}
-      # Or define tasks directly here:
+      # Or define tasks directly here. Each task owns its data file(s), joined to others by the
+      # composition column configured on the datamodule (data.init_args.composition_column):
       # - name: "custom_regression_task"
       #   type: REGRESSION
-      #   data_column: "name_of_column_for_regression_targets_in_attributes_file" # NEW
+      #   data_files: "path/to/custom_regression_task.parquet" # this task's own file(s)
+      #   data_column: "target_column_inside_that_file"
+      #   # split_column: "split"          # optional in-file train/val/test labels
+      #   # task_masking_ratio: 0.9        # optional: keep 90% of valid training samples
+      #   # predict_idx: "test"            # optional: subset to predict (literal or composition list)
       #   enabled: True
       #   loss_weight: 1.0 # Static scaling for this task's loss
-      #   dims: [256, 128, 1] # Example: [model_latent_dim, head_hidden_dim, output_dim]
-      #                      # The first element should match the model's encoder_config.latent_dim
+      #   dims: [256, 128, 1] # [model_latent_dim, head_hidden_dim, output_dim]
       #   norm: True
       #   residual: False
       #   optimizer: # Optional: task-specific optimizer settings
       #     lr: 0.001
       # - name: "custom_classification_task"
       #   type: CLASSIFICATION
-      #   data_column: "name_of_column_for_classification_targets_in_attributes_file" # NEW
+      #   data_files: "path/to/custom_classification_task.parquet"
+      #   data_column: "label_column_inside_that_file"
       #   enabled: True
       #   loss_weight: 1.0
-      #   dims: [256, 128] # Example: [model_latent_dim, head_hidden_dim]
+      #   dims: [256, 128] # [model_latent_dim, head_hidden_dim]
       #   num_classes: 3
       #   norm: True
-      # - name: "custom_sequence_task"
-      #   type: SEQUENCE
-      #   data_column: "name_of_column_for_sequence_data_in_attributes_file" # NEW
-      #   steps_column: "name_of_column_for_sequence_steps_in_attributes_file" # NEW (optional, for sequence steps/x-axis)
+      # - name: "custom_kernel_regression_task"
+      #   type: KernelRegression
+      #   data_files: "path/to/custom_kernel_task.parquet"
+      #   data_column: "sequence_target_column"
+      #   t_column: "sequence_x_axis_column" # energy / temperature / time values
       #   enabled: True
       #   loss_weight: 1.0
-      #   subtype: "rnn" # Or "tcn", "fixed_vec"
-      #   d_in: 256 # Should match model_latent_dim
-      #   hidden: 128
-      #   # seq_len: 100 # Required for fixed_vec if not inferable
+      #   x_dim: [256, 128, 64] # x_dim[0] should match model_latent_dim
+      #   t_dim: [256, 128, 64]
 
     # --- Optimizer for Shared Blocks (Encoder/Deposit) ---
     shared_block_optimizer:
@@ -73,22 +77,28 @@ model:
 data:
   class_path: foundation_model.data.datamodule.CompoundDataModule
   init_args:
-    # --- Paths to your precomputed data files ---
-    formula_desc_source: "path/to/your/precomputed_formula_descriptors.pkl" # Or .csv
-    attributes_source: "path/to/your/precomputed_attributes.pkl" # Or .csv
+    # --- Descriptors are computed on demand from the union of task compositions ---
+    # PrecomputedDescriptorSource reads a composition-indexed descriptor file and looks up rows.
+    # Replace with your own callable (class_path) to compute descriptors from compositions instead.
+    descriptor_fn:
+      class_path: foundation_model.data.composition_sources.PrecomputedDescriptorSource
+      init_args:
+        path: "path/to/your/precomputed_descriptors.parquet" # .csv / .parquet / .pd.xz / .pkl
+        composition_column: null # set if composition is a column; null uses the file's index
 
-    # --- Task configurations will be linked from model.init_args.task_configs by default ---
-    # task_configs: "${model.init_args.task_configs}" # This linking is usually automatic
+    # Name of the composition key shared across all task files (a column name or index name).
+    composition_column: "composition"
+
+    # --- Task configurations are linked from model.init_args.task_configs (automatic) ---
+    # Each task names its OWN data via the per-task fields on its config:
+    #   data_files, data_column (+ t_column for kernel regression), split_column,
+    #   task_masking_ratio, predict_idx.  There is no monolithic attributes file anymore.
 
     # --- Data Handling and Splitting ---
-    # task_masking_ratios: # Optional: mask training samples (dict per task or single float for all tasks)
-    #   "Band gap": 0.9 # Example: use 90% of available "Band gap" data for training samples
-    # task_masking_ratios: 0.9 # Example: use same keep ratio for every enabled task
-    val_split: 0.1 # Proportion of non-test data for validation
-    test_split: 0.1 # Proportion of total data for testing
+    val_split: 0.1 # Random-fallback validation proportion for compositions lacking a split label
+    test_split: 0.1 # Random-fallback test proportion
     random_seed: 42
-    # test_all: False # If True, all data is used for the test set
-    # predict_idx: null # Path to a file or list of indices for prediction
+    # test_all: False # If True, all compositions are assigned to the test set
 
     # --- Dataloader Settings ---
     batch_size: 64

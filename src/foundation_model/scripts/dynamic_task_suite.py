@@ -470,6 +470,27 @@ class DynamicTaskSuiteRunner:
             model.load_state_dict(state_dict)
         return best_path
 
+    @staticmethod
+    def _make_descriptor_fn(features: pd.DataFrame):
+        """Build a descriptor_fn that looks up precomputed descriptor rows by composition."""
+        feats = features.copy()
+        feats.index = feats.index.astype(str)
+
+        def descriptor_fn(compositions):
+            present = [c for c in compositions if c in feats.index]
+            return feats.loc[present]
+
+        return descriptor_fn
+
+    def _task_masking_ratio_for(self, name: str) -> float | None:
+        """Resolve the per-task keep ratio from the (float | dict | None) suite config."""
+        ratios = self.config.task_masking_ratios
+        if ratios is None:
+            return None
+        if isinstance(ratios, dict):
+            return ratios.get(name)
+        return float(ratios)
+
     def _build_pretrain_datamodule(self, task_names: Sequence[str]) -> CompoundDataModule:
         if self.pretrain_features is None or self.pretrain_targets is None:
             raise RuntimeError("Pretrain data is not loaded.")
@@ -478,11 +499,12 @@ class DynamicTaskSuiteRunner:
         if "split" in self.pretrain_targets.columns:
             columns.append("split")
         stage_targets = self.pretrain_targets.loc[:, columns]
+        configs = [self._build_regression_task(name, self.pretrain_target_columns[name]) for name in task_names]
         return CompoundDataModule(
-            formula_desc_source=self.pretrain_features,
-            attributes_source=stage_targets,
-            task_configs=[self._build_regression_task(name, self.pretrain_target_columns[name]) for name in task_names],
-            task_masking_ratios=self.config.task_masking_ratios,
+            task_configs=configs,
+            descriptor_fn=self._make_descriptor_fn(self.pretrain_features),
+            task_frames={cfg.name: stage_targets for cfg in configs},
+            composition_column=self.pretrain_features.index.name or "composition",
             random_seed=self.config.datamodule_random_seed,
             val_split=self.config.val_split,
             test_split=self.config.test_split,
@@ -500,11 +522,12 @@ class DynamicTaskSuiteRunner:
         if "split" in self.finetune_targets.columns:
             columns.append("split")
         target_frame = self.finetune_targets.loc[:, columns]
+        config = self._build_regression_task(task_name, column)
         return CompoundDataModule(
-            formula_desc_source=self.finetune_features,
-            attributes_source=target_frame,
-            task_configs=[self._build_regression_task(task_name, column)],
-            task_masking_ratios=self.config.task_masking_ratios,
+            task_configs=[config],
+            descriptor_fn=self._make_descriptor_fn(self.finetune_features),
+            task_frames={config.name: target_frame},
+            composition_column=self.finetune_features.index.name or "composition",
             random_seed=self.config.datamodule_random_seed,
             val_split=self.config.val_split,
             test_split=self.config.test_split,
@@ -528,6 +551,7 @@ class DynamicTaskSuiteRunner:
             norm=True,
             residual=False,
             optimizer=optimizer,
+            task_masking_ratio=self._task_masking_ratio_for(name),
         )
 
     def _plot_predictions(

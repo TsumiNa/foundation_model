@@ -73,10 +73,15 @@ x_formula ──▶ FoundationEncoder ──▶ latent ──tanh──▶ h_tas
 
 ## Data
 
-- `CompoundDataModule` / `CompoundDataset` (`data/`) load formula descriptors plus an `attributes_source` (CSV/DataFrame) holding targets.
-- Each task config names its target via `data_column`; kernel-regression tasks add a `t_column` naming the sequence x-axis values (energy/temperature/time). **Column names must match the source exactly.**
-- List-valued cells in CSV (sequences, multi-dim targets) must be strings parseable by `ast.literal_eval`, e.g. `"[1.0, 2.5, 3.0]"`.
-- Missing targets / NaNs are **masked out** per task rather than dropped; placeholders fill `y_dict`. Modality dropout and missing-value masking are built in.
+- `CompoundDataModule` / `CompoundDataset` (`data/`) are **composition-keyed**: each task owns its own data file(s), joined to the others by a **composition** column. There is no monolithic `attributes_source` — adding a property task means adding one file + one task config.
+- `CompoundDataModule(task_configs, descriptor_fn, *, task_frames=None, default_data_files=None, composition_column="composition", val_split, test_split, test_all, swap_train_val_split, random_seed, batch_size, num_workers)`:
+  - `descriptor_fn: Callable[[list[str]], pd.DataFrame]` computes descriptors from the union of compositions (results cached per unique composition). `PrecomputedDescriptorSource(path)` in `data/composition_sources.py` is a YAML/CLI-friendly callable for already-computed, composition-indexed descriptor files.
+  - Per-task data comes from `cfg.data_files` (paths; helpers in `data/composition_sources.py`), or an in-memory `task_frames` mapping, or a shared `default_data_files` fallback. `composition_column` may be a column name or the file's index name (per-task override via `cfg.composition_column`).
+- Per-task config fields (`model_config.py` `BaseTaskConfig`): `data_files`, `data_column` (+ `t_column` for kernel regression), `split_column`, `task_masking_ratio`, `predict_idx`. **Column names must match the source exactly.**
+- Splits: a single composition-level train/val/test split overlays each task file's `split` column (precedence `test > val > train`) with a random fallback (`val_split`/`test_split`/`random_seed`).
+- Prediction: each task's `predict_idx` (literal `train`/`val`/`test`/`all` or an explicit composition sequence) selects a subset; the predict set is their union, exposed as `datamodule.predict_compositions` (the prediction writer attaches these as the output index).
+- List-valued cells (sequences, multi-dim targets) must be strings parseable by `ast.literal_eval`, e.g. `"[1.0, 2.5, 3.0]"`.
+- Missing targets / NaNs (incl. compositions absent from a task's frame) are **masked out** per task rather than dropped; placeholders fill `y_dict`.
 
 ## Coding Style & Naming Conventions
 - Follow Ruff formatting (`ruff format`) and lint checks (`ruff check`): 4-space indentation, 120-character lines, double quotes.

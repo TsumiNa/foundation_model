@@ -311,6 +311,19 @@ class PredictionDataFrameWriter(BasePredictionWriter):
             logger.warning("Processed DataFrame is empty. No data saved.")
             return
 
+        # Attach composition keys when the DataModule exposes them and the row count matches
+        # the predicted compositions (single-process predict preserves order). In distributed
+        # runs the gathered order may differ, so we only index when the lengths line up.
+        compositions = getattr(getattr(trainer, "datamodule", None), "predict_compositions", None)
+        if compositions:
+            if len(compositions) == len(df):
+                df.index = pd.Index(compositions, name="composition")
+            else:
+                logger.warning(
+                    f"Not attaching composition index: {len(compositions)} predict compositions "
+                    f"but {len(df)} prediction rows (likely distributed gathering or deduplication)."
+                )
+
         logger.info(f"Final DataFrame shape: {df.shape}")
 
         # Save to CSV

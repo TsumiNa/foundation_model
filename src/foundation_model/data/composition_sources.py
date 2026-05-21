@@ -117,12 +117,16 @@ def load_task_frame(
     frames: list[pd.DataFrame] = []
     for path in data_files:
         df = read_data_file(path)
-        if composition_column not in df.columns:
+        if composition_column in df.columns:
+            df = df.set_index(composition_column)
+        elif df.index.name == composition_column:
+            pass  # already indexed by the composition column
+        else:
             raise ValueError(
                 f"Task '{label}': composition column '{composition_column}' not found in '{path}' "
-                f"(available columns: {list(df.columns)})."
+                f"as a column or index name (available columns: {list(df.columns)}, "
+                f"index name: {df.index.name!r})."
             )
-        df = df.set_index(composition_column)
         frames.append(df)
 
     combined = pd.concat(frames, axis=0) if len(frames) > 1 else frames[0]
@@ -167,6 +171,44 @@ def build_composition_universe(
         for comp in extra_compositions:
             universe.setdefault(str(comp), None)
     return list(universe)
+
+
+class PrecomputedDescriptorSource:
+    """A ``descriptor_fn`` backed by a precomputed, composition-indexed descriptor file.
+
+    This is a YAML/CLI-friendly callable (it can be instantiated via ``class_path`` /
+    ``init_args``) for the common case where descriptors are already computed and stored. The
+    file is loaded once on first call and rows are looked up by composition; compositions absent
+    from the file are simply omitted from the result (and reported as dropped by the DataModule).
+
+    Parameters
+    ----------
+    path : str
+        Path to a composition-indexed descriptor file (see :func:`read_data_file` for formats).
+    composition_column : str | None, optional
+        If given and present as a column, it is set as the index; otherwise the file's existing
+        index is treated as the composition key.
+    """
+
+    def __init__(self, path: str, composition_column: str | None = None):
+        self.path = path
+        self.composition_column = composition_column
+        self._frame: pd.DataFrame | None = None
+
+    def _load(self) -> pd.DataFrame:
+        if self._frame is None:
+            frame = read_data_file(self.path)
+            if self.composition_column is not None and self.composition_column in frame.columns:
+                frame = frame.set_index(self.composition_column)
+            frame = frame.copy()
+            frame.index = frame.index.astype(str)
+            self._frame = frame
+        return self._frame
+
+    def __call__(self, compositions: Sequence[str]) -> pd.DataFrame:
+        frame = self._load()
+        present = [str(c) for c in compositions if str(c) in frame.index]
+        return frame.loc[present]
 
 
 class DescriptorCache:

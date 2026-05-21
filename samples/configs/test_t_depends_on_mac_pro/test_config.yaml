@@ -176,10 +176,14 @@ model:
 data:
   class_path: foundation_model.data.CompoundDataModule
   init_args:
-    # formula_desc_source: qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet
-    # attributes_source: data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet
-    formula_desc_source: /Users/liuchang/projects/foundation_model/data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet
-    attributes_source: /Users/liuchang/projects/foundation_model/data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet
+    # Descriptors are looked up by composition from the descriptor parquet (indexed by 'id').
+    descriptor_fn:
+      class_path: foundation_model.data.composition_sources.PrecomputedDescriptorSource
+      init_args:
+        path: /Users/liuchang/projects/foundation_model/data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet
+    # All tasks share one targets file here; per-task data_files would override this.
+    default_data_files: /Users/liuchang/projects/foundation_model/data/qc_ac_te_mp_dos_reformat_20250615.pd.parquet
+    composition_column: id  # join key is the 'id' index, not the 'composition' formula column
     task_configs: ${model.init_args.task_configs}
     batch_size: 256
     num_workers: 0

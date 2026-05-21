@@ -151,6 +151,10 @@ class CompoundDataModule(L.LightningDataModule):
         In-memory per-task frames (indexed by composition or carrying the composition column),
         used instead of ``cfg.data_files`` for the named tasks. Convenient for programmatic /
         test usage.
+    default_data_files : str | Sequence[str] | None, optional
+        Shared fallback data file(s) used for any enabled task that has neither an in-memory
+        frame nor its own ``cfg.data_files``. Supports the legacy "one file holds all targets"
+        case from a YAML/CLI config without repeating the path on every task.
     composition_column : str, optional
         Global default composition column name; overridable per task via
         ``cfg.composition_column``. Defaults to ``"composition"``.
@@ -177,6 +181,7 @@ class CompoundDataModule(L.LightningDataModule):
         descriptor_fn: DescriptorFn,
         *,
         task_frames: Mapping[str, pd.DataFrame] | None = None,
+        default_data_files: str | Sequence[str] | None = None,
         composition_column: str = "composition",
         random_seed: int | None = 42,
         val_split: float = 0.1,
@@ -199,6 +204,12 @@ class CompoundDataModule(L.LightningDataModule):
         self.task_configs = list(task_configs)
         self.descriptor_fn = descriptor_fn
         self._input_task_frames = dict(task_frames) if task_frames is not None else {}
+        if default_data_files is None:
+            self.default_data_files: tuple[str, ...] = ()
+        elif isinstance(default_data_files, str):
+            self.default_data_files = (default_data_files,)
+        else:
+            self.default_data_files = tuple(str(p) for p in default_data_files)
         self.composition_column = composition_column
         self.random_seed = random_seed
         self.val_split = val_split
@@ -290,10 +301,16 @@ class CompoundDataModule(L.LightningDataModule):
             elif cfg.data_files:
                 frame = load_task_frame(cfg.data_files, comp_col, task_name=cfg.name)
                 logger.info(f"Task '{cfg.name}': loaded {len(frame)} rows from {len(cfg.data_files)} file(s).")
+            elif self.default_data_files:
+                frame = load_task_frame(self.default_data_files, comp_col, task_name=cfg.name)
+                logger.info(
+                    f"Task '{cfg.name}': loaded {len(frame)} rows from shared default_data_files "
+                    f"({len(self.default_data_files)} file(s))."
+                )
             else:
                 logger.warning(
-                    f"Task '{cfg.name}': no in-memory frame and no data_files; it will only contribute "
-                    "placeholder (masked) targets. Provide data_files or task_frames for supervised training."
+                    f"Task '{cfg.name}': no in-memory frame, data_files, or default_data_files; it will only "
+                    "contribute placeholder (masked) targets. Provide a data source for supervised training."
                 )
                 continue
             self._task_frames[cfg.name] = frame
