@@ -24,6 +24,7 @@ from foundation_model.models.model_config import (
     OptimizerConfig,
     RegressionTaskConfig,
     TaskType,
+    TransformerEncoderConfig,
 )
 from foundation_model.models.task_head.classification import ClassificationHead
 from foundation_model.models.task_head.regression import RegressionHead
@@ -837,6 +838,24 @@ def test_enable_autoencoder_mlp_dims():
     # Config dims should be reversed hidden_dims
     cfg = model.task_configs_map["__reconstruction__"]
     assert cfg.dims == [LATENT_DIM, 16, INPUT_DIM]
+
+
+def test_enable_autoencoder_transformer_dims():
+    # Transformer AE dims should be [latent_dim, input_dim] — a single linear projection
+    enc = TransformerEncoderConfig(input_dim=INPUT_DIM, d_model=LATENT_DIM)
+    task = RegressionTaskConfig(name="prop", data_column="prop", dims=[LATENT_DIM, 4, 1])
+    model = FlexibleMultiTaskModel(
+        task_configs=[task],
+        encoder_config=enc,
+        enable_autoencoder=True,
+    )
+    cfg = model.task_configs_map["__reconstruction__"]
+    assert cfg.dims == [LATENT_DIM, INPUT_DIM]
+    # forward produces the right output shape
+    x = torch.randn(4, INPUT_DIM)
+    with torch.no_grad():
+        out = model(x)
+    assert out["__reconstruction__"].shape == (4, INPUT_DIM)
 
 
 def test_enable_autoencoder_not_in_task_configs_by_default():

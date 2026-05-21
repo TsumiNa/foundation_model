@@ -41,13 +41,22 @@ class AutoEncoderHead(BaseTaskHead):
 
         output_act = torch.nn.Softplus() if config.nonnegative else None
 
-        self.net = LinearBlock(
-            [d_in] + head_internal_dims[:-1],
-            normalization=config.norm,
-            residual=config.residual,
-            dim_output_layer=head_internal_dims[-1],
-            output_active=output_act,
-        )
+        if len(head_internal_dims) == 1:
+            # Direct projection with no hidden layers (e.g. Transformer AE: [latent_dim, input_dim]).
+            # Mirrors the dim_output_layer path which also skips normalization on the final layer.
+            self.net = LinearBlock(
+                [d_in, head_internal_dims[0]],
+                normalization=False,
+                output_active=output_act,
+            )
+        else:
+            self.net = LinearBlock(
+                [d_in] + head_internal_dims[:-1],
+                normalization=config.norm,
+                residual=config.residual,
+                dim_output_layer=head_internal_dims[-1],
+                output_active=output_act,
+            )
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         """

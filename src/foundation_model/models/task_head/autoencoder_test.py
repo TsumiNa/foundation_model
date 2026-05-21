@@ -56,3 +56,12 @@ def test_single_dim_raises():
     cfg = _AEConfig(dims=[8], nonnegative=False)
     with pytest.raises(ValueError, match="output dimension"):
         AutoEncoderHead(cfg)
+
+
+def test_two_dim_direct_projection():
+    # dims=[latent, input_dim] — no hidden layer, single linear projection (Transformer AE case)
+    cfg = _AEConfig(dims=[8, 20], nonnegative=False)
+    head = AutoEncoderHead(cfg)
+    x = torch.randn(5, 8)
+    out = head(x)
+    assert out.shape == (5, 20)
