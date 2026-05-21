@@ -331,13 +331,20 @@ class KernelRegressionTaskConfig(BaseTaskConfig):
 
 
 @dataclass
-class AutoEncoderTaskConfig(BaseTaskConfig):
-    """Configuration for autoencoder tasks (reconstruction)."""
+class _AEConfig:
+    """Internal config for the auto-created reconstruction head. Not part of the public API."""
 
-    dims: List[int] = field(default_factory=lambda: [256, 128, 64])
+    dims: List[int] = field(default_factory=list)
+    nonnegative: bool = False
+    name: str = "__reconstruction__"
     type: TaskType = TaskType.AUTOENCODER
     norm: bool = True
     residual: bool = False
+    loss_weight: float = 1.0
+    enabled: bool = True
+    freeze_parameters: bool = False
+    data_column: str = "__autoencoder__"
+    optimizer: Optional[OptimizerConfig] = None
 
 
-TaskConfigType = RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig | AutoEncoderTaskConfig
+TaskConfigType = RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig

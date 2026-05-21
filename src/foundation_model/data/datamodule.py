@@ -12,7 +12,6 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 from foundation_model.models.model_config import (
-    AutoEncoderTaskConfig,
     ClassificationTaskConfig,
     KernelRegressionTaskConfig,
     RegressionTaskConfig,
@@ -28,7 +27,7 @@ from .composition_sources import (
 )
 from .dataset import CompoundDataset
 
-TaskConfig = RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig | AutoEncoderTaskConfig
+TaskConfig = RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
 
 
 class CollateFnWithTaskInfo:

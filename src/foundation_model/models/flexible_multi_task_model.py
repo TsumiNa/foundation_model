@@ -40,14 +40,15 @@ except Exception:  # noqa: BLE001 - keep fallback for CPU-only environments
 
 from .components.foundation_encoder import FoundationEncoder
 from .model_config import (
-    AutoEncoderTaskConfig,
     BaseEncoderConfig,
     ClassificationTaskConfig,
     KernelRegressionTaskConfig,
+    MLPEncoderConfig,
     OptimizerConfig,
     RegressionTaskConfig,
     TaskConfigType,
     TaskType,
+    _AEConfig,
     build_encoder_config,
 )
 from .task_head.autoencoder import AutoEncoderHead
@@ -108,28 +109,31 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     def __init__(
         self,
-        task_configs: Sequence[
-            RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig | AutoEncoderTaskConfig
-        ],
+        task_configs: Sequence[RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig],
         *,
         encoder_config: BaseEncoderConfig | Mapping[str, Any],
         # Freezing parameters
         freeze_shared_encoder: bool = False,
         # Optimization parameters
         shared_block_optimizer: OptimizerConfig | None = None,
-        enable_learnable_loss_balancer: bool = False,  # New parameter
+        enable_learnable_loss_balancer: bool = False,
         # Loss calculation behavior
-        allow_all_missing_in_batch: bool = True,  # New parameter for handling all-missing batches
+        allow_all_missing_in_batch: bool = True,
+        # AutoEncoder head
+        enable_autoencoder: bool = False,
+        autoencoder_nonnegative: bool = False,
     ):
         super().__init__()
-        self.save_hyperparameters()
+        # logger=False: saves all hparams to checkpoint (pickle, not OmegaConf) but skips
+        # logger.log_hyperparams(), which is where OmegaConf chokes on Union[str, Sequence[str]].
+        self.save_hyperparameters(logger=False)
 
         # Store the new parameters
         self.enable_learnable_loss_balancer = enable_learnable_loss_balancer
         self.allow_all_missing_in_batch = allow_all_missing_in_batch
 
         # Validate inputs
-        if not task_configs:
+        if not task_configs and not enable_autoencoder:
             raise ValueError("At least one task configuration must be provided")
 
         if encoder_config is None:
@@ -140,10 +144,25 @@ class FlexibleMultiTaskModel(L.LightningModule):
             self.encoder_config = build_encoder_config(encoder_config)
         # Dimension of latent representation (input to task heads after Tanh activation)
         self.latent_dim = self.encoder_config.latent_dim
-        self.task_configs = list(task_configs)
-        self.task_configs_map = {cfg.name: cfg for cfg in self.task_configs}
+        self.task_configs: list = list(task_configs)
+        self.task_configs_map: dict = {cfg.name: cfg for cfg in self.task_configs}
         for cfg in self.task_configs:
             cfg.loss_weight = self._normalize_loss_weight(getattr(cfg, "loss_weight", 1.0), cfg.name)
+
+        # Auto-create reconstruction head if requested
+        if enable_autoencoder:
+            _AE_NAME = "__reconstruction__"
+            if _AE_NAME in self.task_configs_map:
+                raise ValueError(
+                    f"Task name '{_AE_NAME}' is reserved for the built-in autoencoder head; "
+                    "rename the conflicting task."
+                )
+            ae_cfg = _AEConfig(
+                dims=self._derive_ae_dims(self.encoder_config),
+                nonnegative=autoencoder_nonnegative,
+            )
+            self.task_configs.append(ae_cfg)
+            self.task_configs_map[ae_cfg.name] = ae_cfg
 
         # Freezing parameters
         self.freeze_shared_encoder = freeze_shared_encoder
@@ -398,10 +417,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     def _validate_task_config(
         self,
-        config_item: RegressionTaskConfig
-        | ClassificationTaskConfig
-        | KernelRegressionTaskConfig
-        | AutoEncoderTaskConfig,
+        config_item: RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig,
     ):
         """Validate that the task configuration is compatible with the shared encoder."""
         if not config_item.name:
@@ -421,7 +437,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     f"but received {config_item.x_dim[0]}."
                 )
         else:
-            assert isinstance(config_item, (RegressionTaskConfig, ClassificationTaskConfig, AutoEncoderTaskConfig))
+            assert isinstance(config_item, (RegressionTaskConfig, ClassificationTaskConfig))
             if not getattr(config_item, "dims", None):
                 raise ValueError(f"Task '{config_item.name}' requires a non-empty dims configuration.")
             if config_item.dims[0] != expected_input_dim:
@@ -433,13 +449,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             getattr(config_item, "loss_weight", 1.0), config_item.name
         )
 
-    def _instantiate_task_head(
-        self,
-        config_item: RegressionTaskConfig
-        | ClassificationTaskConfig
-        | KernelRegressionTaskConfig
-        | AutoEncoderTaskConfig,
-    ) -> nn.Module:
+    def _instantiate_task_head(self, config_item) -> nn.Module:
         """Instantiate a task head module for the provided configuration."""
         if not config_item.enabled:
             raise ValueError(f"Task '{config_item.name}' must be enabled before instantiation.")
@@ -455,7 +465,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             assert isinstance(config_item, KernelRegressionTaskConfig)
             head_module = KernelRegressionHead(config=config_item)
         elif config_item.type == TaskType.AUTOENCODER:
-            assert isinstance(config_item, AutoEncoderTaskConfig)
+            assert isinstance(config_item, _AEConfig)
             head_module = AutoEncoderHead(config=config_item)
         else:
             raise ValueError(f"Unsupported task type: {config_item.type}")
@@ -529,6 +539,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if task_name in self.task_log_sigmas:
             self._disabled_task_log_sigma_buffers[task_name] = self.task_log_sigmas[task_name].detach().clone()
             self._deregister_task_log_sigma(task_name)
+
+    @staticmethod
+    def _derive_ae_dims(encoder_config: BaseEncoderConfig) -> list[int]:
+        """Return decoder dims that mirror the encoder: [latent_dim, ..., input_dim]."""
+        if isinstance(encoder_config, MLPEncoderConfig):
+            return list(reversed(encoder_config.hidden_dims))
+        # TransformerEncoderConfig: single linear projection
+        return [encoder_config.latent_dim, encoder_config.input_dim]
 
     def _track_task_types(self):
         """Track which types of tasks are enabled."""
@@ -1705,7 +1723,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         mode: str = "max",
         steps: int = 200,
         lr: float = 0.1,
-        ae_task_name: str | None = None,
         num_restarts: int = 1,
         perturbation_std: float = 0.0,
         target_value: torch.Tensor | float | None = None,
@@ -1715,92 +1732,53 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """
         Optimize inputs to drive one or multiple regression heads toward targets or extremes.
 
-        This method supports two optimization strategies:
+        Two strategies are available via ``optimize_space``:
 
-        1. **Input Space Optimization** (default, optimize_space="input"):
-           Directly optimizes the input tensor X through gradient descent. The encoder is used
-           in the forward pass but X itself is the optimization variable. ae_task_name is ignored.
-
-        2. **Latent Space Optimization** (optimize_space="latent"):
-           First encodes X to get initial latent representation, then optimizes the latent
-           representation, and finally reconstructs X through the autoencoder head. This approach
-           can be more effective for high-dimensional inputs as the latent space has lower
-           dimensionality and may avoid local optima. Requires ae_task_name.
+        - ``"input"`` (default): gradient-descend directly on the input tensor X.
+        - ``"latent"``: encode X to the latent space, optimise there, then reconstruct X
+          via the built-in reconstruction head (requires ``enable_autoencoder=True`` at
+          model construction time).
 
         Parameters
         ----------
         task_name : str
-            Name of the regression task to optimize (e.g., "density"). Ignored when
-            ``task_targets`` is provided.
+            Regression task to optimise. Ignored when ``task_targets`` is provided.
         initial_input : torch.Tensor
-            Starting input tensor, shape (B, input_dim). Used to initialize the optimization.
+            Seed inputs, shape (B, input_dim).
         mode : str, optional
-            Optimization direction: "max" to maximize or "min" to minimize. Ignored if
-            ``target_value`` or ``task_targets`` is provided. Defaults to "max".
+            ``"max"`` or ``"min"``. Ignored when ``target_value`` / ``task_targets`` is set.
         steps : int, optional
-            Number of optimization steps per restart. Defaults to 200.
+            Optimisation steps per restart. Default 200.
         lr : float, optional
-            Learning rate for the optimizer. Defaults to 0.1.
-        ae_task_name : str, optional
-            Name of the autoencoder task. Required when optimize_space="latent", ignored
-            when optimize_space="input". Defaults to None.
+            Adam learning rate. Default 0.1.
         num_restarts : int, optional
-            Number of random restarts to avoid local optima. Defaults to 1.
+            Independent restarts (with optional perturbation). Default 1.
         perturbation_std : float, optional
-            Standard deviation of Gaussian noise added to starting point for each restart.
-            Applied to input when optimize_space="input", to latent when optimize_space="latent".
-            Defaults to 0.0.
-        target_value : torch.Tensor | float | None, optional
-            If provided, minimize MSE between the regression head output and this target.
-            Overrides ``mode`` when set. Defaults to None.
-        task_targets : Mapping[str, torch.Tensor | float] | None, optional
-            For multi-target optimization, map task names to desired values. When provided,
-            ``mode`` and ``target_value`` are ignored. Defaults to None.
+            Gaussian noise std added to the starting point of each restart. Default 0.0.
+        target_value : float | Tensor | None, optional
+            Minimise MSE to this scalar target (single task). Overrides ``mode``.
+        task_targets : Mapping[str, float | Tensor] | None, optional
+            Multi-task targets. When provided, ``mode`` and ``target_value`` are ignored.
         optimize_space : str, optional
-            Optimization space: "input" for input space optimization (default) or "latent"
-            for latent space optimization. Defaults to "input".
+            ``"input"`` or ``"latent"``. Default ``"input"``.
 
         Returns
         -------
         OptimizationResult
-            A namedtuple with fields:
-            - optimized_input: (B, num_restarts, input_dim) optimized/reconstructed inputs
-            - optimized_target: (B, num_restarts, num_targets) final task predictions
-            - initial_score: (B, num_restarts, num_targets) initial task predictions
-            - trajectory: (B, num_restarts, steps, num_targets) optimization trajectory
+            namedtuple with fields:
+            - optimized_input  : (B, R, input_dim)
+            - optimized_target : (B, R, T)
+            - initial_score    : (B, R, T)
+            - trajectory       : (B, R, steps, T)
 
         Raises
         ------
         ValueError
-            If task_name is not a regression task, ae_task_name is not an autoencoder task,
-            or optimize_space="latent" but ae_task_name is None.
-
-        Examples
-        --------
-        # Input space optimization (default)
-        >>> result = model.optimize_latent(
-        ...     task_name="density",
-        ...     initial_input=my_input_batch,
-        ...     mode="max",
-        ...     steps=200,
-        ...     num_restarts=5
-        ... )
-        >>> print(result.optimized_input.shape)  # (B, 5, input_dim)
-        >>> print(result.trajectory.shape)  # (B, 5, 200, 1)
-
-        # Latent space optimization for high-dimensional inputs
-        >>> result = model.optimize_latent(
-        ...     task_name="density",
-        ...     initial_input=my_input_batch,
-        ...     target_value=5.0,
-        ...     steps=200,
-        ...     perturbation_std=0.1,
-        ...     num_restarts=3,
-        ...     ae_task_name="reconstruction",
-        ...     optimize_space="latent"
-        ... )
-        >>> print(result.optimized_input.shape)  # (B, 3, input_dim) - reconstructed from latent
+            If ``optimize_space="latent"`` but the model was built without
+            ``enable_autoencoder=True``, or if task/mode validation fails.
         """
+        _AE_TASK = "__reconstruction__"
+
         # Validate optimization space
         if optimize_space not in {"input", "latent"}:
             raise ValueError(f"optimize_space must be 'input' or 'latent', got '{optimize_space}'")
@@ -1832,23 +1810,17 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     f"Task '{task_name}' must be a regression task for optimization, got {task_config.type}"
                 )
 
-        # Validate autoencoder task
+        # Validate autoencoder availability for latent-space mode
         if optimize_space == "latent":
-            if ae_task_name is None:
-                raise ValueError("ae_task_name is required when optimize_space='latent'")
-            if ae_task_name not in self.task_heads:
+            if _AE_TASK not in self.task_heads:
                 raise ValueError(
-                    f"Autoencoder task '{ae_task_name}' not found. Available tasks: {list(self.task_heads.keys())}"
+                    "optimize_space='latent' requires the model to be built with enable_autoencoder=True."
                 )
-            ae_config = self.task_configs_map[ae_task_name]
-            if ae_config.type != TaskType.AUTOENCODER:
-                raise ValueError(f"Task '{ae_task_name}' must be an autoencoder task, got {ae_config.type}")
-        elif ae_task_name is not None:
-            # Validate AE task even for input space optimization (for error checking)
-            if ae_task_name in self.task_heads:
-                ae_config = self.task_configs_map[ae_task_name]
-                if ae_config.type != TaskType.AUTOENCODER:
-                    raise ValueError(f"Task '{ae_task_name}' must be an autoencoder task, got {ae_config.type}")
+            if not isinstance(self.task_heads[_AE_TASK], AutoEncoderHead):
+                raise ValueError(
+                    f"Task '{_AE_TASK}' exists but is not an AutoEncoderHead; "
+                    "latent-space optimization requires the built-in reconstruction head."
+                )
 
         if target_tasks is None and mode not in {"max", "min"}:
             raise ValueError(f"mode must be 'max' or 'min', got '{mode}'")
@@ -2079,9 +2051,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
                         per_task_final.append(_reduce_pred(pred).detach())
                     per_task_final_tensor = torch.stack(per_task_final, dim=-1)  # (B, T)
 
-                    # Reconstruct input via autoencoder
-                    # AE also receives Tanh(latent) for consistency with training
-                    reconstructed_input = self.task_heads[ae_task_name](final_h_task)
+                    # Reconstruct input via the built-in reconstruction head
+                    reconstructed_input = self.task_heads[_AE_TASK](final_h_task)
 
                 optimized_inputs.append(reconstructed_input.detach())  # (B, D)
                 optimized_targets.append(per_task_final_tensor)  # (B, T)
