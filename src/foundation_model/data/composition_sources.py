@@ -40,6 +40,12 @@ def read_data_file(path: str) -> pd.DataFrame:
     Supported: ``.csv``, ``.parquet`` / ``.pd.parquet``, pickled frames
     (``.pd`` / ``.pd.z`` / ``.pd.xz``), and ``.pkl`` (joblib).
 
+    .. warning::
+        The pickle-based formats (``.pd`` / ``.pd.z`` / ``.pd.xz`` via ``pd.read_pickle``
+        and ``.pkl`` via ``joblib.load``) deserialize arbitrary Python objects and can
+        execute arbitrary code. Only load these from sources you trust; prefer ``.csv`` or
+        ``.parquet`` for untrusted inputs.
+
     Parameters
     ----------
     path : str
@@ -157,7 +163,7 @@ def build_composition_universe(
     for frame in task_frames.values():
         for comp in frame.index.astype(str):
             universe.setdefault(comp, None)
-    if extra_compositions:
+    if extra_compositions is not None:
         for comp in extra_compositions:
             universe.setdefault(str(comp), None)
     return list(universe)

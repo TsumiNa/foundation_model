@@ -3,6 +3,7 @@
 
 """Tests for composition-keyed data-source helpers (refactor PR2)."""
 
+import joblib
 import numpy as np
 import pandas as pd
 import pytest
@@ -36,14 +37,16 @@ def sample_frame():
     return pd.DataFrame({"composition": ["H2O", "CO2", "NaCl"], "y": [1.0, 2.0, 3.0]})
 
 
-@pytest.mark.parametrize("suffix", [".csv", ".parquet", ".pd.xz"])
+@pytest.mark.parametrize("suffix", [".csv", ".parquet", ".pd", ".pd.z", ".pd.xz", ".pkl"])
 def test_read_data_file_roundtrip(tmp_path, sample_frame, suffix):
     path = tmp_path / f"data{suffix}"
     if suffix == ".csv":
         sample_frame.to_csv(path, index=False)
     elif suffix == ".parquet":
         sample_frame.to_parquet(path)
-    else:
+    elif suffix == ".pkl":
+        joblib.dump(sample_frame, path)
+    else:  # .pd / .pd.z / .pd.xz pickled frames
         sample_frame.to_pickle(path)
     loaded = read_data_file(str(path))
     assert list(loaded["composition"]) == ["H2O", "CO2", "NaCl"]
@@ -119,6 +122,13 @@ def test_build_composition_universe_unions_and_preserves_order():
 def test_build_composition_universe_includes_extras():
     frames = {"t1": pd.DataFrame({"y": [1]}, index=pd.Index(["A"], name="composition"))}
     assert build_composition_universe(frames, extra_compositions=["A", "Z"]) == ["A", "Z"]
+
+
+@pytest.mark.parametrize("extras", [pd.Index(["A", "Z"]), np.array(["A", "Z"])])
+def test_build_composition_universe_accepts_array_like_extras(extras):
+    """pd.Index / np.ndarray extras must not trip ambiguous-truthiness errors."""
+    frames = {"t1": pd.DataFrame({"y": [1]}, index=pd.Index(["A"], name="composition"))}
+    assert build_composition_universe(frames, extra_compositions=extras) == ["A", "Z"]
 
 
 # --- DescriptorCache --------------------------------------------------------
