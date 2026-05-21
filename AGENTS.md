@@ -1,31 +1,98 @@
 # Repository Guidelines
 
+This is the canonical contributor/agent guide for this repository. Other agent files (e.g. `CLAUDE.md`) point here — keep this file authoritative and up to date.
+
+## What this is
+
+A multi-task PyTorch Lightning model (`FlexibleMultiTaskModel`) for predicting material/polymer properties from formula descriptors (and optional structure descriptors). One architecture serves both pre-training (with self-supervised auxiliary losses) and downstream fine-tuning.
+
 ## Project Structure & Module Organization
-- Core source lives under `src/foundation_model`, with task heads in `src/foundation_model/models/task_head` and shared layers in `src/foundation_model/models/components`.
-- Integration and regression tests sit at the repo root as `test_*.py`; keep new suite files alongside existing ones for quick discovery (e.g., `test_prediction_writer_kernel_regression.py`).
+- Core source lives under `src/foundation_model`: task heads in `models/task_head/`, shared layers in `models/components/`, config dataclasses/enums in `models/model_config.py`, data loading in `data/`, and CLI/scripts in `scripts/`.
+- Tests are **co-located** with the code they cover as `<module>_test.py` (e.g. `datamodule.py` → `datamodule_test.py`, `dynamic_task_suite.py` → `dynamic_task_suite_test.py`). There is no separate `tests/` tree.
 - Reference notebooks reside in `notebooks/` for experimentation; mirror finalized logic into `src/` modules and keep notebooks informative but non-critical.
-- Sample Hydra/Lightning configs and data fixtures are in `samples/` and `data/`; avoid committing large datasets beyond lightweight fixtures.
+- Sample Lightning/suite configs and data fixtures are in `samples/` and `data/`; avoid committing large datasets beyond lightweight fixtures.
+- Detailed model/component design lives in `ARCHITECTURE.md`; user-facing usage lives in `README.md`.
 
 ## Build, Test, and Development Commands
-- `python -m venv .venv && source .venv/bin/activate`: create a local virtual environment (recommended for contributors).
-- `pip install -e ".[dev]"`: install the package and dev extras defined in `pyproject.toml`.
-- `pytest`: run the full test suite; respects `pyproject` options (`--maxfail=2`, benchmark disabled).
-- `pytest test_integration_kernel_regression.py`: quick smoke check covering multi-task model wiring.
-- `fm-trainer --config <config.yaml>`: launch the primary training CLI (entry point declared under `[project.scripts]`).
+
+Environment is managed with **uv** (Python 3.11–3.13).
+
+```bash
+uv sync --frozen --all-groups   # install runtime + dev deps from uv.lock
+uv add <pkg>                    # add a runtime dep; uv add --dev <pkg> for dev
+```
+
+Lint, format, and type-check:
+
+```bash
+ruff format        # 4-space indent, 120-col, double quotes
+ruff check         # Pyflakes + pycodestyle (see pyproject.toml for ignored rules)
+mypy src           # type checking
+```
+
+Tests (pytest, with benchmark plugin):
+
+```bash
+pytest                                              # full suite (--maxfail=2, benchmarks skipped)
+pytest src/foundation_model/data/datamodule_test.py # single test file
+pytest path/to/file_test.py::test_name              # single test
+```
+
+Run `pytest` (or `uv run pytest`) before submitting; for long-running suites, at least execute the affected module tests and document any skips.
+
+## Entry Points
+
+Three console scripts (declared in `pyproject.toml [project.scripts]`):
+
+- `fm-trainer` → `scripts/train.py` — the primary CLI, a thin wrapper over PyTorch Lightning's `LightningCLI` (`parser_mode="omegaconf"`). Drives `fit`/`validate`/`test`/`predict` from a YAML config of `FlexibleMultiTaskModel` + `CompoundDataModule` + trainer. Override any field on the CLI, e.g. `--trainer.max_epochs=50` or `--model.init_args.<...>`. Loads checkpoints with `strict=False`.
+- `fm-pretrain-suite` → `scripts/dynamic_task_suite.py` — orchestrates a full pre-train→fine-tune experiment sweep driven by a TOML `SuiteConfig` (multiple pre-train runs, frozen-encoder fine-tuning, scaler handling, prediction writing).
+- `fm-progressive-clf` → `scripts/multi_task_progressive_clf.py` — progressive multi-task classification fine-tuning workflow.
+
+Convenience shell wrappers at the repo root (`run_dynamic_task_suite*.sh`, `run_progressive_clf.sh`) supply a default config from `samples/` and auto-derive a date-stamped `--output-dir`. Sample configs live in `samples/*.toml`.
+
+## Architecture
+
+Full details in `ARCHITECTURE.md`. Key flow:
+
+```
+x_formula ──▶ FoundationEncoder ──▶ h_task ──▶ task heads ──▶ {task_name: pred}
+              (shared backbone +              (dict of heads)
+               deposit Linear+Tanh)
+```
+
+- **FoundationEncoder** (`models/components/foundation_encoder.py`): a configurable shared backbone followed by a `deposit` block (Linear + Tanh) that produces `h_task`, the single representation fed to **all** task heads. Backbone mode is chosen by `EncoderType` in the encoder config:
+  - `MLPEncoderConfig` — feed-forward stack; `hidden_dims[0]` is the input dim, `hidden_dims[-1]` is `latent_dim`.
+  - `TransformerEncoderConfig` — treats each scalar feature as a token; aggregates via learnable `[CLS]` or mean pooling (`use_cls_token`); `latent_dim == d_model`.
+- **Task heads** (`models/task_head/`): each is an `nn.Module` registered in an `nn.ModuleDict`. Types are enumerated by `TaskType` and configured by matching dataclasses in `models/model_config.py`:
+  - `REGRESSION` → `RegressionTaskConfig` / `regression.py`
+  - `CLASSIFICATION` → `ClassificationTaskConfig` / `classification.py`
+  - `KernelRegression` → `KernelRegressionTaskConfig` / `kernel_regression.py` — handles variable-length `(t, target)` sequences (e.g. DOS, temperature-dependent properties) via Gaussian-kernel mixtures and a Fourier/FC `t` encoder.
+  - `AUTOENCODER` → `AutoEncoderTaskConfig` / `autoencoder.py`
+- **Config is dataclass-based**, not pydantic. `model_config.py` defines all encoder/task/optimizer dataclasses plus `build_encoder_config()`, which normalizes dict/mapping input into the right dataclass. Per-task `OptimizerConfig` is supported.
+- **Loss weighting**: supervised tasks use learnable homoscedastic-uncertainty weighting (Kendall et al. 2018). The model learns `log σ_t` per task (`model.task_log_sigmas`); the final per-task loss is `0.5·w_t·exp(−2logσ_t)·L_t + logσ_t`, where `w_t` is the static `loss_weight`. Monitored metrics: `train_final_loss` / `val_final_loss`. Disable to get plain `w_t·L_t`.
+- **Dynamic task surgery**: `model.add_task(*cfgs)` and `model.remove_tasks(name)` let you swap heads after loading a checkpoint (used for fine-tuning).
+
+## Data
+
+- `CompoundDataModule` / `CompoundDataset` (`data/`) load formula descriptors plus an `attributes_source` (CSV/DataFrame) holding targets.
+- Each task config names its target via `data_column`; sequence/kernel tasks add a `t_column`/`steps_column` for x-axis values. **Column names must match the source exactly.**
+- List-valued cells in CSV (sequences, multi-dim targets) must be strings parseable by `ast.literal_eval`, e.g. `"[1.0, 2.5, 3.0]"`.
+- Missing targets / NaNs are **masked out** per task rather than dropped; placeholders fill `y_dict`. Modality dropout and missing-value masking are built in.
 
 ## Coding Style & Naming Conventions
-- Follow Ruff formatting (`ruff format`) and lint checks (`ruff check`); both enforce 4-space indentation, 120-character lines, and double quotes.
-- Prefer explicit type hints on public APIs; mirror patterns used in `src/foundation_model/models/task_head`.
+- Follow Ruff formatting (`ruff format`) and lint checks (`ruff check`): 4-space indentation, 120-character lines, double quotes.
 - Module and file names stay snake_case; classes use CapWords (`KernelRegressionHead`), functions snake_case, constants UPPER_SNAKE.
+- Prefer explicit type hints on public APIs; mirror patterns used in `models/task_head/`.
+- Configure behavior through `@dataclass` objects with `__post_init__` validation (mirror `model_config.py`); accept dicts via a normalizer like `build_encoder_config`. Use `str`-based enums for closed choice sets.
+- Use the existing `loguru` logger rather than introducing a new logging mechanism.
+- LoRA support has been removed; legacy config keys like `lora_rank`/`lora_enabled` are silently ignored.
 
 ## Testing Guidelines
-- Tests rely on `pytest` with benchmark plugins; name test functions `test_*`.
-- **Unit tests**: Place alongside the code being tested with naming pattern `<module_name>_test.py` (e.g., `datamodule_test.py` for `datamodule.py`, `dynamic_task_suite_test.py` for `dynamic_task_suite.py`). This co-location makes tests easy to discover and maintain.
-- **Integration tests**: Keep at repo root as `test_*.py` (e.g., `test_integration_kernel_regression.py`, `test_single_gpu_prediction.py`) for quick discovery of cross-module workflows.
-- Include targeted unit tests when adding or modifying features; write integration tests when touching the trainer or data pathways.
-- Run `pytest` before submitting; for long-running suites, at least execute the affected module tests and document any skips.
+- Tests use `pytest`; name test functions `test_*` and prefer `pytest.mark.parametrize` for input variations.
+- Every implementation change ships with a co-located `<module>_test.py` covering the primary path plus the most likely failure patterns (empty/missing/malformed input, NaN/masked targets, tensor-shape or dimension mismatches, enforced preconditions).
+- Include targeted tests when adding or modifying features; exercise the trainer and data pathways when touching them.
 
 ## Commit & Pull Request Guidelines
-- Commit messages generally follow `<type>: <summary>` (see `git log`, e.g., `refactor(task-head): use raw t input in kernel regression`); keep summaries imperative and under 72 characters when possible.
+- Commit messages follow `<type>: <summary>` (see `git log`, e.g. `refactor(task-head): use raw t input in kernel regression`); keep summaries imperative and under 72 characters when possible.
 - Squash fixups locally; each PR should describe scope, motivation, and validation (tests run, configs modified). Link issues or tasks in the description.
 - Provide screenshots or logs when changes impact CLI output or training metrics, and flag any backward-incompatible behavior for reviewer attention.
