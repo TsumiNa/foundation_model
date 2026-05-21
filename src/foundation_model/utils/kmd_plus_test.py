@@ -71,6 +71,23 @@ def test_1d_requires_valid_n_grids(component_features, n_grids):
         KMD(component_features, method="1d", n_grids=n_grids)
 
 
+@pytest.mark.parametrize("bad_sigma", [0.0, -1.0])
+def test_rejects_non_positive_sigma(component_features, bad_sigma):
+    with pytest.raises(ValueError, match="sigma"):
+        KMD(component_features, method="md", sigma=bad_sigma)
+
+
+def test_requires_at_least_two_components():
+    with pytest.raises(ValueError, match="at least 2 components"):
+        KMD(np.ones((1, 3)), method="md")
+
+
+def test_md_auto_sigma_rejects_duplicate_components():
+    cf = np.ones((4, 3))  # identical rows -> median nearest distance is 0
+    with pytest.raises(ValueError, match="auto sigma is undefined"):
+        KMD(cf, method="md", scale=False)
+
+
 @pytest.mark.parametrize("method,kwargs", [("1d", {"n_grids": 10}), ("md", {})])
 def test_transform_shape(method, kwargs, weight, component_features):
     kmd = KMD(component_features, method=method, **kwargs)
@@ -156,3 +173,11 @@ def test_stats_descriptor_respects_stats_order(weight, component_features):
 def test_stats_descriptor_rejects_unknown_stat(weight, component_features):
     with pytest.raises(ValueError, match="unsupported stat"):
         stats_descriptor(weight, component_features, stats=["mean", "bogus"])
+
+
+@pytest.mark.parametrize("stat", ["max", "min"])
+def test_stats_descriptor_rejects_all_zero_weight_row(component_features, stat):
+    w = np.zeros((2, component_features.shape[0]))
+    w[0, 0] = 1.0  # row 1 stays all-zero
+    with pytest.raises(ValueError, match="nonzero weight"):
+        stats_descriptor(w, component_features, stats=[stat])

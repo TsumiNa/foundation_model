@@ -115,6 +115,8 @@ class KMD:
             raise ValueError(f'method must be "md" or "1d", got {method!r}.')
         if method == "1d" and (n_grids is None or n_grids < 2):
             raise ValueError('n_grids must be an integer >= 2 when method="1d".')
+        if sigma != "auto" and (not isinstance(sigma, (int, float)) or sigma <= 0):
+            raise ValueError(f'sigma must be "auto" or a positive float, got {sigma!r}.')
 
         self.method: Method = method
         self.n_grids = n_grids
@@ -122,6 +124,8 @@ class KMD:
         self.scale = scale
 
         cf = np.asarray(component_features, dtype=float)
+        if cf.shape[0] < 2:
+            raise ValueError(f"need at least 2 components, got {cf.shape[0]}.")
         self.n_components: int = cf.shape[0]
         self._kernel: npt.NDArray[np.float64] = self._build_kernel(cf)
         self._gram: npt.NDArray[np.float64] | None = None
@@ -174,13 +178,14 @@ class KMD:
         g_ineq = np.diag(-a_eq)
         h_ineq = np.zeros(n)
 
-        w_raw = np.array(
-            [
-                solve_qp(gram, -(kernel @ kmd[i]), g_ineq, h_ineq, a_eq, b_eq, solver="quadprog")
-                for i in range(kmd.shape[0])
-            ]
-        )
-        w = np.round(np.abs(w_raw), 12)
+        solutions = []
+        for i in range(kmd.shape[0]):
+            sol = solve_qp(gram, -(kernel @ kmd[i]), g_ineq, h_ineq, a_eq, b_eq, solver="quadprog")
+            if sol is None:
+                raise ValueError(f"quadprog failed to reconstruct weights for sample {i}.")
+            solutions.append(sol)
+
+        w = np.round(np.abs(np.array(solutions)), 12)
         return w / w.sum(axis=1)[:, None]
 
     # -- kernel construction -------------------------------------------------
@@ -196,7 +201,12 @@ class KMD:
         d2 = distance_matrix(cf, cf) ** 2
         if self.sigma == "auto":
             nearest = [np.sort(d2[i])[1] for i in range(d2.shape[0])]  # skip the self-distance 0
-            gamma = 1.0 / median(nearest)
+            med = median(nearest)
+            if med <= 0:
+                raise ValueError(
+                    "auto sigma is undefined when components share identical features; pass an explicit sigma."
+                )
+            gamma = 1.0 / med
         else:
             gamma = 1.0 / (2 * self.sigma**2)
         return np.exp(-d2 * gamma)
@@ -259,12 +269,12 @@ def stats_descriptor(
         elif stat == "var":
             wm = w @ cf
             blocks.append(np.array([w[i] @ (cf - wm[i]) ** 2 for i in range(n_samples)]))
-        elif stat == "max":
+        elif stat in ("max", "min"):
             nonzero = w != 0
-            blocks.append(np.array([cf[nonzero[i]].max(axis=0) for i in range(n_samples)]))
-        elif stat == "min":
-            nonzero = w != 0
-            blocks.append(np.array([cf[nonzero[i]].min(axis=0) for i in range(n_samples)]))
+            if not nonzero.any(axis=1).all():
+                raise ValueError(f"{stat!r} pooling requires every sample to have at least one nonzero weight.")
+            reduce = (lambda a: a.max(axis=0)) if stat == "max" else (lambda a: a.min(axis=0))
+            blocks.append(np.array([reduce(cf[nonzero[i]]) for i in range(n_samples)]))
         else:
             raise ValueError(f'unsupported stat {stat!r}; choose from "mean", "var", "max", "min".')
 
