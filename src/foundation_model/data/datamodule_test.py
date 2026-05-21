@@ -13,9 +13,9 @@ from torch.utils.data.distributed import DistributedSampler
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.model_config import (
-    AutoEncoderTaskConfig,
     ClassificationTaskConfig,
     RegressionTaskConfig,
+    _AEConfig,
 )
 
 COMPOSITIONS = [f"s{i}" for i in range(20)]
@@ -326,7 +326,7 @@ def test_empty_dataset_returns_none_dataloader(descriptors_df, reg_cls_configs):
 
 def test_autoencoder_rides_along_with_supervised(descriptors_df):
     configs = [
-        AutoEncoderTaskConfig(name="ae_task", dims=[2, 4, 2]),
+        _AEConfig(dims=[2, 4, 2], name="ae_task"),
         RegressionTaskConfig(name="reg_task", data_column="reg_task", dims=[2, 16, 1]),
     ]
     frames = {"reg_task": pd.DataFrame({"reg_task": np.arange(20.0)}, index=list(COMPOSITIONS))}
@@ -342,7 +342,7 @@ def test_autoencoder_rides_along_with_supervised(descriptors_df):
 
 def test_mixed_tasks_batch_structure(descriptors_df):
     configs = [
-        AutoEncoderTaskConfig(name="ae_task", dims=[2, 4, 2]),
+        _AEConfig(dims=[2, 4, 2], name="ae_task"),
         RegressionTaskConfig(name="reg_task", data_column="reg_task", dims=[2, 16, 1]),
     ]
     frames = {"reg_task": pd.DataFrame({"reg_task": np.arange(20.0)}, index=list(COMPOSITIONS))}

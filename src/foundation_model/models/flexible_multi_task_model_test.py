@@ -802,3 +802,100 @@ def create_dummy_dataframe(num_samples, num_features, index_prefix="sample_"):
     data = np.random.rand(num_samples, num_features)
     index = [f"{index_prefix}{i}" for i in range(num_samples)]
     return pd.DataFrame(data, index=index, columns=[f"feat_{j}" for j in range(num_features)])
+
+
+# ---------------------------------------------------------------------------
+# TestAutoEncoder — new enable_autoencoder interface
+# ---------------------------------------------------------------------------
+
+INPUT_DIM = 20
+LATENT_DIM = 8
+
+
+def _make_model(nonnegative=False, input_dim=INPUT_DIM, latent_dim=LATENT_DIM):
+    enc = MLPEncoderConfig(hidden_dims=[input_dim, 16, latent_dim])
+    task = RegressionTaskConfig(name="prop", data_column="prop", dims=[latent_dim, 4, 1])
+    return FlexibleMultiTaskModel(
+        task_configs=[task],
+        encoder_config=enc,
+        enable_autoencoder=True,
+        autoencoder_nonnegative=nonnegative,
+    )
+
+
+def test_enable_autoencoder_creates_head():
+    model = _make_model()
+    assert "__reconstruction__" in model.task_heads
+
+
+def test_enable_autoencoder_mlp_dims():
+    model = _make_model()
+    head = model.task_heads["__reconstruction__"]
+    # First layer input == latent_dim; output == input_dim
+    first = next(iter(head.net.parameters()))
+    assert first.shape[1] == LATENT_DIM
+    # Config dims should be reversed hidden_dims
+    cfg = model.task_configs_map["__reconstruction__"]
+    assert cfg.dims == [LATENT_DIM, 16, INPUT_DIM]
+
+
+def test_enable_autoencoder_not_in_task_configs_by_default():
+    enc = MLPEncoderConfig(hidden_dims=[INPUT_DIM, 16, LATENT_DIM])
+    task = RegressionTaskConfig(name="prop", data_column="prop", dims=[LATENT_DIM, 4, 1])
+    model = FlexibleMultiTaskModel(task_configs=[task], encoder_config=enc)
+    assert "__reconstruction__" not in model.task_heads
+
+
+def test_autoencoder_forward_runs():
+    model = _make_model()
+    x = torch.randn(4, INPUT_DIM)
+    out = model(x)
+    assert "__reconstruction__" in out
+    assert out["__reconstruction__"].shape == (4, INPUT_DIM)
+
+
+def test_autoencoder_nonnegative_output():
+    model = _make_model(nonnegative=True)
+    x = torch.randn(32, INPUT_DIM)
+    with torch.no_grad():
+        out = model(x)
+    assert out["__reconstruction__"].min().item() > 0
+
+
+def test_autoencoder_linear_output_can_be_negative():
+    model = _make_model(nonnegative=False)
+    torch.manual_seed(0)
+    x = torch.randn(128, INPUT_DIM)
+    with torch.no_grad():
+        out = model(x)
+    assert out["__reconstruction__"].min().item() < 0
+
+
+def test_optimize_latent_space_requires_ae():
+    enc = MLPEncoderConfig(hidden_dims=[INPUT_DIM, 16, LATENT_DIM])
+    task = RegressionTaskConfig(name="prop", data_column="prop", dims=[LATENT_DIM, 4, 1])
+    model = FlexibleMultiTaskModel(task_configs=[task], encoder_config=enc)
+    model.eval()
+    with pytest.raises(ValueError, match="enable_autoencoder"):
+        model.optimize_latent(
+            task_name="prop",
+            initial_input=torch.randn(2, INPUT_DIM),
+            optimize_space="latent",
+        )
+
+
+def test_optimize_latent_space_with_ae():
+    model = _make_model()
+    model.eval()
+    x = torch.randn(2, INPUT_DIM)
+    result = model.optimize_latent(
+        task_name="prop",
+        initial_input=x,
+        target_value=1.0,
+        steps=5,
+        num_restarts=2,
+        optimize_space="latent",
+    )
+    assert result.optimized_input.shape == (2, 2, INPUT_DIM)
+    assert result.optimized_target.shape == (2, 2, 1)
+    assert result.trajectory.shape == (2, 2, 5, 1)

@@ -7,7 +7,6 @@ import pytest
 
 from foundation_model.models.model_config import (
     PREDICT_IDX_LITERALS,
-    AutoEncoderTaskConfig,
     ClassificationTaskConfig,
     KernelRegressionTaskConfig,
     RegressionTaskConfig,
@@ -20,7 +19,6 @@ ALL_TASK_CONFIG_CLASSES = [
     RegressionTaskConfig,
     ClassificationTaskConfig,
     KernelRegressionTaskConfig,
-    AutoEncoderTaskConfig,
 ]
 
 
@@ -45,11 +43,6 @@ def test_data_files_sequence_is_normalized_to_tuple_of_str():
     assert cfg.data_files == ("a.csv", "b.pd.xz")
     assert isinstance(cfg.data_files, tuple)
 
-
-def test_autoencoder_task_allowed_without_data_files():
-    """AE targets are the input x; it must build fine without any data file."""
-    cfg = AutoEncoderTaskConfig(name="ae")
-    assert cfg.data_files == ()
 
 
 @pytest.mark.parametrize("ratio", [0.0, 0.5, 1.0])

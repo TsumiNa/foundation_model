@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from numpy import ndarray
 
 from foundation_model.models.components.fc_layers import LinearBlock
-from foundation_model.models.model_config import AutoEncoderTaskConfig
+from foundation_model.models.model_config import _AEConfig
 
 from .base import BaseTaskHead
 
@@ -20,33 +20,33 @@ class AutoEncoderHead(BaseTaskHead):
 
     Parameters
     ----------
-    config : AutoEncoderTaskConfig
-        Configuration object containing parameters like input dimension (`d_in`),
-        task name (`name`), hidden dimensions (`dims`), normalization (`norm`),
-        and residual connections (`residual`).
+    config : _AEConfig
+        Internal configuration object. ``dims`` must be fully resolved before
+        instantiation (first element = latent_dim, last element = input_dim).
+        ``nonnegative=True`` applies Softplus to the output; ``False`` uses a
+        linear output (no activation).
     """
 
-    def __init__(self, config: AutoEncoderTaskConfig):
+    def __init__(self, config: _AEConfig):
         super().__init__(config)
 
-        if not hasattr(config, "dims") or not config.dims:
-            raise ValueError("AutoEncoderHead config must have 'dims' attribute, and it cannot be empty.")
+        if not config.dims:
+            raise ValueError("AutoEncoderHead: config.dims must be resolved (non-empty) before instantiation.")
         d_in = config.dims[0]
         head_internal_dims = config.dims[1:]
         if not head_internal_dims:
             raise ValueError(
-                "AutoEncoderHead config 'dims' must include at least an output dimension after the input dimension."
+                "AutoEncoderHead: config.dims must include at least an output dimension after the input dimension."
             )
 
-        norm = config.norm
-        residual = config.residual
+        output_act = torch.nn.Softplus() if config.nonnegative else None
 
         self.net = LinearBlock(
             [d_in] + head_internal_dims[:-1],
-            normalization=norm,
-            residual=residual,
+            normalization=config.norm,
+            residual=config.residual,
             dim_output_layer=head_internal_dims[-1],
-            output_active=torch.nn.Sigmoid(),
+            output_active=output_act,
         )
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
