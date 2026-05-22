@@ -1,0 +1,45 @@
+# Smoke-test configuration for the dynamic task suite.
+#
+# Tiny end-to-end run (1 pretrain run, 1 epoch, small samples, 2+2 tasks) used to confirm the
+# suite still executes after the composition-keyed data refactor. Reuses the local polymer data.
+#
+#   ./run_dynamic_task_suite.sh samples/dynamic_task_suite_config_smoke.toml
+
+pretrain_data_path = "data/amorphous_polymer_non_PI_properties_20250730.parquet"
+finetune_data_path = "data/PolyInfo_properties_20250712.parquet"
+output_dir = "artifacts/smoke_test"
+
+pretrain_descriptor_path = "data/amorphous_polymer_FFDescriptor_20250730.parquet"
+finetune_descriptor_path = "data/PolyInfo_FFDescriptor_20250712.parquet"
+
+pretrain_scaler_path = "data/amorphous_polymer_properties_scaler_20250730.pkl.z"
+finetune_scaler_path = "data/PolyInfo_properties_scaler_20250712.pkl.z"
+
+# Model and training hyperparameters (kept tiny for a fast smoke test)
+shared_block_dims = [190, 256, 128]
+encoder_config = { type = "mlp" }
+head_hidden_dim = 64
+head_lr = 0.01
+num_pretrain_runs = 1
+pretrain_max_epochs = 1
+finetune_max_epochs = 1
+batch_size = 128
+num_workers = 0
+log_every_n_steps = 10
+random_seed_base = 17290
+datamodule_random_seed = 42
+pretrain_sample = 500
+finetune_sample = 500
+accelerator = "cpu"
+devices = 1
+early_stopping_patience = 5
+
+# A handful of tasks whose (normalized) columns exist in the polymer tables.
+pretrain_tasks = [
+    'density',
+    'Rg',
+]
+finetune_tasks = [
+    'Tg',
+    'Density',
+]
