@@ -22,6 +22,7 @@ from .composition_sources import (
     CompositionNormalizer,
     DescriptorCache,
     DescriptorFn,
+    PrecomputedDescriptorSource,
     build_composition_universe,
     canonical_key,
     load_task_frame,
@@ -232,6 +233,10 @@ class CompoundDataModule(L.LightningDataModule):
             self.default_data_files = tuple(str(p) for p in default_data_files)
         self.composition_column = composition_column
         self.composition_normalizer = composition_normalizer
+        # The DataModule owns the normalization policy; keep a recognized descriptor source in
+        # sync so the opt-out (composition_normalizer=None) only has to be set in one place.
+        if isinstance(descriptor_fn, PrecomputedDescriptorSource):
+            descriptor_fn._composition_normalizer = composition_normalizer
         self.random_seed = random_seed
         self.val_split = val_split
         self.test_split = test_split
@@ -297,7 +302,10 @@ class CompoundDataModule(L.LightningDataModule):
         frame = frame.copy()
         if composition_column in frame.columns:
             frame = frame.set_index(composition_column)
-        frame.index = pd.Index([self._canon(c) for c in frame.index])
+        if self.composition_normalizer is None:
+            frame.index = frame.index.astype(str)  # vectorized fast path when normalization is off
+        else:
+            frame.index = pd.Index([self._canon(c) for c in frame.index])
         duplicated = frame.index.duplicated(keep="first")
         if duplicated.any():
             logger.warning(

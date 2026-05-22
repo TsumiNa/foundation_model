@@ -215,6 +215,15 @@ def test_datamodule_disable_normalizer_keeps_raw_keys(descriptors_df, reg_cls_co
     assert set(dm.master_index) == set(COMPOSITIONS)
 
 
+def test_datamodule_syncs_normalizer_into_precomputed_source(reg_cls_configs):
+    """The DataModule's opt-out propagates into a PrecomputedDescriptorSource (single source of truth)."""
+    from foundation_model.data.composition_sources import PrecomputedDescriptorSource
+
+    source = PrecomputedDescriptorSource("unused.parquet")  # defaults to normalization ON
+    CompoundDataModule(task_configs=reg_cls_configs, descriptor_fn=source, composition_normalizer=None)
+    assert source._composition_normalizer is None
+
+
 def test_split_column_resolution(descriptors_df, reg_cls_configs):
     split = ["train"] * 10 + ["val"] * 5 + ["test"] * 5
     dm = build_dm(descriptors_df, task_frames=_reg_cls_frames(split=split), configs=reg_cls_configs)

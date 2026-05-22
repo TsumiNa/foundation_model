@@ -20,7 +20,7 @@ tested in isolation with in-memory frames and a fake descriptor function.
 
 from __future__ import annotations
 
-from collections.abc import Mapping  # used for runtime isinstance; safe (unlike typing.Mapping)
+from collections.abc import Mapping
 from typing import Callable, Sequence
 
 import joblib  # type: ignore[import-untyped]
@@ -70,7 +70,7 @@ def normalize_composition(value: object, *, decimals: int = _COMPOSITION_AMOUNT_
     from pymatgen.core.composition import Composition  # local import; pymatgen is heavy
 
     try:
-        if isinstance(value, Mapping):
+        if isinstance(value, dict):
             cleaned = {k: float(v) for k, v in value.items() if v is not None and float(v) > 0}
             if not cleaned:
                 return None
@@ -145,16 +145,21 @@ def lookup_descriptor_fn(
 def _reindex_by_canonical(
     frame: pd.DataFrame, normalizer: CompositionNormalizer | None, *, source: str
 ) -> pd.DataFrame:
-    """Return ``frame`` re-indexed by canonical composition key, deduped keep-first (with warning)."""
+    """Return ``frame`` re-indexed by canonical composition key, deduped keep-first (with warning).
+
+    Uses a shallow copy (the descriptor matrix is shared, only the index is replaced) to avoid
+    duplicating large descriptor frames.
+    """
     canon = pd.Index([canonical_key(c, normalizer) for c in frame.index])
+    out = frame.copy(deep=False)
+    out.index = canon
     duplicated = canon.duplicated(keep="first")
     if duplicated.any():
         logger.warning(
             f"{source}: {int(duplicated.sum())} descriptor row(s) collapsed to a duplicate "
             "composition key after normalization; keeping the first occurrence of each."
         )
-    out = frame.loc[~duplicated].copy()
-    out.index = canon[~duplicated]
+        out = out[~duplicated]
     return out
 
 
