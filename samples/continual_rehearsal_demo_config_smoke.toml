@@ -1,7 +1,8 @@
 # Smoke-test config for the continual rehearsal + inverse-design demo.
 #
 # Tiny end-to-end run (500 rows/dataset, 1 epoch/step) over all inorganic datasets and task types:
-# 2 reg + 2 kernel reg + 1 clf (qc_ac_te_mp) + 2 reg (NEMAD superconductor) + 2 reg (NEMAD magnetic),
+# 2 reg + 2 kernel reg + 1 clf (qc_ac_te_mp) + 2 reg (NEMAD superconductor) +
+# 3 reg (NEMAD magnetic: curie, magnetization, neel) + 2 reg (phonix-db: kp, klat),
 # AE always on, 5% rehearsal, then a short inverse-design stage. KMD-1d descriptors (invertible).
 #
 #   ./run_continual_rehearsal_demo.sh samples/continual_rehearsal_demo_config_smoke.toml

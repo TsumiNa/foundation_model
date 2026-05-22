@@ -961,6 +961,17 @@ def test_optimize_latent_class_targets_rejects_regression_task():
         )
 
 
+def test_optimize_latent_class_targets_rejects_out_of_range_index():
+    model = _make_reg_clf_model()  # "cls" head has num_classes=3 → valid indices [0, 3)
+    for bad in ([3], [-1]):
+        with pytest.raises(ValueError, match="out of range"):
+            model.optimize_latent(
+                initial_input=torch.randn(2, INPUT_DIM),
+                class_targets={"cls": bad},
+                optimize_space="input",
+            )
+
+
 def test_optimize_latent_class_targets_only_no_regression():
     torch.manual_seed(0)
     model = _make_reg_clf_model()

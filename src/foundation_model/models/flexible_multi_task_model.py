@@ -1742,10 +1742,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         Parameters
         ----------
-        task_name : str
-            Regression task to optimise. Ignored when ``task_targets`` is provided.
+        task_name : str | None
+            Regression task to optimise (legacy single-task path). Optional — and ignored — when
+            ``task_targets`` or ``class_targets`` is provided; required otherwise.
         initial_input : torch.Tensor
-            Seed inputs, shape (B, input_dim).
+            Seed inputs, shape (B, input_dim). Always required (raises ``ValueError`` if ``None``).
         mode : str, optional
             ``"max"`` or ``"min"``. Ignored when ``target_value`` / ``task_targets`` is set.
         steps : int, optional
@@ -1816,11 +1817,18 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     raise ValueError(
                         f"Task '{name}' not found in model. Available tasks: {list(self.task_heads.keys())}"
                     )
-                if self.task_configs_map[name].type != TaskType.CLASSIFICATION:
+                cls_cfg = self.task_configs_map[name]
+                if cls_cfg.type != TaskType.CLASSIFICATION:
                     raise ValueError(f"class_targets task '{name}' must be a classification task.")
                 idxs = [int(classes)] if isinstance(classes, int) else [int(c) for c in classes]
                 if not idxs:
                     raise ValueError(f"class_targets['{name}'] must specify at least one class index.")
+                num_classes = getattr(cls_cfg, "num_classes", None)
+                if num_classes is not None and any(not 0 <= i < num_classes for i in idxs):
+                    raise ValueError(
+                        f"class_targets['{name}'] indices {idxs} out of range for a "
+                        f"{num_classes}-class head; valid indices are [0, {num_classes})."
+                    )
                 class_target_map[name] = idxs
 
         # Legacy single-task path (mode / target_value) only when no target maps are given
@@ -1896,7 +1904,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             """Stack per-task scores to (B, T); return (B, 0) when there are no regression tasks."""
             if vals:
                 return torch.stack(vals, dim=-1)
-            return torch.zeros((input_tensor.shape[0], 0), device=device)
+            return torch.zeros((input_tensor.shape[0], 0), device=device, dtype=input_tensor.dtype)
 
         def _class_loss_terms(h_task: torch.Tensor) -> list[torch.Tensor]:
             """``-log P(target classes)`` per classification objective (maximize that prob)."""

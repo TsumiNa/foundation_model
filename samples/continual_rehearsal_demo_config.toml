@@ -1,7 +1,8 @@
 # Continual multi-task rehearsal + inverse-design demo (full run, 20 epochs/step).
 #
 # All inorganic datasets + all task types: 2 reg + 2 kernel reg + 1 clf (qc_ac_te_mp) +
-# 2 reg (NEMAD superconductor) + 2 reg (NEMAD magnetic) + always-on autoencoder. Tasks are
+# 2 reg (NEMAD superconductor: tc, pressure) + 3 reg (NEMAD magnetic: curie, magnetization, neel) +
+# 2 reg (phonix-db: kp, klat) + always-on autoencoder. Tasks are
 # added incrementally with 5% rehearsal of learned tasks; KMD-1d descriptors (invertible) are
 # computed on the fly. A final inverse-design stage optimizes the latent toward 2 regression
 # targets + increased quasicrystal probability and decodes the descriptor back to a composition.

@@ -5,10 +5,12 @@
 Continual multi-task learning demo with rehearsal (5% replay) + inverse design.
 
 Comprehensive end-to-end exercise of the composition-keyed data stack +
-FlexibleMultiTaskModel across every task type and every inorganic dataset:
+FlexibleMultiTaskModel across every task type and every inorganic dataset (default sequence):
 
 * 2 regression + 2 kernel regression + 1 classification from the qc_ac_te_mp DOS/material set,
-* 2 regression from the NEMAD superconductor set, 2 regression from the NEMAD magnetic set,
+* 2 regression from the NEMAD superconductor set (tc, pressure),
+* 3 regression from the NEMAD magnetic set (curie, magnetization, neel),
+* 2 regression from the phonix-db set (kp, klat),
 * the built-in autoencoder head (always on).
 
 All compositions are featurized **on the fly** with the invertible KMD-1d descriptor
@@ -16,7 +18,8 @@ All compositions are featurized **on the fly** with the invertible KMD-1d descri
 
 Tasks are added one at a time (dynamic finetuning). The AE head stays on the whole time; when a
 new head is appended, previously learned tasks keep only ~``replay_ratio`` of their valid
-training targets active (per-task ``task_masking_ratio``) — balancing forgetting against cost.
+training targets active (per-task ``task_masking_ratio``). The mask is drawn once per step when
+the training dataset is built (it is not resampled each epoch) — balancing forgetting against cost.
 Every step evaluates *all* active heads on the fixed test split and plots the new head plus the
 per-task forgetting trajectory.
 
@@ -138,8 +141,8 @@ class ContinualRehearsalConfig:
         unknown = [t for t in self.task_sequence if t not in TASK_SPECS]
         if unknown:
             raise ValueError(f"Unknown task(s) {unknown}. Available: {sorted(TASK_SPECS)}")
-        if not 0.0 < self.replay_ratio <= 1.0:
-            raise ValueError("replay_ratio must be in (0, 1].")
+        if not 0.0 <= self.replay_ratio <= 1.0:
+            raise ValueError("replay_ratio must be in [0, 1] (0 = no rehearsal).")
         if len(self.inverse_reg_tasks) != len(self.inverse_reg_targets):
             raise ValueError("inverse_reg_tasks and inverse_reg_targets must have equal length.")
 
@@ -233,9 +236,12 @@ class ContinualRehearsalRunner:
             values = df[col]
             if spec["source"] != "qc" and spec["kind"] == "reg":
                 # log1p compresses the orders-of-magnitude range, then z-score + clip tails.
+                # Scaling stats come from *train* rows only to avoid leaking val/test distribution.
                 v = np.log1p(df[col].astype(float).clip(lower=0.0))
-                mean = float(v.mean())
-                std = float(v.std(ddof=0)) or 1.0
+                is_train = np.array([split_by_key.get(str(k)) == "train" for k in df.index])
+                ref = v[is_train] if is_train.any() else v
+                mean = float(ref.mean())
+                std = float(ref.std(ddof=0)) or 1.0
                 values = ((v - mean) / std).clip(-_RAW_TARGET_CLIP, _RAW_TARGET_CLIP)
             frame[col] = values
             if spec["kind"] == "kr":
@@ -372,11 +378,19 @@ class ContinualRehearsalRunner:
             )
             trainer.fit(model, datamodule=datamodule)
 
+            # Evaluate on the DataModule's *resolved* test compositions so the metrics use exactly
+            # the rows held out of training (not the raw per-task split column, which can diverge
+            # from the global overlay/random-fallback split the DataModule actually trained on).
+            test_keys: set[str] | None = None
+            if datamodule.split_series is not None:
+                resolved = datamodule.split_series
+                test_keys = set(resolved.index[resolved == "test"].astype(str))
+
             step_dir = self.output_dir / f"step{step + 1:02d}_{task_name}"
             step_dir.mkdir(parents=True, exist_ok=True)
             step_metrics: dict[str, dict[str, float]] = {}
             for name in active:
-                metric = self._evaluate_task(model, name, step_dir, is_new=(name == task_name))
+                metric = self._evaluate_task(model, name, step_dir, is_new=(name == task_name), test_keys=test_keys)
                 step_metrics[name] = metric
                 metric_history[name].append((step + 1, metric["primary"]))
             records.append({"step": step + 1, "new_task": task_name, "metrics": step_metrics})
@@ -384,20 +398,26 @@ class ContinualRehearsalRunner:
             logger.info(f"Step {step + 1}: {summary}")
 
         self._plot_forgetting(metric_history)
-        (self.output_dir / "experiment_records.json").write_text(json.dumps(records, indent=2))
+        (self.output_dir / "experiment_records.json").write_text(json.dumps(records, indent=2), encoding="utf-8")
 
         inverse = self._inverse_design(model)
-        (self.output_dir / "inverse_design.json").write_text(json.dumps(inverse, indent=2))
+        (self.output_dir / "inverse_design.json").write_text(json.dumps(inverse, indent=2), encoding="utf-8")
 
         self._write_report_html(records, inverse)
         logger.info(f"Done. Outputs in {self.output_dir}")
 
     # ------------------------------------------------------------------ eval
 
-    def _test_rows(self, task_name: str) -> list[str]:
+    def _test_rows(self, task_name: str, test_keys: set[str] | None = None) -> list[str]:
+        """Test compositions with a non-null target for ``task_name``.
+
+        When ``test_keys`` is given (the DataModule's resolved test split) it is the source of
+        truth; otherwise fall back to the per-task ``split`` column (used for inverse-design seeds).
+        """
         spec = TASK_SPECS[task_name]
         frame = self.task_frames[task_name]
-        mask = frame[spec["column"]].notna() & (frame["split"] == "test")
+        mask = frame[spec["column"]].notna()
+        mask &= frame.index.isin(test_keys) if test_keys is not None else (frame["split"] == "test")
         return list(frame.index[mask])
 
     def _descriptor_tensor(self, comps: list[str], device) -> tuple[torch.Tensor, list[str]]:
@@ -405,12 +425,12 @@ class ContinualRehearsalRunner:
         comps = [c for c in comps if c in desc.index]
         return torch.tensor(desc.loc[comps].values, dtype=torch.float32, device=device), comps
 
-    def _evaluate_task(self, model, task_name, step_dir, *, is_new) -> dict[str, float]:
+    def _evaluate_task(self, model, task_name, step_dir, *, is_new, test_keys=None) -> dict[str, float]:
         spec = TASK_SPECS[task_name]
         kind = spec["kind"]
         model.eval()
         device = next(model.parameters()).device
-        comps = self._test_rows(task_name)
+        comps = self._test_rows(task_name, test_keys)
         if not comps:
             return {"primary": float("nan"), "samples": 0}
         frame = self.task_frames[task_name]
@@ -844,7 +864,14 @@ def _parse_args(argv: list[str] | None = None) -> ContinualRehearsalConfig:
             data[key] = val
 
     field_names = set(ContinualRehearsalConfig.__dataclass_fields__)
-    path_fields = {"qc_data_path", "qc_preprocessing_path", "superconductor_path", "magnetic_path", "output_dir"}
+    path_fields = {
+        "qc_data_path",
+        "qc_preprocessing_path",
+        "superconductor_path",
+        "magnetic_path",
+        "phonix_path",
+        "output_dir",
+    }
     kwargs: dict[str, Any] = {}
     for key, value in data.items():
         if key not in field_names:
