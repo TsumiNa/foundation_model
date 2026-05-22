@@ -14,7 +14,7 @@ magnetic_path = "data/NEMAD_magnetic_20260419.parquet"
 phonix_path = "data/phonix-db-filtered_20260425.parquet"
 output_dir = "artifacts/continual_rehearsal_smoke"
 
-task_sequence = ["density", "formation_energy", "dos_density", "power_factor", "material_type", "tc", "pressure", "curie", "magnetization", "neel", "kp", "klat"]
+task_sequence = ["density", "dos_density", "power_factor", "tc", "pressure", "curie", "magnetization", "neel", "kp", "formation_energy", "klat", "material_type"]
 replay_ratio = 0.05
 sample_per_dataset = 500
 
@@ -29,6 +29,9 @@ n_kernel = 15
 inverse_n_seeds = 8
 inverse_steps = 50
 inverse_lr = 0.05
+inverse_class_weight = 5.0
+inverse_reg_tasks = ["formation_energy", "klat"]
+inverse_reg_targets = [-2.0, 2.0]
 
 random_seed = 2025
 datamodule_random_seed = 42

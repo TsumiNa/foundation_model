@@ -23,8 +23,9 @@ the training dataset is built (it is not resampled each epoch) — balancing for
 Every step evaluates *all* active heads on the fixed test split and plots the new head plus the
 per-task forgetting trajectory.
 
-After all tasks are learned, an **inverse-design** stage optimizes the latent space toward a
-condition (2 regression targets + increased quasicrystal probability) and decodes the optimized
+After all tasks are learned, an **inverse-design** stage seeds from the highest-QC training
+compositions and optimizes the latent to **raise quasicrystal probability** (primary) with low
+formation energy and high lattice thermal conductivity (secondary), then decodes the optimized
 KMD descriptor back to a composition via ``KMD.inverse``.
 
 Run:
@@ -92,7 +93,23 @@ TASK_SPECS: dict[str, dict[str, Any]] = {
 # Raw (non-qc) regression targets span orders of magnitude (thermal conductivity, magnetization);
 # they are log1p-compressed, z-scored, then clipped to tame heavy tails.
 _RAW_TARGET_CLIP = 5.0
-DEFAULT_SEQUENCE = list(TASK_SPECS.keys())
+# The first nine tasks may be added in any order; the last three are fixed as
+# formation_energy → klat → material_type so the inverse-design heads (and especially the QC
+# classifier) are the freshest at the end, when inverse design runs.
+DEFAULT_SEQUENCE = [
+    "density",
+    "dos_density",
+    "power_factor",
+    "tc",
+    "pressure",
+    "curie",
+    "magnetization",
+    "neel",
+    "kp",
+    "formation_energy",
+    "klat",
+    "material_type",
+]
 # The raw encoder has 5 classes (DAC=0, DQC=1, IAC=2, IQC=3, others=4). They are too imbalanced
 # and finely split to learn, so we merge the approximant/quasicrystal pairs into 3 classes:
 #   AC = DAC + IAC, QC = DQC + IQC, others.  (index == merged class id)
@@ -208,12 +225,21 @@ class ContinualRehearsalConfig:
     kr_lr: float = 5e-4
     kr_decay: float = 5e-5
 
-    # Inverse-design stage
+    # Inverse-design stage: primary objective = raise QC probability; secondary = low formation
+    # energy + high lattice thermal conductivity. Seeds are the highest-QC training compositions.
     inverse_n_seeds: int = 16
     inverse_steps: int = 300
     inverse_lr: float = 0.05
-    inverse_reg_tasks: list[str] = field(default_factory=lambda: ["density", "formation_energy"])
-    inverse_reg_targets: list[float] = field(default_factory=lambda: [1.5, -1.5])
+    inverse_class_weight: float = 5.0  # weight of the QC objective relative to the regression ones
+    inverse_reg_tasks: list[str] = field(default_factory=lambda: ["formation_energy", "klat"])
+    inverse_reg_targets: list[float] = field(default_factory=lambda: [-2.0, 2.0])  # low f.e., high klat
+    # How the optimization's starting latents are seeded:
+    #   "top_qc"   – the inverse_seed_split compositions the model scores highest on QC probability;
+    #   "random"   – a random sample from inverse_seed_split;
+    #   "explicit" – the exact compositions listed in inverse_seed_compositions.
+    inverse_seed_strategy: str = "top_qc"
+    inverse_seed_split: str = "train"  # split to draw seeds from ("train"/"val"/"test"/"all")
+    inverse_seed_compositions: list[str] = field(default_factory=list)  # used when strategy == "explicit"
 
     random_seed: int = 2025
     datamodule_random_seed: int = 42
@@ -228,6 +254,12 @@ class ContinualRehearsalConfig:
             raise ValueError("replay_ratio must be in [0, 1] (0 = no rehearsal).")
         if len(self.inverse_reg_tasks) != len(self.inverse_reg_targets):
             raise ValueError("inverse_reg_tasks and inverse_reg_targets must have equal length.")
+        if self.inverse_seed_strategy not in {"top_qc", "random", "explicit"}:
+            raise ValueError("inverse_seed_strategy must be 'top_qc', 'random', or 'explicit'.")
+        if self.inverse_seed_split not in {"train", "val", "test", "all"}:
+            raise ValueError("inverse_seed_split must be 'train', 'val', 'test', or 'all'.")
+        if self.inverse_seed_strategy == "explicit" and not self.inverse_seed_compositions:
+            raise ValueError("inverse_seed_strategy='explicit' requires inverse_seed_compositions.")
 
 
 def _as_float_array(cell: Any) -> np.ndarray:
@@ -621,13 +653,6 @@ class ContinualRehearsalRunner:
         device = next(model.parameters()).device
         model.eval()
 
-        # Seed from qc test compositions (material_type is defined there).
-        seeds = self._test_rows("material_type")[: cfg.inverse_n_seeds]
-        x_seed, seeds = self._descriptor_tensor(seeds, device)
-        if not seeds:
-            logger.warning("No seeds available for inverse design.")
-            return {}
-
         reg_targets = {t: v for t, v in zip(cfg.inverse_reg_tasks, cfg.inverse_reg_targets)}
 
         def _qc_prob(x: torch.Tensor) -> np.ndarray:
@@ -641,6 +666,14 @@ class ContinualRehearsalRunner:
                 h = torch.tanh(model.encoder(x))
                 return {t: model.task_heads[t](h).squeeze(-1).cpu().numpy() for t in reg_targets}
 
+        # Seed the optimization (strategy configurable: top_qc / random / explicit), then push the
+        # latents toward QC (primary) with low formation energy / high klat (secondary).
+        seeds = self._select_seeds(model, device, _qc_prob)
+        x_seed, seeds = self._descriptor_tensor(seeds, device)
+        if not seeds:
+            logger.warning("No seeds available for inverse design.")
+            return {}
+
         before_qc = _qc_prob(x_seed)
         before_reg = _reg_preds(x_seed)
 
@@ -648,6 +681,7 @@ class ContinualRehearsalRunner:
             initial_input=x_seed,
             task_targets=reg_targets,
             class_targets={"material_type": QC_CLASSES},
+            class_target_weight=cfg.inverse_class_weight,  # QC probability is the primary objective
             optimize_space="latent",
             steps=cfg.inverse_steps,
             lr=cfg.inverse_lr,
@@ -685,6 +719,36 @@ class ContinualRehearsalRunner:
         logger.info(f"Inverse design in-latent regression: {latent_summary}")
         logger.info(f"Inverse design QC prob (round-trip): {before_qc.mean():.3f} -> {after_qc.mean():.3f}")
         return {"reg_targets": reg_targets, "qc_classes": QC_CLASSES, "n_seeds": len(seeds), "records": records}
+
+    def _select_seeds(self, model, device, qc_prob_fn) -> list[str]:
+        """Inverse-design seed compositions, per the configured strategy (top_qc / random / explicit)."""
+        cfg = self.config
+        n = cfg.inverse_n_seeds
+
+        if cfg.inverse_seed_strategy == "explicit":
+            seeds = [normalize_composition(c) or str(c) for c in cfg.inverse_seed_compositions]
+            seeds = [c for c in seeds if c in self._desc_cache or not self.descriptor_fn([c]).empty]
+            return seeds[:n]
+
+        # Candidate pool: the chosen split of the material_type frame, with a valid descriptor.
+        frame = self.task_frames["material_type"]
+        index = (
+            frame.index if cfg.inverse_seed_split == "all" else frame.index[frame["split"] == cfg.inverse_seed_split]
+        )
+        pool = [c for c in index if c in self._desc_cache or not self.descriptor_fn([c]).empty]
+        if not pool:
+            return []
+
+        if cfg.inverse_seed_strategy == "random":
+            rng = np.random.default_rng(cfg.random_seed)
+            idx = rng.choice(len(pool), size=min(n, len(pool)), replace=False)
+            return [pool[i] for i in idx]
+
+        # "top_qc": highest predicted QC probability.
+        x, pool = self._descriptor_tensor(pool, device)
+        probs = qc_prob_fn(x)
+        order = np.argsort(probs)[::-1][:n]
+        return [pool[i] for i in order]
 
     def _decode_compositions(self, descriptors: np.ndarray) -> list[str]:
         """KMD.inverse: descriptor -> element weights -> compact formula string."""
@@ -854,16 +918,30 @@ class ContinualRehearsalRunner:
         logger.info(f"Saved forgetting trajectory to {self.output_dir / 'forgetting_trajectory.png'}")
 
     def _plot_inverse_design(self, before_qc, after_qc, before_reg, reg_latent, after_reg, reg_targets):
-        """Two readable stories: (1) latent optimization reaches the target; (2) the decode
-        round-trip loses fidelity. Each regression target is a parallel-coordinates panel
-        (seed prediction → optimized-in-latent → decoded), plus an honest quasicrystal panel."""
+        """Parallel-coordinates per objective. Primary: QC probability (seed → optimized/decoded),
+        which should rise toward 1. Secondary: the regression targets (seed → optimized-in-latent →
+        decoded round-trip), each toward its target line."""
         reg_names = list(reg_targets)
         n_seeds = len(before_qc)
-        fig, axes = plt.subplots(1, len(reg_names) + 1, figsize=(4.6 * (len(reg_names) + 1), 4.2), squeeze=False)
+        n_panels = 1 + len(reg_names)
+        fig, axes = plt.subplots(1, n_panels, figsize=(4.6 * n_panels, 4.2), squeeze=False)
         axes = axes[0]
-        stages = ["seed\nprediction", "optimized\n(latent)", "decoded\n(round-trip)"]
 
-        for ax, t in zip(axes[: len(reg_names)], reg_names):
+        # Primary objective: quasicrystal probability, seed → decoded round-trip.
+        axq = axes[0]
+        for i in range(n_seeds):
+            axq.plot([0, 1], [before_qc[i], after_qc[i]], color="#55A868", alpha=0.4, lw=1.0, marker="o", ms=3)
+        axq.axhline(1.0, color="#C44E52", ls="--", lw=1.6, label="target = 1.0")
+        axq.set_xticks([0, 1], ["seed", "optimized\n(decoded)"])
+        axq.set_xlim(-0.3, 1.3)
+        axq.set_ylim(-0.02, 1.02)
+        axq.set_ylabel("P(quasicrystal)")
+        axq.set_title("Quasicrystal Probability ↑", fontsize=12)
+        axq.legend(loc="best", fontsize=9)
+
+        # Secondary objectives: regression targets.
+        stages = ["seed\nprediction", "optimized\n(latent)", "decoded\n(round-trip)"]
+        for ax, t in zip(axes[1:], reg_names):
             color = self._task_colors.get(t, _PALETTE[0])
             for i in range(n_seeds):
                 ax.plot(
@@ -879,30 +957,10 @@ class ContinualRehearsalRunner:
             ax.set_xticks([0, 1, 2], stages)
             ax.set_xlim(-0.3, 2.3)
             ax.set_ylabel("Predicted value")
-            ax.set_title(_display(t))
+            ax.set_title(f"{_display(t)} {'↓' if reg_targets[t] < 0 else '↑'}", fontsize=12)
             ax.legend(loc="best", fontsize=9)
 
-        # Quasicrystal panel: honest about the near-zero probability (majority-class collapse).
-        axq = axes[-1]
-        axq.axis("off")
-        axq.set_title("Quasicrystal Probability")
-        axq.text(
-            0.5,
-            0.5,
-            f"before:           {before_qc.mean():.1e}\n"
-            f"after (decode):   {after_qc.mean():.1e}\n\n"
-            "≈ 0 — the Material Type head collapses\n"
-            "to the majority class (severe class\n"
-            "imbalance), so the quasicrystal objective\n"
-            "has almost no gradient. Addressed by the\n"
-            "classification rebalance (separate work).",
-            ha="center",
-            va="center",
-            fontsize=10,
-            family="monospace",
-            bbox=dict(boxstyle="round,pad=0.6", facecolor="#f3f4f6", edgecolor="#e5e7eb"),
-        )
-        fig.suptitle("Inverse design: latent optimization vs decode round-trip", y=1.02)
+        fig.suptitle("Inverse design — primary: raise QC probability · secondary: low f.e., high κ_lat", y=1.03)
         fig.savefig(self.output_dir / "inverse_design.png")
         plt.close(fig)
         logger.info(f"Saved inverse-design plot to {self.output_dir / 'inverse_design.png'}")
@@ -987,7 +1045,7 @@ class ContinualRehearsalRunner:
                 "<li><b>Descriptor</b>: invertible KMD-1d, computed on the fly (descriptor → composition via <code>KMD.inverse</code>).</li>"
                 "<li><b>Continual finetuning</b>: tasks added one at a time; AE head always on.</li>"
                 f"<li><b>Rehearsal</b>: learned tasks keep only {self.config.replay_ratio:.0%} of their training targets per step.</li>"
-                "<li><b>Inverse design</b>: optimize the latent toward regression targets + quasicrystal probability, then decode a composition.</li>"
+                "<li><b>Inverse design</b>: from the highest-QC training compositions, optimize the latent to <b>raise quasicrystal probability</b> (primary) with low formation energy &amp; high κ_lat (secondary), then decode a composition.</li>"
                 "</ul>"
             ),
             slide(
@@ -1005,11 +1063,11 @@ class ContinualRehearsalRunner:
             slide(
                 "<h2>Inverse design</h2><div class='row'>"
                 + (f"<img class='wide' src='{inv_img}'/>" if inv_img else "")
-                + "<div class='panel'><h3>Latent optimization reached targets</h3><ul>"
+                + "<div class='panel'><h3>Primary — quasicrystal probability</h3>"
+                + f"<p>mean P(QC) over seeds: <b>{qc_before:.3f} → {qc_after:.3f}</b> (round-trip)</p>"
+                + "<h3>Secondary — regression targets (in latent)</h3><ul>"
                 + inv_lines
-                + f"</ul><p>Quasicrystal probability (round-trip): <b>{qc_before:.1e} → {qc_after:.1e}</b> "
-                + "<span class='meta'>(≈0 — Material Type collapses to the majority class; class-imbalance fix pending)</span></p>"
-                + "<h3>Decoded compositions (KMD.inverse)</h3><ul>"
+                + "</ul><h3>Decoded compositions (KMD.inverse)</h3><ul>"
                 + decoded
                 + "</ul></div></div>"
             ),
