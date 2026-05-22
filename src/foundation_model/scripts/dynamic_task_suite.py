@@ -28,6 +28,7 @@ from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from loguru import logger as fm_logger
 
+from foundation_model.data.composition_sources import lookup_descriptor_fn
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
 from foundation_model.models.model_config import (
@@ -472,18 +473,13 @@ class DynamicTaskSuiteRunner:
 
     @staticmethod
     def _make_descriptor_fn(features: pd.DataFrame):
-        """Build a descriptor_fn that looks up precomputed descriptor rows by composition.
+        """Look up precomputed descriptor rows by canonical composition key.
 
-        Avoids copying the (potentially large) descriptor matrix: only an index label map is
-        built. The DataModule's descriptor cache stringifies the returned index.
+        Delegates to :func:`lookup_descriptor_fn`, which normalizes the descriptor index the same
+        way the DataModule normalizes task frames, so the two sides join even when the descriptor
+        file and the task data spell compositions differently.
         """
-        label_by_str = {str(idx): idx for idx in features.index}
-
-        def descriptor_fn(compositions):
-            labels = [label_by_str[c] for c in compositions if c in label_by_str]
-            return features.loc[labels]
-
-        return descriptor_fn
+        return lookup_descriptor_fn(features)
 
     def _task_masking_ratio_for(self, name: str) -> float | None:
         """Resolve the per-task keep ratio from the (float | dict | None) suite config."""

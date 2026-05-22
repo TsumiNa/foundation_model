@@ -19,10 +19,14 @@ from foundation_model.models.model_config import (
 )
 
 from .composition_sources import (
+    CompositionNormalizer,
     DescriptorCache,
     DescriptorFn,
+    PrecomputedDescriptorSource,
     build_composition_universe,
+    canonical_key,
     load_task_frame,
+    normalize_composition,
     resolve_splits,
 )
 from .dataset import CompoundDataset
@@ -157,6 +161,16 @@ class CompoundDataModule(L.LightningDataModule):
     composition_column : str, optional
         Global default composition column name; overridable per task via
         ``cfg.composition_column``. Defaults to ``"composition"``.
+    composition_normalizer : Callable[[object], str | None] | None, optional
+        Canonicalizes every composition key the DataModule ingests (task frames, ``data_files``,
+        explicit ``predict_idx`` sequences) so heterogeneously-spelled sources — a pymatgen
+        ``Composition``/dict vs a formula string, ``Fe3O2`` vs ``Fe3.0O2.0`` — join by exact
+        match. Keys that don't parse fall back to their raw string (so synthetic/non-formula IDs
+        are untouched). Defaults to :func:`~foundation_model.data.composition_sources.normalize_composition`;
+        pass ``None`` to disable. **The descriptor side must use the same rule**: the bundled
+        :class:`~foundation_model.data.composition_sources.PrecomputedDescriptorSource` and
+        :func:`~foundation_model.data.composition_sources.lookup_descriptor_fn` normalize by
+        default; a custom ``descriptor_fn`` must accept these canonical keys.
     random_seed : int | None, optional
         Base seed for all stochastic operations (split, masking, swap). Defaults to 42.
     val_split, test_split : float, optional
@@ -182,6 +196,7 @@ class CompoundDataModule(L.LightningDataModule):
         task_frames: Mapping[str, pd.DataFrame] | None = None,
         default_data_files: str | Sequence[str] | None = None,
         composition_column: str = "composition",
+        composition_normalizer: CompositionNormalizer | None = normalize_composition,
         random_seed: int | None = 42,
         val_split: float = 0.1,
         test_split: float = 0.1,
@@ -217,6 +232,11 @@ class CompoundDataModule(L.LightningDataModule):
         else:
             self.default_data_files = tuple(str(p) for p in default_data_files)
         self.composition_column = composition_column
+        self.composition_normalizer = composition_normalizer
+        # The DataModule owns the normalization policy; keep a recognized descriptor source in
+        # sync so the opt-out (composition_normalizer=None) only has to be set in one place.
+        if isinstance(descriptor_fn, PrecomputedDescriptorSource):
+            descriptor_fn._composition_normalizer = composition_normalizer
         self.random_seed = random_seed
         self.val_split = val_split
         self.test_split = test_split
@@ -250,7 +270,9 @@ class CompoundDataModule(L.LightningDataModule):
         self._train_sampler: DistributedSampler | None = None
 
         self.save_hyperparameters(
-            ignore=["task_configs", "descriptor_fn", "task_frames"],
+            # Callables / large frames must not be pickled into checkpoints (a function reference
+            # such as composition_normalizer also trips torch's weights_only=True loader).
+            ignore=["task_configs", "descriptor_fn", "task_frames", "composition_normalizer"],
         )
 
         logger.info(f"DataModule initialized with {len(self.task_configs)} task configurations.")
@@ -271,12 +293,19 @@ class CompoundDataModule(L.LightningDataModule):
     def _composition_column_for(self, cfg: TaskConfig) -> str:
         return cfg.composition_column or self.composition_column
 
+    def _canon(self, value: object) -> str:
+        """Canonical composition key (normalizer with raw-string fallback)."""
+        return canonical_key(value, self.composition_normalizer)
+
     def _normalize_frame(self, frame: pd.DataFrame, composition_column: str, *, task_name: str = "") -> pd.DataFrame:
-        """Return a copy indexed by string composition keys, deduped keep-first."""
+        """Return a copy indexed by canonical composition keys, deduped keep-first."""
         frame = frame.copy()
         if composition_column in frame.columns:
             frame = frame.set_index(composition_column)
-        frame.index = frame.index.astype(str)
+        if self.composition_normalizer is None:
+            frame.index = frame.index.astype(str)  # vectorized fast path when normalization is off
+        else:
+            frame.index = pd.Index([self._canon(c) for c in frame.index])
         duplicated = frame.index.duplicated(keep="first")
         if duplicated.any():
             logger.warning(
@@ -312,10 +341,17 @@ class CompoundDataModule(L.LightningDataModule):
                 frame = self._normalize_frame(self._input_task_frames[cfg.name], comp_col, task_name=cfg.name)
                 logger.info(f"Task '{cfg.name}': using provided in-memory frame ({len(frame)} rows).")
             elif cfg.data_files:
-                frame = load_task_frame(cfg.data_files, comp_col, task_name=cfg.name)
+                frame = load_task_frame(
+                    cfg.data_files, comp_col, task_name=cfg.name, composition_normalizer=self.composition_normalizer
+                )
                 logger.info(f"Task '{cfg.name}': loaded {len(frame)} rows from {len(cfg.data_files)} file(s).")
             elif self.default_data_files:
-                frame = load_task_frame(self.default_data_files, comp_col, task_name=cfg.name)
+                frame = load_task_frame(
+                    self.default_data_files,
+                    comp_col,
+                    task_name=cfg.name,
+                    composition_normalizer=self.composition_normalizer,
+                )
                 logger.info(
                     f"Task '{cfg.name}': loaded {len(frame)} rows from shared default_data_files "
                     f"({len(self.default_data_files)} file(s))."
@@ -333,7 +369,7 @@ class CompoundDataModule(L.LightningDataModule):
         for cfg in self._supervised_tasks():
             pid = cfg.predict_idx
             if isinstance(pid, (list, tuple)):
-                extra.extend(str(c) for c in pid)
+                extra.extend(self._canon(c) for c in pid)
         universe = build_composition_universe(self._task_frames, extra_compositions=extra)
         if not universe:
             raise ValueError(
@@ -350,7 +386,14 @@ class CompoundDataModule(L.LightningDataModule):
                 f"(e.g. {', '.join(dropped[:5])})."
             )
         if self.descriptors.empty:
-            raise ValueError("descriptor_fn produced no valid descriptors for any composition.")
+            hint = ""
+            if self.composition_normalizer is None:
+                hint = (
+                    " The DataModule has composition_normalizer=None but bundled descriptor sources "
+                    "(PrecomputedDescriptorSource / lookup_descriptor_fn) normalize by default — pass "
+                    "composition_normalizer=None to the descriptor source too so both sides use the same keys."
+                )
+            raise ValueError(f"descriptor_fn produced no valid descriptors for any composition.{hint}")
         self.master_index = [str(c) for c in self.descriptors.index]
         logger.info(f"Master composition index size (with valid descriptors): {len(self.master_index)}")
 
@@ -448,7 +491,7 @@ class CompoundDataModule(L.LightningDataModule):
                 else:  # "test"
                     subset = list(self.test_idx)
             else:  # explicit sequence of composition keys
-                requested = [str(c) for c in pid]
+                requested = [self._canon(c) for c in pid]
                 subset = [c for c in requested if c in master_set]
                 missing = [c for c in requested if c not in master_set]
                 if missing:

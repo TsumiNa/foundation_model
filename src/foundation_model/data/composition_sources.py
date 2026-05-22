@@ -20,7 +20,8 @@ tested in isolation with in-memory frames and a fake descriptor function.
 
 from __future__ import annotations
 
-from typing import Callable, Mapping, Sequence
+from collections.abc import Mapping
+from typing import Callable, Sequence
 
 import joblib  # type: ignore[import-untyped]
 import pandas as pd
@@ -33,6 +34,133 @@ DescriptorFn = Callable[[list[str]], pd.DataFrame]
 # Split labels, ordered by precedence (later wins on conflict).
 _SPLIT_PRECEDENCE: dict[str, int] = {"train": 1, "val": 2, "test": 3}
 VALID_SPLIT_LABELS = frozenset(_SPLIT_PRECEDENCE)
+
+# Decimal places used when rendering element amounts in a canonical composition key. Six is
+# enough for typical fractional stoichiometries while collapsing float-representation noise.
+_COMPOSITION_AMOUNT_DECIMALS = 6
+
+
+def normalize_composition(value: object, *, decimals: int = _COMPOSITION_AMOUNT_DECIMALS) -> str | None:
+    """Canonical, float-amount composition key shared across every data source.
+
+    Different files spell the same composition differently — a pymatgen ``Composition`` /
+    element-amount ``dict`` (the qc dataset) versus a formula string (NEMAD / phonix), and
+    ``"Fe3O2"`` versus ``"Fe3.0O2.0"``. This maps any of them through pymatgen to a single
+    canonical string so the composition-keyed DataModule can join them by exact match.
+
+    The amounts are **not reduced** (``Fe2O3`` ≠ ``Fe4O6``) because some descriptors aggregate
+    by sum rather than by mean, so the absolute stoichiometry must be preserved. Every amount is
+    rendered as a fixed-precision float and elements are sorted by symbol, making the key
+    invariant to integer-vs-decimal spelling and to element ordering.
+
+    Parameters
+    ----------
+    value : object
+        A formula string, a pymatgen ``Composition``, or an element→amount mapping. Mapping
+        entries that are ``None`` or non-positive are dropped (the qc ``composition`` column
+        stores every element with mostly-``None`` amounts).
+    decimals : int, optional
+        Decimal places for each amount. Defaults to six.
+
+    Returns
+    -------
+    str | None
+        e.g. ``"Fe2.000000 O3.000000"``; ``None`` if the input is empty or unparseable.
+    """
+    from pymatgen.core.composition import Composition  # local import; pymatgen is heavy
+
+    try:
+        if isinstance(value, dict):
+            cleaned = {k: float(v) for k, v in value.items() if v is not None and float(v) > 0}
+            if not cleaned:
+                return None
+            comp = Composition(cleaned)
+        else:
+            text = str(value).strip()
+            # Fast-path: a real formula starts with an element symbol (uppercase) or an opening
+            # bracket. This cheaply rejects non-formula join keys (``mp-1234`` IDs, synthetic
+            # ``s0`` keys, SMILES like ``*CC*``) without a pymatgen parse, while still letting
+            # charged/bracketed formulas through for pymatgen to decide.
+            if not text or not (text[0].isupper() or text[0] in "(["):
+                return None
+            comp = Composition(text)
+    except Exception:
+        return None
+    amounts = comp.get_el_amt_dict()
+    if not amounts:
+        return None
+    return " ".join(f"{el}{amounts[el]:.{decimals}f}" for el in sorted(amounts))
+
+
+CompositionNormalizer = Callable[[object], str | None]
+
+
+def canonical_key(value: object, normalizer: CompositionNormalizer | None) -> str:
+    """Apply ``normalizer`` to ``value``, falling back to ``str(value)`` when it can't parse.
+
+    The fallback is what keeps normalization safe to enable by default: real formulas are
+    canonicalized while non-formula keys (synthetic IDs, material IDs) pass through unchanged,
+    and — crucially — both the task and descriptor sides use this same rule, so even unparseable
+    keys still align.
+    """
+    if normalizer is None:
+        return str(value)
+    out = normalizer(value)
+    return out if out is not None else str(value)
+
+
+def lookup_descriptor_fn(
+    features: pd.DataFrame,
+    *,
+    composition_normalizer: CompositionNormalizer | None = normalize_composition,
+) -> DescriptorFn:
+    """Build a ``descriptor_fn`` that looks up rows of an in-memory descriptor frame.
+
+    The frame is re-indexed by :func:`canonical_key` so lookups match the canonical composition
+    keys the DataModule passes (it normalizes task frames the same way). Rows whose keys collide
+    after normalization — including pre-existing duplicate index labels — are collapsed keep-first
+    (with a warning), guaranteeing a 1:1 key→row map so lookups never mismatch in length.
+
+    Parameters
+    ----------
+    features : pd.DataFrame
+        Descriptor matrix indexed by composition.
+    composition_normalizer : Callable | None, optional
+        Normalizer applied to the frame index. Defaults to :func:`normalize_composition`;
+        pass ``None`` to look up by the raw (stringified) index instead.
+    """
+    frame = _reindex_by_canonical(features, composition_normalizer, source="lookup_descriptor_fn")
+
+    index = frame.index
+
+    def descriptor_fn(compositions: Sequence[str]) -> pd.DataFrame:
+        # Keys are usually already canonical (the DataModule normalized them), so try a direct
+        # hit first and only pay for canonicalization on a miss.
+        present = [c if c in index else canonical_key(c, composition_normalizer) for c in compositions]
+        return frame.loc[[k for k in present if k in index]]
+
+    return descriptor_fn
+
+
+def _reindex_by_canonical(
+    frame: pd.DataFrame, normalizer: CompositionNormalizer | None, *, source: str
+) -> pd.DataFrame:
+    """Return ``frame`` re-indexed by canonical composition key, deduped keep-first (with warning).
+
+    Uses a shallow copy (the descriptor matrix is shared, only the index is replaced) to avoid
+    duplicating large descriptor frames.
+    """
+    canon = pd.Index([canonical_key(c, normalizer) for c in frame.index])
+    out = frame.copy(deep=False)
+    out.index = canon
+    duplicated = canon.duplicated(keep="first")
+    if duplicated.any():
+        logger.warning(
+            f"{source}: {int(duplicated.sum())} descriptor row(s) collapsed to a duplicate "
+            "composition key after normalization; keeping the first occurrence of each."
+        )
+        out = out[~duplicated]
+    return out
 
 
 def read_data_file(path: str) -> pd.DataFrame:
@@ -85,6 +213,7 @@ def load_task_frame(
     composition_column: str,
     *,
     task_name: str = "",
+    composition_normalizer: CompositionNormalizer | None = None,
 ) -> pd.DataFrame:
     """Load and concatenate a task's data file(s), indexed by composition.
 
@@ -100,6 +229,10 @@ def load_task_frame(
         Name of the column holding composition keys.
     task_name : str, optional
         Task name used only for log messages.
+    composition_normalizer : Callable | None, optional
+        When given, the composition index is mapped through :func:`canonical_key` (deduped after
+        normalization). The DataModule passes its normalizer here; standalone callers default to
+        ``None`` (raw string index).
 
     Returns
     -------
@@ -131,7 +264,10 @@ def load_task_frame(
         frames.append(df)
 
     combined = pd.concat(frames, axis=0) if len(frames) > 1 else frames[0]
-    combined.index = combined.index.astype(str)
+    if composition_normalizer is not None:
+        combined.index = pd.Index([canonical_key(c, composition_normalizer) for c in combined.index])
+    else:
+        combined.index = combined.index.astype(str)
     combined.index.name = composition_column
 
     duplicated = combined.index.duplicated(keep="first")
@@ -189,11 +325,22 @@ class PrecomputedDescriptorSource:
     composition_column : str | None, optional
         If given and present as a column, it is set as the index; otherwise the file's existing
         index is treated as the composition key.
+    composition_normalizer : Callable | None, optional
+        Normalizer applied to the descriptor index via :func:`canonical_key` (deduped keep-first
+        afterwards), so lookups match the canonical keys the DataModule passes. Defaults to
+        :func:`normalize_composition`; pass ``None`` to look up by the raw string index.
     """
 
-    def __init__(self, path: str, composition_column: str | None = None):
+    def __init__(
+        self,
+        path: str,
+        composition_column: str | None = None,
+        *,
+        composition_normalizer: CompositionNormalizer | None = normalize_composition,
+    ):
         self.path = path
         self.composition_column = composition_column
+        self._composition_normalizer = composition_normalizer
         self._frame: pd.DataFrame | None = None
 
     def _load(self) -> pd.DataFrame:
@@ -202,14 +349,22 @@ class PrecomputedDescriptorSource:
             if self.composition_column is not None and self.composition_column in frame.columns:
                 frame = frame.set_index(self.composition_column)
             frame = frame.copy()
-            frame.index = frame.index.astype(str)
+            if self._composition_normalizer is not None:
+                frame = _reindex_by_canonical(
+                    frame, self._composition_normalizer, source=f"PrecomputedDescriptorSource('{self.path}')"
+                )
+            else:
+                frame.index = frame.index.astype(str)
             self._frame = frame
         return self._frame
 
     def __call__(self, compositions: Sequence[str]) -> pd.DataFrame:
         frame = self._load()
-        present = [str(c) for c in compositions if str(c) in frame.index]
-        return frame.loc[present]
+        index = frame.index
+        # Keys are usually already canonical (the DataModule normalized them); try a direct hit
+        # first and only canonicalize on a miss, so we don't re-normalize every query at scale.
+        present = [c if c in index else canonical_key(c, self._composition_normalizer) for c in compositions]
+        return frame.loc[[k for k in present if k in index]]
 
 
 class DescriptorCache:
