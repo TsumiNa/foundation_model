@@ -80,7 +80,7 @@ TASK_SPECS: dict[str, dict[str, Any]] = {
         "column": "Power factor (normalized)",
         "t_column": "Power factor (T/K)",
     },
-    "material_type": {"source": "qc", "kind": "clf", "column": "Material type (label)", "num_classes": 5},
+    "material_type": {"source": "qc", "kind": "clf", "column": "Material type (label)", "num_classes": 3},
     "tc": {"source": "superconductor", "kind": "reg", "column": "Transition temperature[K]"},
     "pressure": {"source": "superconductor", "kind": "reg", "column": "Pressure[GPa]"},
     "curie": {"source": "magnetic", "kind": "reg", "column": "Curie temperature[K]"},
@@ -93,8 +93,90 @@ TASK_SPECS: dict[str, dict[str, Any]] = {
 # they are log1p-compressed, z-scored, then clipped to tame heavy tails.
 _RAW_TARGET_CLIP = 5.0
 DEFAULT_SEQUENCE = list(TASK_SPECS.keys())
-# Quasicrystal classes for the material_type label encoder (DAC=0, DQC=1, IAC=2, IQC=3, others=4).
-QC_CLASSES = [1, 3]
+# The raw encoder has 5 classes (DAC=0, DQC=1, IAC=2, IQC=3, others=4). They are too imbalanced
+# and finely split to learn, so we merge the approximant/quasicrystal pairs into 3 classes:
+#   AC = DAC + IAC, QC = DQC + IQC, others.  (index == merged class id)
+_MATERIAL_TYPE_MERGE = {0: 0, 2: 0, 1: 1, 3: 1, 4: 2}
+MATERIAL_TYPE_CLASSES = ["AC", "QC", "others"]  # index == merged class id
+# Confusion-matrix display order (bottom-left → top-right), so the diagonal reads others→AC→QC.
+MATERIAL_TYPE_DISPLAY_ORDER = ["others", "AC", "QC"]
+# Quasicrystal class index (merged) used as the inverse-design classification objective.
+QC_CLASSES = [1]
+
+# --- Presentation -------------------------------------------------------------
+# Human-readable, properly capitalized task names for every plot title / axis / table cell.
+TASK_DISPLAY: dict[str, str] = {
+    "density": "Density",
+    "formation_energy": "Formation Energy",
+    "dos_density": "DOS Density",
+    "power_factor": "Power Factor",
+    "material_type": "Material Type",
+    "tc": "Critical Temperature (Tc)",
+    "pressure": "Pressure",
+    "curie": "Curie Temperature",
+    "magnetization": "Magnetization",
+    "neel": "Néel Temperature",
+    "kp": "Phonon Conductivity (κₚ)",
+    "klat": "Lattice Conductivity (κ_lat)",
+}
+# A 12-colour qualitative palette (Seaborn "deep" + extras) so every task keeps one stable colour
+# across all figures — no default-cycle collisions when 12 tasks share a legend.
+_PALETTE = [
+    "#4C72B0",
+    "#DD8452",
+    "#55A868",
+    "#C44E52",
+    "#8172B3",
+    "#937860",
+    "#DA8BC3",
+    "#8C8C8C",
+    "#CCB974",
+    "#64B5CD",
+    "#E377C2",
+    "#17BECF",
+]
+# Single colour for every regression parity scatter (per-task colours stay for the line plots).
+_SCATTER_COLOR = "#2563EB"
+
+
+def _display(task: str) -> str:
+    """Pretty, capitalized task name for plots/tables."""
+    return TASK_DISPLAY.get(task, task.replace("_", " ").title())
+
+
+def _scale_label(task: str) -> str:
+    """Plotted target scale (every target is preprocessed, so there is no raw physical unit)."""
+    return "normalized" if TASK_SPECS[task]["source"] == "qc" else "log1p, z-scored"
+
+
+def _title(task: str) -> str:
+    """Plot title: property name + the scale it is plotted in (metrics go inside the axes)."""
+    return f"{_display(task)}  ({_scale_label(task)})"
+
+
+def _apply_plot_style() -> None:
+    """One white-background, consistent matplotlib look for every figure in the demo."""
+    plt.rcParams.update(
+        {
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+            "savefig.facecolor": "white",
+            "savefig.bbox": "tight",
+            "figure.dpi": 130,
+            "savefig.dpi": 150,
+            "font.size": 11,
+            "axes.titlesize": 13,
+            "axes.titleweight": "semibold",
+            "axes.labelsize": 11,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "axes.grid": True,
+            "grid.alpha": 0.25,
+            "grid.linestyle": "-",
+            "legend.frameon": False,
+            "lines.linewidth": 1.6,
+        }
+    )
 
 
 @dataclass
@@ -178,6 +260,9 @@ class ContinualRehearsalRunner:
         self.config = config
         self.output_dir = Path(config.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        _apply_plot_style()
+        # Stable colour per task (by position in the configured sequence) across every figure.
+        self._task_colors = {name: _PALETTE[i % len(_PALETTE)] for i, name in enumerate(config.task_sequence)}
         # KMD-1d featurizer over the bundled element features (invertible: descriptor -> composition).
         self._kmd = KMD(element_features.values, method="1d", n_grids=config.n_grids, sigma="auto", scale=True)
         self.x_dim = int(self._kmd.transform(np.eye(1, len(DEFAULT_ELEMENTS))).shape[1])
@@ -205,7 +290,12 @@ class ContinualRehearsalRunner:
         for name, df in sources.items():
             df = df.copy()
             if cfg.sample_per_dataset is not None and cfg.sample_per_dataset < len(df):
-                df = df.iloc[rng.choice(len(df), size=cfg.sample_per_dataset, replace=False)]
+                if name == "qc" and "Material type (label)" in df.columns:
+                    # Stratify: keep every minority (non-"others") material-type row so the rare
+                    # AC/QC classes survive the cap, then fill the rest with random "others".
+                    df = self._stratified_qc_sample(df, cfg.sample_per_dataset, rng)
+                else:
+                    df = df.iloc[rng.choice(len(df), size=cfg.sample_per_dataset, replace=False)]
             comp_col = "composition" if name != "qc" else "composition"
             df["__key__"] = [_composition_key(v) for v in df[comp_col]]
             df = df.dropna(subset=["__key__"]).drop_duplicates(subset="__key__", keep="first").set_index("__key__")
@@ -227,6 +317,9 @@ class ContinualRehearsalRunner:
                 raise KeyError(f"Task '{task_name}': column '{col}' missing in {spec['source']} data.")
             frame = pd.DataFrame(index=df.index)
             values = df[col]
+            if task_name == "material_type":
+                # Merge the 5 fine labels into AC / QC / others (see _MATERIAL_TYPE_MERGE).
+                values = values.map(_MATERIAL_TYPE_MERGE)
             if spec["source"] != "qc" and spec["kind"] == "reg":
                 # log1p compresses the orders-of-magnitude range, then z-score + clip tails.
                 # Scaling stats come from *train* rows only to avoid leaking val/test distribution.
@@ -253,6 +346,32 @@ class ContinualRehearsalRunner:
             dropped = joblib.load(cfg.qc_preprocessing_path).get("dropped_idx", [])
             df = df.loc[~df.index.isin(dropped)]
         return df
+
+    @staticmethod
+    def _stratified_qc_sample(df: pd.DataFrame, cap: int, rng: np.random.Generator) -> pd.DataFrame:
+        """Cap qc rows while keeping every minority (non-"others") material-type row."""
+        labels = df["Material type (label)"]
+        minority = df[labels != 4]  # DAC/DQC/IAC/IQC (others == 4)
+        others = df[labels == 4]
+        n_others = max(cap - len(minority), 0)
+        if n_others < len(others):
+            others = others.iloc[rng.choice(len(others), size=n_others, replace=False)]
+        out = pd.concat([minority, others])
+        if len(out) > cap:  # minorities alone exceed the cap (unlikely): subsample uniformly
+            out = out.iloc[rng.choice(len(out), size=cap, replace=False)]
+        return out
+
+    def _class_weights(self, task_name: str) -> list[float]:
+        """Balanced (inverse-frequency) class weights from the train split, so a dominant class
+        doesn't collapse predictions onto itself."""
+        spec = TASK_SPECS[task_name]
+        frame = self.task_frames[task_name]
+        num_classes = int(spec["num_classes"])
+        train = frame.loc[frame["split"] == "train", spec["column"]].dropna().astype(int)
+        counts = np.bincount(train, minlength=num_classes).astype(float)
+        counts[counts == 0] = 1.0  # avoid divide-by-zero for an absent class
+        weights = counts.sum() / (num_classes * counts)  # sklearn "balanced" scheme
+        return weights.tolist()
 
     def descriptor_fn(self, compositions: list[str]) -> pd.DataFrame:
         """KMD-1d descriptors for composition keys (computed once per unique key, cached)."""
@@ -297,6 +416,7 @@ class ContinualRehearsalRunner:
                 data_column=spec["column"],
                 dims=[ld, hd, 32],
                 num_classes=spec["num_classes"],
+                class_weights=self._class_weights(task_name),  # counter the others-class imbalance
                 optimizer=OptimizerConfig(lr=cfg.head_lr, weight_decay=1e-5),
             )
         train_t = self._collect_train_t(task_name)
@@ -490,7 +610,7 @@ class ContinualRehearsalRunner:
                 "primary": r2,
             }
             if is_new:
-                self._plot_kr_sequences(keep, t_list, true_parts, pred, task_name, r2, step_dir)
+                self._plot_kr_sequences(keep, t_list, true_parts, pred, task_name, step_dir)
             return metric
 
     # ------------------------------------------------------------------ inverse design
@@ -583,86 +703,206 @@ class ContinualRehearsalRunner:
     # ------------------------------------------------------------------ plots
 
     def _plot_parity(self, true, pred, task_name, r2, step_dir):
-        fig, ax = plt.subplots(figsize=(5, 5), dpi=130)
-        ax.scatter(true, pred, s=8, alpha=0.4, edgecolor="none")
+        fig, ax = plt.subplots(figsize=(5, 5))
+        # Uniform colour/alpha for every regression parity scatter.
+        ax.scatter(true, pred, s=14, alpha=0.55, color=_SCATTER_COLOR, edgecolor="none")
         lo, hi = float(min(true.min(), pred.min())), float(max(true.max(), pred.max()))
-        ax.plot([lo, hi], [lo, hi], "r--", lw=1)
-        ax.set_xlabel("true")
-        ax.set_ylabel("pred")
-        ax.set_title(f"{task_name} (new) — R²={r2:.3f}, n={len(true)}")
-        fig.tight_layout()
+        ax.plot([lo, hi], [lo, hi], color="#444444", ls="--", lw=1.2, label="ideal")
+        ax.set_xlabel("True")
+        ax.set_ylabel("Predicted")
+        ax.set_title(_title(task_name))
+        ax.text(
+            0.04,
+            0.96,
+            f"R² = {r2:.3f}\nn = {len(true)}",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=10,
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="white", edgecolor="#d0d0d0", alpha=0.9),
+        )
+        ax.legend(loc="lower right")
         fig.savefig(step_dir / f"{task_name}_parity.png")
         plt.close(fig)
 
     def _plot_confusion(self, true, pred, task_name, acc, step_dir, num_classes):
-        cm = np.zeros((num_classes, num_classes), dtype=int)
+        counts = np.zeros((num_classes, num_classes), dtype=int)
         for t, p in zip(true, pred):
             if 0 <= t < num_classes and 0 <= p < num_classes:
-                cm[t, p] += 1
-        fig, ax = plt.subplots(figsize=(5, 4.5), dpi=130)
-        im = ax.imshow(cm, cmap="Blues")
-        fig.colorbar(im, ax=ax)
-        ax.set_xlabel("pred")
-        ax.set_ylabel("true")
-        ax.set_title(f"{task_name} (new) — acc={acc:.3f}, n={int(cm.sum())}")
-        fig.tight_layout()
+                counts[t, p] += 1
+        # Display order + bottom-left origin so the correct-prediction diagonal runs bottom-left
+        # → top-right. material_type is shown as others → AC → QC.
+        if task_name == "material_type":
+            labels = MATERIAL_TYPE_DISPLAY_ORDER[:num_classes]
+            perm = [MATERIAL_TYPE_CLASSES.index(lbl) for lbl in labels]
+        else:
+            labels = [str(i) for i in range(num_classes)]
+            perm = list(range(num_classes))
+        counts = counts[np.ix_(perm, perm)]
+        # Colour by row-normalized fraction (per-true-class recall) so a dominant class doesn't
+        # leave every other row invisible; annotate each cell with that fraction + the raw count.
+        row_sums = counts.sum(axis=1, keepdims=True)
+        row_frac = np.divide(counts, row_sums, out=np.zeros(counts.shape, dtype=float), where=row_sums > 0)
+        fig, ax = plt.subplots(figsize=(5.6, 5.2))
+        im = ax.imshow(row_frac, cmap="Blues", vmin=0.0, vmax=1.0, origin="lower")
+        fig.colorbar(im, ax=ax, label="row-normalized fraction (recall)", fraction=0.046, pad=0.04)
+        ax.set_xticks(range(num_classes), labels, rotation=45, ha="right")
+        ax.set_yticks(range(num_classes), labels)
+        for i in range(num_classes):
+            for j in range(num_classes):
+                if counts[i, j]:
+                    ax.text(
+                        j,
+                        i,
+                        f"{row_frac[i, j] * 100:.0f}%\n{counts[i, j]}",
+                        ha="center",
+                        va="center",
+                        fontsize=8,
+                        color="white" if row_frac[i, j] > 0.5 else "#333333",
+                    )
+        ax.grid(False)
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("True")
+        ax.set_title(_display(task_name))
+        ax.text(
+            0.5,
+            -0.22,
+            f"accuracy = {acc:.3f}  ·  n = {int(counts.sum())}",
+            transform=ax.transAxes,
+            ha="center",
+            va="top",
+            fontsize=10,
+        )
         fig.savefig(step_dir / f"{task_name}_confusion.png")
         plt.close(fig)
 
-    def _plot_kr_sequences(self, comps, t_list, true_parts, pred, task_name, r2, step_dir):
-        fig, ax = plt.subplots(figsize=(6, 4), dpi=130)
+    def _plot_kr_sequences(self, comps, t_list, true_parts, pred, task_name, step_dir):
+        color = self._task_colors.get(task_name, _PALETTE[0])
+        k = min(3, len(comps))
+        fig, axes = plt.subplots(1, k, figsize=(4.2 * k, 3.7), squeeze=False)
         offset = 0
-        for i in range(min(3, len(comps))):
+        for i in range(k):
+            ax = axes[0][i]
             n = true_parts[i].size
             t = t_list[i].cpu().numpy()
-            ax.plot(t, true_parts[i], lw=1.2, alpha=0.8, label=f"true #{i}")
-            ax.plot(t, pred[offset : offset + n], lw=1.0, ls="--", alpha=0.8, label=f"pred #{i}")
+            true_i = np.asarray(true_parts[i])
+            pred_i = pred[offset : offset + n]
+            order = np.argsort(t)  # ensure a clean left-to-right curve
+            (line_true,) = ax.plot(t[order], true_i[order], color="#444444", lw=1.8, label="True")
+            (line_pred,) = ax.plot(t[order], pred_i[order], color=color, lw=1.6, ls="--", label="Predicted")
+            ax.set_xlabel("t")
+            if i == 0:
+                ax.set_ylabel("Value")
+            # Per-composition R² (each panel is one composition's sequence); top-right, clear of legend.
+            r2_i = float(r2_score(true_i, pred_i)) if n >= 2 and float(np.var(true_i)) > 0 else float("nan")
+            ax.text(
+                0.96,
+                0.96,
+                f"R² = {r2_i:.3f}",
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                fontsize=9,
+                bbox=dict(boxstyle="round,pad=0.4", facecolor="white", edgecolor="#d0d0d0", alpha=0.9),
+            )
+            ax.set_title(comps[i], fontsize=9)
             offset += n
-        ax.set_xlabel("t")
-        ax.set_ylabel("value (norm)")
-        ax.set_title(f"{task_name} (new) — R²={r2:.3f}")
-        ax.legend(fontsize=7, ncol=2)
-        fig.tight_layout()
+        # Horizontal legend above the panels, left edge aligned to the first panel (not the figure
+        # margin) and above the panel titles, so it clears both the titles and the R² boxes.
+        fig.legend(
+            [line_true, line_pred],
+            ["True", "Predicted"],
+            loc="lower left",
+            ncol=2,
+            bbox_to_anchor=(0.0, 1.10),
+            bbox_transform=axes[0][0].transAxes,
+        )
+        fig.suptitle(_title(task_name), y=1.24)
         fig.savefig(step_dir / f"{task_name}_sequences.png")
         plt.close(fig)
 
     def _plot_forgetting(self, metric_history):
-        fig, ax = plt.subplots(figsize=(8, 5), dpi=130)
+        # Wide enough to spread many steps; legend sits outside so it scales to dozens of tasks.
+        n_tasks = sum(1 for pts in metric_history.values() if pts)
+        fig, ax = plt.subplots(figsize=(13, max(5.5, 0.32 * n_tasks + 3)))
+        all_steps: set[int] = set()
         for task_name, points in metric_history.items():
             if not points:
                 continue
             steps = [s for s, _ in points]
             vals = [v for _, v in points]
-            ax.plot(steps, vals, marker="o", label=task_name)
-        ax.set_xlabel("finetuning step")
-        ax.set_ylabel("primary metric (R² / accuracy)")
-        ax.set_title("Per-task performance vs continual finetuning step")
-        ax.grid(True, alpha=0.3)
-        ax.legend(fontsize=8, ncol=2)
-        fig.tight_layout()
+            all_steps.update(steps)
+            is_clf = TASK_SPECS[task_name]["kind"] == "clf"
+            ax.plot(
+                steps,
+                vals,
+                marker="s" if is_clf else "o",
+                ms=5,
+                ls="--" if is_clf else "-",
+                color=self._task_colors.get(task_name, "#888888"),
+                label=_display(task_name) + (" · accuracy" if is_clf else ""),
+            )
+        if all_steps:
+            ax.set_xticks(sorted(all_steps))
+        ax.set_xlabel("Continual finetuning step (a new task is added at each step)")
+        ax.set_ylabel("Primary metric  ·  R² (regression) / accuracy (classification)")
+        ax.set_title("Per-task performance across continual finetuning")
+        ncol = 1 if n_tasks <= 20 else 2
+        ax.legend(fontsize=8, ncol=ncol, loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0.0)
         fig.savefig(self.output_dir / "forgetting_trajectory.png")
         plt.close(fig)
         logger.info(f"Saved forgetting trajectory to {self.output_dir / 'forgetting_trajectory.png'}")
 
     def _plot_inverse_design(self, before_qc, after_qc, before_reg, reg_latent, after_reg, reg_targets):
-        n_panels = 1 + len(reg_targets)
-        fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 4), dpi=130)
-        axes = np.atleast_1d(axes)
-        idx = np.arange(len(before_qc))
-        axes[0].bar(idx - 0.2, before_qc, width=0.4, label="before")
-        axes[0].bar(idx + 0.2, after_qc, width=0.4, label="after (decode)")
-        axes[0].set_title("Quasicrystal probability")
-        axes[0].set_xlabel("seed")
-        axes[0].legend(fontsize=8)
-        for ax, (t, tgt) in zip(axes[1:], reg_targets.items()):
-            ax.bar(idx - 0.25, before_reg[t], width=0.25, label="before")
-            ax.bar(idx, reg_latent[t], width=0.25, label="achieved (latent)")
-            ax.bar(idx + 0.25, after_reg[t], width=0.25, label="after (decode)")
-            ax.axhline(tgt, color="r", ls="--", lw=1, label=f"target={tgt}")
-            ax.set_title(f"{t} prediction")
-            ax.set_xlabel("seed")
-            ax.legend(fontsize=7)
-        fig.tight_layout()
+        """Two readable stories: (1) latent optimization reaches the target; (2) the decode
+        round-trip loses fidelity. Each regression target is a parallel-coordinates panel
+        (seed prediction → optimized-in-latent → decoded), plus an honest quasicrystal panel."""
+        reg_names = list(reg_targets)
+        n_seeds = len(before_qc)
+        fig, axes = plt.subplots(1, len(reg_names) + 1, figsize=(4.6 * (len(reg_names) + 1), 4.2), squeeze=False)
+        axes = axes[0]
+        stages = ["seed\nprediction", "optimized\n(latent)", "decoded\n(round-trip)"]
+
+        for ax, t in zip(axes[: len(reg_names)], reg_names):
+            color = self._task_colors.get(t, _PALETTE[0])
+            for i in range(n_seeds):
+                ax.plot(
+                    [0, 1, 2],
+                    [before_reg[t][i], reg_latent[t][i], after_reg[t][i]],
+                    color=color,
+                    alpha=0.35,
+                    lw=1.0,
+                    marker="o",
+                    ms=3,
+                )
+            ax.axhline(reg_targets[t], color="#C44E52", ls="--", lw=1.6, label=f"target = {reg_targets[t]:+.1f}")
+            ax.set_xticks([0, 1, 2], stages)
+            ax.set_xlim(-0.3, 2.3)
+            ax.set_ylabel("Predicted value")
+            ax.set_title(_display(t))
+            ax.legend(loc="best", fontsize=9)
+
+        # Quasicrystal panel: honest about the near-zero probability (majority-class collapse).
+        axq = axes[-1]
+        axq.axis("off")
+        axq.set_title("Quasicrystal Probability")
+        axq.text(
+            0.5,
+            0.5,
+            f"before:           {before_qc.mean():.1e}\n"
+            f"after (decode):   {after_qc.mean():.1e}\n\n"
+            "≈ 0 — the Material Type head collapses\n"
+            "to the majority class (severe class\n"
+            "imbalance), so the quasicrystal objective\n"
+            "has almost no gradient. Addressed by the\n"
+            "classification rebalance (separate work).",
+            ha="center",
+            va="center",
+            fontsize=10,
+            family="monospace",
+            bbox=dict(boxstyle="round,pad=0.6", facecolor="#f3f4f6", edgecolor="#e5e7eb"),
+        )
+        fig.suptitle("Inverse design: latent optimization vs decode round-trip", y=1.02)
         fig.savefig(self.output_dir / "inverse_design.png")
         plt.close(fig)
         logger.info(f"Saved inverse-design plot to {self.output_dir / 'inverse_design.png'}")
@@ -686,7 +926,7 @@ class ContinualRehearsalRunner:
             spec = TASK_SPECS[task]
             metric_name = "acc" if spec["kind"] == "clf" else "R²"
             rows.append(
-                f"<tr><td>{task}</td><td>{kind_label[spec['kind']]}</td><td>{spec['source']}</td>"
+                f"<tr><td>{_display(task)}</td><td>{kind_label[spec['kind']]}</td><td>{spec['source']}</td>"
                 f"<td>{intro.get(task, float('nan')):+.3f}</td>"
                 f"<td>{final.get(task, {}).get('primary', float('nan')):+.3f}</td><td>{metric_name}</td></tr>"
             )
@@ -703,7 +943,7 @@ class ContinualRehearsalRunner:
             img = self._img_b64(f"step{i:02d}_{task}/{task}_{suffix}.png")
             if img:
                 examples.append(
-                    f'<figure><img src="{img}"/><figcaption>{task} ({kind_label[kind]})</figcaption></figure>'
+                    f'<figure><img src="{img}"/><figcaption>{_display(task)} ({kind_label[kind]})</figcaption></figure>'
                 )
                 seen.add(kind)
 
@@ -718,7 +958,7 @@ class ContinualRehearsalRunner:
             return float(np.mean(vals)) if vals else float("nan")
 
         inv_lines = "".join(
-            f"<li><b>{t}</b>: {_mean('reg_before', t):+.2f} → <b>{_mean('reg_achieved_latent', t):+.2f}</b> "
+            f"<li><b>{_display(t)}</b>: {_mean('reg_before', t):+.2f} → <b>{_mean('reg_achieved_latent', t):+.2f}</b> "
             f"(target {reg_targets[t]:+.1f})</li>"
             for t in reg_targets
         )
@@ -767,7 +1007,8 @@ class ContinualRehearsalRunner:
                 + (f"<img class='wide' src='{inv_img}'/>" if inv_img else "")
                 + "<div class='panel'><h3>Latent optimization reached targets</h3><ul>"
                 + inv_lines
-                + f"</ul><p>Quasicrystal probability (round-trip): <b>{qc_before:.3f} → {qc_after:.3f}</b></p>"
+                + f"</ul><p>Quasicrystal probability (round-trip): <b>{qc_before:.1e} → {qc_after:.1e}</b> "
+                + "<span class='meta'>(≈0 — Material Type collapses to the majority class; class-imbalance fix pending)</span></p>"
                 + "<h3>Decoded compositions (KMD.inverse)</h3><ul>"
                 + decoded
                 + "</ul></div></div>"
@@ -775,7 +1016,7 @@ class ContinualRehearsalRunner:
             slide(
                 "<h2>Takeaways</h2><ul>"
                 "<li>One shared encoder serves regression, kernel regression, classification &amp; reconstruction across 4 inorganic datasets.</li>"
-                "<li>5% rehearsal keeps well-learned tasks (density, formation energy, material type) near their peak while new heads are added.</li>"
+                "<li>5% rehearsal keeps well-learned tasks (Density, Formation Energy) near their peak while new heads are added.</li>"
                 "<li>Latent-space optimization with regression + classification conditions hits the targets and decodes back to real compositions via the invertible KMD descriptor.</li>"
                 "</ul>"
             ),
