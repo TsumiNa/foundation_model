@@ -61,6 +61,17 @@ class ClassificationHead(BaseTaskHead):
 
         self.num_classes = num_classes
 
+        # Optional per-class loss weights (registered as a buffer so they follow the model's device
+        # and are saved/restored with it). ``None`` => unweighted cross-entropy.
+        class_weights = getattr(config, "class_weights", None)
+        if class_weights is not None:
+            weights = torch.as_tensor(class_weights, dtype=torch.float)
+            if weights.numel() != num_classes:
+                raise ValueError(f"class_weights length ({weights.numel()}) must equal num_classes ({num_classes}).")
+            self.register_buffer("class_weights", weights)
+        else:
+            self.class_weights = None
+
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         """
         Forward pass of the classification head.
@@ -147,7 +158,9 @@ class ClassificationHead(BaseTaskHead):
         # 4. Individual sample losses
         # Use mask mechanism only (no ignore_index) for unified missing data handling
         # Missing data placeholders (-100) in targets won't affect loss due to mask filtering
-        losses = F.cross_entropy(pred, final_target_for_loss, reduction="none")  # losses is (B,)
+        losses = F.cross_entropy(
+            pred, final_target_for_loss, weight=self.class_weights, reduction="none"
+        )  # losses is (B,)
         masked_losses = losses * mask_1d  # Apply 1D mask, result is (B,)
 
         # 5. Total loss - simple division without defensive clamp

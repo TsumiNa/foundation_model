@@ -278,6 +278,9 @@ class ClassificationTaskConfig(BaseTaskConfig):
     type: TaskType = TaskType.CLASSIFICATION  # Overrides Base.type, provides default, remains positional
     norm: bool = True  # New positional argument with default
     residual: bool = False  # New positional argument with default
+    # Optional per-class weights for the cross-entropy loss (length == num_classes). Use to
+    # counter class imbalance so a dominant class doesn't collapse predictions onto itself.
+    class_weights: Optional[List[float]] = field(default=None, kw_only=True)
 
 
 @dataclass
