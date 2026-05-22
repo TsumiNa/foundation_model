@@ -1,24 +1,28 @@
-# Continual multi-task learning demo with 5% rehearsal.
+# Continual multi-task rehearsal + inverse-design demo (full run, 20 epochs/step).
 #
-# Adds tasks one at a time (2 regression, 2 kernel regression, 1 classification); the built-in
-# autoencoder head stays on the whole time. When a new task head is appended, previously learned
-# tasks keep only ~replay_ratio of their valid training targets active (per-task masking), to
-# balance catastrophic forgetting against training cost.
+# All inorganic datasets + all task types: 2 reg + 2 kernel reg + 1 clf (qc_ac_te_mp) +
+# 2 reg (NEMAD superconductor) + 2 reg (NEMAD magnetic) + always-on autoencoder. Tasks are
+# added incrementally with 5% rehearsal of learned tasks; KMD-1d descriptors (invertible) are
+# computed on the fly. A final inverse-design stage optimizes the latent toward 2 regression
+# targets + increased quasicrystal probability and decodes the descriptor back to a composition.
 #
 #   ./run_continual_rehearsal_demo.sh samples/continual_rehearsal_demo_config.toml
+#
+# sample_per_dataset = null uses every row (heavier); set an integer to cap per dataset for speed.
 
-data_path = "data/qc_ac_te_mp_dos_reformat_20250615_enforce_quaternary_test.pd.parquet"
-descriptor_path = "data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet"
-preprocessing_path = "data/preprocessing_objects_20250615.pkl.z"
+qc_data_path = "data/qc_ac_te_mp_dos_reformat_20250615_enforce_quaternary_test.pd.parquet"
+qc_preprocessing_path = "data/preprocessing_objects_20250615.pkl.z"
+superconductor_path = "data/NEMAD_superconductor_20260425.parquet"
+magnetic_path = "data/NEMAD_magnetic_20260419.parquet"
 output_dir = "artifacts/continual_rehearsal"
 
-task_sequence = ["density", "formation_energy", "dos_density", "power_factor", "material_type"]
+task_sequence = ["density", "formation_energy", "dos_density", "power_factor", "material_type", "tc", "pressure", "curie", "magnetization"]
 replay_ratio = 0.05
+# sample_per_dataset = 8000  # uncomment to cap rows per dataset for a faster run
 
 max_epochs_per_step = 20
 batch_size = 256
-early_stopping_patience = 0
-
+n_grids = 8
 latent_dim = 128
 encoder_hidden = 256
 head_hidden_dim = 64
@@ -27,6 +31,12 @@ encoder_lr = 0.005
 n_kernel = 15
 kr_lr = 5e-4
 kr_decay = 5e-5
+
+inverse_n_seeds = 16
+inverse_steps = 300
+inverse_lr = 0.05
+inverse_reg_tasks = ["density", "formation_energy"]
+inverse_reg_targets = [1.5, -1.5]
 
 random_seed = 2025
 datamodule_random_seed = 42

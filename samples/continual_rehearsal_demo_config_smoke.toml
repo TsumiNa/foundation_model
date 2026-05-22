@@ -1,28 +1,32 @@
-# Smoke-test configuration for the continual rehearsal demo.
+# Smoke-test config for the continual rehearsal + inverse-design demo.
 #
-# Tiny end-to-end run (1500-sample cap, 1 epoch per step) to confirm the full pipeline executes:
-# 2 regression + 2 kernel regression + 1 classification added incrementally, AE always on, 5%
-# rehearsal of learned tasks, per-step + forgetting plots.
+# Tiny end-to-end run (500 rows/dataset, 1 epoch/step) over all inorganic datasets and task types:
+# 2 reg + 2 kernel reg + 1 clf (qc_ac_te_mp) + 2 reg (NEMAD superconductor) + 2 reg (NEMAD magnetic),
+# AE always on, 5% rehearsal, then a short inverse-design stage. KMD-1d descriptors (invertible).
 #
 #   ./run_continual_rehearsal_demo.sh samples/continual_rehearsal_demo_config_smoke.toml
 
-data_path = "data/qc_ac_te_mp_dos_reformat_20250615_enforce_quaternary_test.pd.parquet"
-descriptor_path = "data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet"
-preprocessing_path = "data/preprocessing_objects_20250615.pkl.z"
+qc_data_path = "data/qc_ac_te_mp_dos_reformat_20250615_enforce_quaternary_test.pd.parquet"
+qc_preprocessing_path = "data/preprocessing_objects_20250615.pkl.z"
+superconductor_path = "data/NEMAD_superconductor_20260425.parquet"
+magnetic_path = "data/NEMAD_magnetic_20260419.parquet"
 output_dir = "artifacts/continual_rehearsal_smoke"
 
-task_sequence = ["density", "formation_energy", "dos_density", "power_factor", "material_type"]
+task_sequence = ["density", "formation_energy", "dos_density", "power_factor", "material_type", "tc", "pressure", "curie", "magnetization"]
 replay_ratio = 0.05
+sample_per_dataset = 500
 
-sample = 1500
 max_epochs_per_step = 1
 batch_size = 256
-early_stopping_patience = 0
-
+n_grids = 8
 latent_dim = 128
 encoder_hidden = 256
 head_hidden_dim = 64
 n_kernel = 15
+
+inverse_n_seeds = 8
+inverse_steps = 50
+inverse_lr = 0.05
 
 random_seed = 2025
 datamodule_random_seed = 42

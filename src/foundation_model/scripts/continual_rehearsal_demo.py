@@ -2,21 +2,30 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Continual multi-task learning demo with rehearsal (5% replay).
+Continual multi-task learning demo with rehearsal (5% replay) + inverse design.
 
-Comprehensive end-to-end exercise of the composition-keyed data stack + FlexibleMultiTaskModel
-across all task types. Tasks are added one at a time (mimicking dynamic finetuning); the
-built-in autoencoder head stays on the whole time, and each time a new task head is appended,
-previously learned tasks are *not* fully retrained — instead each keeps only ~``replay_ratio``
-of its valid training targets active per epoch (via per-task ``task_masking_ratio``), striking a
-balance between catastrophic forgetting and training cost.
+Comprehensive end-to-end exercise of the composition-keyed data stack +
+FlexibleMultiTaskModel across every task type and every inorganic dataset:
 
-After every step the new head's performance and the degradation of all previously learned heads
-are evaluated on the fixed test split and plotted.
+* 2 regression + 2 kernel regression + 1 classification from the qc_ac_te_mp DOS/material set,
+* 2 regression from the NEMAD superconductor set, 2 regression from the NEMAD magnetic set,
+* the built-in autoencoder head (always on).
 
-Run via the wrapper:
+All compositions are featurized **on the fly** with the invertible KMD-1d descriptor
+(:mod:`foundation_model.utils.kmd_plus`), joined across datasets by composition formula.
+
+Tasks are added one at a time (dynamic finetuning). The AE head stays on the whole time; when a
+new head is appended, previously learned tasks keep only ~``replay_ratio`` of their valid
+training targets active (per-task ``task_masking_ratio``) — balancing forgetting against cost.
+Every step evaluates *all* active heads on the fixed test split and plots the new head plus the
+per-task forgetting trajectory.
+
+After all tasks are learned, an **inverse-design** stage optimizes the latent space toward a
+condition (2 regression targets + increased quasicrystal probability) and decodes the optimized
+KMD descriptor back to a composition via ``KMD.inverse``.
+
+Run:
     ./run_continual_rehearsal_demo.sh samples/continual_rehearsal_demo_config_smoke.toml
-or directly:
     python -m foundation_model.scripts.continual_rehearsal_demo --config-file <toml>
 """
 
@@ -39,7 +48,6 @@ import numpy as np
 import pandas as pd
 import torch
 from lightning import Trainer, seed_everything
-from lightning.pytorch.callbacks import EarlyStopping
 from loguru import logger
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, r2_score  # type: ignore[import-untyped]
 
@@ -52,37 +60,51 @@ from foundation_model.models.model_config import (
     OptimizerConfig,
     RegressionTaskConfig,
 )
+from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, KMD, element_features, formula_to_composition
 
-# --- Task catalogue (columns in the qc_ac_te_mp DOS/material dataset) ---------
-# Each task owns its target column; kernel-regression tasks add a t (x-axis) column.
+# --- Task catalogue ----------------------------------------------------------
+# source: which dataset the task's targets come from ("qc" / "superconductor" / "magnetic").
+# qc columns are pre-normalized; NEMAD raw columns are z-scored at load time.
 TASK_SPECS: dict[str, dict[str, Any]] = {
-    "density": {"kind": "reg", "column": "Density (normalized)"},
-    "formation_energy": {"kind": "reg", "column": "Formation energy per atom (normalized)"},
-    "dos_density": {"kind": "kr", "column": "DOS density (normalized)", "t_column": "DOS energy"},
-    "power_factor": {"kind": "kr", "column": "Power factor (normalized)", "t_column": "Power factor (T/K)"},
-    "material_type": {"kind": "clf", "column": "Material type (label)", "num_classes": 5},
+    "density": {"source": "qc", "kind": "reg", "column": "Density (normalized)"},
+    "formation_energy": {"source": "qc", "kind": "reg", "column": "Formation energy per atom (normalized)"},
+    "dos_density": {"source": "qc", "kind": "kr", "column": "DOS density (normalized)", "t_column": "DOS energy"},
+    "power_factor": {
+        "source": "qc",
+        "kind": "kr",
+        "column": "Power factor (normalized)",
+        "t_column": "Power factor (T/K)",
+    },
+    "material_type": {"source": "qc", "kind": "clf", "column": "Material type (label)", "num_classes": 5},
+    "tc": {"source": "superconductor", "kind": "reg", "column": "Transition temperature[K]"},
+    "pressure": {"source": "superconductor", "kind": "reg", "column": "Pressure[GPa]"},
+    "curie": {"source": "magnetic", "kind": "reg", "column": "Curie temperature[K]"},
+    "magnetization": {"source": "magnetic", "kind": "reg", "column": "Magnetization[A·m²/mol]"},
 }
-DEFAULT_SEQUENCE = ["density", "formation_energy", "dos_density", "power_factor", "material_type"]
+DEFAULT_SEQUENCE = list(TASK_SPECS.keys())
+# Quasicrystal classes for the material_type label encoder (DAC=0, DQC=1, IAC=2, IQC=3, others=4).
+QC_CLASSES = [1, 3]
 
 
 @dataclass
 class ContinualRehearsalConfig:
-    """Configuration for the continual rehearsal demo."""
+    """Configuration for the continual rehearsal + inverse-design demo."""
 
-    data_path: Path = Path("data/qc_ac_te_mp_dos_reformat_20250615_enforce_quaternary_test.pd.parquet")
-    descriptor_path: Path = Path("data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet")
-    preprocessing_path: Path | None = Path("data/preprocessing_objects_20250615.pkl.z")
+    qc_data_path: Path = Path("data/qc_ac_te_mp_dos_reformat_20250615_enforce_quaternary_test.pd.parquet")
+    qc_preprocessing_path: Path | None = Path("data/preprocessing_objects_20250615.pkl.z")
+    superconductor_path: Path = Path("data/NEMAD_superconductor_20260425.parquet")
+    magnetic_path: Path = Path("data/NEMAD_magnetic_20260419.parquet")
     output_dir: Path = Path("artifacts/continual_rehearsal")
 
     task_sequence: list[str] = field(default_factory=lambda: list(DEFAULT_SEQUENCE))
-    replay_ratio: float = 0.05  # fraction of a learned task's valid train targets kept per step
-    sample: int | None = None  # optional cap on total compositions (for fast runs)
+    replay_ratio: float = 0.05
+    sample_per_dataset: int | None = None  # cap rows per dataset (for fast runs)
 
     max_epochs_per_step: int = 10
     batch_size: int = 256
     num_workers: int = 0
-    early_stopping_patience: int = 0  # 0 disables early stopping (fixed epochs)
 
+    n_grids: int = 8  # KMD-1d grid points per element feature; descriptor dim = 58 * n_grids
     latent_dim: int = 128
     encoder_hidden: int = 256
     head_hidden_dim: int = 64
@@ -91,6 +113,13 @@ class ContinualRehearsalConfig:
     n_kernel: int = 15
     kr_lr: float = 5e-4
     kr_decay: float = 5e-5
+
+    # Inverse-design stage
+    inverse_n_seeds: int = 16
+    inverse_steps: int = 300
+    inverse_lr: float = 0.05
+    inverse_reg_tasks: list[str] = field(default_factory=lambda: ["density", "formation_energy"])
+    inverse_reg_targets: list[float] = field(default_factory=lambda: [1.5, -1.5])
 
     random_seed: int = 2025
     datamodule_random_seed: int = 42
@@ -103,25 +132,41 @@ class ContinualRehearsalConfig:
             raise ValueError(f"Unknown task(s) {unknown}. Available: {sorted(TASK_SPECS)}")
         if not 0.0 < self.replay_ratio <= 1.0:
             raise ValueError("replay_ratio must be in (0, 1].")
+        if len(self.inverse_reg_tasks) != len(self.inverse_reg_targets):
+            raise ValueError("inverse_reg_tasks and inverse_reg_targets must have equal length.")
 
 
 def _as_float_array(cell: Any) -> np.ndarray:
-    """Coerce a sequence cell (ndarray/list/str) to a 1D float array."""
     if isinstance(cell, str):
         cell = ast.literal_eval(cell)
     return np.asarray(cell, dtype=float).ravel()
 
 
+def _composition_key(raw: Any) -> str | None:
+    """Canonical reduced-formula key for a composition dict (qc) or formula string (NEMAD)."""
+    from pymatgen.core.composition import Composition  # local import; pymatgen is heavy
+
+    try:
+        if isinstance(raw, dict):
+            cleaned = {k: v for k, v in raw.items() if v is not None and float(v) > 0}
+            if not cleaned:
+                return None
+            comp = Composition(cleaned)
+        else:
+            comp = Composition(str(raw))
+        return comp.reduced_formula
+    except Exception:
+        return None
+
+
 def _init_kernels(t_values: np.ndarray, n_kernel: int) -> tuple[list[float], list[float]]:
-    """Quantile-spaced kernel centres + uniform sigmas from the training t distribution."""
     t = np.asarray(t_values, dtype=float)
     t = t[np.isfinite(t)]
     if t.size == 0:
         return [], []
     centers = np.quantile(t, np.linspace(0.0, 1.0, n_kernel))
     span = max((float(t.max()) - float(t.min())) / max(n_kernel - 1, 1), 1e-3)
-    sigmas = np.full(n_kernel, span, dtype=float)
-    return centers.tolist(), sigmas.tolist()
+    return centers.tolist(), np.full(n_kernel, span).tolist()
 
 
 class ContinualRehearsalRunner:
@@ -129,55 +174,100 @@ class ContinualRehearsalRunner:
         self.config = config
         self.output_dir = Path(config.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        # KMD-1d featurizer over the bundled element features (invertible: descriptor -> composition).
+        self._kmd = KMD(element_features.values, method="1d", n_grids=config.n_grids, sigma="auto", scale=True)
+        self.x_dim = int(self._kmd.transform(np.eye(1, len(DEFAULT_ELEMENTS))).shape[1])
+        self._desc_cache: dict[str, np.ndarray] = {}
         self._load_data()
 
     # ------------------------------------------------------------------ data
 
     def _load_data(self) -> None:
         cfg = self.config
-        logger.info("Loading descriptors and properties...")
-        descriptors = pd.read_parquet(cfg.descriptor_path)
-        properties = pd.read_parquet(cfg.data_path)
+        rng = np.random.default_rng(cfg.datamodule_random_seed)
+        # task_frames[task] -> DataFrame indexed by composition key with [column(+t), "split"]
+        self.task_frames: dict[str, pd.DataFrame] = {}
+        split_by_key: dict[str, str] = {}
 
-        if cfg.preprocessing_path is not None and Path(cfg.preprocessing_path).exists():
-            dropped = joblib.load(cfg.preprocessing_path).get("dropped_idx", [])
-            properties = properties.loc[~properties.index.isin(dropped)]
-            logger.info(f"Dropped {len(dropped)} preprocessing-flagged rows.")
+        sources = {
+            "qc": self._load_qc(),
+            "superconductor": pd.read_parquet(cfg.superconductor_path),
+            "magnetic": pd.read_parquet(cfg.magnetic_path),
+        }
 
-        common = descriptors.index.intersection(properties.index)
-        if cfg.sample is not None and cfg.sample < len(common):
-            common = pd.Index(
-                pd.Series(common).sample(n=cfg.sample, random_state=cfg.datamodule_random_seed).to_numpy()
-            )
-        descriptors = descriptors.loc[common]
-        properties = properties.loc[common]
-        descriptors.index = descriptors.index.astype(str)
-        properties.index = properties.index.astype(str)
+        # Build a composition key per row for each source, capping rows for speed.
+        keyed: dict[str, pd.DataFrame] = {}
+        for name, df in sources.items():
+            df = df.copy()
+            if cfg.sample_per_dataset is not None and cfg.sample_per_dataset < len(df):
+                df = df.iloc[rng.choice(len(df), size=cfg.sample_per_dataset, replace=False)]
+            comp_col = "composition" if name != "qc" else "composition"
+            df["__key__"] = [_composition_key(v) for v in df[comp_col]]
+            df = df.dropna(subset=["__key__"]).drop_duplicates(subset="__key__", keep="first").set_index("__key__")
+            keyed[name] = df
+            # Record split: qc uses its own split column; NEMAD gets a random split.
+            if "split" in df.columns:
+                for k, s in df["split"].items():
+                    split_by_key.setdefault(str(k), str(s))
+            else:
+                for k in df.index:
+                    split_by_key.setdefault(str(k), rng.choice(["train", "val", "test"], p=[0.7, 0.15, 0.15]))
 
-        self.descriptors = descriptors
-        self.properties = properties
-        self.x_dim = descriptors.shape[1]
-        self.composition_column: str = str(descriptors.index.name) if descriptors.index.name is not None else "id"
-        logger.info(f"Aligned {len(common)} compositions; descriptor dim = {self.x_dim}.")
-        if "split" in properties.columns:
-            logger.info(f"Split counts: {properties['split'].value_counts().to_dict()}")
+        # Build per-task frames; z-score raw NEMAD regression columns.
+        for task_name in cfg.task_sequence:
+            spec = TASK_SPECS[task_name]
+            df = keyed[spec["source"]]
+            col = spec["column"]
+            if col not in df.columns:
+                raise KeyError(f"Task '{task_name}': column '{col}' missing in {spec['source']} data.")
+            frame = pd.DataFrame(index=df.index)
+            values = df[col]
+            if spec["source"] != "qc" and spec["kind"] == "reg":
+                v = df[col].astype(float)
+                mean = float(v.mean())
+                std = float(v.std(ddof=0)) or 1.0
+                values = (v - mean) / std
+            frame[col] = values
+            if spec["kind"] == "kr":
+                frame[spec["t_column"]] = df[spec["t_column"]]
+            frame["split"] = [split_by_key.get(str(k), "train") for k in frame.index]
+            self.task_frames[task_name] = frame
 
-        # Precompute a label -> original-index map for the descriptor_fn (no matrix copy).
-        self._label_by_str = {str(idx): idx for idx in self.descriptors.index}
+        self.split_by_key = split_by_key
+        n_keys = len(set().union(*[set(f.index) for f in self.task_frames.values()]))
+        logger.info(f"Built {len(self.task_frames)} task frames over {n_keys} unique compositions; x_dim={self.x_dim}.")
+
+    def _load_qc(self) -> pd.DataFrame:
+        cfg = self.config
+        df = pd.read_parquet(cfg.qc_data_path)
+        if cfg.qc_preprocessing_path is not None and Path(cfg.qc_preprocessing_path).exists():
+            dropped = joblib.load(cfg.qc_preprocessing_path).get("dropped_idx", [])
+            df = df.loc[~df.index.isin(dropped)]
+        return df
 
     def descriptor_fn(self, compositions: list[str]) -> pd.DataFrame:
-        labels = [self._label_by_str[c] for c in compositions if c in self._label_by_str]
-        return self.descriptors.loc[labels]
-
-    def _task_frame(self, task_name: str) -> pd.DataFrame:
-        """Composition-indexed frame holding this task's column(s) + split."""
-        spec = TASK_SPECS[task_name]
-        cols = [spec["column"]]
-        if spec["kind"] == "kr":
-            cols.append(spec["t_column"])
-        if "split" in self.properties.columns:
-            cols.append("split")
-        return self.properties[cols].copy()
+        """KMD-1d descriptors for composition keys (computed once per unique key, cached)."""
+        uncached = [c for c in dict.fromkeys(compositions) if c not in self._desc_cache]
+        if uncached:
+            weights = np.zeros((len(uncached), len(DEFAULT_ELEMENTS)), dtype=float)
+            valid: list[str] = []
+            for key in uncached:
+                try:
+                    w = formula_to_composition(key)
+                except Exception:
+                    w = None
+                if w is None or float(w.sum()) <= 0:
+                    continue
+                weights[len(valid)] = w
+                valid.append(key)
+            if valid:
+                desc = self._kmd.transform(weights[: len(valid)])
+                for j, key in enumerate(valid):
+                    self._desc_cache[key] = desc[j]
+        present = [c for c in compositions if c in self._desc_cache]
+        if not present:
+            return pd.DataFrame()
+        return pd.DataFrame(np.stack([self._desc_cache[c] for c in present]), index=present)
 
     # ------------------------------------------------------------------ configs
 
@@ -200,7 +290,6 @@ class ContinualRehearsalRunner:
                 num_classes=spec["num_classes"],
                 optimizer=OptimizerConfig(lr=cfg.head_lr, weight_decay=1e-5),
             )
-        # kernel regression
         train_t = self._collect_train_t(task_name)
         centers, sigmas = _init_kernels(train_t, cfg.n_kernel)
         return KernelRegressionTaskConfig(
@@ -220,14 +309,12 @@ class ContinualRehearsalRunner:
 
     def _collect_train_t(self, task_name: str) -> np.ndarray:
         spec = TASK_SPECS[task_name]
-        frame = self.properties
-        mask = frame[spec["column"]].notna()
-        if "split" in frame.columns:
-            mask &= frame["split"] == "train"
-        t_cells = frame.loc[mask, spec["t_column"]].dropna()
-        if t_cells.empty:
+        frame = self.task_frames[task_name]
+        mask = frame[spec["column"]].notna() & (frame["split"] == "train")
+        cells = frame.loc[mask, spec["t_column"]].dropna()
+        if cells.empty:
             return np.array([])
-        return np.concatenate([_as_float_array(c) for c in t_cells])
+        return np.concatenate([_as_float_array(c) for c in cells])
 
     # ------------------------------------------------------------------ run
 
@@ -244,17 +331,14 @@ class ContinualRehearsalRunner:
         )
 
         task_configs: dict[str, Any] = {}
-        # metric_history[task] = list of (step_index, metric_value)
         metric_history: dict[str, list[tuple[int, float]]] = {name: [] for name in cfg.task_sequence}
         records: list[dict[str, Any]] = []
 
         for step, task_name in enumerate(cfg.task_sequence):
             logger.info(f"=== Step {step + 1}/{len(cfg.task_sequence)}: add task '{task_name}' ===")
-            new_cfg = self._build_task_config(task_name)
-            task_configs[task_name] = new_cfg
-            model.add_task(new_cfg)
+            task_configs[task_name] = self._build_task_config(task_name)
+            model.add_task(task_configs[task_name])
 
-            # Rehearsal: new task full, previously learned tasks keep replay_ratio of train targets.
             active = cfg.task_sequence[: step + 1]
             for name in active:
                 task_configs[name].task_masking_ratio = 1.0 if name == task_name else cfg.replay_ratio
@@ -262,16 +346,12 @@ class ContinualRehearsalRunner:
             datamodule = CompoundDataModule(
                 task_configs=[task_configs[name] for name in active],
                 descriptor_fn=self.descriptor_fn,
-                task_frames={name: self._task_frame(name) for name in active},
-                composition_column=self.composition_column,
+                task_frames={name: self.task_frames[name] for name in active},
+                composition_column="composition",
                 random_seed=cfg.datamodule_random_seed,
                 batch_size=cfg.batch_size,
                 num_workers=cfg.num_workers,
             )
-
-            callbacks: list[Any] = []
-            if cfg.early_stopping_patience > 0:
-                callbacks.append(EarlyStopping(monitor="val_final_loss", patience=cfg.early_stopping_patience))
             trainer = Trainer(
                 max_epochs=cfg.max_epochs_per_step,
                 accelerator=cfg.accelerator,
@@ -279,7 +359,6 @@ class ContinualRehearsalRunner:
                 logger=False,
                 enable_checkpointing=False,
                 enable_progress_bar=False,
-                callbacks=callbacks,
             )
             trainer.fit(model, datamodule=datamodule)
 
@@ -287,66 +366,66 @@ class ContinualRehearsalRunner:
             step_dir.mkdir(parents=True, exist_ok=True)
             step_metrics: dict[str, dict[str, float]] = {}
             for name in active:
-                metric, primary = self._evaluate_task(model, name, step_dir, is_new=(name == task_name))
+                metric = self._evaluate_task(model, name, step_dir, is_new=(name == task_name))
                 step_metrics[name] = metric
-                metric_history[name].append((step + 1, primary))
-
-            records.append(
-                {"step": step + 1, "new_task": task_name, "active_tasks": list(active), "metrics": step_metrics}
-            )
-            logger.info(f"Step {step + 1} metrics: { {k: round(v['primary'], 4) for k, v in step_metrics.items()} }")
+                metric_history[name].append((step + 1, metric["primary"]))
+            records.append({"step": step + 1, "new_task": task_name, "metrics": step_metrics})
+            summary = ", ".join(f"{k}={v['primary']:.3f}" for k, v in step_metrics.items())
+            logger.info(f"Step {step + 1}: {summary}")
 
         self._plot_forgetting(metric_history)
-        summary_path = self.output_dir / "experiment_records.json"
-        summary_path.write_text(json.dumps(records, indent=2))
-        logger.info(f"Done. Summary: {summary_path}")
+        (self.output_dir / "experiment_records.json").write_text(json.dumps(records, indent=2))
+
+        inverse = self._inverse_design(model)
+        (self.output_dir / "inverse_design.json").write_text(json.dumps(inverse, indent=2))
+        logger.info(f"Done. Outputs in {self.output_dir}")
 
     # ------------------------------------------------------------------ eval
 
-    def _test_rows(self, task_name: str) -> pd.Index:
+    def _test_rows(self, task_name: str) -> list[str]:
         spec = TASK_SPECS[task_name]
-        frame = self.properties
-        mask = frame[spec["column"]].notna()
-        if "split" in frame.columns:
-            mask &= frame["split"] == "test"
-        return frame.index[mask]
+        frame = self.task_frames[task_name]
+        mask = frame[spec["column"]].notna() & (frame["split"] == "test")
+        return list(frame.index[mask])
 
-    def _evaluate_task(
-        self, model: FlexibleMultiTaskModel, task_name: str, step_dir: Path, *, is_new: bool
-    ) -> tuple[dict[str, float], float]:
+    def _descriptor_tensor(self, comps: list[str], device) -> tuple[torch.Tensor, list[str]]:
+        desc = self.descriptor_fn(comps)
+        comps = [c for c in comps if c in desc.index]
+        return torch.tensor(desc.loc[comps].values, dtype=torch.float32, device=device), comps
+
+    def _evaluate_task(self, model, task_name, step_dir, *, is_new) -> dict[str, float]:
         spec = TASK_SPECS[task_name]
         kind = spec["kind"]
-        comps = list(self._test_rows(task_name))
         model.eval()
         device = next(model.parameters()).device
+        comps = self._test_rows(task_name)
         if not comps:
-            return {"primary": float("nan"), "samples": 0}, float("nan")
-
-        x = torch.tensor(self.descriptors.loc[comps].values, dtype=torch.float32, device=device)
+            return {"primary": float("nan"), "samples": 0}
+        frame = self.task_frames[task_name]
         head = model.task_heads[task_name]
 
         with torch.no_grad():
-            # Evaluate the target head directly off the shared latent so other (e.g. kernel)
-            # heads — which require their own t_sequences — are not invoked.
-            h_task = torch.tanh(model.encoder(x))
-
-            if kind == "reg":
-                pred = head(h_task).squeeze(-1).cpu().numpy()
-                true = self.properties.loc[comps, spec["column"]].astype(float).to_numpy()
-                metric = {
-                    "r2": float(r2_score(true, pred)),
-                    "mae": float(mean_absolute_error(true, pred)),
-                    "samples": len(comps),
-                }
-                metric["primary"] = metric["r2"]
-                if is_new:
-                    self._plot_parity(true, pred, task_name, metric["r2"], step_dir)
-                return metric, metric["r2"]
-
-            if kind == "clf":
-                logits = head(h_task)
+            if kind in ("reg", "clf"):
+                x, comps = self._descriptor_tensor(comps, device)
+                if not comps:
+                    return {"primary": float("nan"), "samples": 0}
+                h = torch.tanh(model.encoder(x))
+                if kind == "reg":
+                    pred = head(h).squeeze(-1).cpu().numpy()
+                    true = frame.loc[comps, spec["column"]].astype(float).to_numpy()
+                    r2 = float(r2_score(true, pred))
+                    metric = {
+                        "r2": r2,
+                        "mae": float(mean_absolute_error(true, pred)),
+                        "samples": len(comps),
+                        "primary": r2,
+                    }
+                    if is_new:
+                        self._plot_parity(true, pred, task_name, r2, step_dir)
+                    return metric
+                logits = head(h)
                 pred = logits.argmax(dim=-1).cpu().numpy()
-                true = self.properties.loc[comps, spec["column"]].astype(int).to_numpy()
+                true = frame.loc[comps, spec["column"]].astype(int).to_numpy()
                 acc = float(accuracy_score(true, pred))
                 metric = {
                     "accuracy": acc,
@@ -356,39 +435,125 @@ class ContinualRehearsalRunner:
                 }
                 if is_new:
                     self._plot_confusion(true, pred, task_name, acc, step_dir, spec["num_classes"])
-                return metric, acc
+                return metric
 
-            # kernel regression: build per-sample t lists, evaluate concatenated points
-            t_col = spec["t_column"]
+            # kernel regression
             keep, t_list, true_parts = [], [], []
             for comp in comps:
-                y_cell = self.properties.at[comp, spec["column"]]
-                t_cell = self.properties.at[comp, t_col]
-                if y_cell is None or t_cell is None:
+                if comp not in self._desc_cache and self.descriptor_fn([comp]).empty:
                     continue
-                y_arr, t_arr = _as_float_array(y_cell), _as_float_array(t_cell)
+                y_arr = _as_float_array(frame.at[comp, spec["column"]])
+                t_arr = _as_float_array(frame.at[comp, spec["t_column"]])
                 if y_arr.size == 0 or y_arr.size != t_arr.size:
                     continue
                 keep.append(comp)
                 t_list.append(torch.tensor(t_arr, dtype=torch.float32, device=device))
                 true_parts.append(y_arr)
             if not keep:
-                return {"primary": float("nan"), "samples": 0}, float("nan")
-            xk = torch.tensor(self.descriptors.loc[keep].values, dtype=torch.float32, device=device)
+                return {"primary": float("nan"), "samples": 0}
+            xk, _ = self._descriptor_tensor(keep, device)
             h_k = torch.tanh(model.encoder(xk))
             expanded_h, expanded_t = model._expand_for_kernel_regression(h_k, t_list)
             pred = head(expanded_h, t=expanded_t).squeeze(-1).cpu().numpy()
             true = np.concatenate(true_parts)
+            r2 = float(r2_score(true, pred))
             metric = {
-                "r2": float(r2_score(true, pred)),
+                "r2": r2,
                 "mae": float(mean_absolute_error(true, pred)),
                 "samples": len(keep),
                 "points": int(true.size),
-                "primary": float(r2_score(true, pred)),
+                "primary": r2,
             }
             if is_new:
-                self._plot_kr_sequences(keep, t_list, true_parts, pred, task_name, metric["r2"], step_dir)
-            return metric, metric["primary"]
+                self._plot_kr_sequences(keep, t_list, true_parts, pred, task_name, r2, step_dir)
+            return metric
+
+    # ------------------------------------------------------------------ inverse design
+
+    def _inverse_design(self, model) -> dict[str, Any]:
+        cfg = self.config
+        logger.info("=== Inverse design: latent optimization toward conditions ===")
+        device = next(model.parameters()).device
+        model.eval()
+
+        # Seed from qc test compositions (material_type is defined there).
+        seeds = self._test_rows("material_type")[: cfg.inverse_n_seeds]
+        x_seed, seeds = self._descriptor_tensor(seeds, device)
+        if not seeds:
+            logger.warning("No seeds available for inverse design.")
+            return {}
+
+        reg_targets = {t: v for t, v in zip(cfg.inverse_reg_tasks, cfg.inverse_reg_targets)}
+
+        def _qc_prob(x: torch.Tensor) -> np.ndarray:
+            with torch.no_grad():
+                h = torch.tanh(model.encoder(x))
+                probs = torch.softmax(model.task_heads["material_type"](h), dim=-1)
+                return probs[:, QC_CLASSES].sum(dim=-1).cpu().numpy()
+
+        def _reg_preds(x: torch.Tensor) -> dict[str, np.ndarray]:
+            with torch.no_grad():
+                h = torch.tanh(model.encoder(x))
+                return {t: model.task_heads[t](h).squeeze(-1).cpu().numpy() for t in reg_targets}
+
+        before_qc = _qc_prob(x_seed)
+        before_reg = _reg_preds(x_seed)
+
+        result = model.optimize_latent(
+            initial_input=x_seed,
+            task_targets=reg_targets,
+            class_targets={"material_type": QC_CLASSES},
+            optimize_space="latent",
+            steps=cfg.inverse_steps,
+            lr=cfg.inverse_lr,
+        )
+        # Regression values achieved *in latent space* (before AE decode) — the direct optimization result.
+        reg_names = list(reg_targets.keys())
+        achieved = result.optimized_target[:, 0, :].cpu().numpy()  # (B, len(reg_names)) in reg_targets order
+        reg_latent = {t: achieved[:, j] for j, t in enumerate(reg_names)}
+
+        optimized_desc = result.optimized_input[:, 0, :]  # (B, x_dim) reconstructed KMD descriptor
+        after_qc = _qc_prob(optimized_desc)  # round-trip (decode -> re-encode) condition fidelity
+        after_reg = _reg_preds(optimized_desc)
+
+        # Decode optimized descriptors back to compositions via KMD.inverse.
+        decoded = self._decode_compositions(optimized_desc.cpu().numpy())
+
+        self._plot_inverse_design(before_qc, after_qc, before_reg, reg_latent, after_reg, reg_targets)
+
+        records = []
+        for i, seed in enumerate(seeds):
+            records.append(
+                {
+                    "seed_composition": seed,
+                    "qc_prob_before": float(before_qc[i]),
+                    "qc_prob_after_decode": float(after_qc[i]),
+                    "reg_before": {t: float(before_reg[t][i]) for t in reg_names},
+                    "reg_achieved_latent": {t: float(reg_latent[t][i]) for t in reg_names},
+                    "reg_after_decode": {t: float(after_reg[t][i]) for t in reg_names},
+                    "decoded_composition": decoded[i],
+                }
+            )
+        latent_summary = ", ".join(
+            f"{t}:{before_reg[t].mean():.2f}->{reg_latent[t].mean():.2f}(tgt {reg_targets[t]})" for t in reg_names
+        )
+        logger.info(f"Inverse design in-latent regression: {latent_summary}")
+        logger.info(f"Inverse design QC prob (round-trip): {before_qc.mean():.3f} -> {after_qc.mean():.3f}")
+        return {"reg_targets": reg_targets, "qc_classes": QC_CLASSES, "n_seeds": len(seeds), "records": records}
+
+    def _decode_compositions(self, descriptors: np.ndarray) -> list[str]:
+        """KMD.inverse: descriptor -> element weights -> compact formula string."""
+        try:
+            weights = self._kmd.inverse(descriptors)
+        except Exception as exc:  # pragma: no cover - QP edge cases
+            logger.warning(f"KMD.inverse failed ({exc}); skipping composition decoding.")
+            return ["<undecodable>"] * descriptors.shape[0]
+        out = []
+        for w in weights:
+            order = np.argsort(w)[::-1]
+            parts = [f"{DEFAULT_ELEMENTS[i]}{w[i]:.3f}" for i in order[:6] if w[i] > 1e-3]
+            out.append(" ".join(parts) if parts else "<empty>")
+        return out
 
     # ------------------------------------------------------------------ plots
 
@@ -420,7 +585,6 @@ class ContinualRehearsalRunner:
         plt.close(fig)
 
     def _plot_kr_sequences(self, comps, t_list, true_parts, pred, task_name, r2, step_dir):
-        # Split the concatenated prediction back into per-sample chunks.
         fig, ax = plt.subplots(figsize=(6, 4), dpi=130)
         offset = 0
         for i in range(min(3, len(comps))):
@@ -430,15 +594,15 @@ class ContinualRehearsalRunner:
             ax.plot(t, pred[offset : offset + n], lw=1.0, ls="--", alpha=0.8, label=f"pred #{i}")
             offset += n
         ax.set_xlabel("t")
-        ax.set_ylabel("value (normalized)")
-        ax.set_title(f"{task_name} (new) — R²={r2:.3f} over all points")
+        ax.set_ylabel("value (norm)")
+        ax.set_title(f"{task_name} (new) — R²={r2:.3f}")
         ax.legend(fontsize=7, ncol=2)
         fig.tight_layout()
         fig.savefig(step_dir / f"{task_name}_sequences.png")
         plt.close(fig)
 
-    def _plot_forgetting(self, metric_history: dict[str, list[tuple[int, float]]]):
-        fig, ax = plt.subplots(figsize=(7, 4.5), dpi=130)
+    def _plot_forgetting(self, metric_history):
+        fig, ax = plt.subplots(figsize=(8, 5), dpi=130)
         for task_name, points in metric_history.items():
             if not points:
                 continue
@@ -447,13 +611,36 @@ class ContinualRehearsalRunner:
             ax.plot(steps, vals, marker="o", label=task_name)
         ax.set_xlabel("finetuning step")
         ax.set_ylabel("primary metric (R² / accuracy)")
-        ax.set_title("Per-task performance vs continual finetuning step (forgetting)")
+        ax.set_title("Per-task performance vs continual finetuning step")
         ax.grid(True, alpha=0.3)
-        ax.legend(fontsize=8)
+        ax.legend(fontsize=8, ncol=2)
         fig.tight_layout()
         fig.savefig(self.output_dir / "forgetting_trajectory.png")
         plt.close(fig)
         logger.info(f"Saved forgetting trajectory to {self.output_dir / 'forgetting_trajectory.png'}")
+
+    def _plot_inverse_design(self, before_qc, after_qc, before_reg, reg_latent, after_reg, reg_targets):
+        n_panels = 1 + len(reg_targets)
+        fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 4), dpi=130)
+        axes = np.atleast_1d(axes)
+        idx = np.arange(len(before_qc))
+        axes[0].bar(idx - 0.2, before_qc, width=0.4, label="before")
+        axes[0].bar(idx + 0.2, after_qc, width=0.4, label="after (decode)")
+        axes[0].set_title("Quasicrystal probability")
+        axes[0].set_xlabel("seed")
+        axes[0].legend(fontsize=8)
+        for ax, (t, tgt) in zip(axes[1:], reg_targets.items()):
+            ax.bar(idx - 0.25, before_reg[t], width=0.25, label="before")
+            ax.bar(idx, reg_latent[t], width=0.25, label="achieved (latent)")
+            ax.bar(idx + 0.25, after_reg[t], width=0.25, label="after (decode)")
+            ax.axhline(tgt, color="r", ls="--", lw=1, label=f"target={tgt}")
+            ax.set_title(f"{t} prediction")
+            ax.set_xlabel("seed")
+            ax.legend(fontsize=7)
+        fig.tight_layout()
+        fig.savefig(self.output_dir / "inverse_design.png")
+        plt.close(fig)
+        logger.info(f"Saved inverse-design plot to {self.output_dir / 'inverse_design.png'}")
 
 
 # --- CLI ---------------------------------------------------------------------
@@ -468,34 +655,22 @@ def _load_toml(path: Path) -> dict[str, Any]:
 
 
 def _parse_args(argv: list[str] | None = None) -> ContinualRehearsalConfig:
-    parser = argparse.ArgumentParser(description="Continual multi-task rehearsal demo.")
-    parser.add_argument("--config-file", type=Path, default=None, help="TOML config path.")
+    parser = argparse.ArgumentParser(description="Continual rehearsal + inverse-design demo.")
+    parser.add_argument("--config-file", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
-    parser.add_argument("--sample", type=int, default=None)
+    parser.add_argument("--sample-per-dataset", type=int, default=None)
     parser.add_argument("--max-epochs-per-step", type=int, default=None)
-    parser.add_argument("--replay-ratio", type=float, default=None)
-    parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--accelerator", type=str, default=None)
-    parser.add_argument("--task-sequence", nargs="+", default=None)
     args = parser.parse_args(argv)
 
     data = _load_toml(args.config_file) if args.config_file else {}
-    # CLI overrides take precedence over the config file.
-    for key in (
-        "output_dir",
-        "sample",
-        "max_epochs_per_step",
-        "replay_ratio",
-        "batch_size",
-        "accelerator",
-        "task_sequence",
-    ):
+    for key in ("output_dir", "sample_per_dataset", "max_epochs_per_step", "accelerator"):
         val = getattr(args, key)
         if val is not None:
             data[key] = val
 
-    field_names = {f for f in ContinualRehearsalConfig.__dataclass_fields__}
-    path_fields = {"data_path", "descriptor_path", "preprocessing_path", "output_dir"}
+    field_names = set(ContinualRehearsalConfig.__dataclass_fields__)
+    path_fields = {"qc_data_path", "qc_preprocessing_path", "superconductor_path", "magnetic_path", "output_dir"}
     kwargs: dict[str, Any] = {}
     for key, value in data.items():
         if key not in field_names:
@@ -506,8 +681,7 @@ def _parse_args(argv: list[str] | None = None) -> ContinualRehearsalConfig:
 
 
 def main(argv: list[str] | None = None) -> None:
-    config = _parse_args(argv)
-    ContinualRehearsalRunner(config).run()
+    ContinualRehearsalRunner(_parse_args(argv)).run()
 
 
 if __name__ == "__main__":
