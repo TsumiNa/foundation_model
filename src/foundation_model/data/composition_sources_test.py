@@ -44,6 +44,13 @@ def test_normalize_composition_invalid_returns_none():
     assert normalize_composition("not-a-formula!!") is None
 
 
+def test_normalize_composition_fast_path_rejects_non_formula_strings():
+    # Non-formula join keys (MP IDs, SMILES) are rejected without a pymatgen parse.
+    assert normalize_composition("mp-1234") is None
+    assert normalize_composition("*CC*") is None
+    assert normalize_composition("") is None
+
+
 @pytest.fixture
 def loguru_warnings():
     """Capture loguru WARNING-level messages (caplog only sees stdlib logging)."""
@@ -282,6 +289,17 @@ def test_lookup_descriptor_fn_aligns_heterogeneous_spellings():
     out = fn([normalize_composition("Fe2.0O3.0"), "missing"])
     assert list(out.index) == [normalize_composition("Fe2O3")]
     assert out.iloc[0]["d0"] == 1.0
+
+
+def test_lookup_descriptor_fn_dedupes_colliding_labels(loguru_warnings):
+    # Duplicate raw labels / spellings that canonicalize to the same key must not crash the
+    # length-matched re-index; they collapse keep-first with a warning (Codex P1 regression).
+    features = pd.DataFrame({"d0": [1.0, 9.0, 2.0]}, index=pd.Index(["Fe2O3", "Fe2.0O3.0", "NaCl"]))
+    fn = lookup_descriptor_fn(features)
+    out = fn([normalize_composition("Fe2O3"), normalize_composition("NaCl")])
+    assert list(out.index) == [normalize_composition("Fe2O3"), normalize_composition("NaCl")]
+    assert out.loc[normalize_composition("Fe2O3"), "d0"] == 1.0  # first occurrence kept
+    assert any("collapsed to a duplicate" in m for m in loguru_warnings)
 
 
 # --- resolve_splits ---------------------------------------------------------
