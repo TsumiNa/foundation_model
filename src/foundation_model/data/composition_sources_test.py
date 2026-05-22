@@ -24,11 +24,11 @@ from foundation_model.data.composition_sources import (
 # --- normalize_composition --------------------------------------------------
 
 
-def test_normalize_composition_float_and_order_invariant():
+def test_normalize_composition_formula_and_order_invariant():
     # Integer vs decimal spelling and element ordering all collapse to one canonical key.
     assert normalize_composition("Fe3O2") == normalize_composition("Fe3.0O2.0")
     assert normalize_composition("Fe2O3") == normalize_composition("O3Fe2")
-    assert normalize_composition("Fe2O3") == "Fe2.000000 O3.000000"
+    assert normalize_composition("Fe2O3") == "Fe2 O3"  # readable pymatgen .formula
     # Amounts are NOT reduced: absolute stoichiometry is preserved.
     assert normalize_composition("Fe2O3") != normalize_composition("Fe4O6")
 
@@ -36,7 +36,7 @@ def test_normalize_composition_float_and_order_invariant():
 def test_normalize_composition_accepts_mapping_dropping_none():
     # The qc 'composition' column stores every element, mostly None.
     sparse = {"Fe": 2.0, "O": 3.0, "Na": None, "Cl": 0.0}
-    assert normalize_composition(sparse) == "Fe2.000000 O3.000000"
+    assert normalize_composition(sparse) == "Fe2 O3"
 
 
 def test_normalize_composition_invalid_returns_none():
