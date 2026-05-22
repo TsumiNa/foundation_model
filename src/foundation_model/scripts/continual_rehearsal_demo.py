@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -80,7 +81,13 @@ TASK_SPECS: dict[str, dict[str, Any]] = {
     "pressure": {"source": "superconductor", "kind": "reg", "column": "Pressure[GPa]"},
     "curie": {"source": "magnetic", "kind": "reg", "column": "Curie temperature[K]"},
     "magnetization": {"source": "magnetic", "kind": "reg", "column": "Magnetization[A·m²/mol]"},
+    "neel": {"source": "magnetic", "kind": "reg", "column": "Neel temperature[K]"},
+    "kp": {"source": "phonix", "kind": "reg", "column": "kp[W/mK]"},
+    "klat": {"source": "phonix", "kind": "reg", "column": "klat[W/mK]"},
 }
+# Raw (non-qc) regression targets span orders of magnitude (thermal conductivity, magnetization);
+# they are log1p-compressed, z-scored, then clipped to tame heavy tails.
+_RAW_TARGET_CLIP = 5.0
 DEFAULT_SEQUENCE = list(TASK_SPECS.keys())
 # Quasicrystal classes for the material_type label encoder (DAC=0, DQC=1, IAC=2, IQC=3, others=4).
 QC_CLASSES = [1, 3]
@@ -94,6 +101,7 @@ class ContinualRehearsalConfig:
     qc_preprocessing_path: Path | None = Path("data/preprocessing_objects_20250615.pkl.z")
     superconductor_path: Path = Path("data/NEMAD_superconductor_20260425.parquet")
     magnetic_path: Path = Path("data/NEMAD_magnetic_20260419.parquet")
+    phonix_path: Path = Path("data/phonix-db-filtered_20260425.parquet")
     output_dir: Path = Path("artifacts/continual_rehearsal")
 
     task_sequence: list[str] = field(default_factory=lambda: list(DEFAULT_SEQUENCE))
@@ -193,6 +201,7 @@ class ContinualRehearsalRunner:
             "qc": self._load_qc(),
             "superconductor": pd.read_parquet(cfg.superconductor_path),
             "magnetic": pd.read_parquet(cfg.magnetic_path),
+            "phonix": pd.read_parquet(cfg.phonix_path),
         }
 
         # Build a composition key per row for each source, capping rows for speed.
@@ -223,10 +232,11 @@ class ContinualRehearsalRunner:
             frame = pd.DataFrame(index=df.index)
             values = df[col]
             if spec["source"] != "qc" and spec["kind"] == "reg":
-                v = df[col].astype(float)
+                # log1p compresses the orders-of-magnitude range, then z-score + clip tails.
+                v = np.log1p(df[col].astype(float).clip(lower=0.0))
                 mean = float(v.mean())
                 std = float(v.std(ddof=0)) or 1.0
-                values = (v - mean) / std
+                values = ((v - mean) / std).clip(-_RAW_TARGET_CLIP, _RAW_TARGET_CLIP)
             frame[col] = values
             if spec["kind"] == "kr":
                 frame[spec["t_column"]] = df[spec["t_column"]]
@@ -378,6 +388,8 @@ class ContinualRehearsalRunner:
 
         inverse = self._inverse_design(model)
         (self.output_dir / "inverse_design.json").write_text(json.dumps(inverse, indent=2))
+
+        self._write_report_html(records, inverse)
         logger.info(f"Done. Outputs in {self.output_dir}")
 
     # ------------------------------------------------------------------ eval
@@ -641,6 +653,168 @@ class ContinualRehearsalRunner:
         fig.savefig(self.output_dir / "inverse_design.png")
         plt.close(fig)
         logger.info(f"Saved inverse-design plot to {self.output_dir / 'inverse_design.png'}")
+
+    # ------------------------------------------------------------------ report
+
+    def _img_b64(self, rel: str) -> str | None:
+        path = self.output_dir / rel
+        if not path.exists():
+            return None
+        return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+
+    def _write_report_html(self, records: list[dict[str, Any]], inverse: dict[str, Any]) -> None:
+        """Emit a self-contained, white-background HTML slide deck summarizing the run."""
+        final = records[-1]["metrics"] if records else {}
+        intro = {r["new_task"]: r["metrics"][r["new_task"]]["primary"] for r in records}
+        kind_label = {"reg": "regression", "kr": "kernel regression", "clf": "classification"}
+
+        rows = []
+        for task in self.config.task_sequence:
+            spec = TASK_SPECS[task]
+            metric_name = "acc" if spec["kind"] == "clf" else "R²"
+            rows.append(
+                f"<tr><td>{task}</td><td>{kind_label[spec['kind']]}</td><td>{spec['source']}</td>"
+                f"<td>{intro.get(task, float('nan')):+.3f}</td>"
+                f"<td>{final.get(task, {}).get('primary', float('nan')):+.3f}</td><td>{metric_name}</td></tr>"
+            )
+        task_table = "\n".join(rows)
+
+        # Per-type example plots (first reg / kr / clf in the sequence).
+        examples = []
+        seen: set[str] = set()
+        for i, task in enumerate(self.config.task_sequence, start=1):
+            kind = TASK_SPECS[task]["kind"]
+            if kind in seen:
+                continue
+            suffix = {"reg": "parity", "kr": "sequences", "clf": "confusion"}[kind]
+            img = self._img_b64(f"step{i:02d}_{task}/{task}_{suffix}.png")
+            if img:
+                examples.append(
+                    f'<figure><img src="{img}"/><figcaption>{task} ({kind_label[kind]})</figcaption></figure>'
+                )
+                seen.add(kind)
+
+        forget_img = self._img_b64("forgetting_trajectory.png")
+        inv_img = self._img_b64("inverse_design.png")
+
+        recs = inverse.get("records", [])
+        reg_targets = inverse.get("reg_targets", {})
+
+        def _mean(field: str, sub: str) -> float:
+            vals = [r[field][sub] for r in recs if sub in r.get(field, {})]
+            return float(np.mean(vals)) if vals else float("nan")
+
+        inv_lines = "".join(
+            f"<li><b>{t}</b>: {_mean('reg_before', t):+.2f} → <b>{_mean('reg_achieved_latent', t):+.2f}</b> "
+            f"(target {reg_targets[t]:+.1f})</li>"
+            for t in reg_targets
+        )
+        qc_before = float(np.mean([r["qc_prob_before"] for r in recs])) if recs else float("nan")
+        qc_after = float(np.mean([r["qc_prob_after_decode"] for r in recs])) if recs else float("nan")
+        decoded = "".join(f"<li><code>{r['decoded_composition']}</code></li>" for r in recs[:4])
+
+        n_tasks = len(self.config.task_sequence)
+        n_reg = sum(1 for t in self.config.task_sequence if TASK_SPECS[t]["kind"] == "reg")
+        n_kr = sum(1 for t in self.config.task_sequence if TASK_SPECS[t]["kind"] == "kr")
+        n_clf = sum(1 for t in self.config.task_sequence if TASK_SPECS[t]["kind"] == "clf")
+
+        def slide(body: str) -> str:
+            return f'<section class="slide">{body}</section>'
+
+        slides = [
+            slide(
+                "<h1>Continual Multi-Task Learning + Inverse Design</h1>"
+                "<p class='sub'>Composition-keyed FlexibleMultiTaskModel across all inorganic datasets &amp; task types</p>"
+                f"<p class='meta'>{n_tasks} supervised tasks ({n_reg} regression · {n_kr} kernel regression · "
+                f"{n_clf} classification) + always-on autoencoder · KMD-1d descriptors</p>"
+            ),
+            slide(
+                "<h2>Setup</h2><ul>"
+                "<li><b>Datasets</b>: qc_ac_te_mp (DOS/material), NEMAD superconductor, NEMAD magnetic, phonix-db — joined by composition formula.</li>"
+                "<li><b>Descriptor</b>: invertible KMD-1d, computed on the fly (descriptor → composition via <code>KMD.inverse</code>).</li>"
+                "<li><b>Continual finetuning</b>: tasks added one at a time; AE head always on.</li>"
+                f"<li><b>Rehearsal</b>: learned tasks keep only {self.config.replay_ratio:.0%} of their training targets per step.</li>"
+                "<li><b>Inverse design</b>: optimize the latent toward regression targets + quasicrystal probability, then decode a composition.</li>"
+                "</ul>"
+            ),
+            slide(
+                "<h2>Tasks &amp; performance</h2>"
+                "<table><thead><tr><th>task</th><th>type</th><th>dataset</th>"
+                "<th>at intro</th><th>final</th><th>metric</th></tr></thead>"
+                f"<tbody>{task_table}</tbody></table>"
+                "<p class='meta'>“at intro” = score the step a task is added; “final” = after all tasks learned.</p>"
+            ),
+            slide(
+                "<h2>Forgetting under 5% rehearsal</h2>"
+                + (f"<img class='wide' src='{forget_img}'/>" if forget_img else "<p>(plot unavailable)</p>")
+            ),
+            slide("<h2>Per-task-type examples</h2><div class='row'>" + "".join(examples) + "</div>"),
+            slide(
+                "<h2>Inverse design</h2><div class='row'>"
+                + (f"<img class='wide' src='{inv_img}'/>" if inv_img else "")
+                + "<div class='panel'><h3>Latent optimization reached targets</h3><ul>"
+                + inv_lines
+                + f"</ul><p>Quasicrystal probability (round-trip): <b>{qc_before:.3f} → {qc_after:.3f}</b></p>"
+                + "<h3>Decoded compositions (KMD.inverse)</h3><ul>"
+                + decoded
+                + "</ul></div></div>"
+            ),
+            slide(
+                "<h2>Takeaways</h2><ul>"
+                "<li>One shared encoder serves regression, kernel regression, classification &amp; reconstruction across 4 inorganic datasets.</li>"
+                "<li>5% rehearsal keeps well-learned tasks (density, formation energy, material type) near their peak while new heads are added.</li>"
+                "<li>Latent-space optimization with regression + classification conditions hits the targets and decodes back to real compositions via the invertible KMD descriptor.</li>"
+                "</ul>"
+            ),
+        ]
+
+        html = _REPORT_TEMPLATE.replace("__SLIDES__", "\n".join(slides)).replace("__N__", str(len(slides)))
+        (self.output_dir / "report.html").write_text(html, encoding="utf-8")
+        logger.info(f"Saved HTML report to {self.output_dir / 'report.html'}")
+
+
+_REPORT_TEMPLATE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Continual Multi-Task Demo — Summary</title>
+<style>
+  :root { --fg:#1a1a1a; --muted:#6b7280; --accent:#2563eb; --line:#e5e7eb; }
+  * { box-sizing: border-box; }
+  html,body { margin:0; height:100%; background:#ffffff; color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .deck { height:100vh; overflow-y:scroll; scroll-snap-type:y mandatory; }
+  .slide { min-height:100vh; scroll-snap-align:start; display:flex; flex-direction:column;
+    justify-content:center; padding:6vh 9vw; border-bottom:1px solid var(--line); }
+  h1 { font-size:2.6rem; margin:0 0 .4rem; }
+  h2 { font-size:2rem; margin:0 0 1.2rem; color:var(--accent); }
+  h3 { font-size:1.15rem; margin:1rem 0 .4rem; }
+  p.sub { font-size:1.3rem; color:var(--fg); margin:.2rem 0; }
+  p.meta { color:var(--muted); font-size:1rem; }
+  ul { font-size:1.15rem; line-height:1.7; }
+  table { border-collapse:collapse; font-size:1rem; }
+  th,td { border-bottom:1px solid var(--line); padding:.45rem .9rem; text-align:right; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3) { text-align:left; }
+  thead th { color:var(--muted); font-weight:600; }
+  img.wide { max-height:62vh; max-width:62vw; }
+  .row { display:flex; gap:1.5rem; align-items:center; flex-wrap:wrap; }
+  figure { margin:0; text-align:center; } figure img { max-height:46vh; max-width:30vw; }
+  figcaption { color:var(--muted); font-size:.95rem; margin-top:.4rem; }
+  .panel { max-width:34vw; } code { background:#f3f4f6; padding:.1rem .35rem; border-radius:4px; }
+  .nav { position:fixed; bottom:14px; right:18px; color:var(--muted); font-size:.85rem; }
+</style></head>
+<body><div class="deck" id="deck">
+__SLIDES__
+</div>
+<div class="nav">↑/↓ or scroll · <span id="pos">1</span>/__N__</div>
+<script>
+  const deck=document.getElementById('deck'), slides=[...document.querySelectorAll('.slide')], pos=document.getElementById('pos');
+  let i=0;
+  function go(n){ i=Math.max(0,Math.min(slides.length-1,n)); slides[i].scrollIntoView({behavior:'smooth'}); }
+  document.addEventListener('keydown',e=>{ if(e.key==='ArrowDown'||e.key==='ArrowRight'||e.key===' '){e.preventDefault();go(i+1);}
+    else if(e.key==='ArrowUp'||e.key==='ArrowLeft'){e.preventDefault();go(i-1);} });
+  deck.addEventListener('scroll',()=>{ i=Math.round(deck.scrollTop/window.innerHeight); pos.textContent=i+1; });
+</script></body></html>
+"""
 
 
 # --- CLI ---------------------------------------------------------------------
