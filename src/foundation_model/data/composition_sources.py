@@ -20,7 +20,6 @@ tested in isolation with in-memory frames and a fake descriptor function.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping  # used for runtime isinstance; safe (unlike typing.Mapping)
 from typing import Callable, Sequence
 
@@ -39,11 +38,6 @@ VALID_SPLIT_LABELS = frozenset(_SPLIT_PRECEDENCE)
 # Decimal places used when rendering element amounts in a canonical composition key. Six is
 # enough for typical fractional stoichiometries while collapsing float-representation noise.
 _COMPOSITION_AMOUNT_DECIMALS = 6
-
-# Characters that can legitimately appear in a chemical formula. A string with anything else
-# (``-`` in ``mp-1234`` Materials Project IDs, ``*``/``=`` in SMILES, …) is obviously not a
-# formula, so we reject it without paying for a pymatgen parse + exception per row.
-_FORMULA_CHARS = re.compile(r"^[A-Za-z0-9.()\[\]\s]+$")
 
 
 def normalize_composition(value: object, *, decimals: int = _COMPOSITION_AMOUNT_DECIMALS) -> str | None:
@@ -82,10 +76,12 @@ def normalize_composition(value: object, *, decimals: int = _COMPOSITION_AMOUNT_
                 return None
             comp = Composition(cleaned)
         else:
-            text = str(value)
-            # Fast-path: skip the pymatgen parse for strings that can't be formulas (e.g. ``mp-``
-            # IDs, SMILES) so non-formula join keys don't cost an exception each.
-            if not text or not _FORMULA_CHARS.match(text):
+            text = str(value).strip()
+            # Fast-path: a real formula starts with an element symbol (uppercase) or an opening
+            # bracket. This cheaply rejects non-formula join keys (``mp-1234`` IDs, synthetic
+            # ``s0`` keys, SMILES like ``*CC*``) without a pymatgen parse, while still letting
+            # charged/bracketed formulas through for pymatgen to decide.
+            if not text or not (text[0].isupper() or text[0] in "(["):
                 return None
             comp = Composition(text)
     except Exception:
@@ -96,7 +92,7 @@ def normalize_composition(value: object, *, decimals: int = _COMPOSITION_AMOUNT_
     return " ".join(f"{el}{amounts[el]:.{decimals}f}" for el in sorted(amounts))
 
 
-CompositionNormalizer = Callable[[object], "str | None"]
+CompositionNormalizer = Callable[[object], str | None]
 
 
 def canonical_key(value: object, normalizer: CompositionNormalizer | None) -> str:
@@ -135,12 +131,13 @@ def lookup_descriptor_fn(
     """
     frame = _reindex_by_canonical(features, composition_normalizer, source="lookup_descriptor_fn")
 
+    index = frame.index
+
     def descriptor_fn(compositions: Sequence[str]) -> pd.DataFrame:
-        # Canonicalize the query keys too (idempotent when the DataModule already did) so the
-        # lookup is robust whether called with raw or canonical compositions.
-        keys = [canonical_key(c, composition_normalizer) for c in compositions]
-        present = [k for k in keys if k in frame.index]
-        return frame.loc[present]
+        # Keys are usually already canonical (the DataModule normalized them), so try a direct
+        # hit first and only pay for canonicalization on a miss.
+        present = [c if c in index else canonical_key(c, composition_normalizer) for c in compositions]
+        return frame.loc[[k for k in present if k in index]]
 
     return descriptor_fn
 
@@ -358,11 +355,11 @@ class PrecomputedDescriptorSource:
 
     def __call__(self, compositions: Sequence[str]) -> pd.DataFrame:
         frame = self._load()
-        # Canonicalize the query keys with the same rule used for the index (idempotent when the
-        # DataModule already did), so lookups work whether called with raw or canonical keys.
-        keys = (canonical_key(c, self._composition_normalizer) for c in compositions)
-        present = [k for k in keys if k in frame.index]
-        return frame.loc[present]
+        index = frame.index
+        # Keys are usually already canonical (the DataModule normalized them); try a direct hit
+        # first and only canonicalize on a miss, so we don't re-normalize every query at scale.
+        present = [c if c in index else canonical_key(c, self._composition_normalizer) for c in compositions]
+        return frame.loc[[k for k in present if k in index]]
 
 
 class DescriptorCache:

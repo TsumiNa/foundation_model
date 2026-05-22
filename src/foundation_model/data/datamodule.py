@@ -378,7 +378,14 @@ class CompoundDataModule(L.LightningDataModule):
                 f"(e.g. {', '.join(dropped[:5])})."
             )
         if self.descriptors.empty:
-            raise ValueError("descriptor_fn produced no valid descriptors for any composition.")
+            hint = ""
+            if self.composition_normalizer is None:
+                hint = (
+                    " The DataModule has composition_normalizer=None but bundled descriptor sources "
+                    "(PrecomputedDescriptorSource / lookup_descriptor_fn) normalize by default — pass "
+                    "composition_normalizer=None to the descriptor source too so both sides use the same keys."
+                )
+            raise ValueError(f"descriptor_fn produced no valid descriptors for any composition.{hint}")
         self.master_index = [str(c) for c in self.descriptors.index]
         logger.info(f"Master composition index size (with valid descriptors): {len(self.master_index)}")
 
