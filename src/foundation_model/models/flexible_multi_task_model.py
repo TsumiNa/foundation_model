@@ -1735,6 +1735,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         target_value: torch.Tensor | float | None = None,
         task_targets: Mapping[str, torch.Tensor | float] | None = None,
         class_targets: Mapping[str, int | Sequence[int]] | None = None,
+        class_target_weight: float = 1.0,
         optimize_space: str = "input",
     ) -> OptimizationResult:
         """
@@ -1772,6 +1773,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Classification objectives: maps a classification task name to the class index (or
             indices) whose combined probability should be *maximized*. Adds a ``-log P(target
             classes)`` term to the objective and may be combined with ``task_targets``.
+        class_target_weight : float, optional
+            Multiplier on each classification objective term relative to the regression terms.
+            Use ``> 1`` to make class probability the primary objective and regression targets
+            secondary. Default ``1.0``.
         optimize_space : str, optional
             ``"input"`` or ``"latent"``. Default ``"input"``.
 
@@ -1818,6 +1823,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if class_targets is not None:
             if not isinstance(class_targets, Mapping) or len(class_targets) == 0:
                 raise ValueError("class_targets must be a non-empty mapping of task_name -> class index/indices")
+            if class_target_weight <= 0:
+                raise ValueError(f"class_target_weight must be > 0, got {class_target_weight}")
             class_target_map = {}
             for name, classes in class_targets.items():
                 if name not in self.task_heads:
@@ -1995,7 +2002,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                                 expanded_target = expanded_target.expand(pred.shape)
                             loss_terms.append(F.mse_loss(pred, expanded_target))
 
-                    loss_terms.extend(_class_loss_terms(h_task))
+                    loss_terms.extend(class_target_weight * term for term in _class_loss_terms(h_task))
                     per_task_values_tensor = _stack_scores(per_task_values)  # (B, T)
 
                     if loss_terms:
@@ -2091,7 +2098,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                                 expanded_target = expanded_target.expand(pred.shape)
                             loss_terms.append(F.mse_loss(pred, expanded_target))
 
-                    loss_terms.extend(_class_loss_terms(h_task))
+                    loss_terms.extend(class_target_weight * term for term in _class_loss_terms(h_task))
                     per_task_values_tensor = _stack_scores(per_task_values)  # (B, T)
 
                     if loss_terms:

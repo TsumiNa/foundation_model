@@ -981,6 +981,33 @@ def test_optimize_latent_class_targets_only_no_regression():
     assert res.optimized_target.shape == (4, 1, 0)  # no regression tasks tracked
 
 
+def test_optimize_latent_class_target_weight_rejects_nonpositive():
+    model = _make_reg_clf_model()
+    with pytest.raises(ValueError, match="class_target_weight must be > 0"):
+        model.optimize_latent(
+            initial_input=torch.randn(2, INPUT_DIM),
+            class_targets={"cls": [1]},
+            class_target_weight=0.0,
+            optimize_space="input",
+        )
+
+
+def test_optimize_latent_class_target_weight_runs_with_combined_objectives():
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    x = torch.randn(4, INPUT_DIM)
+    res = model.optimize_latent(
+        initial_input=x,
+        task_targets={"prop": 1.0},
+        class_targets={"cls": [1]},
+        class_target_weight=5.0,  # class probability is the primary objective
+        optimize_space="input",
+        steps=10,
+    )
+    assert res.optimized_input.shape == (4, 1, INPUT_DIM)
+    assert res.optimized_target.shape == (4, 1, 1)  # one regression task tracked
+
+
 # --- optimize_composition (differentiable KMD) --------------------------------
 
 
@@ -1124,8 +1151,6 @@ def test_optimize_composition_uses_kmd_kernel_torch():
     res = model.optimize_composition(kernel, task_targets={"prop": 0.5}, n_starts=3, steps=10)
     assert res.optimized_weights.shape == (3, 7)
     assert torch.allclose(res.optimized_weights.sum(dim=-1), torch.ones(3), atol=1e-5)
-
-
 def test_optimize_latent_space_with_ae():
     model = _make_model()
     model.eval()
