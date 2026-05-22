@@ -55,6 +55,7 @@ from lightning import Trainer, seed_everything
 from loguru import logger
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, r2_score  # type: ignore[import-untyped]
 
+from foundation_model.data.composition_sources import normalize_composition
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
 from foundation_model.models.model_config import (
@@ -154,20 +155,12 @@ def _as_float_array(cell: Any) -> np.ndarray:
 
 
 def _composition_key(raw: Any) -> str | None:
-    """Canonical reduced-formula key for a composition dict (qc) or formula string (NEMAD)."""
-    from pymatgen.core.composition import Composition  # local import; pymatgen is heavy
+    """Canonical, float-amount composition key shared with the data stack.
 
-    try:
-        if isinstance(raw, dict):
-            cleaned = {k: v for k, v in raw.items() if v is not None and float(v) > 0}
-            if not cleaned:
-                return None
-            comp = Composition(cleaned)
-        else:
-            comp = Composition(str(raw))
-        return comp.reduced_formula
-    except Exception:
-        return None
+    Uses the system-wide :func:`normalize_composition` (non-reduced, float amounts) so the demo's
+    in-memory frames key exactly the way ``CompoundDataModule`` does — no demo-local convention.
+    """
+    return normalize_composition(raw)
 
 
 def _init_kernels(t_values: np.ndarray, n_kernel: int) -> tuple[list[float], list[float]]:

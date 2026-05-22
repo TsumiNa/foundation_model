@@ -14,9 +14,34 @@ from foundation_model.data.composition_sources import (
     PrecomputedDescriptorSource,
     build_composition_universe,
     load_task_frame,
+    lookup_descriptor_fn,
+    normalize_composition,
     read_data_file,
     resolve_splits,
 )
+
+
+# --- normalize_composition --------------------------------------------------
+
+
+def test_normalize_composition_float_and_order_invariant():
+    # Integer vs decimal spelling and element ordering all collapse to one canonical key.
+    assert normalize_composition("Fe3O2") == normalize_composition("Fe3.0O2.0")
+    assert normalize_composition("Fe2O3") == normalize_composition("O3Fe2")
+    assert normalize_composition("Fe2O3") == "Fe2.000000 O3.000000"
+    # Amounts are NOT reduced: absolute stoichiometry is preserved.
+    assert normalize_composition("Fe2O3") != normalize_composition("Fe4O6")
+
+
+def test_normalize_composition_accepts_mapping_dropping_none():
+    # The qc 'composition' column stores every element, mostly None.
+    sparse = {"Fe": 2.0, "O": 3.0, "Na": None, "Cl": 0.0}
+    assert normalize_composition(sparse) == "Fe2.000000 O3.000000"
+
+
+def test_normalize_composition_invalid_returns_none():
+    assert normalize_composition({}) is None
+    assert normalize_composition("not-a-formula!!") is None
 
 
 @pytest.fixture
@@ -220,7 +245,8 @@ def test_precomputed_descriptor_source_indexed_file(tmp_path, comp_col):
     df = pd.DataFrame({"d0": [1.0, 2.0, 3.0]}, index=pd.Index(["A", "B", "C"], name="id"))
     path = tmp_path / "desc.parquet"
     df.to_parquet(path)
-    source = PrecomputedDescriptorSource(str(path), composition_column=comp_col)
+    # composition_normalizer=None: look up by the raw (stringified) index.
+    source = PrecomputedDescriptorSource(str(path), composition_column=comp_col, composition_normalizer=None)
     out = source(["C", "A", "missing"])
     assert list(out.index) == ["C", "A"]
     assert out.loc["C", "d0"] == 3.0
@@ -231,10 +257,31 @@ def test_precomputed_descriptor_source_column_file(tmp_path):
     df = pd.DataFrame({"id": ["A", "B"], "d0": [1.0, 2.0]})
     path = tmp_path / "desc.csv"
     df.to_csv(path, index=False)
-    source = PrecomputedDescriptorSource(str(path), composition_column="id")
+    source = PrecomputedDescriptorSource(str(path), composition_column="id", composition_normalizer=None)
     out = source(["A"])
     assert list(out.index) == ["A"]
     assert out.loc["A", "d0"] == 1.0
+
+
+def test_precomputed_descriptor_source_normalizes_by_default(tmp_path):
+    """By default the index is canonicalized, so heterogeneous spellings of a query still hit."""
+    df = pd.DataFrame({"d0": [1.0, 2.0]}, index=pd.Index(["Fe2O3", "H2O"], name="composition"))
+    path = tmp_path / "desc.parquet"
+    df.to_parquet(path)
+    source = PrecomputedDescriptorSource(str(path), composition_column="composition")
+    # Queried with a different spelling of Fe2O3 (decimal amounts, reversed order).
+    out = source(["O3.0Fe2.0", "missing"])
+    assert list(out.index) == [normalize_composition("Fe2O3")]
+    assert out.iloc[0]["d0"] == 1.0
+
+
+def test_lookup_descriptor_fn_aligns_heterogeneous_spellings():
+    features = pd.DataFrame({"d0": [1.0, 2.0]}, index=pd.Index(["Fe2O3", "NaCl"]))
+    fn = lookup_descriptor_fn(features)
+    # Descriptor frame spelled "Fe2O3"; query spelled with float amounts -> still matches.
+    out = fn([normalize_composition("Fe2.0O3.0"), "missing"])
+    assert list(out.index) == [normalize_composition("Fe2O3")]
+    assert out.iloc[0]["d0"] == 1.0
 
 
 # --- resolve_splits ---------------------------------------------------------

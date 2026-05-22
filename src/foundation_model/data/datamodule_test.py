@@ -181,6 +181,40 @@ def test_default_data_files_shared_across_tasks(tmp_path, descriptors_df):
 # --- splitting --------------------------------------------------------------
 
 
+def test_datamodule_normalizes_heterogeneous_compositions():
+    """Task frames and descriptors that spell the same compositions differently join by default."""
+    from foundation_model.data.composition_sources import lookup_descriptor_fn, normalize_composition
+
+    descs = pd.DataFrame({"f1": [0.1, 0.2], "f2": [0.3, 0.4]}, index=pd.Index(["Fe2O3", "H2O"]))
+    frames = {
+        "task1": pd.DataFrame({"task1": [1.0, 2.0]}, index=pd.Index(["Fe2O3", "H2O"])),  # plain
+        # Same two compositions, spelled with float amounts / reversed order.
+        "task_cls": pd.DataFrame({"task_cls": [0, 1]}, index=pd.Index(["O3.0Fe2.0", "H2.0O1.0"])),
+    }
+    configs = [
+        RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 8, 1]),
+        ClassificationTaskConfig(name="task_cls", data_column="task_cls", num_classes=2, dims=[2, 8, 2]),
+    ]
+    dm = CompoundDataModule(
+        task_configs=configs, descriptor_fn=lookup_descriptor_fn(descs), task_frames=frames, test_all=True
+    )
+    dm.setup(stage="test")
+    # Both spellings collapse to the same two canonical keys (universe stays 2, nothing dropped).
+    assert set(dm.master_index) == {normalize_composition("Fe2O3"), normalize_composition("H2O")}
+
+
+def test_datamodule_disable_normalizer_keeps_raw_keys(descriptors_df, reg_cls_configs):
+    """composition_normalizer=None preserves raw string keys (synthetic 's0' fixtures unchanged)."""
+    dm = CompoundDataModule(
+        task_configs=reg_cls_configs,
+        descriptor_fn=make_descriptor_fn(descriptors_df),
+        task_frames=_reg_cls_frames(),
+        composition_normalizer=None,
+    )
+    dm.setup(stage="fit")
+    assert set(dm.master_index) == set(COMPOSITIONS)
+
+
 def test_split_column_resolution(descriptors_df, reg_cls_configs):
     split = ["train"] * 10 + ["val"] * 5 + ["test"] * 5
     dm = build_dm(descriptors_df, task_frames=_reg_cls_frames(split=split), configs=reg_cls_configs)
