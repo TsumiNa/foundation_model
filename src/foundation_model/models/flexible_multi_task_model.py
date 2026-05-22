@@ -1718,8 +1718,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     def optimize_latent(
         self,
-        task_name: str,
-        initial_input: torch.Tensor,
+        task_name: str | None = None,
+        initial_input: torch.Tensor | None = None,
         mode: str = "max",
         steps: int = 200,
         lr: float = 0.1,
@@ -1727,6 +1727,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         perturbation_std: float = 0.0,
         target_value: torch.Tensor | float | None = None,
         task_targets: Mapping[str, torch.Tensor | float] | None = None,
+        class_targets: Mapping[str, int | Sequence[int]] | None = None,
         optimize_space: str = "input",
     ) -> OptimizationResult:
         """
@@ -1741,10 +1742,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         Parameters
         ----------
-        task_name : str
-            Regression task to optimise. Ignored when ``task_targets`` is provided.
+        task_name : str | None
+            Regression task to optimise (legacy single-task path). Optional — and ignored — when
+            ``task_targets`` or ``class_targets`` is provided; required otherwise.
         initial_input : torch.Tensor
-            Seed inputs, shape (B, input_dim).
+            Seed inputs, shape (B, input_dim). Always required (raises ``ValueError`` if ``None``).
         mode : str, optional
             ``"max"`` or ``"min"``. Ignored when ``target_value`` / ``task_targets`` is set.
         steps : int, optional
@@ -1758,7 +1760,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
         target_value : float | Tensor | None, optional
             Minimise MSE to this scalar target (single task). Overrides ``mode``.
         task_targets : Mapping[str, float | Tensor] | None, optional
-            Multi-task targets. When provided, ``mode`` and ``target_value`` are ignored.
+            Multi-task regression targets. When provided, ``mode`` and ``target_value`` are ignored.
+        class_targets : Mapping[str, int | Sequence[int]] | None, optional
+            Classification objectives: maps a classification task name to the class index (or
+            indices) whose combined probability should be *maximized*. Adds a ``-log P(target
+            classes)`` term to the objective and may be combined with ``task_targets``.
         optimize_space : str, optional
             ``"input"`` or ``"latent"``. Default ``"input"``.
 
@@ -1783,7 +1789,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if optimize_space not in {"input", "latent"}:
             raise ValueError(f"optimize_space must be 'input' or 'latent', got '{optimize_space}'")
 
-        # Validate task configurations
+        # Validate regression targets
         target_tasks: dict[str, torch.Tensor | float] | None = None
         if task_targets is not None:
             if not isinstance(task_targets, Mapping) or len(task_targets) == 0:
@@ -1799,8 +1805,35 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 cfg = self.task_configs_map[name]
                 if cfg.type != TaskType.REGRESSION:
                     raise ValueError(f"Task '{name}' must be a regression task for optimization, got {cfg.type}")
-        else:
-            if task_name not in self.task_heads:
+
+        # Validate classification objectives (maximize combined class probability)
+        class_target_map: dict[str, list[int]] | None = None
+        if class_targets is not None:
+            if not isinstance(class_targets, Mapping) or len(class_targets) == 0:
+                raise ValueError("class_targets must be a non-empty mapping of task_name -> class index/indices")
+            class_target_map = {}
+            for name, classes in class_targets.items():
+                if name not in self.task_heads:
+                    raise ValueError(
+                        f"Task '{name}' not found in model. Available tasks: {list(self.task_heads.keys())}"
+                    )
+                cls_cfg = self.task_configs_map[name]
+                if cls_cfg.type != TaskType.CLASSIFICATION:
+                    raise ValueError(f"class_targets task '{name}' must be a classification task.")
+                idxs = [int(classes)] if isinstance(classes, int) else [int(c) for c in classes]
+                if not idxs:
+                    raise ValueError(f"class_targets['{name}'] must specify at least one class index.")
+                num_classes = getattr(cls_cfg, "num_classes", None)
+                if num_classes is not None and any(not 0 <= i < num_classes for i in idxs):
+                    raise ValueError(
+                        f"class_targets['{name}'] indices {idxs} out of range for a "
+                        f"{num_classes}-class head; valid indices are [0, {num_classes})."
+                    )
+                class_target_map[name] = idxs
+
+        # Legacy single-task path (mode / target_value) only when no target maps are given
+        if target_tasks is None and class_target_map is None:
+            if task_name is None or task_name not in self.task_heads:
                 raise ValueError(
                     f"Task '{task_name}' not found in model. Available tasks: {list(self.task_heads.keys())}"
                 )
@@ -1813,16 +1846,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # Validate autoencoder availability for latent-space mode
         if optimize_space == "latent":
             if _AE_TASK not in self.task_heads:
-                raise ValueError(
-                    "optimize_space='latent' requires the model to be built with enable_autoencoder=True."
-                )
+                raise ValueError("optimize_space='latent' requires the model to be built with enable_autoencoder=True.")
             if not isinstance(self.task_heads[_AE_TASK], AutoEncoderHead):
                 raise ValueError(
                     f"Task '{_AE_TASK}' exists but is not an AutoEncoderHead; "
                     "latent-space optimization requires the built-in reconstruction head."
                 )
 
-        if target_tasks is None and mode not in {"max", "min"}:
+        if target_tasks is None and class_target_map is None and mode not in {"max", "min"}:
             raise ValueError(f"mode must be 'max' or 'min', got '{mode}'")
 
         if num_restarts < 1:
@@ -1857,13 +1888,41 @@ class FlexibleMultiTaskModel(L.LightningModule):
         elif target_value is not None:
             target_tensor = torch.as_tensor(target_value, device=device, dtype=input_tensor.dtype)
 
+        class_index_map: dict[str, torch.Tensor] = {}
+        if class_target_map is not None:
+            class_index_map = {
+                name: torch.as_tensor(idxs, device=device, dtype=torch.long) for name, idxs in class_target_map.items()
+            }
+
         # Helper to reduce predictions to scalar per task/batch
         def _reduce_pred(pred: torch.Tensor) -> torch.Tensor:
             if pred.ndim == 1:
                 return pred
             return pred.mean(dim=tuple(range(1, pred.ndim)))
 
-        tasks_for_optimization = list(target_tasks.keys()) if target_tasks is not None else [task_name]
+        def _stack_scores(vals: list[torch.Tensor]) -> torch.Tensor:
+            """Stack per-task scores to (B, T); return (B, 0) when there are no regression tasks."""
+            if vals:
+                return torch.stack(vals, dim=-1)
+            return torch.zeros((input_tensor.shape[0], 0), device=device, dtype=input_tensor.dtype)
+
+        def _class_loss_terms(h_task: torch.Tensor) -> list[torch.Tensor]:
+            """``-log P(target classes)`` per classification objective (maximize that prob)."""
+            terms: list[torch.Tensor] = []
+            for cname, cidx in class_index_map.items():
+                logits = self.task_heads[cname](h_task)
+                log_probs = F.log_softmax(logits, dim=-1)
+                combined = torch.logsumexp(log_probs.index_select(-1, cidx), dim=-1)
+                terms.append(-combined.mean())
+            return terms
+
+        if target_tasks is not None:
+            tasks_for_optimization = list(target_tasks.keys())
+        elif class_target_map is not None:
+            tasks_for_optimization = []  # classification-only objective
+        else:
+            assert task_name is not None  # guaranteed by validation above
+            tasks_for_optimization = [task_name]
         num_targets = len(tasks_for_optimization)
 
         optimized_inputs: list[torch.Tensor] = []
@@ -1886,7 +1945,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     for name in tasks_for_optimization:
                         pred = self.task_heads[name](h_task)
                         initial_vals.append(_reduce_pred(pred).detach())
-                    initial_vals = torch.stack(initial_vals, dim=-1)  # (B, T)
+                    initial_vals = _stack_scores(initial_vals)  # (B, T)
                     initial_score = initial_vals
                     initial_scores_list.append(initial_score)
 
@@ -1929,7 +1988,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
                                 expanded_target = expanded_target.expand(pred.shape)
                             loss_terms.append(F.mse_loss(pred, expanded_target))
 
-                    per_task_values_tensor = torch.stack(per_task_values, dim=-1)  # (B, T)
+                    loss_terms.extend(_class_loss_terms(h_task))
+                    per_task_values_tensor = _stack_scores(per_task_values)  # (B, T)
 
                     if loss_terms:
                         loss = torch.stack(loss_terms).mean()
@@ -1954,7 +2014,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     for name in tasks_for_optimization:
                         pred = self.task_heads[name](h_task)
                         per_task_final.append(_reduce_pred(pred).detach())
-                    per_task_final_tensor = torch.stack(per_task_final, dim=-1)  # (B, T)
+                    per_task_final_tensor = _stack_scores(per_task_final)  # (B, T)
                     optimized_input = optim_input.detach()
 
                 optimized_inputs.append(optimized_input.detach())  # (B, D)
@@ -1979,7 +2039,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     for name in tasks_for_optimization:
                         pred = self.task_heads[name](h_task)
                         initial_vals.append(_reduce_pred(pred).detach())
-                    initial_vals = torch.stack(initial_vals, dim=-1)  # (B, T)
+                    initial_vals = _stack_scores(initial_vals)  # (B, T)
                     initial_score = initial_vals
                     initial_scores_list.append(initial_score)
 
@@ -2024,7 +2084,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
                                 expanded_target = expanded_target.expand(pred.shape)
                             loss_terms.append(F.mse_loss(pred, expanded_target))
 
-                    per_task_values_tensor = torch.stack(per_task_values, dim=-1)  # (B, T)
+                    loss_terms.extend(_class_loss_terms(h_task))
+                    per_task_values_tensor = _stack_scores(per_task_values)  # (B, T)
 
                     if loss_terms:
                         loss = torch.stack(loss_terms).mean()
@@ -2049,7 +2110,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     for name in tasks_for_optimization:
                         pred = self.task_heads[name](final_h_task)
                         per_task_final.append(_reduce_pred(pred).detach())
-                    per_task_final_tensor = torch.stack(per_task_final, dim=-1)  # (B, T)
+                    per_task_final_tensor = _stack_scores(per_task_final)  # (B, T)
 
                     # Reconstruct input via the built-in reconstruction head
                     reconstructed_input = self.task_heads[_AE_TASK](final_h_task)

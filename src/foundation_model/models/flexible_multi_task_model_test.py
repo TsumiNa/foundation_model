@@ -903,6 +903,84 @@ def test_optimize_latent_space_requires_ae():
         )
 
 
+# --- optimize_latent classification objective (class_targets) ---------------
+
+
+def _make_reg_clf_model():
+    enc = MLPEncoderConfig(hidden_dims=[INPUT_DIM, 16, LATENT_DIM])
+    tasks = [
+        RegressionTaskConfig(name="prop", data_column="prop", dims=[LATENT_DIM, 8, 1]),
+        ClassificationTaskConfig(name="cls", data_column="cls", num_classes=3, dims=[LATENT_DIM, 8, 3]),
+    ]
+    return FlexibleMultiTaskModel(task_configs=tasks, encoder_config=enc, enable_autoencoder=True)
+
+
+def _target_class_prob(model, x, classes):
+    with torch.no_grad():
+        h = torch.tanh(model.encoder(x))
+        probs = torch.softmax(model.task_heads["cls"](h), dim=-1)
+        return probs[:, classes].sum(dim=-1).mean().item()
+
+
+def test_optimize_latent_class_target_input_space_increases_prob():
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    model.eval()  # match optimize_latent's internal eval mode (consistent BatchNorm stats)
+    x = torch.randn(8, INPUT_DIM)
+    target_classes = [2]
+    before = _target_class_prob(model, x, target_classes)
+    res = model.optimize_latent(
+        initial_input=x, class_targets={"cls": target_classes}, optimize_space="input", steps=100, lr=0.2
+    )
+    after = _target_class_prob(model, res.optimized_input[:, 0, :], target_classes)
+    assert after > before  # objective drives the target-class probability up
+
+
+def test_optimize_latent_combined_reg_and_class_targets():
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    x = torch.randn(5, INPUT_DIM)
+    res = model.optimize_latent(
+        initial_input=x,
+        task_targets={"prop": 1.0},
+        class_targets={"cls": [0, 1]},
+        optimize_space="latent",
+        steps=20,
+    )
+    assert res.optimized_input.shape == (5, 1, INPUT_DIM)  # reconstructed via AE
+    assert res.optimized_target.shape == (5, 1, 1)  # one regression task tracked
+
+
+def test_optimize_latent_class_targets_rejects_regression_task():
+    model = _make_reg_clf_model()
+    with pytest.raises(ValueError, match="must be a classification task"):
+        model.optimize_latent(
+            initial_input=torch.randn(2, INPUT_DIM),
+            class_targets={"prop": [0]},
+            optimize_space="input",
+        )
+
+
+def test_optimize_latent_class_targets_rejects_out_of_range_index():
+    model = _make_reg_clf_model()  # "cls" head has num_classes=3 → valid indices [0, 3)
+    for bad in ([3], [-1]):
+        with pytest.raises(ValueError, match="out of range"):
+            model.optimize_latent(
+                initial_input=torch.randn(2, INPUT_DIM),
+                class_targets={"cls": bad},
+                optimize_space="input",
+            )
+
+
+def test_optimize_latent_class_targets_only_no_regression():
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    x = torch.randn(4, INPUT_DIM)
+    res = model.optimize_latent(initial_input=x, class_targets={"cls": [1]}, optimize_space="input", steps=10)
+    assert res.optimized_input.shape == (4, 1, INPUT_DIM)
+    assert res.optimized_target.shape == (4, 1, 0)  # no regression tasks tracked
+
+
 def test_optimize_latent_space_with_ae():
     model = _make_model()
     model.eval()
