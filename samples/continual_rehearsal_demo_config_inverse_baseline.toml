@@ -1,0 +1,47 @@
+# Cheaper baseline for inverse-design experiments.
+#
+# Drops the two expensive kernel-regression tasks (dos_density, power_factor) — they aren't used
+# by inverse design and dominated the cost of the full run. Keeps the 7 other regression tasks for
+# encoder diversity. The last three are still formation_energy → klat → material_type so the
+# inverse heads stay freshest at the end of the continual sequence. final_model.pt is saved so
+# inverse-design experiments (cycle-consistency vs differentiable KMD) can iterate without
+# retraining.
+#
+#   ./run_continual_rehearsal_demo.sh samples/continual_rehearsal_demo_config_inverse_baseline.toml
+
+qc_data_path = "data/qc_ac_te_mp_dos_reformat_20250615_enforce_quaternary_test.pd.parquet"
+qc_preprocessing_path = "data/preprocessing_objects_20250615.pkl.z"
+superconductor_path = "data/NEMAD_superconductor_20260425.parquet"
+magnetic_path = "data/NEMAD_magnetic_20260419.parquet"
+phonix_path = "data/phonix-db-filtered_20260425.parquet"
+output_dir = "artifacts/continual_rehearsal_inverse_baseline"
+
+# 10 tasks, no KR; last 3 = formation_energy, klat, material_type (freshest at inverse-design time).
+task_sequence = ["density", "tc", "pressure", "curie", "magnetization", "neel", "kp", "formation_energy", "klat", "material_type"]
+replay_ratio = 0.05
+
+max_epochs_per_step = 20
+batch_size = 256
+n_grids = 8
+latent_dim = 128
+encoder_hidden = 256
+head_hidden_dim = 64
+head_lr = 0.005
+encoder_lr = 0.005
+
+# Inverse design (defaults match the full config; we'll override via --inverse-only later).
+inverse_n_seeds = 16
+inverse_steps = 300
+inverse_lr = 0.05
+inverse_class_weight = 5.0
+inverse_cycle_weight = 0.0                       # baseline = off; eval script sweeps this
+inverse_reg_tasks = ["formation_energy", "klat"]
+inverse_reg_targets = [-2.0, 2.0]
+inverse_seed_strategy = "top_qc"
+inverse_seed_split = "train"
+
+random_seed = 2025
+datamodule_random_seed = 42
+accelerator = "auto"
+devices = 1
+num_workers = 0
