@@ -2257,117 +2257,136 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if sparsity_weight < 0:
             raise ValueError(f"sparsity_weight must be >= 0, got {sparsity_weight}")
 
-        # --- Set up the optimisation variable: logits over n_components -------------------------
-        was_training = self.training
-        self.eval()
-        params = next(self.parameters())
-        device, dtype = params.device, params.dtype  # match the model's precision (fp32/fp16/bf16/fp64)
-        kmd_kernel = kmd_kernel.to(device=device, dtype=dtype)
-
+        # --- Validate the seed (BEFORE touching model state, so a bad input doesn't leave the
+        #     model in eval() / with params switched off). ---------------------------------------
         if initial_weights is None:
             if n_starts < 1:
                 raise ValueError("n_starts must be >= 1 when initial_weights is None.")
-            # Use the caller's existing global RNG state — don't reseed here (would defeat the
-            # intended diversity across repeated calls and would leak state to surrounding code).
-            logits = torch.randn(n_starts, n_components, device=device, dtype=dtype) * 0.5
         else:
             if initial_weights.ndim != 2 or initial_weights.shape[1] != n_components:
                 raise ValueError(
                     f"initial_weights must have shape (B, {n_components}); got {tuple(initial_weights.shape)}."
                 )
-            w0 = initial_weights.to(device=device, dtype=dtype)
-            if (w0 < 0).any():
+            if (initial_weights < 0).any():
                 raise ValueError("initial_weights must be non-negative (no silent clamping).")
-            row_sums = w0.sum(dim=-1)
-            if (row_sums <= 0).any():
+            if (initial_weights.sum(dim=-1) <= 0).any():
                 raise ValueError("initial_weights rows must have a positive sum.")
-            # Normalise to the simplex (so callers may pass un-normalised positive weights), then
-            # convert to logits via log. A tiny floor only avoids log(0) for legitimate zero
-            # entries (e.g. sparse element-presence seeds).
-            w0 = w0 / row_sums.unsqueeze(-1)
-            logits = torch.log(w0.clamp(min=1e-12)).detach().clone()
-        logits = logits.requires_grad_(True)
-        optimizer = optim.Adam([logits], lr=lr)
 
-        tasks_for_optimization: list[str] = list(target_tasks.keys()) if target_tasks is not None else []
-        target_tensor_map: dict[str, torch.Tensor] = {}
-        if target_tasks is not None:
-            target_tensor_map = {
-                name: torch.as_tensor(val, device=device, dtype=dtype) for name, val in target_tasks.items()
-            }
-        class_index_map: dict[str, torch.Tensor] = {}
-        if class_target_map is not None:
-            class_index_map = {
-                name: torch.as_tensor(idxs, device=device, dtype=torch.long) for name, idxs in class_target_map.items()
-            }
+        # --- Save / restore model state ------------------------------------------------------------
+        # Wrap the optimisation in try/finally so a later raise (e.g. a head failure) still
+        # restores training mode and parameter requires_grad flags. During the call we also turn
+        # off requires_grad on every parameter — only ``logits`` is being optimised, so
+        # ``loss.backward()`` would otherwise populate stale ``.grad`` on every encoder/head
+        # parameter for no benefit.
+        was_training = self.training
+        saved_req_grad: list[tuple[torch.nn.Parameter, bool]] = [(p, p.requires_grad) for p in self.parameters()]
+        self.eval()
+        for p, _ in saved_req_grad:
+            p.requires_grad_(False)
+        try:
+            ref_param = next(self.parameters())
+            device, dtype = ref_param.device, ref_param.dtype  # match the model's precision
+            kmd_kernel = kmd_kernel.to(device=device, dtype=dtype)
 
-        def _heads_forward(h_task: torch.Tensor) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
-            """Run regression heads, return (per-task predictions, loss terms)."""
-            preds, terms = [], []
-            for name in tasks_for_optimization:
-                pred = self.task_heads[name](h_task)
-                reduced = pred if pred.ndim == 1 else pred.mean(dim=tuple(range(1, pred.ndim)))
-                preds.append(reduced)
-                tgt = target_tensor_map[name]
-                if tgt.ndim == 0:
-                    tgt = tgt.reshape([1] * pred.ndim)
-                if tgt.shape != pred.shape:
-                    tgt = tgt.expand(pred.shape)
-                terms.append(F.mse_loss(pred, tgt))
-            for cname, cidx in class_index_map.items():
-                cls_logits = self.task_heads[cname](h_task)
-                log_probs = F.log_softmax(cls_logits, dim=-1)
-                combined = torch.logsumexp(log_probs.index_select(-1, cidx), dim=-1)
-                terms.append(class_target_weight * (-combined.mean()))
-            return preds, terms
+            # --- Build logits over n_components ---------------------------------------------------
+            if initial_weights is None:
+                # Use the caller's existing global RNG state — don't reseed here (would defeat
+                # the intended diversity across repeated calls and would leak state outward).
+                logits = torch.randn(n_starts, n_components, device=device, dtype=dtype) * 0.5
+            else:
+                w0 = initial_weights.to(device=device, dtype=dtype)
+                # Normalise to the simplex (callers may pass un-normalised positive weights);
+                # log gives logits whose softmax recovers the row. A tiny floor only avoids
+                # log(0) for legitimate zero entries (sparse element-presence seeds).
+                w0 = w0 / w0.sum(dim=-1, keepdim=True)
+                logits = torch.log(w0.clamp(min=1e-12)).detach().clone()
+            logits = logits.requires_grad_(True)
+            optimizer = optim.Adam([logits], lr=lr)
 
-        n_reg_tracked = len(tasks_for_optimization)
+            tasks_for_optimization: list[str] = list(target_tasks.keys()) if target_tasks is not None else []
+            target_tensor_map: dict[str, torch.Tensor] = {}
+            if target_tasks is not None:
+                target_tensor_map = {
+                    name: torch.as_tensor(val, device=device, dtype=dtype) for name, val in target_tasks.items()
+                }
+            class_index_map: dict[str, torch.Tensor] = {}
+            if class_target_map is not None:
+                class_index_map = {
+                    name: torch.as_tensor(idxs, device=device, dtype=torch.long)
+                    for name, idxs in class_target_map.items()
+                }
 
-        def _stack(values: list[torch.Tensor], B: int) -> torch.Tensor:
-            return torch.stack(values, dim=-1) if values else torch.zeros((B, 0), device=device, dtype=dtype)
+            def _heads_forward(h_task: torch.Tensor) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
+                """Run regression heads, return (per-task predictions, loss terms)."""
+                preds, terms = [], []
+                for name in tasks_for_optimization:
+                    pred = self.task_heads[name](h_task)
+                    reduced = pred if pred.ndim == 1 else pred.mean(dim=tuple(range(1, pred.ndim)))
+                    preds.append(reduced)
+                    tgt = target_tensor_map[name]
+                    if tgt.ndim == 0:
+                        tgt = tgt.reshape([1] * pred.ndim)
+                    if tgt.shape != pred.shape:
+                        tgt = tgt.expand(pred.shape)
+                    terms.append(F.mse_loss(pred, tgt))
+                for cname, cidx in class_index_map.items():
+                    cls_logits = self.task_heads[cname](h_task)
+                    log_probs = F.log_softmax(cls_logits, dim=-1)
+                    combined = torch.logsumexp(log_probs.index_select(-1, cidx), dim=-1)
+                    terms.append(class_target_weight * (-combined.mean()))
+                return preds, terms
 
-        # --- Record initial scores --------------------------------------------------------------
-        with torch.no_grad():
-            w0 = torch.softmax(logits, dim=-1)
-            h0 = torch.tanh(self.encoder(w0 @ kmd_kernel))
-            initial_preds, _ = _heads_forward(h0)
-            initial_score = _stack([p.detach() for p in initial_preds], logits.shape[0])
+            n_reg_tracked = len(tasks_for_optimization)
 
-        # --- Optimisation loop ------------------------------------------------------------------
-        trajectory: list[torch.Tensor] = []
-        for _ in range(steps):
-            optimizer.zero_grad()
-            w = torch.softmax(logits, dim=-1)
-            x = w @ kmd_kernel
-            h_task = torch.tanh(self.encoder(x))
-            preds, terms = _heads_forward(h_task)
-            if sparsity_weight > 0:
-                # Negative entropy of w (minimise entropy → push w toward few-element mixtures).
-                entropy = -(w * w.clamp(min=1e-12).log()).sum(dim=-1).mean()
-                terms.append(sparsity_weight * entropy)
-            loss = torch.stack(terms).mean()
-            loss.backward()
-            optimizer.step()
-            trajectory.append(_stack([p.detach() for p in preds], logits.shape[0]))
+            def _stack(values: list[torch.Tensor], B: int) -> torch.Tensor:
+                return torch.stack(values, dim=-1) if values else torch.zeros((B, 0), device=device, dtype=dtype)
 
-        # --- Final state ------------------------------------------------------------------------
-        with torch.no_grad():
-            w_final = torch.softmax(logits, dim=-1)
-            x_final = w_final @ kmd_kernel
-            h_final = torch.tanh(self.encoder(x_final))
-            final_preds, _ = _heads_forward(h_final)
-            final_target = _stack([p.detach() for p in final_preds], logits.shape[0])
+            # --- Record initial scores --------------------------------------------------------------
+            with torch.no_grad():
+                w0_tensor = torch.softmax(logits, dim=-1)
+                h0 = torch.tanh(self.encoder(w0_tensor @ kmd_kernel))
+                initial_preds, _ = _heads_forward(h0)
+                initial_score = _stack([p.detach() for p in initial_preds], logits.shape[0])
 
-        if was_training:
-            self.train()
+            # --- Optimisation loop ------------------------------------------------------------------
+            # With every model parameter at ``requires_grad=False``, ``loss.backward()`` populates
+            # gradient only on ``logits`` — no stale grads accumulate on encoder/heads.
+            trajectory: list[torch.Tensor] = []
+            for _ in range(steps):
+                optimizer.zero_grad()
+                w = torch.softmax(logits, dim=-1)
+                x = w @ kmd_kernel
+                h_task = torch.tanh(self.encoder(x))
+                preds, terms = _heads_forward(h_task)
+                if sparsity_weight > 0:
+                    # Negative entropy of w (minimise entropy → push w toward few-element mixtures).
+                    entropy = -(w * w.clamp(min=1e-12).log()).sum(dim=-1).mean()
+                    terms.append(sparsity_weight * entropy)
+                loss = torch.stack(terms).mean()
+                loss.backward()
+                optimizer.step()
+                trajectory.append(_stack([p.detach() for p in preds], logits.shape[0]))
 
-        return CompositionOptimizationResult(
-            optimized_weights=w_final.detach(),
-            optimized_descriptor=x_final.detach(),
-            optimized_target=final_target,
-            initial_score=initial_score,
-            # Preserve the (steps, B, T) shape contract even when steps == 0.
-            trajectory=torch.stack(trajectory, dim=0)
-            if trajectory
-            else torch.empty((0, logits.shape[0], n_reg_tracked), device=device, dtype=dtype),
-        )
+            # --- Final state ------------------------------------------------------------------------
+            with torch.no_grad():
+                w_final = torch.softmax(logits, dim=-1)
+                x_final = w_final @ kmd_kernel
+                h_final = torch.tanh(self.encoder(x_final))
+                final_preds, _ = _heads_forward(h_final)
+                final_target = _stack([p.detach() for p in final_preds], logits.shape[0])
+
+            return CompositionOptimizationResult(
+                optimized_weights=w_final.detach(),
+                optimized_descriptor=x_final.detach(),
+                optimized_target=final_target,
+                initial_score=initial_score,
+                # Preserve the (steps, B, T) shape contract even when steps == 0.
+                trajectory=torch.stack(trajectory, dim=0)
+                if trajectory
+                else torch.empty((0, logits.shape[0], n_reg_tracked), device=device, dtype=dtype),
+            )
+        finally:
+            if was_training:
+                self.train()
+            for p, prev in saved_req_grad:
+                p.requires_grad_(prev)

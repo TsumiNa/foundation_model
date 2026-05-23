@@ -154,6 +154,18 @@ def test_kernel_torch_mutation_does_not_affect_numpy_kmd(component_features, wei
     np.testing.assert_allclose(fresh.numpy(), kmd.transform(np.eye(component_features.shape[0])))
 
 
+def test_transform_torch_reuses_internal_cache(component_features):
+    """transform_torch must not deep-copy the kernel on every call (perf-critical for loops)."""
+    import torch
+
+    kmd = KMD(component_features, method="1d", n_grids=10)
+    w = torch.rand(2, component_features.shape[0])
+    _ = kmd.transform_torch(w)  # first call seeds the internal cache
+    cached = kmd._internal_kernel_torch(device=w.device, dtype=w.dtype)
+    again = kmd._internal_kernel_torch(device=w.device, dtype=w.dtype)
+    assert cached is again  # same (device, dtype) key returns the cached tensor
+
+
 def test_transform_torch_preserves_input_dtype():
     """The torch transform should respect the caller's dtype (e.g. fp64 stays fp64)."""
     import torch

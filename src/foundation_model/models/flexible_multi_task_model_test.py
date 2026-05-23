@@ -1080,6 +1080,36 @@ def test_optimize_composition_trajectory_shape_when_zero_steps():
     assert res.trajectory.shape == (0, 3, 1)
 
 
+def test_optimize_composition_does_not_populate_module_grads():
+    """Encoder/head .grad must NOT be touched; only logits is optimised."""
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    kernel = torch.randn(6, INPUT_DIM)
+    # Ensure no pre-existing grads.
+    for p in model.parameters():
+        p.grad = None
+    model.optimize_composition(kernel, task_targets={"prop": 0.5}, n_starts=3, steps=4)
+    # After the call, no encoder/head parameter should have an accumulated .grad.
+    for name, p in model.named_parameters():
+        assert p.grad is None, f"parameter {name} unexpectedly has .grad after optimize_composition"
+
+
+def test_optimize_composition_restores_model_state_on_error():
+    """A validation raised inside the call must still leave the model in its original mode and
+    with parameter requires_grad flags untouched (try/finally invariant)."""
+    model = _make_reg_clf_model()
+    model.train()  # put model into training mode
+    before_mode = model.training
+    before_req_grad = [p.requires_grad for p in model.parameters()]
+    kernel = torch.randn(6, INPUT_DIM)
+    # Force a failure deep in the optimisation (mismatched class target index).
+    with pytest.raises(ValueError):
+        model.optimize_composition(kernel, class_targets={"cls": [99]}, n_starts=2, steps=2)
+    # Mode and requires_grad must be exactly as we left them.
+    assert model.training == before_mode
+    assert [p.requires_grad for p in model.parameters()] == before_req_grad
+
+
 def test_optimize_composition_uses_kmd_kernel_torch():
     """End-to-end: a real KMD's kernel_torch flows into optimize_composition."""
     from foundation_model.utils.kmd_plus import KMD
