@@ -329,54 +329,145 @@ def _parse_formula_to_fractions(formula: str) -> dict[str, float]:
     return {k: v / tot for k, v in out.items()} if tot > 0 else out
 
 
-def _render_composition_row(
+#: Font size for composition formula text in the seed-to-optimized plot. Tuned with the
+#: ``_ROW_HEIGHT`` below to keep rows compact without text overlap.
+_MAP_FONT = 13
+_MAP_ROW_HEIGHT = 0.34  # data-unit row height; figure height scales with n_rows × this
+
+#: Short labels used inside the parenthetical block, so a row like
+#: ``Δformation_energy=-1.36`` doesn't push the right edge off the figure. Tasks not in the
+#: map fall back to their raw name (covered by the lookup default in the call site).
+_REG_DISPLAY_SHORT: dict[str, str] = {
+    "formation_energy": "FE",
+    "klat": "klat",
+    "tc": "tc",
+    "magnetization": "mag",
+    "magnetic_moment": "mm",
+}
+
+
+def _target_arrow(target_value: float, baseline: float = 0.0) -> str:
+    """Up-arrow if the target is above ``baseline`` (default 0 in z-scored regression space).
+
+    Both project reg targets are z-scored; positive target ⇒ "drive up" (↑), negative ⇒ "drive
+    down" (↓). The arrow is rendered next to each property name in the column header and in
+    every row's parenthetical block, so the reader can match the delta sign against the desired
+    direction at a glance.
+    """
+    return "↑" if target_value > baseline else "↓"
+
+
+def _render_seed_row(
     ax,
     x_axes_frac: float,
     y_data: float,
     comp: dict[str, float],
-    element_counts: Counter,
-    n_outputs: int,
-    cmap,
+    qc: float,
 ) -> None:
-    """Draw one composition as a left-aligned sequence of colored "El amount" fragments.
+    """Draw one *seed* row: all-black text, no element colouring, with a ``(QC=XX.X%)`` suffix.
 
-    Element symbols are bold + colored by their global appearance count in the optimised pool;
-    amount values stay in plain monospaced black. Layout is built with HPacker so the spacing
-    is independent of font-metrics quirks.
+    The seed side is informational — the comparison signal lives on the optimised side. Keeping
+    the seed monochrome lets the colour gradient on the right read as a pure 'what the optimiser
+    did to this seed' story.
     """
     if not comp:
         return
-    # Sort elements by descending amount so the formula reads "dominant first".
     items = sorted(comp.items(), key=lambda kv: -kv[1])
     parts: list = []
     for el, frac in items:
-        count = element_counts.get(el, 0)
-        # Elements absent from the optimised pool fall back to gray; otherwise the cmap maps the
-        # appearance count into the colour scale. count == n_outputs would land at the cmap's
-        # bright end.
-        color = cmap(count / max(n_outputs, 1)) if count > 0 else "#999999"
         parts.append(
             TextArea(
                 el,
-                textprops=dict(color=color, fontweight="bold", fontsize=10, fontfamily="monospace"),
+                textprops=dict(color="#111", fontweight="bold", fontsize=_MAP_FONT, fontfamily="monospace"),
             )
         )
         parts.append(
             TextArea(
                 f"{frac * 100:.1f} ",
-                textprops=dict(color="#222", fontsize=10, fontfamily="monospace"),
+                textprops=dict(color="#111", fontsize=_MAP_FONT, fontfamily="monospace"),
             )
         )
-    box = HPacker(children=parts, align="baseline", pad=0, sep=2)
-    ab = AnnotationBbox(
-        box,
-        (x_axes_frac, y_data),
-        xycoords=("axes fraction", "data"),
-        frameon=False,
-        box_alignment=(0, 0.5),
-        pad=0,
+    parts.append(
+        TextArea(
+            f" (QC={qc * 100:.1f}%)",
+            textprops=dict(color="#555", fontsize=_MAP_FONT - 1, fontfamily="monospace"),
+        )
     )
-    ax.add_artist(ab)
+    box = HPacker(children=parts, align="baseline", pad=0, sep=2)
+    ax.add_artist(
+        AnnotationBbox(
+            box,
+            (x_axes_frac, y_data),
+            xycoords=("axes fraction", "data"),
+            frameon=False,
+            box_alignment=(0, 0.5),
+            pad=0,
+        )
+    )
+
+
+def _render_optimized_row(
+    ax,
+    x_axes_frac: float,
+    y_data: float,
+    comp: dict[str, float],
+    qc: float,
+    deltas: dict[str, float],
+    arrows: dict[str, str],
+    element_counts: Counter,
+    n_outputs: int,
+    cmap,
+) -> None:
+    """Draw one *optimised* row: element symbols coloured by frequency in the optimised pool.
+
+    The parenthetical block is ``(QC=XX.X%, Δ<task>=±N.N <target-arrow>, ...)`` — the signed
+    delta tells the reader how much each property moved from its seed value, and the arrow
+    pins down whether the target wants it to go up or down.
+    """
+    if not comp:
+        return
+    items = sorted(comp.items(), key=lambda kv: -kv[1])
+    parts: list = []
+    for el, frac in items:
+        count = element_counts.get(el, 0)
+        # vmin=0 / vmax=n_outputs maps the lowest appearance count to the cmap's darkest end
+        # (per user request: "the lower, the closer to black"). Elements absent from the
+        # optimised pool can't actually appear in ``comp`` (we'd never iterate them here), so
+        # the ``count == 0`` branch is a defensive fallback only.
+        color = cmap(count / max(n_outputs, 1)) if count > 0 else "#aaaaaa"
+        parts.append(
+            TextArea(
+                el,
+                textprops=dict(color=color, fontweight="bold", fontsize=_MAP_FONT, fontfamily="monospace"),
+            )
+        )
+        parts.append(
+            TextArea(
+                f"{frac * 100:.1f} ",
+                textprops=dict(color="#111", fontsize=_MAP_FONT, fontfamily="monospace"),
+            )
+        )
+    # Parenthetical: QC + per-target signed delta + target-direction arrow. Use the short
+    # display labels so long names like ``formation_energy`` don't push the right edge of the
+    # axes into the colourbar.
+    delta_text = ", ".join(f"Δ{_REG_DISPLAY_SHORT.get(t, t)}={deltas[t]:+.2f} {arrows[t]}" for t in deltas)
+    parts.append(
+        TextArea(
+            f" (QC={qc * 100:.1f}%, {delta_text})",
+            textprops=dict(color="#555", fontsize=_MAP_FONT - 2, fontfamily="monospace"),
+        )
+    )
+    box = HPacker(children=parts, align="baseline", pad=0, sep=2)
+    ax.add_artist(
+        AnnotationBbox(
+            box,
+            (x_axes_frac, y_data),
+            xycoords=("axes fraction", "data"),
+            frameon=False,
+            box_alignment=(0, 0.5),
+            pad=0,
+        )
+    )
 
 
 def _plot_seed_to_optimized_mapping(
@@ -385,14 +476,28 @@ def _plot_seed_to_optimized_mapping(
     out_path: Path,
     *,
     title: str,
+    seed_qc: np.ndarray,
+    seed_reg: dict[str, np.ndarray],
+    optimized_qc: np.ndarray,
+    optimized_reg: dict[str, np.ndarray],
+    reg_targets: dict[str, float],
 ) -> None:
-    """Per-seed 1:1 view — left column shows each seed, right column shows the optimiser's output.
+    """Per-seed 1:1 view — left column shows the seed, right column shows the optimiser's output.
 
     Both compositions are normalised to fractions and rendered as percent (so the user-facing
-    numbers match the seed-side ``"Au65 Ga20 Gd15"`` convention). Element symbols are coloured by
-    their appearance count in the **optimised** pool — gray for elements absent from it — and a
-    color bar on the right shows the scale. The intent is to visualise *which seed lands where*
-    under each composition config, complementing the aggregated ``element_frequency_heatmap.png``.
+    numbers match the seed-side ``"Au65 Ga20 Gd15"`` convention).
+
+    * **Seed side** — all-black monochrome formula + ``(QC=XX.X%)``.
+    * **Optimised side** — element symbols coloured by their appearance count in the optimised
+      pool (cmap goes near-black for rare → bright yellow for ubiquitous, per the user's
+      "low end close to black" request). Parenthetical block carries QC% and per-target
+      signed deltas ``Δ<task>=+/-N.N <target-arrow>`` so the reader can match each delta's sign
+      against the optimisation direction at a glance.
+    * **Color bar** on the right shows the appearance-count scale used on the optimised side.
+
+    The intent is to complement the aggregated ``element_frequency_heatmap.png`` with per-seed
+    detail — which seed gave rise to which composition under each path, and whether each
+    target moved correctly.
     """
     n = len(seeds)
     if n == 0 or len(decoded) != n:
@@ -404,57 +509,74 @@ def _plot_seed_to_optimized_mapping(
     seed_dicts = [_parse_formula_to_fractions(s) for s in seeds]
     decoded_dicts = [_parse_formula_to_fractions(d) for d in decoded]
 
-    # Element-presence count over the optimised pool — used for both colouring and the color bar.
+    # Element-presence count over the optimised pool — drives the colour scale + colour bar.
     element_counts: Counter = Counter()
     for d in decoded_dicts:
         for el in d:
             element_counts[el] += 1
 
-    cmap = plt.cm.plasma
+    # ``inferno`` gives high contrast across the range with the low end close to black, as
+    # requested. ``vmin=0`` keeps the "rare" colour distinguishable from the "common" end.
+    cmap = plt.cm.inferno
     norm = mcolors.Normalize(vmin=0, vmax=n)
+    arrows = {t: _target_arrow(v) for t, v in reg_targets.items()}
 
-    fig, (ax_main, ax_cbar) = plt.subplots(
-        1, 2, figsize=(15, max(8.0, 0.45 * n + 1.4)), gridspec_kw={"width_ratios": [40, 1]}
-    )
+    fig_height = max(6.5, _MAP_ROW_HEIGHT * n + 1.4)
+    # ``bbox_inches="tight"`` at savefig crops to actual artist extents, so the 20" width is a
+    # *minimum* — long parenthetical blocks (many reg targets, long element formulas) will
+    # stretch it further without colliding with the colour bar.
+    fig, (ax_main, ax_cbar) = plt.subplots(1, 2, figsize=(20, fig_height), gridspec_kw={"width_ratios": [70, 1]})
     ax_main.set_xlim(0, 1)
-    ax_main.set_ylim(-0.6, n - 0.4)
+    ax_main.set_ylim(-0.7, n - 0.3)
     ax_main.invert_yaxis()
     ax_main.set_axis_off()
-    # Column headers anchored above the first row.
-    ax_main.text(0.02, -0.55, "Seed (fraction × 100)", fontsize=11, fontweight="bold", ha="left", va="bottom")
+
+    # Column headers above row 0 — also document what's in the parenthetical block, using the
+    # same short property names so the header matches each row's delta block exactly.
+    header_arrows = ", ".join(f"Δ{_REG_DISPLAY_SHORT.get(t, t)} {arrows[t]}" for t in reg_targets)
     ax_main.text(
-        0.55, -0.55, "Optimised composition (fraction × 100)", fontsize=11, fontweight="bold", ha="left", va="bottom"
+        0.005,
+        -0.6,
+        "Seed (fraction × 100, QC%)",
+        fontsize=_MAP_FONT,
+        fontweight="bold",
+        ha="left",
+        va="bottom",
+    )
+    ax_main.text(
+        0.38,
+        -0.6,
+        f"Optimised composition (fraction × 100, QC%, {header_arrows})",
+        fontsize=_MAP_FONT,
+        fontweight="bold",
+        ha="left",
+        va="bottom",
     )
 
     for i, (s_dict, d_dict) in enumerate(zip(seed_dicts, decoded_dicts)):
-        _render_composition_row(
+        _render_seed_row(ax_main, x_axes_frac=0.005, y_data=i, comp=s_dict, qc=float(seed_qc[i]))
+        ax_main.text(0.355, i, "→", fontsize=15, color="#888", ha="center", va="center")
+        deltas_i = {t: float(optimized_reg[t][i] - seed_reg[t][i]) for t in reg_targets}
+        _render_optimized_row(
             ax_main,
-            x_axes_frac=0.02,
-            y_data=i,
-            comp=s_dict,
-            element_counts=element_counts,
-            n_outputs=n,
-            cmap=cmap,
-        )
-        ax_main.text(0.51, i, "→", fontsize=14, color="#888", ha="center", va="center")
-        _render_composition_row(
-            ax_main,
-            x_axes_frac=0.55,
+            x_axes_frac=0.38,
             y_data=i,
             comp=d_dict,
+            qc=float(optimized_qc[i]),
+            deltas=deltas_i,
+            arrows=arrows,
             element_counts=element_counts,
             n_outputs=n,
             cmap=cmap,
         )
 
-    # Color bar: appearance count in optimised pool.
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cb = fig.colorbar(sm, cax=ax_cbar)
-    cb.set_label(f"Element appearance count\nin optimised pool (out of {n})")
-    cb.ax.tick_params(labelsize=9)
+    cb.set_label(f"Element appearance count\nin optimised pool (out of {n})", fontsize=_MAP_FONT - 2)
+    cb.ax.tick_params(labelsize=_MAP_FONT - 3)
 
-    fig.suptitle(title, fontsize=12, y=0.995)
+    fig.suptitle(title, fontsize=_MAP_FONT + 1, y=0.998)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     logger.info(f"Wrote seed→optimised mapping plot to {out_path}")
@@ -511,6 +633,13 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
     logger.info(f"Selected {len(seeds)} seed compositions (saved to seeds.json)")
 
     reg_targets = {t: v for t, v in zip(config.inverse_reg_tasks, config.inverse_reg_targets)}
+    # Per-seed *baseline* predictions (before any inverse-design optimisation). These power the
+    # seed-side ``(QC=X.X%)`` parenthetical and the ``Δ<task>`` deltas on the optimised side of
+    # the per-seed mapping plot. Computed once here against ``x_seed`` (the seed descriptors)
+    # and persisted in ``results.json`` under ``seed_predictions`` so future re-plots don't need
+    # the model loaded again.
+    seed_qc = _qc_prob(model, x_seed)
+    seed_reg = _reg_preds(model, x_seed, list(reg_targets.keys()))
     results: list[dict[str, Any]] = []
 
     # Latent method: ae_align_scale sweep over [0, 1].
@@ -554,7 +683,22 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
         logger.info(row)
 
     (out_dir / "results.json").write_text(
-        json.dumps({"reg_targets": reg_targets, "results": results, "summary": summary}, indent=2),
+        json.dumps(
+            {
+                "reg_targets": reg_targets,
+                # ``seed_predictions`` carries the baseline predictions the inverse-design
+                # optimisation moved away from — needed to render the per-seed mapping plot's
+                # ``Δ<task>`` deltas (and the seed-side ``QC%`` parenthetical). Save here so a
+                # future re-plot from results.json alone never has to re-run the model.
+                "seed_predictions": {
+                    "qc": seed_qc.tolist(),
+                    "reg": {t: vals.tolist() for t, vals in seed_reg.items()},
+                },
+                "results": results,
+                "summary": summary,
+            },
+            indent=2,
+        ),
         encoding="utf-8",
     )
     _plot_comparison(results, reg_targets, out_dir / "comparison.png")
@@ -562,22 +706,30 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
     # signal (bold orange on the x-axis) is part of every paper-comparison output — the slide
     # author / downstream reader doesn't need to find or rerun a separate post-hoc script.
     _plot_element_frequency_heatmap(results, list(seeds), out_dir / "element_frequency_heatmap.png")
-    # Seed → optimised 1:1 mapping plot, one figure per seed-based composition config. The
-    # aggregated heatmap shows column-level concentration; this complements it with per-seed
-    # detail — each seed's row reveals which elements the optimiser kept, dropped, or
-    # introduced. ``comp (random)`` is excluded since its ``seeds`` field is a placeholder
-    # ``random_start_N`` rather than a real composition (no per-row correspondence).
+    # Seed → optimised 1:1 mapping plot. One figure per path that has per-seed correspondence
+    # (every method except ``comp (random)``, whose ``seeds`` field is a ``random_start_N``
+    # placeholder rather than a real composition). Each plot's right side carries the QC% and
+    # per-target signed deltas so the reader can see *which seed gave rise to which output*
+    # and whether each target moved in the right direction.
     for r in results:
-        if r["method"] != "composition":
+        if r["method"] == "composition" and r.get("config", {}).get("init") != "seed":
+            # ``comp (random)`` — no per-row seed correspondence.
             continue
-        if r.get("config", {}).get("init") != "seed":
-            continue
-        slug = re.sub(r"[^a-z0-9]+", "_", r["label"].lower()).strip("_")
+        if r["method"] == "latent":
+            # Latent labels are like "latent\nα=0.25"; build a slug that preserves the number.
+            slug = f"latent_align{r['align_scale']:g}".replace(".", "p")
+        else:
+            slug = re.sub(r"[^a-z0-9]+", "_", r["label"].lower()).strip("_")
         _plot_seed_to_optimized_mapping(
             seeds=list(seeds),
             decoded=list(r["decoded_composition"]),
             out_path=out_dir / f"seed_to_optimized__{slug}.png",
             title=f"Seed → optimised composition · {r['label'].replace(chr(10), ' ')}",
+            seed_qc=seed_qc,
+            seed_reg=seed_reg,
+            optimized_qc=np.asarray(r["qc_after_decode"]),
+            optimized_reg={t: np.asarray(r["reg_after_decode"][t]) for t in reg_targets},
+            reg_targets=reg_targets,
         )
     # The auto-generated README is a compact summary table only. It writes to ``SUMMARY.md``
     # (not ``README.md``) so a user-written index — pointing to every figure, file, and the
