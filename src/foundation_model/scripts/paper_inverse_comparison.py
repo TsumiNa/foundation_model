@@ -11,15 +11,18 @@ ready to drop into a paper draft. Reuses the per-method helpers from
 
 The study covers:
 
-* **Latent method** with cycle-consistency weight λ ∈ {0, 0.1, 0.5, 1, 2, 5}.
-* **Composition method** (differentiable KMD) under four configurations:
-    1. Unconstrained;
-    2. ``allowed_elements`` restricted to a feasible alloy palette;
-    3. (2) + a ``sparsity_weight`` to encourage few-element formulas;
-    4. (2) + ``element_step_scale`` as a soft per-element constraint (uniform 0.5).
-
-Configuration #1 isolates the AE-decode round-trip problem; #2 demonstrates the experimental
-feasibility lever; #3 demonstrates the few-element preference; #4 demonstrates the soft-lock knob.
+* **Latent method** with AE-cycle weight λ ∈ {0, 0.1, 0.5, 1, 2, 5}.
+* **Composition method** (differentiable KMD) under five configurations chosen to expose how
+  ``seed_blend``, the element whitelist, and seeding strategy affect novelty / diversity:
+    1. ``seed_blend = 1.0`` — strict seed init (the original behaviour, baseline for "no new
+       elements can enter the support set");
+    2. ``seed_blend = 0.95`` — new default; non-seed-element logits become reachable by Adam,
+       letting the optimiser introduce elements outside the seed when helpful;
+    3. (2) + ``allowed_elements`` restricted to a feasible alloy palette;
+    4. (3) + ``entropy_weight`` (formerly ``sparsity_weight``) to softly prefer few-element
+       formulas;
+    5. Random initialisation (``initial_weights=None``, ``n_starts=B``) — completely free
+       exploration, no seed bias at all (Scheme D control).
 
     python -m foundation_model.scripts.paper_inverse_comparison \\
         --config-file samples/continual_rehearsal_demo_config_inverse_baseline.toml \\
@@ -45,11 +48,17 @@ import torch
 from lightning import seed_everything
 from loguru import logger
 
-from foundation_model.scripts.continual_rehearsal_demo import ContinualRehearsalConfig, ContinualRehearsalRunner
+from foundation_model.scripts.continual_rehearsal_demo import (
+    QC_CLASSES,
+    ContinualRehearsalConfig,
+    ContinualRehearsalRunner,
+)
 from foundation_model.scripts.eval_inverse_methods import (
+    _format_weights,
     _qc_prob,
-    _run_composition_method,
+    _reg_preds,
     _run_latent_method,
+    _seed_weights_from_compositions,
 )
 
 # Default feasible alloy palette for the constrained-composition runs. These are the metals most
@@ -57,12 +66,29 @@ from foundation_model.scripts.eval_inverse_methods import (
 # this set while exploration of e.g. lanthanides / actinides is suppressed.
 DEFAULT_ALLOY_PALETTE = ["Mg", "Al", "Cu", "Ni", "Zn", "Ag", "Pd", "Co", "Fe", "Re", "Ga", "In"]
 
-# Configurations for the composition method (each becomes a column in the comparison plot).
+# Composition-method configurations. Each row produces one bar in the comparison plot. The first
+# two isolate the seed_blend effect; the next two layer on element constraints; the last drops the
+# seed entirely (random init) as the no-seed-bias control (Scheme D).
 COMPOSITION_CONFIGS: list[dict[str, Any]] = [
-    {"label": "composition\n(unconstrained)", "allowed": "all", "scale": 1.0, "sparsity": 0.0},
-    {"label": "composition\n(alloy palette)", "allowed": DEFAULT_ALLOY_PALETTE, "scale": 1.0, "sparsity": 0.0},
-    {"label": "composition\n(alloy + sparsity)", "allowed": DEFAULT_ALLOY_PALETTE, "scale": 1.0, "sparsity": 0.5},
-    {"label": "composition\n(alloy + soft step=0.5)", "allowed": DEFAULT_ALLOY_PALETTE, "scale": 0.5, "sparsity": 0.0},
+    {"label": "comp\n(strict seed)", "init": "seed", "blend": 1.0, "allowed": "all", "scale": 1.0, "entropy": 0.0},
+    {"label": "comp\n(blended seed)", "init": "seed", "blend": 0.95, "allowed": "all", "scale": 1.0, "entropy": 0.0},
+    {
+        "label": "comp\n(alloy palette)",
+        "init": "seed",
+        "blend": 0.95,
+        "allowed": DEFAULT_ALLOY_PALETTE,
+        "scale": 1.0,
+        "entropy": 0.0,
+    },
+    {
+        "label": "comp\n(alloy + entropy)",
+        "init": "seed",
+        "blend": 0.95,
+        "allowed": DEFAULT_ALLOY_PALETTE,
+        "scale": 1.0,
+        "entropy": 0.5,
+    },
+    {"label": "comp\n(random init)", "init": "random", "blend": 0.95, "allowed": "all", "scale": 1.0, "entropy": 0.0},
 ]
 LATENT_CYCLE_WEIGHTS = [0.0, 0.1, 0.5, 1.0, 2.0, 5.0]
 
@@ -161,7 +187,7 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
 
     # Latent method: cycle weight sweep.
     for lam in LATENT_CYCLE_WEIGHTS:
-        logger.info(f"--- Latent method, cycle_consistency_weight = {lam} ---")
+        logger.info(f"--- Latent method, ae_cycle_weight = {lam} ---")
         r = _run_latent_method(
             runner,
             model,
@@ -174,13 +200,13 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
             lr=config.inverse_lr,
         )
         r["label"] = f"latent\nλ={lam:g}"
-        r["config"] = {"cycle_weight": lam}
+        r["config"] = {"ae_cycle_weight": lam}
         results.append(r)
 
-    # Composition method: multiple configurations.
+    # Composition method: walk through the configuration matrix.
     for cfg in COMPOSITION_CONFIGS:
         logger.info(f"--- {cfg['label'].replace(chr(10), ' ')} ---")
-        r = _run_composition_method(
+        r = _run_composition_config(
             runner,
             model,
             seeds,
@@ -188,30 +214,10 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
             class_weight=config.inverse_class_weight,
             steps=config.inverse_steps,
             lr=config.inverse_lr,
-            allowed_elements=cfg["allowed"],
-            element_step_scale=cfg["scale"],
+            cfg=cfg,
         )
-        # Re-run with sparsity if requested (the eval helper doesn't currently expose it; thread
-        # by calling optimize_composition directly via a tiny adapter).
-        if cfg["sparsity"] > 0:
-            r = _run_composition_with_sparsity(
-                runner,
-                model,
-                seeds,
-                reg_targets,
-                class_weight=config.inverse_class_weight,
-                steps=config.inverse_steps,
-                lr=config.inverse_lr,
-                allowed=cfg["allowed"],
-                step_scale=cfg["scale"],
-                sparsity=cfg["sparsity"],
-            )
         r["label"] = cfg["label"]
-        r["config"] = {
-            "allowed_elements": cfg["allowed"],
-            "element_step_scale": cfg["scale"],
-            "sparsity_weight": cfg["sparsity"],
-        }
+        r["config"] = {k: cfg[k] for k in ("init", "blend", "allowed", "scale", "entropy")}
         results.append(r)
 
     summary = _summarise(results, reg_targets)
@@ -228,44 +234,57 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
     logger.info(f"Paper materials written to {out_dir}")
 
 
-def _run_composition_with_sparsity(
-    runner: ContinualRehearsalRunner, model, seeds, reg_targets, class_weight, steps, lr, allowed, step_scale, sparsity
+def _run_composition_config(
+    runner: ContinualRehearsalRunner,
+    model,
+    seeds: list[str],
+    reg_targets: dict[str, float],
+    *,
+    class_weight: float,
+    steps: int,
+    lr: float,
+    cfg: dict[str, Any],
 ) -> dict[str, Any]:
-    """Variant of ``_run_composition_method`` that also threads ``sparsity_weight`` through."""
+    """Run :meth:`optimize_composition` under one config row (handles seed/random init both)."""
     import time
 
-    from foundation_model.scripts.eval_inverse_methods import (
-        _decode_latent_path,  # noqa: F401
-        _format_weights,
-        _reg_preds,
-        _seed_weights_from_compositions,
-    )
     from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS
 
     device, dtype = next(model.parameters()).device, next(model.parameters()).dtype
     kernel = runner._kmd.kernel_torch(device=device, dtype=dtype)
-    w_seed = _seed_weights_from_compositions(seeds, n_components=len(DEFAULT_ELEMENTS))
+
+    if cfg["init"] == "seed":
+        w_seed = _seed_weights_from_compositions(seeds, n_components=len(DEFAULT_ELEMENTS))
+        init_kwargs = {"initial_weights": w_seed, "seed_blend": cfg["blend"]}
+    elif cfg["init"] == "random":
+        # n_starts matches the seed count so per-row aggregation lines up with the latent runs.
+        init_kwargs = {"initial_weights": None, "n_starts": len(seeds)}
+    else:
+        raise ValueError(f"Unknown init mode in config: {cfg['init']!r}")
+
     t0 = time.perf_counter()
     res = model.optimize_composition(
         kernel,
-        initial_weights=w_seed,
         task_targets=reg_targets,
-        class_targets={"material_type": [1]},  # QC merged-class index
+        class_targets={"material_type": QC_CLASSES},
         class_target_weight=class_weight,
-        sparsity_weight=sparsity,
-        allowed_elements=allowed,
-        element_step_scale=step_scale,
+        entropy_weight=cfg["entropy"],
+        allowed_elements=cfg["allowed"],
+        element_step_scale=cfg["scale"],
         steps=steps,
         lr=lr,
+        **init_kwargs,
     )
     elapsed = time.perf_counter() - t0
+
     reg_names = list(reg_targets)
     optimized_desc = res.optimized_descriptor
     return {
         "method": "composition",
         "cycle_weight": None,
         "elapsed_s": elapsed,
-        "seeds": list(seeds),
+        # For random init the "seeds" entry is informational only — there's no per-row correspondence.
+        "seeds": list(seeds) if cfg["init"] == "seed" else [f"random_start_{i}" for i in range(len(seeds))],
         "qc_after_decode": _qc_prob(model, optimized_desc).tolist(),
         "reg_achieved_latent": {t: res.optimized_target.cpu().numpy()[:, j].tolist() for j, t in enumerate(reg_names)},
         "reg_after_decode": {t: _reg_preds(model, optimized_desc, [t])[t].tolist() for t in reg_names},

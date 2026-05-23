@@ -39,6 +39,7 @@ import argparse
 import ast
 import base64
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -719,7 +720,7 @@ class ContinualRehearsalRunner:
             task_targets=reg_targets,
             class_targets={"material_type": QC_CLASSES},
             class_target_weight=cfg.inverse_class_weight,  # QC probability is the primary objective
-            cycle_consistency_weight=cfg.inverse_cycle_weight,  # keep optimized latent on the AE manifold
+            ae_cycle_weight=cfg.inverse_cycle_weight,  # keep optimized latent on the AE manifold
             optimize_space="latent",
             steps=cfg.inverse_steps,
             lr=cfg.inverse_lr,
@@ -758,15 +759,27 @@ class ContinualRehearsalRunner:
         logger.info(f"Inverse design QC prob (round-trip): {before_qc.mean():.3f} -> {after_qc.mean():.3f}")
         return {"reg_targets": reg_targets, "qc_classes": QC_CLASSES, "n_seeds": len(seeds), "records": records}
 
+    @staticmethod
+    def _element_system(composition: str) -> frozenset[str]:
+        """Element symbols (no amounts) in a composition string — used for system-level dedup."""
+        return frozenset(re.findall(r"[A-Z][a-z]?", composition))
+
     def _select_seeds(self, model, device, qc_prob_fn) -> list[str]:
-        """Inverse-design seed compositions, per the configured strategy (top_qc / random / explicit)."""
+        """Inverse-design seed compositions, per the configured strategy (top_qc / random / explicit).
+
+        Seeds are deduplicated by **element system** (the set of element symbols, ignoring ratios)
+        — keeping only the best-scoring representative for each element set. Without this, the
+        top-QC list tends to collapse into many near-duplicates of the same alloy family (e.g.
+        Mg-Al-Cu in slightly different ratios), which both wastes seed budget and is misleading
+        when reporting the diversity of inverse-design outputs.
+        """
         cfg = self.config
         n = cfg.inverse_n_seeds
 
         if cfg.inverse_seed_strategy == "explicit":
             seeds = [normalize_composition(c) or str(c) for c in cfg.inverse_seed_compositions]
             seeds = [c for c in seeds if c in self._desc_cache or not self.descriptor_fn([c]).empty]
-            return seeds[:n]
+            return self._dedupe_by_element_system(seeds, n)
 
         # Candidate pool: the chosen split of the material_type frame, with a valid descriptor.
         frame = self.task_frames["material_type"]
@@ -779,14 +792,32 @@ class ContinualRehearsalRunner:
 
         if cfg.inverse_seed_strategy == "random":
             rng = np.random.default_rng(cfg.random_seed)
-            idx = rng.choice(len(pool), size=min(n, len(pool)), replace=False)
-            return [pool[i] for i in idx]
+            # Shuffle the whole pool, then dedupe by element system to keep ``n`` unique families.
+            shuffled = [pool[i] for i in rng.permutation(len(pool))]
+            return self._dedupe_by_element_system(shuffled, n)
 
-        # "top_qc": highest predicted QC probability.
+        # "top_qc": highest predicted QC probability — dedup keeps the best representative
+        # per element set, so 16 seeds means 16 distinct alloy families (not 16 ratio variants
+        # of three families).
         x, pool = self._descriptor_tensor(pool, device)
         probs = qc_prob_fn(x)
-        order = np.argsort(probs)[::-1][:n]
-        return [pool[i] for i in order]
+        ranked = [pool[i] for i in np.argsort(probs)[::-1]]
+        return self._dedupe_by_element_system(ranked, n)
+
+    @classmethod
+    def _dedupe_by_element_system(cls, candidates: list[str], n: int) -> list[str]:
+        """Walk ``candidates`` in order, keep the first occurrence of each element set, cap at ``n``."""
+        seen: set[frozenset[str]] = set()
+        out: list[str] = []
+        for comp in candidates:
+            key = cls._element_system(comp)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(comp)
+            if len(out) >= n:
+                break
+        return out
 
     def _decode_compositions(self, descriptors: np.ndarray) -> list[str]:
         """KMD.inverse: descriptor -> element weights -> compact formula string."""

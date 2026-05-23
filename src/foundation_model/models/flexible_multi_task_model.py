@@ -1736,7 +1736,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         task_targets: Mapping[str, torch.Tensor | float] | None = None,
         class_targets: Mapping[str, int | Sequence[int]] | None = None,
         class_target_weight: float = 1.0,
-        cycle_consistency_weight: float = 0.0,
+        ae_cycle_weight: float = 0.0,
         optimize_space: str = "input",
     ) -> OptimizationResult:
         """
@@ -1778,10 +1778,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Multiplier on each classification objective term relative to the regression terms.
             Use ``> 1`` to make class probability the primary objective and regression targets
             secondary. Default ``1.0``.
-        cycle_consistency_weight : float, optional
+        ae_cycle_weight : float, optional
             Latent-space optimization only. Adds ``λ · ‖tanh(encoder(AE.decode(h))) − h‖²`` to the
-            loss, pulling the optimized latent toward the manifold the AE can faithfully reconstruct
+            loss, pulling the optimized latent toward the AE's decode/encode fixed set
             (mitigates the decode round-trip drop). Default ``0.0`` (off).
+            Operates in **latent space**; orthogonal to :meth:`optimize_composition`'s
+            ``entropy_weight``, which lives in composition space.
         optimize_space : str, optional
             ``"input"`` or ``"latent"``. Default ``"input"``.
 
@@ -1850,8 +1852,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     )
                 class_target_map[name] = idxs
 
-        if cycle_consistency_weight < 0:
-            raise ValueError(f"cycle_consistency_weight must be >= 0, got {cycle_consistency_weight}")
+        if ae_cycle_weight < 0:
+            raise ValueError(f"ae_cycle_weight must be >= 0, got {ae_cycle_weight}")
 
         # Legacy single-task path (mode / target_value) only when no target maps are given
         if target_tasks is None and class_target_map is None:
@@ -2107,11 +2109,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
                             loss_terms.append(F.mse_loss(pred, expanded_target))
 
                     loss_terms.extend(class_target_weight * term for term in _class_loss_terms(h_task))
-                    if cycle_consistency_weight > 0:
+                    if ae_cycle_weight > 0:
                         # Pull the optimized latent toward what the AE faithfully reconstructs:
                         # decode it to a descriptor, re-encode, and penalise the drift in h_task.
                         re_h_task = torch.tanh(self.encoder(self.task_heads[_AE_TASK](h_task)))
-                        loss_terms.append(cycle_consistency_weight * F.mse_loss(re_h_task, h_task))
+                        loss_terms.append(ae_cycle_weight * F.mse_loss(re_h_task, h_task))
                     per_task_values_tensor = _stack_scores(per_task_values)  # (B, T)
 
                     if loss_terms:
@@ -2174,9 +2176,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         task_targets: Mapping[str, torch.Tensor | float] | None = None,
         class_targets: Mapping[str, int | Sequence[int]] | None = None,
         class_target_weight: float = 1.0,
-        sparsity_weight: float = 0.0,
+        entropy_weight: float = 0.0,
         allowed_elements: str | list[str] = "all",
         element_step_scale: float | Mapping[str, float] = 1.0,
+        seed_blend: float = 0.95,
         steps: int = 300,
         lr: float = 0.05,
     ) -> CompositionOptimizationResult:
@@ -2208,9 +2211,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Same semantics as :meth:`optimize_latent`. Regression targets are matched by MSE;
             classification objectives add ``-log P(target classes)`` (scaled by
             ``class_target_weight``).
-        sparsity_weight : float, optional
-            Adds a negative-entropy term ``λ · H(w)`` to the loss, pushing ``w`` toward few-element
-            mixtures. Default 0 (no sparsity pressure).
+        entropy_weight : float, optional
+            Adds a Shannon-entropy term ``λ · H(w) = −λ · Σ w_i log w_i`` to the loss, penalising
+            high-entropy (flat) ``w`` and softly pushing the solution toward peakier (few-element)
+            mixtures. Default 0 (no pressure). Note this is the *entropy* of ``w``, not literal
+            L1 sparsity; in practice both bias toward few-element solutions, but entropy is the
+            differentiable form on a simplex.
         allowed_elements : str | list[str], optional
             Element whitelist for the optimisation. ``"all"`` (default) imposes no constraint.
             A non-empty list of element symbols (e.g. ``["Mg", "Al", "Cu", "Ni"]``) restricts the
@@ -2226,6 +2232,15 @@ class FlexibleMultiTaskModel(L.LightningModule):
             rest at ``1.0``: ``{"Mg": 0.0, "Al": 0.0}`` freezes those elements at their seed
             values (lock the seed framework); ``0.1`` lets an element drift slowly. Symbols are
             resolved against ``DEFAULT_ELEMENTS`` (kernel alignment required, as above).
+        seed_blend : float, optional
+            How much of the (per-row) seed prior to keep when ``initial_weights`` is given;
+            ``w0 ← seed_blend · seed + (1 − seed_blend) · uniform_over_allowed``. Default ``0.95``
+            (5 % uniform mass spread over the allowed elements). The blend lifts non-seed-element
+            logits from ``log(1e-12) ≈ −27.6`` (effectively unreachable by Adam in a few hundred
+            steps) to ``log(0.05 / |allowed|) ≈ −7.6``, so the optimiser can introduce new elements
+            when they help the objective. Set to ``1.0`` to reproduce the strict seed-only behaviour
+            (no new elements can enter the support set); ``0.0`` makes the seed irrelevant and
+            starts from uniform. Ignored when ``initial_weights is None``.
         steps : int
             Adam optimisation steps. Default 300.
         lr : float
@@ -2291,8 +2306,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         if target_tasks is None and class_target_map is None:
             raise ValueError("Provide at least one of task_targets / class_targets.")
-        if sparsity_weight < 0:
-            raise ValueError(f"sparsity_weight must be >= 0, got {sparsity_weight}")
+        if entropy_weight < 0:
+            raise ValueError(f"entropy_weight must be >= 0, got {entropy_weight}")
+        if not 0.0 <= seed_blend <= 1.0:
+            raise ValueError(f"seed_blend must be in [0, 1], got {seed_blend}")
 
         # --- Per-element constraints (symbol-based) -----------------------------------------------
         # ``allowed_elements`` is a hard whitelist; ``element_step_scale`` is a soft per-element
@@ -2389,12 +2406,30 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 # Use the caller's existing global RNG state — don't reseed here (would defeat
                 # the intended diversity across repeated calls and would leak state outward).
                 logits = torch.randn(n_starts, n_components, device=device, dtype=dtype) * 0.5
+                if elem_mask_arg is not None:
+                    # Push disallowed elements to a deep negative logit so softmax mask works
+                    # consistently for both the random and seeded branches (the per-step mask
+                    # below also enforces this; we mirror it here for the t=0 score).
+                    logits = logits.masked_fill(~elem_mask_arg.to(device=device), -1e9)
             else:
                 w0 = initial_weights.to(device=device, dtype=dtype)
-                # Normalise to the simplex (callers may pass un-normalised positive weights);
-                # log gives logits whose softmax recovers the row. A tiny floor only avoids
-                # log(0) for legitimate zero entries (sparse element-presence seeds).
                 w0 = w0 / w0.sum(dim=-1, keepdim=True)
+                # Blend in a uniform prior so non-seed-element logits are reachable by Adam.
+                # Without this, log(0) → −∞ (clamped to log(1e-12) ≈ −27.6); the softmax Jacobian
+                # is proportional to w_i, so the per-step gradient on those logits is ≈ 1e-12 and
+                # Adam cannot lift them within a few hundred steps — the support set is frozen to
+                # the seed's nonzero elements. ``seed_blend < 1`` spreads a small uniform mass
+                # over the allowed elements so every reachable element starts at a workable logit.
+                if seed_blend < 1.0:
+                    if elem_mask_arg is not None:
+                        uniform_row = elem_mask_arg.to(device=device, dtype=dtype)
+                        uniform_row = uniform_row / uniform_row.sum()
+                    else:
+                        uniform_row = torch.full((n_components,), 1.0 / n_components, device=device, dtype=dtype)
+                    w0 = seed_blend * w0 + (1.0 - seed_blend) * uniform_row
+                    w0 = w0 / w0.sum(dim=-1, keepdim=True)
+                # Tiny floor only to avoid log(0) when an element is both disallowed AND not in
+                # the uniform support (i.e. seed_blend == 1.0 with sparse seeds).
                 logits = torch.log(w0.clamp(min=1e-12)).detach().clone()
             logits = logits.requires_grad_(True)
             optimizer = optim.Adam([logits], lr=lr)
@@ -2465,10 +2500,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 x = w @ kmd_kernel
                 h_task = torch.tanh(self.encoder(x))
                 preds, terms = _heads_forward(h_task)
-                if sparsity_weight > 0:
-                    # Negative entropy of w (minimise entropy → push w toward few-element mixtures).
+                if entropy_weight > 0:
+                    # Shannon entropy of w; positive weight penalises high-entropy (flat) ``w``
+                    # and softly pushes the solution toward peakier (few-element) mixtures.
                     entropy = -(w * w.clamp(min=1e-12).log()).sum(dim=-1).mean()
-                    terms.append(sparsity_weight * entropy)
+                    terms.append(entropy_weight * entropy)
                 loss = torch.stack(terms).mean()
                 loss.backward()
                 if step_scale is not None and logits.grad is not None:

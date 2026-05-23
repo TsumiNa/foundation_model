@@ -981,18 +981,18 @@ def test_optimize_latent_class_targets_only_no_regression():
     assert res.optimized_target.shape == (4, 1, 0)  # no regression tasks tracked
 
 
-def test_optimize_latent_cycle_consistency_rejects_negative():
+def test_optimize_latent_ae_cycle_rejects_negative():
     model = _make_reg_clf_model()
-    with pytest.raises(ValueError, match="cycle_consistency_weight must be >= 0"):
+    with pytest.raises(ValueError, match="ae_cycle_weight must be >= 0"):
         model.optimize_latent(
             initial_input=torch.randn(2, INPUT_DIM),
             task_targets={"prop": 1.0},
             optimize_space="latent",
-            cycle_consistency_weight=-0.1,
+            ae_cycle_weight=-0.1,
         )
 
 
-def test_optimize_latent_cycle_consistency_runs_in_latent_space():
+def test_optimize_latent_ae_cycle_runs_in_latent_space():
     torch.manual_seed(0)
     model = _make_reg_clf_model()  # enable_autoencoder=True, so AE head is available
     x = torch.randn(4, INPUT_DIM)
@@ -1001,7 +1001,7 @@ def test_optimize_latent_cycle_consistency_runs_in_latent_space():
         task_targets={"prop": 1.0},
         class_targets={"cls": [1]},
         class_target_weight=3.0,
-        cycle_consistency_weight=0.5,  # pull latent toward AE-reconstructible manifold
+        ae_cycle_weight=0.5,  # pull latent toward AE-reconstructible fixed set
         optimize_space="latent",
         steps=10,
     )
@@ -1278,6 +1278,7 @@ def test_optimize_composition_element_step_scale_uniform_scalar():
         task_targets={"prop": 5.0},
         initial_weights=init_w,
         element_step_scale=0.0,  # everything frozen
+        seed_blend=1.0,  # strict seed → no uniform mixing, so w should match init_w exactly
         steps=30,
         lr=0.5,
     )
@@ -1314,6 +1315,100 @@ def test_optimize_composition_element_step_scale_validation():
         model.optimize_composition(
             small_kernel, task_targets={"prop": 0.0}, element_step_scale={"Mg": 0.0}, n_starts=2, steps=2
         )
+
+
+def test_optimize_composition_seed_blend_validates_range():
+    """seed_blend must be in [0, 1]."""
+    model, kernel, elements = _build_aligned_model_and_kernel()
+    w = torch.zeros(1, len(elements))
+    w[0, 0] = 1.0
+    with pytest.raises(ValueError, match=r"seed_blend must be in \[0, 1\]"):
+        model.optimize_composition(kernel, initial_weights=w, task_targets={"prop": 0.0}, seed_blend=-0.1, steps=2)
+    with pytest.raises(ValueError, match=r"seed_blend must be in \[0, 1\]"):
+        model.optimize_composition(kernel, initial_weights=w, task_targets={"prop": 0.0}, seed_blend=1.5, steps=2)
+
+
+def test_optimize_composition_seed_blend_strict_freezes_support_set():
+    """seed_blend=1.0 reproduces the old strict-seed behaviour: non-seed elements stay ~0."""
+    torch.manual_seed(0)
+    model, kernel, elements = _build_aligned_model_and_kernel()
+
+    # Seed places all mass on Mg + Al; with seed_blend=1.0 every other element starts at logit
+    # log(1e-12) ≈ −27.6 and can't escape in a handful of steps.
+    init_w = torch.zeros(1, len(elements))
+    init_w[0, elements.index("Mg")] = 0.6
+    init_w[0, elements.index("Al")] = 0.4
+
+    res = model.optimize_composition(
+        kernel,
+        initial_weights=init_w,
+        task_targets={"prop": 5.0},
+        seed_blend=1.0,
+        steps=40,
+        lr=0.1,
+    )
+    w = res.optimized_weights[0]
+    seed_mass = w[elements.index("Mg")] + w[elements.index("Al")]
+    # Strict seed: non-seed elements never recruited — essentially all mass stays on Mg+Al.
+    assert seed_mass > 0.999
+
+
+def test_optimize_composition_seed_blend_allows_new_elements():
+    """seed_blend<1.0 lifts non-seed logits enough that Adam can recruit new elements."""
+    torch.manual_seed(0)
+    model, kernel, elements = _build_aligned_model_and_kernel()
+
+    init_w = torch.zeros(1, len(elements))
+    init_w[0, elements.index("Mg")] = 0.6
+    init_w[0, elements.index("Al")] = 0.4
+
+    res = model.optimize_composition(
+        kernel,
+        initial_weights=init_w,
+        task_targets={"prop": 5.0},
+        seed_blend=0.5,  # heavy blend so the test is robust to model init
+        steps=80,
+        lr=0.2,
+    )
+    w = res.optimized_weights[0]
+    non_seed = sum(w[i].item() for i, s in enumerate(elements) if s not in {"Mg", "Al"})
+    # Some non-seed mass should accumulate (the toy model has no specific preference, so we
+    # only require the floor to be measurably above zero — the strict-seed test above shows
+    # the same setup gives ~0 when seed_blend=1.0).
+    assert non_seed > 0.05
+
+
+def test_optimize_composition_random_init_uses_n_starts():
+    """initial_weights=None falls back to n_starts random simplex points; allowed_elements still binds."""
+    torch.manual_seed(0)
+    model, kernel, elements = _build_aligned_model_and_kernel()
+    allowed = ["Mg", "Al", "Cu", "Ni"]
+    res = model.optimize_composition(
+        kernel,
+        task_targets={"prop": 1.0},
+        n_starts=5,
+        allowed_elements=allowed,
+        steps=5,
+    )
+    assert res.optimized_weights.shape == (5, len(elements))
+    # Disallowed elements stay at exactly zero (mask is applied at every step).
+    disallowed = [i for i, s in enumerate(elements) if s not in allowed]
+    assert torch.allclose(res.optimized_weights[:, disallowed], torch.zeros_like(res.optimized_weights[:, disallowed]))
+
+
+def test_optimize_composition_entropy_weight_rejects_negative():
+    model, kernel, _ = _build_aligned_model_and_kernel()
+    with pytest.raises(ValueError, match="entropy_weight must be >= 0"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, entropy_weight=-0.1, n_starts=2, steps=2)
+
+
+def test_optimize_composition_entropy_weight_runs():
+    """entropy_weight>0 just needs to run cleanly and still produce simplex rows."""
+    torch.manual_seed(0)
+    model, kernel, _ = _build_aligned_model_and_kernel()
+    res = model.optimize_composition(kernel, task_targets={"prop": 1.0}, n_starts=3, entropy_weight=0.5, steps=5)
+    assert res.optimized_weights.shape[0] == 3
+    assert torch.allclose(res.optimized_weights.sum(dim=-1), torch.ones(3), atol=1e-5)
 
 
 def test_optimize_composition_uses_kmd_kernel_torch():

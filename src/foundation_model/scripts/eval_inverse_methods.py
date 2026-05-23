@@ -4,8 +4,8 @@
 """
 Compare two inverse-design methods on a single trained checkpoint.
 
-Method A — latent-space optimisation with cycle-consistency
-    optimize_latent(optimize_space="latent", class_target_weight=…, cycle_consistency_weight=λ).
+Method A — latent-space optimisation with AE-cycle penalty
+    optimize_latent(optimize_space="latent", class_target_weight=…, ae_cycle_weight=λ).
     The optimised latent is decoded back to a descriptor through the AE; the heads' values at
     the **decoded** descriptor are reported (so "round-trip drift" is the key failure mode and
     cycle-consistency is the proposed mitigation, swept over λ).
@@ -120,7 +120,7 @@ def _run_latent_method(
         task_targets=reg_targets,
         class_targets={"material_type": QC_CLASSES},
         class_target_weight=class_weight,
-        cycle_consistency_weight=cycle_weight,
+        ae_cycle_weight=cycle_weight,
         optimize_space="latent",
         steps=steps,
         lr=lr,
@@ -270,7 +270,7 @@ def evaluate(
 
     # Method A: latent-space, sweep cycle weight.
     for lam in cycle_weights:
-        logger.info(f"--- Latent method, cycle_consistency_weight = {lam} ---")
+        logger.info(f"--- Latent method, ae_cycle_weight = {lam} ---")
         results.append(
             _run_latent_method(
                 runner,
@@ -342,7 +342,7 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ContinualRehearsalConfig
         "--cycle-weights",
         type=str,
         default="0,0.1,0.5,1,2,5",
-        help="Comma-separated λ values for cycle_consistency_weight in the latent method.",
+        help="Comma-separated λ values for ae_cycle_weight in the latent method.",
     )
     parser.add_argument(
         "--allowed-elements",
