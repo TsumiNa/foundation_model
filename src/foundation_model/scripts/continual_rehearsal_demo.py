@@ -231,6 +231,9 @@ class ContinualRehearsalConfig:
     inverse_steps: int = 300
     inverse_lr: float = 0.05
     inverse_class_weight: float = 5.0  # weight of the QC objective relative to the regression ones
+    # Cycle-consistency: pulls the optimized latent toward what the AE can faithfully reconstruct,
+    # so after-decode predictions stay close to in-latent values. 0 = off; 0.1–1.0 typical.
+    inverse_cycle_weight: float = 0.0
     inverse_reg_tasks: list[str] = field(default_factory=lambda: ["formation_energy", "klat"])
     inverse_reg_targets: list[float] = field(default_factory=lambda: [-2.0, 2.0])  # low f.e., high klat
     # How the optimization's starting latents are seeded:
@@ -479,17 +482,28 @@ class ContinualRehearsalRunner:
 
     # ------------------------------------------------------------------ run
 
-    def run(self) -> None:
+    def _build_empty_model(self) -> FlexibleMultiTaskModel:
         cfg = self.config
-        seed_everything(cfg.random_seed, workers=True)
-
         encoder_config = MLPEncoderConfig(hidden_dims=[self.x_dim, cfg.encoder_hidden, cfg.latent_dim])
-        model = FlexibleMultiTaskModel(
+        return FlexibleMultiTaskModel(
             task_configs=[],
             encoder_config=encoder_config,
             enable_autoencoder=True,
             shared_block_optimizer=OptimizerConfig(lr=cfg.encoder_lr, weight_decay=1e-2),
         )
+
+    def _build_full_model(self) -> FlexibleMultiTaskModel:
+        """Recreate the final post-training model (all tasks added in order) so a saved
+        state_dict can be loaded for inverse-only runs."""
+        model = self._build_empty_model()
+        for task_name in self.config.task_sequence:
+            model.add_task(self._build_task_config(task_name))
+        return model
+
+    def run(self) -> None:
+        cfg = self.config
+        seed_everything(cfg.random_seed, workers=True)
+        model = self._build_empty_model()
 
         task_configs: dict[str, Any] = {}
         metric_history: dict[str, list[tuple[int, float]]] = {name: [] for name in cfg.task_sequence}
@@ -545,10 +559,33 @@ class ContinualRehearsalRunner:
         self._plot_forgetting(metric_history)
         (self.output_dir / "experiment_records.json").write_text(json.dumps(records, indent=2), encoding="utf-8")
 
+        # Persist the final model so inverse-design experiments can be re-run without retraining.
+        ckpt_path = self.output_dir / "final_model.pt"
+        torch.save({"model": model.state_dict(), "task_sequence": list(cfg.task_sequence)}, ckpt_path)
+        logger.info(f"Saved final model checkpoint to {ckpt_path}")
+
         inverse = self._inverse_design(model)
         (self.output_dir / "inverse_design.json").write_text(json.dumps(inverse, indent=2), encoding="utf-8")
 
         self._write_report_html(records, inverse)
+
+    def run_inverse_only(self, ckpt_path: Path) -> None:
+        """Skip training; load a saved checkpoint and run only the inverse-design stage.
+
+        Use this to iterate on the inverse-design objective (e.g. ``inverse_cycle_weight``) without
+        repeating the multi-hour training. Data loading + descriptor computation still happen, but
+        no Trainer.fit calls.
+        """
+        logger.info(f"=== Inverse-only mode: loading model checkpoint {ckpt_path} ===")
+        seed_everything(self.config.random_seed, workers=True)
+        model = self._build_full_model()
+        state = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+        state_dict = state["model"] if isinstance(state, dict) and "model" in state else state
+        model.load_state_dict(state_dict)
+        model.eval()
+        inverse = self._inverse_design(model)
+        (self.output_dir / "inverse_design.json").write_text(json.dumps(inverse, indent=2), encoding="utf-8")
+        logger.info(f"Inverse-only done. Outputs in {self.output_dir}")
         logger.info(f"Done. Outputs in {self.output_dir}")
 
     # ------------------------------------------------------------------ eval
@@ -682,6 +719,7 @@ class ContinualRehearsalRunner:
             task_targets=reg_targets,
             class_targets={"material_type": QC_CLASSES},
             class_target_weight=cfg.inverse_class_weight,  # QC probability is the primary objective
+            cycle_consistency_weight=cfg.inverse_cycle_weight,  # keep optimized latent on the AE manifold
             optimize_space="latent",
             steps=cfg.inverse_steps,
             lr=cfg.inverse_lr,
@@ -1140,13 +1178,20 @@ def _load_toml(path: Path) -> dict[str, Any]:
     return tomllib.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def _parse_args(argv: list[str] | None = None) -> ContinualRehearsalConfig:
+def _parse_args(argv: list[str] | None = None) -> tuple[ContinualRehearsalConfig, argparse.Namespace]:
     parser = argparse.ArgumentParser(description="Continual rehearsal + inverse-design demo.")
     parser.add_argument("--config-file", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--sample-per-dataset", type=int, default=None)
     parser.add_argument("--max-epochs-per-step", type=int, default=None)
     parser.add_argument("--accelerator", type=str, default=None)
+    parser.add_argument(
+        "--inverse-only",
+        type=Path,
+        default=None,
+        metavar="CKPT",
+        help="Skip training; load a final_model.pt checkpoint and run only the inverse-design stage.",
+    )
     args = parser.parse_args(argv)
 
     data = _load_toml(args.config_file) if args.config_file else {}
@@ -1170,11 +1215,16 @@ def _parse_args(argv: list[str] | None = None) -> ContinualRehearsalConfig:
             logger.warning(f"Ignoring unknown config key '{key}'.")
             continue
         kwargs[key] = Path(value) if key in path_fields and value is not None else value
-    return ContinualRehearsalConfig(**kwargs)
+    return ContinualRehearsalConfig(**kwargs), args
 
 
 def main(argv: list[str] | None = None) -> None:
-    ContinualRehearsalRunner(_parse_args(argv)).run()
+    config, args = _parse_args(argv)
+    runner = ContinualRehearsalRunner(config)
+    if args.inverse_only is not None:
+        runner.run_inverse_only(args.inverse_only)
+    else:
+        runner.run()
 
 
 if __name__ == "__main__":
