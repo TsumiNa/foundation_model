@@ -2175,8 +2175,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
         class_targets: Mapping[str, int | Sequence[int]] | None = None,
         class_target_weight: float = 1.0,
         sparsity_weight: float = 0.0,
-        allowed_elements: torch.Tensor | None = None,
-        element_step_scale: torch.Tensor | None = None,
+        allowed_elements: str | list[str] = "all",
+        element_step_scale: float | Mapping[str, float] = 1.0,
         steps: int = 300,
         lr: float = 0.05,
     ) -> CompositionOptimizationResult:
@@ -2211,17 +2211,21 @@ class FlexibleMultiTaskModel(L.LightningModule):
         sparsity_weight : float, optional
             Adds a negative-entropy term ``λ · H(w)`` to the loss, pushing ``w`` toward few-element
             mixtures. Default 0 (no sparsity pressure).
-        allowed_elements : torch.Tensor | None, optional
-            Whitelist of element columns the optimisation may use. Accepts either a 1-D bool mask
-            of shape ``(n_components,)`` or a 1-D long tensor of element indices. Disallowed
-            elements are forced to ``w = 0`` for every step (their logits are masked to ``-inf``
-            inside the softmax), so no gradient ever lifts them. Use to encode experimental
-            feasibility constraints. ``None`` => every element allowed (default).
-        element_step_scale : torch.Tensor | None, optional
-            Per-element gradient multiplier ``∈ [0, ∞)``, shape ``(n_components,)``. Scales each
-            element's logit gradient before the optimiser step: ``0`` freezes that element at its
-            current value (e.g. lock the seed framework), ``0.1`` lets it drift only slowly,
-            ``1.0`` is the default. Combine with ``allowed_elements`` for hard + soft constraints.
+        allowed_elements : str | list[str], optional
+            Element whitelist for the optimisation. ``"all"`` (default) imposes no constraint.
+            A non-empty list of element symbols (e.g. ``["Mg", "Al", "Cu", "Ni"]``) restricts the
+            optimisation to those elements only — disallowed elements are forced to ``w = 0`` at
+            every step (their logits are masked to ``-inf`` inside the softmax), so no gradient
+            ever lifts them. Symbols are resolved against
+            :data:`~foundation_model.utils.kmd_plus.DEFAULT_ELEMENTS`; the kernel must therefore
+            have ``n_components == len(DEFAULT_ELEMENTS)`` when symbols are used.
+        element_step_scale : float | Mapping[str, float], optional
+            Per-element gradient multiplier ``∈ [0, ∞)`` applied to each logit's gradient before
+            the optimiser step. A scalar applies uniformly to every element (default ``1.0`` =
+            no constraint). A symbol→float mapping overrides specific elements while leaving the
+            rest at ``1.0``: ``{"Mg": 0.0, "Al": 0.0}`` freezes those elements at their seed
+            values (lock the seed framework); ``0.1`` lets an element drift slowly. Symbols are
+            resolved against ``DEFAULT_ELEMENTS`` (kernel alignment required, as above).
         steps : int
             Adam optimisation steps. Default 300.
         lr : float
@@ -2290,43 +2294,64 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if sparsity_weight < 0:
             raise ValueError(f"sparsity_weight must be >= 0, got {sparsity_weight}")
 
-        # --- Per-element constraints --------------------------------------------------------------
+        # --- Per-element constraints (symbol-based) -----------------------------------------------
         # ``allowed_elements`` is a hard whitelist; ``element_step_scale`` is a soft per-element
-        # learning-rate multiplier (0 = frozen). Validate shapes/values here before state changes.
+        # learning-rate multiplier (0 = frozen). Symbol-based inputs are resolved against the
+        # bundled :data:`DEFAULT_ELEMENTS` registry — see argument docs above.
+        from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS  # local import; small list
+
         elem_mask_arg: torch.Tensor | None = None
-        if allowed_elements is not None:
-            if allowed_elements.ndim != 1:
+        if isinstance(allowed_elements, str):
+            if allowed_elements != "all":
+                raise ValueError(f"allowed_elements as a string must be 'all'; got {allowed_elements!r}.")
+            # "all": no constraint, leave elem_mask_arg as None.
+        elif isinstance(allowed_elements, (list, tuple)):
+            if len(allowed_elements) == 0:
+                raise ValueError("allowed_elements list must be non-empty.")
+            sym_to_idx = {s: i for i, s in enumerate(DEFAULT_ELEMENTS)}
+            bad = [s for s in allowed_elements if s not in sym_to_idx]
+            if bad:
+                raise ValueError(f"Unknown element symbol(s) in allowed_elements: {bad}.")
+            if n_components != len(DEFAULT_ELEMENTS):
                 raise ValueError(
-                    f"allowed_elements must be 1-D (bool mask or index list); got shape {tuple(allowed_elements.shape)}."
+                    f"allowed_elements as element symbols requires the kernel to align with "
+                    f"DEFAULT_ELEMENTS (n_components={n_components}, expected {len(DEFAULT_ELEMENTS)})."
                 )
-            if allowed_elements.dtype == torch.bool:
-                if allowed_elements.shape[0] != n_components:
-                    raise ValueError(
-                        f"allowed_elements bool mask must have length n_components ({n_components}); "
-                        f"got {allowed_elements.shape[0]}."
-                    )
-                elem_mask_arg = allowed_elements.to(dtype=torch.bool)
-            else:
-                idx = allowed_elements.to(dtype=torch.long)
-                if (idx < 0).any() or (idx >= n_components).any():
-                    raise ValueError(
-                        f"allowed_elements indices must be in [0, {n_components}); got out-of-range values."
-                    )
-                elem_mask_arg = torch.zeros(n_components, dtype=torch.bool)
-                elem_mask_arg[idx] = True
-            if not elem_mask_arg.any():
-                raise ValueError("allowed_elements must allow at least one element (all False mask given).")
+            elem_mask_arg = torch.zeros(n_components, dtype=torch.bool)
+            for sym in allowed_elements:
+                elem_mask_arg[sym_to_idx[sym]] = True
+        else:
+            raise TypeError(
+                f"allowed_elements must be 'all' or a non-empty list of element symbols; got {type(allowed_elements).__name__}."
+            )
 
         step_scale_arg: torch.Tensor | None = None
-        if element_step_scale is not None:
-            if element_step_scale.ndim != 1 or element_step_scale.shape[0] != n_components:
-                raise ValueError(
-                    f"element_step_scale must be 1-D of length n_components ({n_components}); "
-                    f"got shape {tuple(element_step_scale.shape)}."
-                )
-            if (element_step_scale < 0).any():
+        if isinstance(element_step_scale, (int, float)) and not isinstance(element_step_scale, bool):
+            if element_step_scale < 0:
+                raise ValueError(f"element_step_scale must be >= 0; got {element_step_scale}.")
+            if float(element_step_scale) != 1.0:
+                step_scale_arg = torch.full((n_components,), float(element_step_scale))
+            # else: 1.0 means "no scaling"; keep step_scale_arg = None for the fast path.
+        elif isinstance(element_step_scale, Mapping):
+            sym_to_idx = {s: i for i, s in enumerate(DEFAULT_ELEMENTS)}
+            bad = [s for s in element_step_scale if s not in sym_to_idx]
+            if bad:
+                raise ValueError(f"Unknown element symbol(s) in element_step_scale: {bad}.")
+            if any(float(v) < 0 for v in element_step_scale.values()):
                 raise ValueError("element_step_scale values must be >= 0.")
-            step_scale_arg = element_step_scale
+            if n_components != len(DEFAULT_ELEMENTS):
+                raise ValueError(
+                    f"element_step_scale as a symbol dict requires the kernel to align with "
+                    f"DEFAULT_ELEMENTS (n_components={n_components}, expected {len(DEFAULT_ELEMENTS)})."
+                )
+            step_scale_arg = torch.ones(n_components)
+            for sym, val in element_step_scale.items():
+                step_scale_arg[sym_to_idx[sym]] = float(val)
+        else:
+            raise TypeError(
+                f"element_step_scale must be a non-negative float or a mapping of "
+                f"element_symbol → float; got {type(element_step_scale).__name__}."
+            )
 
         # --- Validate the seed (BEFORE touching model state, so a bad input doesn't leave the
         #     model in eval() / with params switched off). ---------------------------------------

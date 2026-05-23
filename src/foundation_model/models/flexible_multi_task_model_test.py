@@ -1165,116 +1165,154 @@ def test_optimize_composition_restores_model_state_on_error():
     assert [p.requires_grad for p in model.parameters()] == before_req_grad
 
 
-def test_optimize_composition_allowed_elements_hard_mask():
-    """Disallowed elements stay at exactly zero weight, regardless of seed or n_starts."""
-    torch.manual_seed(0)
-    model = _make_reg_clf_model()
-    n_components = 6
-    kernel = torch.randn(n_components, INPUT_DIM)
+def _build_aligned_model_and_kernel():
+    """Helper for symbol-based tests: a tiny model + kernel whose first dim == len(DEFAULT_ELEMENTS).
 
-    # Whitelist as indices: only elements {0, 2, 4} may be non-zero.
-    allowed = torch.tensor([0, 2, 4], dtype=torch.long)
+    Symbol-based ``allowed_elements`` / ``element_step_scale`` require the kernel to align with
+    the bundled element registry. The kernel is random (matmul correctness is irrelevant here);
+    we just need the right shape so the symbol→index mapping is unambiguous.
+    """
+    from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS
+
+    n_components = len(DEFAULT_ELEMENTS)
+    enc = MLPEncoderConfig(hidden_dims=[INPUT_DIM, 16, LATENT_DIM])
+    tasks = [
+        RegressionTaskConfig(name="prop", data_column="prop", dims=[LATENT_DIM, 8, 1]),
+        ClassificationTaskConfig(name="cls", data_column="cls", num_classes=3, dims=[LATENT_DIM, 8, 3]),
+    ]
+    model = FlexibleMultiTaskModel(task_configs=tasks, encoder_config=enc, enable_autoencoder=True)
+    kernel = torch.randn(n_components, INPUT_DIM)
+    return model, kernel, DEFAULT_ELEMENTS
+
+
+def test_optimize_composition_allowed_elements_symbol_whitelist():
+    """A list of element symbols restricts w to those elements; the rest stay at exactly 0."""
+    torch.manual_seed(0)
+    model, kernel, elements = _build_aligned_model_and_kernel()
+    whitelist = ["Mg", "Al", "Cu", "Ni"]
     res = model.optimize_composition(
         kernel,
         task_targets={"prop": 1.0},
         class_targets={"cls": [1]},
         class_target_weight=3.0,
-        n_starts=4,
-        allowed_elements=allowed,
-        steps=20,
+        n_starts=3,
+        allowed_elements=whitelist,
+        steps=15,
         lr=0.2,
     )
     w = res.optimized_weights
-    # Forbidden columns must be exactly zero across every row.
-    forbidden = [1, 3, 5]
-    assert torch.all(w[:, forbidden] == 0)
-    # Allowed columns still sum to 1.
-    assert torch.allclose(w[:, allowed].sum(dim=-1), torch.ones(4), atol=1e-5)
+    allowed_idx = [elements.index(s) for s in whitelist]
+    forbidden_idx = [i for i in range(len(elements)) if i not in allowed_idx]
+    assert torch.all(w[:, forbidden_idx] == 0)
+    assert torch.allclose(w[:, allowed_idx].sum(dim=-1), torch.ones(3), atol=1e-5)
 
-    # Same outcome with the bool-mask form.
-    mask = torch.zeros(n_components, dtype=torch.bool)
-    mask[allowed] = True
-    res2 = model.optimize_composition(
-        kernel,
-        task_targets={"prop": 1.0},
-        n_starts=3,
-        allowed_elements=mask,
-        steps=5,
-    )
-    assert torch.all(res2.optimized_weights[:, forbidden] == 0)
+
+def test_optimize_composition_allowed_elements_default_all():
+    """The default ``allowed_elements='all'`` imposes no constraint."""
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    kernel = torch.randn(6, INPUT_DIM)  # any kernel size works when no symbols are used
+    res = model.optimize_composition(kernel, task_targets={"prop": 0.5}, n_starts=2, steps=5)
+    # All columns can carry weight; nothing should be forced to zero by the default.
+    assert (res.optimized_weights > 0).all()
 
 
 def test_optimize_composition_allowed_elements_validation():
-    model = _make_reg_clf_model()
-    kernel = torch.randn(6, INPUT_DIM)
-    with pytest.raises(ValueError, match="1-D"):
+    model, kernel, _ = _build_aligned_model_and_kernel()
+    # "all" is the only acceptable string.
+    with pytest.raises(ValueError, match="must be 'all'"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, allowed_elements="everything", steps=2)
+    # Empty list rejected.
+    with pytest.raises(ValueError, match="non-empty"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, allowed_elements=[], steps=2)
+    # Unknown symbol rejected.
+    with pytest.raises(ValueError, match="Unknown element symbol"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, allowed_elements=["Mg", "NotAnElement"], steps=2)
+    # Wrong type rejected.
+    with pytest.raises(TypeError, match="non-empty list"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, allowed_elements=42, steps=2)  # type: ignore[arg-type]
+    # Symbols with a non-aligned kernel rejected.
+    small_kernel = torch.randn(6, INPUT_DIM)
+    with pytest.raises(ValueError, match="align with DEFAULT_ELEMENTS"):
         model.optimize_composition(
-            kernel,
-            task_targets={"prop": 0.0},
-            allowed_elements=torch.zeros(6, 1, dtype=torch.bool),
-            n_starts=2,
-            steps=2,
-        )
-    with pytest.raises(ValueError, match="length n_components"):
-        model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, allowed_elements=torch.ones(5, dtype=torch.bool), n_starts=2, steps=2
-        )
-    with pytest.raises(ValueError, match="out-of-range"):
-        model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, allowed_elements=torch.tensor([0, 7]), n_starts=2, steps=2
-        )
-    with pytest.raises(ValueError, match="allow at least one"):
-        model.optimize_composition(
-            kernel,
-            task_targets={"prop": 0.0},
-            allowed_elements=torch.zeros(6, dtype=torch.bool),
-            n_starts=2,
-            steps=2,
+            small_kernel, task_targets={"prop": 0.0}, allowed_elements=["Mg", "Al"], n_starts=2, steps=2
         )
 
 
-def test_optimize_composition_element_step_scale_freezes_elements():
-    """element_step_scale=0 on chosen elements keeps their weights at the seed value."""
+def test_optimize_composition_element_step_scale_locks_symbols():
+    """A symbol→0.0 mapping freezes those elements' weights at their seed values."""
     torch.manual_seed(0)
-    model = _make_reg_clf_model()
-    n_components = 6
-    kernel = torch.randn(n_components, INPUT_DIM)
+    model, kernel, elements = _build_aligned_model_and_kernel()
 
-    # Seed: equal mass on 4 elements (the "locked framework"), zero on others.
-    init_w = torch.tensor([[0.25, 0.25, 0.25, 0.25, 0.0, 0.0]])
-    # Freeze elements 0 and 1 at their seed values; let 2..5 move freely.
-    step_scale = torch.tensor([0.0, 0.0, 1.0, 1.0, 1.0, 1.0])
+    # Seed: equal mass on 4 specific symbols, zero on the rest.
+    locked_syms = ["Mg", "Al"]
+    free_syms = ["Cu", "Ni"]
+    seed_syms = locked_syms + free_syms
+    init_w = torch.zeros(1, len(elements))
+    for s in seed_syms:
+        init_w[0, elements.index(s)] = 0.25
+
     res = model.optimize_composition(
         kernel,
         task_targets={"prop": 5.0},
         initial_weights=init_w,
-        element_step_scale=step_scale,
+        element_step_scale={s: 0.0 for s in locked_syms},
         steps=50,
         lr=0.3,
     )
     w = res.optimized_weights
-    # Elements 0 and 1 must keep the same relative weight as at seed (logits unchanged).
-    # Note: softmax(seed_logits) at start = init_w; with grad=0 on those logits and no movement,
-    # their LOGIT stays constant. But the softmax over the FULL vector can still rescale them if
-    # other elements grow. We instead check the ratio of their LOGITS is preserved (frozen logits).
-    # A simpler check: w[0,0] / w[0,1] should be 1.0 (same as the seed ratio) within tolerance.
-    assert torch.isclose(w[0, 0] / w[0, 1], torch.tensor(1.0), atol=1e-4)
+    # The two locked symbols had equal seed weight; their logits don't move, so the softmax ratio
+    # stays at 1.0 regardless of how other elements grow.
+    mg, al = elements.index("Mg"), elements.index("Al")
+    assert torch.isclose(w[0, mg] / w[0, al], torch.tensor(1.0), atol=1e-4)
+
+
+def test_optimize_composition_element_step_scale_uniform_scalar():
+    """A scalar element_step_scale=0 freezes every element at the seed (uniform behaviour)."""
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    kernel = torch.randn(6, INPUT_DIM)
+    init_w = torch.tensor([[0.2, 0.2, 0.2, 0.2, 0.1, 0.1]])
+    res = model.optimize_composition(
+        kernel,
+        task_targets={"prop": 5.0},
+        initial_weights=init_w,
+        element_step_scale=0.0,  # everything frozen
+        steps=30,
+        lr=0.5,
+    )
+    # With every element frozen and equal seed proportions kept, w should match init_w (normalised).
+    assert torch.allclose(res.optimized_weights, init_w, atol=1e-5)
 
 
 def test_optimize_composition_element_step_scale_validation():
-    model = _make_reg_clf_model()
-    kernel = torch.randn(6, INPUT_DIM)
-    with pytest.raises(ValueError, match="length n_components"):
-        model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, element_step_scale=torch.ones(5), n_starts=2, steps=2
-        )
+    model, kernel, _ = _build_aligned_model_and_kernel()
+    # Negative scalar rejected.
     with pytest.raises(ValueError, match=">= 0"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, element_step_scale=-0.5, steps=2)
+    # Unknown symbol rejected.
+    with pytest.raises(ValueError, match="Unknown element symbol"):
+        model.optimize_composition(
+            kernel, task_targets={"prop": 0.0}, element_step_scale={"Mg": 0.5, "NotAnElement": 0.0}, steps=2
+        )
+    # Negative value in mapping rejected.
+    with pytest.raises(ValueError, match="values must be >= 0"):
+        model.optimize_composition(
+            kernel, task_targets={"prop": 0.0}, element_step_scale={"Mg": 0.5, "Al": -0.1}, steps=2
+        )
+    # Wrong type rejected.
+    with pytest.raises(TypeError, match="non-negative float or a mapping"):
         model.optimize_composition(
             kernel,
             task_targets={"prop": 0.0},
-            element_step_scale=torch.tensor([1.0, -0.1, 1.0, 1.0, 1.0, 1.0]),
-            n_starts=2,
-            steps=2,
+            element_step_scale=[1.0, 1.0],
+            steps=2,  # type: ignore[arg-type]
+        )
+    # Symbol dict with a non-aligned kernel rejected.
+    small_kernel = torch.randn(6, INPUT_DIM)
+    with pytest.raises(ValueError, match="align with DEFAULT_ELEMENTS"):
+        model.optimize_composition(
+            small_kernel, task_targets={"prop": 0.0}, element_step_scale={"Mg": 0.0}, n_starts=2, steps=2
         )
 
 

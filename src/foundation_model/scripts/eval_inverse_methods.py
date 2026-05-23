@@ -154,8 +154,8 @@ def _run_composition_method(
     class_weight: float,
     steps: int,
     lr: float,
-    allowed_elements: torch.Tensor | None = None,
-    element_step_scale: torch.Tensor | None = None,
+    allowed_elements: "str | list[str]" = "all",
+    element_step_scale: "float | dict[str, float]" = 1.0,
 ) -> dict[str, Any]:
     device, dtype = next(model.parameters()).device, next(model.parameters()).dtype
     kernel = runner._kmd.kernel_torch(device=device, dtype=dtype)
@@ -235,39 +235,12 @@ def _plot_summary(results: list[dict[str, Any]], reg_targets: dict[str, float], 
 # --- Main flow ----------------------------------------------------------------
 
 
-def _resolve_element_constraints(
-    allowed_syms: list[str] | None,
-    locked_syms: list[str] | None,
-    step_value: float,
-) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-    """Convert symbol lists to (allowed_elements bool mask, element_step_scale tensor)."""
-    n = len(DEFAULT_ELEMENTS)
-    sym_to_idx = {sym: i for i, sym in enumerate(DEFAULT_ELEMENTS)}
-
-    def _to_idx(symbols: list[str]) -> list[int]:
-        bad = [s for s in symbols if s not in sym_to_idx]
-        if bad:
-            raise ValueError(f"Unknown element symbol(s): {bad}. Valid: e.g. {DEFAULT_ELEMENTS[:8]}…")
-        return [sym_to_idx[s] for s in symbols]
-
-    allowed_mask = None
-    if allowed_syms:
-        allowed_mask = torch.zeros(n, dtype=torch.bool)
-        allowed_mask[_to_idx(allowed_syms)] = True
-
-    step_scale = None
-    if locked_syms:
-        step_scale = torch.ones(n)
-        step_scale[_to_idx(locked_syms)] = step_value
-    return allowed_mask, step_scale
-
-
 def evaluate(
     config: ContinualRehearsalConfig,
     ckpt_path: Path,
     cycle_weights: list[float],
-    allowed_elements: torch.Tensor | None = None,
-    element_step_scale: torch.Tensor | None = None,
+    allowed_elements: "str | list[str]" = "all",
+    element_step_scale: "float | dict[str, float]" = 1.0,
 ) -> None:
     seed_everything(config.random_seed, workers=True)
     runner = ContinualRehearsalRunner(config)
@@ -314,12 +287,12 @@ def evaluate(
 
     # Method B: differentiable KMD, single run (no λ). Element constraints (if any) only apply here.
     logger.info("--- Composition method (differentiable KMD) ---")
-    if allowed_elements is not None:
-        logger.info(f"  allowed_elements: {int(allowed_elements.sum())} of {len(DEFAULT_ELEMENTS)} elements")
-    if element_step_scale is not None:
-        locked = [DEFAULT_ELEMENTS[i] for i in (element_step_scale == 0).nonzero(as_tuple=True)[0].tolist()]
-        if locked:
-            logger.info(f"  locked elements (step_scale=0): {locked}")
+    if isinstance(allowed_elements, list):
+        logger.info(f"  allowed_elements: {len(allowed_elements)} symbol(s) — {allowed_elements}")
+    if isinstance(element_step_scale, dict):
+        logger.info(f"  element_step_scale: {element_step_scale}")
+    elif isinstance(element_step_scale, (int, float)) and float(element_step_scale) != 1.0:
+        logger.info(f"  element_step_scale (uniform): {element_step_scale}")
     results.append(
         _run_composition_method(
             runner,
@@ -423,13 +396,17 @@ def main(argv: list[str] | None = None) -> None:
     cycle_weights = [float(x) for x in args.cycle_weights.split(",") if x.strip()]
     allowed_syms = [s.strip() for s in args.allowed_elements.split(",") if s.strip()]
     locked_syms = [s.strip() for s in args.locked_elements.split(",") if s.strip()]
-    allowed_mask, step_scale = _resolve_element_constraints(allowed_syms, locked_syms, args.locked_step_scale)
+    # Pass symbols straight through to optimize_composition's symbol-based API.
+    allowed_arg: "str | list[str]" = allowed_syms if allowed_syms else "all"
+    step_scale_arg: "float | dict[str, float]" = (
+        {s: args.locked_step_scale for s in locked_syms} if locked_syms else 1.0
+    )
     evaluate(
         config,
         args.checkpoint,
         cycle_weights,
-        allowed_elements=allowed_mask,
-        element_step_scale=step_scale,
+        allowed_elements=allowed_arg,
+        element_step_scale=step_scale_arg,
     )
 
 
