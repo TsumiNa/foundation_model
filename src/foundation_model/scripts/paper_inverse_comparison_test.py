@@ -14,6 +14,7 @@ import numpy as np
 
 from foundation_model.scripts.paper_inverse_comparison import (
     _parse_formula_to_fractions,
+    _plot_qc_vs_reg_scatter,
     _plot_seed_to_optimized_mapping,
     _target_arrow,
 )
@@ -116,4 +117,67 @@ def test_plot_seed_to_optimized_mapping_skips_on_length_mismatch(tmp_path):
 def test_plot_seed_to_optimized_mapping_skips_on_empty(tmp_path):
     out = tmp_path / "should_not_exist.png"
     _plot_seed_to_optimized_mapping([], [], out, title="empty", **_mapping_kwargs([], []))
+    assert not out.exists()
+
+
+# --- _plot_qc_vs_reg_scatter ----------------------------------------------------------------
+
+
+def _scatter_result(method: str, label: str, n: int = 6, **extra) -> dict:
+    """Minimal ``results`` row shape consumed by ``_plot_qc_vs_reg_scatter``.
+
+    Only the fields the scatter helper reads are populated — ``method``, ``label``,
+    ``qc_after_decode``, and ``reg_after_decode``. Numbers are arbitrary; the test asserts
+    the helper writes a PNG without raising.
+    """
+    rng = np.random.default_rng(abs(hash(label)) % (2**31))
+    return {
+        "method": method,
+        "label": label,
+        "qc_after_decode": rng.uniform(0.2, 0.95, size=n).tolist(),
+        "reg_after_decode": {
+            "formation_energy": rng.uniform(-1.5, -0.2, size=n).tolist(),
+            "klat": rng.uniform(0.5, 2.2, size=n).tolist(),
+        },
+        **extra,
+    }
+
+
+def test_plot_qc_vs_reg_scatter_writes_png(tmp_path):
+    """End-to-end smoke: latent + composition results, two reg targets, expect a PNG out."""
+    results = [
+        _scatter_result("latent", "latent\nα=0"),
+        _scatter_result("latent", "latent\nα=0.25"),
+        _scatter_result("latent", "latent\nα=1"),
+        _scatter_result("composition", "comp\n(seed)"),
+        _scatter_result("composition", "comp\n(seed, 5% all)"),
+    ]
+    reg_targets = {"formation_energy": -2.0, "klat": 2.0}
+    out = tmp_path / "qc_vs_secondary_scatter.png"
+    _plot_qc_vs_reg_scatter(results, reg_targets, out, title="test")
+    assert out.exists()
+
+
+def test_plot_qc_vs_reg_scatter_handles_single_target(tmp_path):
+    """One reg-target = one panel; still must render without grid-shape errors."""
+    results = [
+        _scatter_result("latent", "latent\nα=1"),
+        _scatter_result("composition", "comp\n(seed)"),
+    ]
+    out = tmp_path / "qc_single.png"
+    _plot_qc_vs_reg_scatter(results, {"klat": 2.0}, out, title="single target")
+    assert out.exists()
+
+
+def test_plot_qc_vs_reg_scatter_skips_on_empty_results(tmp_path):
+    out = tmp_path / "should_not_exist.png"
+    _plot_qc_vs_reg_scatter([], {"klat": 2.0}, out, title="empty")
+    assert not out.exists()
+
+
+def test_plot_qc_vs_reg_scatter_skips_on_empty_reg_targets(tmp_path):
+    """No reg-targets ⇒ nothing to plot; the helper must not write a degenerate figure."""
+    results = [_scatter_result("latent", "latent\nα=1")]
+    out = tmp_path / "should_not_exist.png"
+    _plot_qc_vs_reg_scatter(results, {}, out, title="no targets")
     assert not out.exists()

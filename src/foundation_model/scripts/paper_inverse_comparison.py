@@ -582,6 +582,155 @@ def _plot_seed_to_optimized_mapping(
     logger.info(f"Wrote seed→optimised mapping plot to {out_path}")
 
 
+# --- QC vs secondary-property scatter plot ----------------------------------------------------
+
+
+#: Marker shapes by method-group, per the user's "use shape to separate the two groups" request.
+#: Circle for latent (continuous α sweep ↦ a continuous family) vs triangle for composition
+#: (discrete-config family). Kept here as a single source of truth so the legend renderer and
+#: the scatter loop can't drift.
+_SCATTER_MARKERS = {"latent": "o", "composition": "^"}
+
+#: Per-group base colormaps. Greens vs Blues keep the two groups easily distinguishable at a
+#: glance (the user's "two groups' base colors must be easy to tell apart"). Within each group
+#: we step the colormap to encode the parameter-config ordering — see ``_group_color_ramp``.
+_SCATTER_CMAPS = {"latent": plt.cm.Greens, "composition": plt.cm.Blues}
+
+
+def _group_color_ramp(cmap, n: int) -> list:
+    """Evenly stepped colors across the upper portion of ``cmap``.
+
+    Skip the very pale low end (would be invisible on white) and the near-black high end
+    (would look the same across both groups). The 0.35 / 0.90 window matches the band used in
+    the seed-to-optimised plot's element shading.
+    """
+    if n <= 0:
+        return []
+    if n == 1:
+        return [cmap(0.65)]
+    return [cmap(0.35 + 0.55 * i / (n - 1)) for i in range(n)]
+
+
+def _plot_qc_vs_reg_scatter(
+    results: list[dict[str, Any]],
+    reg_targets: dict[str, float],
+    out_path: Path,
+    *,
+    title: str | None = None,
+) -> None:
+    """One panel per secondary regression target, plotting QC prob vs that target across all paths.
+
+    Each method's per-seed outputs become one scatter cluster: shape encodes the *group* (circle
+    for latent, triangle for composition — per the "use shape to separate the two groups" spec),
+    and color steps through that group's colormap (Greens / Blues) in label-order so the reader
+    can read the parameter sweep off the legend without remembering which α / config is which.
+    Red dashed lines mark the joint target (vertical at ``QC=1.0``, horizontal at the per-task
+    regression target). A figure-level legend at the bottom lists every method label once across
+    all panels.
+    """
+    if not reg_targets:
+        logger.warning("_plot_qc_vs_reg_scatter: no reg_targets — skipping plot.")
+        return
+    if not results:
+        logger.warning("_plot_qc_vs_reg_scatter: no results — skipping plot.")
+        return
+
+    # Split results by group, preserving the order in which ``run()`` appended them — that's
+    # the same order the comparison bar chart uses, so the legend matches across figures.
+    latent_results = [r for r in results if r["method"] == "latent"]
+    comp_results = [r for r in results if r["method"] == "composition"]
+
+    # Per-group color ramps. Latent: Greens, low α → pale green, high α → deep green. Comp:
+    # Blues, simple-config → pale blue, full-knob config → deep blue.
+    latent_colors = _group_color_ramp(_SCATTER_CMAPS["latent"], len(latent_results))
+    comp_colors = _group_color_ramp(_SCATTER_CMAPS["composition"], len(comp_results))
+    color_by_result: dict[int, Any] = {}
+    for r, c in zip(latent_results, latent_colors):
+        color_by_result[id(r)] = c
+    for r, c in zip(comp_results, comp_colors):
+        color_by_result[id(r)] = c
+
+    n_panels = len(reg_targets)
+    fig, axes = plt.subplots(1, n_panels, figsize=(5.6 * n_panels, 6.4), squeeze=False)
+    axes = axes[0]
+
+    for ax, (task, tgt) in zip(axes, reg_targets.items()):
+        arrow = _target_arrow(tgt)
+        for r in results:
+            qc = np.asarray(r["qc_after_decode"], dtype=float)
+            reg = np.asarray(r["reg_after_decode"][task], dtype=float)
+            ax.scatter(
+                qc,
+                reg,
+                marker=_SCATTER_MARKERS[r["method"]],
+                color=color_by_result[id(r)],
+                s=64,
+                alpha=0.78,
+                edgecolor="#222",
+                linewidths=0.6,
+                label=r["label"].replace("\n", " "),
+            )
+        ax.axvline(1.0, color="#C44E52", ls="--", lw=1.3, alpha=0.8)
+        ax.axhline(tgt, color="#C44E52", ls="--", lw=1.3, alpha=0.8)
+        ax.set_xlim(-0.05, 1.05)
+        ax.set_xlabel("P(quasicrystal) ↑")
+        ax.set_ylabel(REG_TASK_TITLES.get(task, task))
+        ax.set_title(f"QC vs {_REG_DISPLAY_SHORT.get(task, task)} {arrow}  (target = {tgt:+.1f})", fontsize=11)
+
+    # Figure-level legend across all panels. Use proxy handles so the legend orders by group
+    # (latent first, then comp) rather than by whichever panel happened to draw which marker
+    # first. Add a single red-dashed "target" entry at the end.
+    from matplotlib.lines import Line2D
+
+    handles: list[Line2D] = []
+    for r in latent_results:
+        handles.append(
+            Line2D(
+                [0],
+                [0],
+                marker=_SCATTER_MARKERS["latent"],
+                color="none",
+                markerfacecolor=color_by_result[id(r)],
+                markeredgecolor="#222",
+                markersize=9,
+                label=r["label"].replace("\n", " "),
+            )
+        )
+    for r in comp_results:
+        handles.append(
+            Line2D(
+                [0],
+                [0],
+                marker=_SCATTER_MARKERS["composition"],
+                color="none",
+                markerfacecolor=color_by_result[id(r)],
+                markeredgecolor="#222",
+                markersize=9,
+                label=r["label"].replace("\n", " "),
+            )
+        )
+    handles.append(Line2D([0], [0], color="#C44E52", ls="--", lw=1.3, label="target (QC=1.0 / reg-target)"))
+    # ncol picked so the legend fits across the figure width without wrapping past 3 rows for
+    # the 8-method + 1-target sweep we use in practice.
+    fig.legend(
+        handles=handles,
+        loc="lower center",
+        ncol=min(len(handles), 4),
+        fontsize=9,
+        frameon=False,
+        bbox_to_anchor=(0.5, -0.02),
+    )
+
+    if title:
+        fig.suptitle(title, y=1.00)
+    # Leave generous bottom padding so the legend (rendered below the axes via bbox_to_anchor)
+    # ends up inside the saved bbox after ``bbox_inches="tight"`` crops.
+    fig.tight_layout(rect=(0, 0.10, 1, 0.98))
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    logger.info(f"Wrote QC-vs-secondary scatter plot to {out_path}")
+
+
 def _summarise(results: list[dict[str, Any]], reg_targets: dict[str, float]) -> list[dict[str, Any]]:
     summary = []
     for r in results:
@@ -731,6 +880,16 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
             optimized_reg={t: np.asarray(r["reg_after_decode"][t]) for t in reg_targets},
             reg_targets=reg_targets,
         )
+    # Scatter view of QC prob vs each secondary reg target, grouped by method (latent = circle /
+    # green ramp, composition = triangle / blue ramp). Complements the bar chart: the bar chart
+    # collapses each method to a mean ± std, the scatter shows the per-seed cloud so the reader
+    # can see how tight each method's outputs are around the joint target.
+    _plot_qc_vs_reg_scatter(
+        results,
+        reg_targets,
+        out_dir / "qc_vs_secondary_scatter.png",
+        title="QC probability vs secondary properties (per-seed outputs)",
+    )
     # The auto-generated README is a compact summary table only. It writes to ``SUMMARY.md``
     # (not ``README.md``) so a user-written index — pointing to every figure, file, and the
     # full ANALYSIS.md — can live at ``README.md`` without being overwritten on rerun.
