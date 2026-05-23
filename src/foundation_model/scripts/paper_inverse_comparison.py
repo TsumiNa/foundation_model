@@ -11,18 +11,19 @@ ready to drop into a paper draft. Reuses the per-method helpers from
 
 The study covers:
 
-* **Latent method** with AE-alignment scale α ∈ {0, 0.1, 0.25, 0.5, 0.75, 1.0} on [0, 1].
+* **Latent method** with AE-alignment scale α ∈ {0, 0.25, 1.0} — failure-mode baseline, a useful
+  intermediate, and the [0, 1] upper bound. (Earlier runs swept finer; the three points are enough
+  to show the qualitative plateau.)
 * **Composition method** (differentiable KMD) under five configurations chosen to expose how
-  ``seed_blend``, the element whitelist, and seeding strategy affect novelty / diversity:
-    1. ``seed_blend = 1.0`` — strict seed init (the original behaviour, baseline for "no new
-       elements can enter the support set");
-    2. ``seed_blend = 0.95`` — new default; non-seed-element logits become reachable by Adam,
-       letting the optimiser introduce elements outside the seed when helpful;
-    3. (2) + ``allowed_elements`` restricted to a feasible alloy palette;
-    4. (3) + ``diversity_scale`` (positive value rewards multi-element recipes, negative rewards
-       peaky ones) — included as an ablation to show how per-output complexity can be biased;
-    5. Random initialisation (``initial_weights=None``, ``n_starts=B``) — completely free
-       exploration, no seed bias at all (Scheme D control).
+  ``seed_blend``, the element whitelist, and seeding strategy affect novelty / diversity. Labels
+  follow a "describe the config in the label" convention:
+    1. ``comp (seed)`` — ``seed_blend = 1.0`` (strict seed, support set frozen);
+    2. ``comp (seed, 5% all)`` — ``seed_blend = 0.95`` (5 % uniform mixed in, all 94 elements
+       reachable but no whitelist);
+    3. ``comp (seed, 5% all, element list)`` — (2) + ``allowed_elements = ALLOY_PALETTE``;
+    4. ``comp (seed, 5% all, element list, low diversity)`` — (3) + ``diversity_scale = 0`` so
+       per-output entropy is penalised → peaky few-element recipes (ablation);
+    5. ``comp (random)`` — ``initial_weights=None``, no seed bias.
 
     python -m foundation_model.scripts.paper_inverse_comparison \\
         --config-file samples/continual_rehearsal_demo_config_inverse_baseline.toml \\
@@ -116,10 +117,12 @@ assert len(DEFAULT_ALLOY_PALETTE) == 41
 # seed entirely (random init) as the no-seed-bias control (Scheme D).
 COMPOSITION_CONFIGS: list[dict[str, Any]] = [
     # diversity = 1.0 = no entropy penalty (default user-facing behaviour).
-    {"label": "comp\n(strict seed)", "init": "seed", "blend": 1.0, "allowed": "all", "scale": 1.0, "diversity": 1.0},
-    {"label": "comp\n(blended seed)", "init": "seed", "blend": 0.95, "allowed": "all", "scale": 1.0, "diversity": 1.0},
+    # Labels follow the "describe the config" convention: each comma-separated phrase names a
+    # knob that's been turned on relative to the previous row.
+    {"label": "comp\n(seed)", "init": "seed", "blend": 1.0, "allowed": "all", "scale": 1.0, "diversity": 1.0},
+    {"label": "comp\n(seed, 5% all)", "init": "seed", "blend": 0.95, "allowed": "all", "scale": 1.0, "diversity": 1.0},
     {
-        "label": "comp\n(alloy palette)",
+        "label": "comp\n(seed, 5% all, element list)",
         "init": "seed",
         "blend": 0.95,
         "allowed": DEFAULT_ALLOY_PALETTE,
@@ -128,16 +131,28 @@ COMPOSITION_CONFIGS: list[dict[str, Any]] = [
     },
     {
         # Ablation: clamp diversity to 0 → max entropy penalty → forced peaky few-element recipes.
-        "label": "comp\n(alloy + peaky)",
+        "label": "comp\n(seed, 5% all,\nelement list, low diversity)",
         "init": "seed",
         "blend": 0.95,
         "allowed": DEFAULT_ALLOY_PALETTE,
         "scale": 1.0,
         "diversity": 0.0,
     },
-    {"label": "comp\n(random init)", "init": "random", "blend": 0.95, "allowed": "all", "scale": 1.0, "diversity": 1.0},
+    {"label": "comp\n(random)", "init": "random", "blend": 0.95, "allowed": "all", "scale": 1.0, "diversity": 1.0},
 ]
-LATENT_ALIGN_SCALES = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]  # ae_align_scale ∈ [0, 1]
+LATENT_ALIGN_SCALES = [0.0, 0.25, 1.0]  # ae_align_scale ∈ [0, 1] — three points: failure / mid / max
+
+
+#: Per-task display title with units and a directional arrow that points the way the optimiser
+#: should drive the value. Defaults applied for the two tasks the plan §5 scenarios use. The
+#: lookup falls back to the raw task name if a task isn't in the map (so the plot still works
+#: when scenarios 1 / 2 add ``magnetic_moment`` / ``tc``).
+REG_TASK_TITLES: dict[str, str] = {
+    "formation_energy": "Formation energy [eV/atom] ↓",
+    "klat": "klat [W/mK] ↑",
+    "magnetic_moment": "Magnetic moment [μB/f.u.] ↑",
+    "tc": "Critical temperature [K] ↑",
+}
 
 
 def _plot_comparison(results: list[dict[str, Any]], reg_targets: dict[str, float], out_path: Path) -> None:
@@ -154,7 +169,7 @@ def _plot_comparison(results: list[dict[str, Any]], reg_targets: dict[str, float
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=9)
 
-    # Panel 1: QC probability.
+    # Panel 1: QC probability. The arrow makes the optimisation direction explicit at a glance.
     qc_means = [float(np.mean(r["qc_after_decode"])) for r in results]
     qc_stds = [float(np.std(r["qc_after_decode"])) for r in results]
     axes[0].bar(x, qc_means, yerr=qc_stds, color=colors, capsize=3)
@@ -162,10 +177,11 @@ def _plot_comparison(results: list[dict[str, Any]], reg_targets: dict[str, float
     _set_xticks(axes[0])
     axes[0].set_ylim(-0.02, 1.05)
     axes[0].set_ylabel("P(quasicrystal)")
-    axes[0].set_title("Quasicrystal Probability (primary)")
+    axes[0].set_title("P(quasicrystal) ↑")
     axes[0].legend(fontsize=9, loc="lower right")
 
-    # Remaining panels: regression targets.
+    # Remaining panels: regression targets. Title pulled from REG_TASK_TITLES with the unit and
+    # an arrow indicating whether the target is below (↓) or above (↑) the model's baseline.
     for ax, (t, tgt) in zip(axes[1:], reg_targets.items()):
         means = [float(np.mean(r["reg_after_decode"][t])) for r in results]
         stds = [float(np.std(r["reg_after_decode"][t])) for r in results]
@@ -173,7 +189,7 @@ def _plot_comparison(results: list[dict[str, Any]], reg_targets: dict[str, float
         ax.axhline(tgt, color="#C44E52", ls="--", lw=1.4, label=f"target = {tgt:+.1f}")
         _set_xticks(ax)
         ax.set_ylabel("Predicted value")
-        ax.set_title(t)
+        ax.set_title(REG_TASK_TITLES.get(t, t))
         ax.legend(fontsize=9, loc="best")
 
     fig.suptitle("Inverse-design comparison: latent (ae_align_scale sweep) vs differentiable KMD (configs)", y=1.00)

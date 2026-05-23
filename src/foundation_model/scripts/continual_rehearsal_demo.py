@@ -560,9 +560,23 @@ class ContinualRehearsalRunner:
                 metric = self._evaluate_task(model, name, step_dir, is_new=(name == task_name), test_keys=test_keys)
                 step_metrics[name] = metric
                 metric_history[name].append((step + 1, metric["primary"]))
+            # Persist a checkpoint after each step so the model state at any intermediate stage
+            # can be recovered (useful for "what did the encoder look like just after task K was
+            # introduced?" analyses, and for downstream restart without retraining the prefix).
+            step_ckpt = step_dir / "checkpoint.pt"
+            torch.save(
+                {
+                    "model": model.state_dict(),
+                    "task_sequence": list(cfg.task_sequence),
+                    "step": step + 1,
+                    "new_task": task_name,
+                    "active_tasks": list(active),
+                },
+                step_ckpt,
+            )
             records.append({"step": step + 1, "new_task": task_name, "metrics": step_metrics})
             summary = ", ".join(f"{k}={v['primary']:.3f}" for k, v in step_metrics.items())
-            logger.info(f"Step {step + 1}: {summary}")
+            logger.info(f"Step {step + 1}: {summary} (ckpt: {step_ckpt.relative_to(self.output_dir)})")
 
         self._plot_forgetting(metric_history)
         (self.output_dir / "experiment_records.json").write_text(json.dumps(records, indent=2), encoding="utf-8")
@@ -616,6 +630,14 @@ class ContinualRehearsalRunner:
         return torch.tensor(desc.loc[comps].values, dtype=torch.float32, device=device), comps
 
     def _evaluate_task(self, model, task_name, step_dir, *, is_new, test_keys=None) -> dict[str, float]:
+        """Evaluate ``task_name`` on the held-out test split and persist (predictions + metrics).
+
+        At every step we now save the raw `(composition, true, pred)` for **every active head**
+        so the plots can be redrawn later from the parquet without re-running training. Plots
+        themselves still go via the per-task ``_plot_*`` helpers when ``is_new`` so the per-step
+        directory stays focused on the new task; old-task parity / confusion / KR plots can be
+        regenerated downstream from the parquet if desired.
+        """
         spec = TASK_SPECS[task_name]
         kind = spec["kind"]
         model.eval()
@@ -644,6 +666,8 @@ class ContinualRehearsalRunner:
                     }
                     if is_new:
                         self._plot_parity(true, pred, task_name, r2, step_dir)
+                    self._dump_predictions(task_name, step_dir, comps=list(comps), true=true, pred=pred)
+                    self._dump_metrics(task_name, step_dir, metric)
                     return metric
                 logits = head(h)
                 pred = logits.argmax(dim=-1).cpu().numpy()
@@ -657,6 +681,8 @@ class ContinualRehearsalRunner:
                 }
                 if is_new:
                     self._plot_confusion(true, pred, task_name, acc, step_dir, spec["num_classes"])
+                self._dump_predictions(task_name, step_dir, comps=list(comps), true=true, pred=pred)
+                self._dump_metrics(task_name, step_dir, metric)
                 return metric
 
             # kernel regression
@@ -688,7 +714,56 @@ class ContinualRehearsalRunner:
             }
             if is_new:
                 self._plot_kr_sequences(keep, t_list, true_parts, pred, task_name, step_dir)
+            # For KR tasks the parquet carries the t and y series per composition so the curves
+            # are fully reconstructible without rerunning the encoder.
+            self._dump_kr_predictions(
+                task_name,
+                step_dir,
+                comps=list(keep),
+                t_list=[t.cpu().numpy() for t in t_list],
+                true_parts=true_parts,
+                pred=pred,
+            )
+            self._dump_metrics(task_name, step_dir, metric)
             return metric
+
+    # --- per-step persistence helpers --------------------------------------------------------
+
+    def _dump_predictions(self, task_name: str, step_dir: Path, *, comps: list[str], true, pred) -> None:
+        """Persist (composition, true, pred) for a regression or classification task."""
+        df = pd.DataFrame({"composition": comps, "true": true, "pred": pred})
+        df.to_parquet(step_dir / f"{task_name}_pred.parquet")
+
+    def _dump_kr_predictions(
+        self,
+        task_name: str,
+        step_dir: Path,
+        *,
+        comps: list[str],
+        t_list: list[np.ndarray],
+        true_parts: list[np.ndarray],
+        pred,
+    ) -> None:
+        """Persist KR test predictions in long-form: one row per (composition, t)."""
+        rows: list[dict[str, object]] = []
+        offset = 0
+        for comp, t_arr, y_true in zip(comps, t_list, true_parts):
+            n = int(y_true.size)
+            for k in range(n):
+                rows.append(
+                    {
+                        "composition": comp,
+                        "t": float(t_arr[k]),
+                        "true": float(y_true[k]),
+                        "pred": float(pred[offset + k]),
+                    }
+                )
+            offset += n
+        pd.DataFrame(rows).to_parquet(step_dir / f"{task_name}_pred.parquet")
+
+    def _dump_metrics(self, task_name: str, step_dir: Path, metric: dict[str, float]) -> None:
+        """Persist the per-task metric dict next to the parquet for easy human / scripted inspection."""
+        (step_dir / f"{task_name}_metrics.json").write_text(json.dumps(metric, indent=2), encoding="utf-8")
 
     # ------------------------------------------------------------------ inverse design
 

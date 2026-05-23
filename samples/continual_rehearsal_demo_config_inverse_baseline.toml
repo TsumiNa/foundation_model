@@ -18,7 +18,12 @@ qc_preprocessing_path = "data/preprocessing_objects_20250615.pkl.z"
 superconductor_path = "data/NEMAD_superconductor_20260425.parquet"
 magnetic_path = "data/NEMAD_magnetic_20260419.parquet"
 phonix_path = "data/phonix-db-filtered_20260425.parquet"
-output_dir = "artifacts/continual_rehearsal_inverse_baseline"
+# Unified pipeline output: one parent folder holds training + finetune + inverse-design.
+# This script (continual_rehearsal_demo) writes the rehearsal stage into the ``training/``
+# subfolder; the downstream scripts (finetune_inverse_heads, paper_inverse_comparison) write
+# into the sibling ``finetune/`` and ``inverse_design/`` subfolders so all artefacts for one
+# pipeline run live under a single directory.
+output_dir = "artifacts/inverse_design_run/training"
 
 # 11 tasks: 7 reg + 1 KR (dos_density) + 3 tail (formation_energy → klat → material_type).
 task_sequence = ["density", "tc", "pressure", "curie", "magnetization", "neel", "kp", "dos_density", "formation_energy", "klat", "material_type"]
