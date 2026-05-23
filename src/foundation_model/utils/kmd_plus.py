@@ -150,6 +150,50 @@ class KMD:
         """Alias for :meth:`transform`."""
         return self.transform(weight)
 
+    def kernel_torch(self, *, device=None, dtype=None):  # type: ignore[no-untyped-def]
+        """Return the precomputed kernel as a (cached) ``torch.Tensor``.
+
+        The kernel is constant after construction, so we cache the torch view once and move it
+        to the caller's device/dtype on demand.
+
+        Parameters
+        ----------
+        device, dtype:
+            Optional torch device / dtype overrides for the returned view.
+        """
+        import torch
+
+        cached = getattr(self, "_kernel_torch", None)
+        if cached is None:
+            cached = torch.as_tensor(self._kernel)
+            self._kernel_torch = cached
+        if device is not None or dtype is not None:
+            return cached.to(device=device, dtype=dtype)
+        return cached
+
+    def transform_torch(self, weight, *, device=None, dtype=None):  # type: ignore[no-untyped-def]
+        """Differentiable torch counterpart of :meth:`transform`.
+
+        :meth:`transform` is a single matrix multiplication ``weight @ K`` with ``K`` constant —
+        so the only step needed for end-to-end gradient flow into composition weights (e.g. for
+        gradient-based inverse design in composition space) is doing that matmul in torch.
+
+        Parameters
+        ----------
+        weight : torch.Tensor
+            Mixing ratios, shape ``(n_samples, n_components)``. Any ``device`` / ``dtype``.
+            Gradients flow through this argument.
+        device, dtype : optional
+            Overrides for the cached kernel view; defaults to ``weight``'s device/dtype.
+
+        Returns
+        -------
+        torch.Tensor
+            Descriptors, same shape as :meth:`transform` would produce.
+        """
+        kernel = self.kernel_torch(device=device or weight.device, dtype=dtype or weight.dtype)
+        return weight @ kernel
+
     def inverse(self, kmd: npt.ArrayLike) -> npt.NDArray[np.float64]:
         """Recover mixing weights from descriptors (descriptors → materials).
 

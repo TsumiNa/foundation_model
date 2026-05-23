@@ -61,6 +61,13 @@ OptimizationResult = namedtuple(
     "OptimizationResult", ["optimized_input", "optimized_target", "initial_score", "trajectory"]
 )
 
+# Composition-space optimization (gradient descent over element weights w ∈ simplex). The optimised
+# w *is* the recipe (no AE-decode round-trip), so it is reported alongside the descriptor x = w @ K.
+CompositionOptimizationResult = namedtuple(
+    "CompositionOptimizationResult",
+    ["optimized_weights", "optimized_descriptor", "optimized_target", "initial_score", "trajectory"],
+)
+
 
 class FlexibleMultiTaskModel(L.LightningModule):
     """
@@ -2136,4 +2143,219 @@ class FlexibleMultiTaskModel(L.LightningModule):
             optimized_target=opt_target_tensor,
             initial_score=initial_score_tensor,
             trajectory=traj_tensor,
+        )
+
+    def optimize_composition(
+        self,
+        kmd_kernel: torch.Tensor,
+        *,
+        initial_weights: torch.Tensor | None = None,
+        n_starts: int = 16,
+        task_targets: Mapping[str, torch.Tensor | float] | None = None,
+        class_targets: Mapping[str, int | Sequence[int]] | None = None,
+        class_target_weight: float = 1.0,
+        sparsity_weight: float = 0.0,
+        steps: int = 300,
+        lr: float = 0.05,
+    ) -> CompositionOptimizationResult:
+        """Gradient-based inverse design in **composition space**.
+
+        Optimises a simplex-constrained element-weight vector ``w`` directly through the
+        differentiable KMD transform ``x = w @ K`` and the supervised heads:
+
+        ``logits → w = softmax(logits) → x = w @ kmd_kernel → encoder → tanh → heads → loss``
+
+        Because the optimisation variable *is* the recipe, there is **no AE-decode round-trip**:
+        the optimised ``w`` is the composition you would report. Compared to :meth:`optimize_latent`
+        in ``"latent"`` mode, this method (a) eliminates the round-trip fidelity drop, (b) keeps the
+        solution on the legitimate composition simplex by construction, and (c) makes ``w`` itself
+        the output.
+
+        Parameters
+        ----------
+        kmd_kernel : torch.Tensor
+            The precomputed KMD kernel matrix, shape ``(n_components, x_dim)`` — typically obtained
+            from :meth:`foundation_model.utils.kmd_plus.KMD.kernel_torch`. ``x_dim`` must match the
+            encoder's input dim.
+        initial_weights : torch.Tensor | None
+            Seed weights, shape ``(B, n_components)``. If ``None``, ``n_starts`` random starts are
+            sampled from a Gaussian over the logits (mildly diverse simplex starting points).
+        n_starts : int
+            Batch size when ``initial_weights is None``. Default 16.
+        task_targets, class_targets, class_target_weight :
+            Same semantics as :meth:`optimize_latent`. Regression targets are matched by MSE;
+            classification objectives add ``-log P(target classes)`` (scaled by
+            ``class_target_weight``).
+        sparsity_weight : float, optional
+            Adds a negative-entropy term ``λ · H(w)`` to the loss, pushing ``w`` toward few-element
+            mixtures. Default 0 (no sparsity pressure).
+        steps : int
+            Adam optimisation steps. Default 300.
+        lr : float
+            Adam learning rate over the logits. Default 0.05.
+
+        Returns
+        -------
+        CompositionOptimizationResult
+            with fields:
+            - ``optimized_weights``    : (B, n_components), each row a simplex point — the recipe.
+            - ``optimized_descriptor`` : (B, x_dim), equals ``optimized_weights @ kmd_kernel``.
+            - ``optimized_target``     : (B, T), final per-regression-task predicted values.
+            - ``initial_score``        : (B, T), same shape, predicted at step 0.
+            - ``trajectory``           : (steps, B, T), per-task values across optimisation.
+        """
+        # --- Validate the kernel ----------------------------------------------------------------
+        if not isinstance(kmd_kernel, torch.Tensor) or kmd_kernel.ndim != 2:
+            raise ValueError("kmd_kernel must be a 2D torch.Tensor of shape (n_components, x_dim).")
+        n_components, x_dim = kmd_kernel.shape
+        expected_dim = getattr(self.encoder, "input_dim", None)
+        if expected_dim is not None and x_dim != expected_dim:
+            raise ValueError(f"kmd_kernel.shape[1]={x_dim} does not match encoder.input_dim={expected_dim}.")
+
+        # --- Validate regression / classification objectives (mirrors optimize_latent) ----------
+        target_tasks: dict[str, torch.Tensor | float] | None = None
+        if task_targets is not None:
+            if not isinstance(task_targets, Mapping) or len(task_targets) == 0:
+                raise ValueError("task_targets must be a non-empty mapping of task_name -> target_value")
+            target_tasks = dict(task_targets)
+            for name in target_tasks:
+                if name not in self.task_heads:
+                    raise ValueError(
+                        f"Task '{name}' not found in model. Available tasks: {list(self.task_heads.keys())}"
+                    )
+                if self.task_configs_map[name].type != TaskType.REGRESSION:
+                    raise ValueError(f"Task '{name}' must be a regression task for optimization.")
+
+        class_target_map: dict[str, list[int]] | None = None
+        if class_targets is not None:
+            if not isinstance(class_targets, Mapping) or len(class_targets) == 0:
+                raise ValueError("class_targets must be a non-empty mapping of task_name -> class index/indices")
+            if class_target_weight <= 0:
+                raise ValueError(f"class_target_weight must be > 0, got {class_target_weight}")
+            class_target_map = {}
+            for name, classes in class_targets.items():
+                if name not in self.task_heads:
+                    raise ValueError(
+                        f"Task '{name}' not found in model. Available tasks: {list(self.task_heads.keys())}"
+                    )
+                cls_cfg = self.task_configs_map[name]
+                if cls_cfg.type != TaskType.CLASSIFICATION:
+                    raise ValueError(f"class_targets task '{name}' must be a classification task.")
+                idxs = [int(classes)] if isinstance(classes, int) else [int(c) for c in classes]
+                if not idxs:
+                    raise ValueError(f"class_targets['{name}'] must specify at least one class index.")
+                num_classes = getattr(cls_cfg, "num_classes", None)
+                if num_classes is not None and any(not 0 <= i < num_classes for i in idxs):
+                    raise ValueError(
+                        f"class_targets['{name}'] indices {idxs} out of range for a "
+                        f"{num_classes}-class head; valid indices are [0, {num_classes})."
+                    )
+                class_target_map[name] = idxs
+
+        if target_tasks is None and class_target_map is None:
+            raise ValueError("Provide at least one of task_targets / class_targets.")
+        if sparsity_weight < 0:
+            raise ValueError(f"sparsity_weight must be >= 0, got {sparsity_weight}")
+
+        # --- Set up the optimisation variable: logits over n_components -------------------------
+        was_training = self.training
+        self.eval()
+        device = next(self.parameters()).device
+        kmd_kernel = kmd_kernel.to(device=device, dtype=torch.float32)
+
+        if initial_weights is None:
+            if n_starts < 1:
+                raise ValueError("n_starts must be >= 1 when initial_weights is None.")
+            torch.manual_seed(torch.initial_seed())  # respect outer seeding
+            logits = torch.randn(n_starts, n_components, device=device) * 0.5
+        else:
+            if initial_weights.ndim != 2 or initial_weights.shape[1] != n_components:
+                raise ValueError(
+                    f"initial_weights must have shape (B, {n_components}); got {tuple(initial_weights.shape)}."
+                )
+            w0 = initial_weights.to(device=device, dtype=torch.float32).clamp(min=1e-9)
+            # softmax(log w0) recovers w0 (up to the simplex normalisation), so this lets the user
+            # seed from real compositions and have step-0 logits reproduce them.
+            logits = torch.log(w0).detach().clone()
+        logits = logits.requires_grad_(True)
+        optimizer = optim.Adam([logits], lr=lr)
+
+        tasks_for_optimization: list[str] = list(target_tasks.keys()) if target_tasks is not None else []
+        target_tensor_map: dict[str, torch.Tensor] = {}
+        if target_tasks is not None:
+            target_tensor_map = {
+                name: torch.as_tensor(val, device=device, dtype=torch.float32) for name, val in target_tasks.items()
+            }
+        class_index_map: dict[str, torch.Tensor] = {}
+        if class_target_map is not None:
+            class_index_map = {
+                name: torch.as_tensor(idxs, device=device, dtype=torch.long) for name, idxs in class_target_map.items()
+            }
+
+        def _heads_forward(h_task: torch.Tensor) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
+            """Run regression heads, return (per-task predictions, loss terms)."""
+            preds, terms = [], []
+            for name in tasks_for_optimization:
+                pred = self.task_heads[name](h_task)
+                reduced = pred if pred.ndim == 1 else pred.mean(dim=tuple(range(1, pred.ndim)))
+                preds.append(reduced)
+                tgt = target_tensor_map[name]
+                if tgt.ndim == 0:
+                    tgt = tgt.reshape([1] * pred.ndim)
+                if tgt.shape != pred.shape:
+                    tgt = tgt.expand(pred.shape)
+                terms.append(F.mse_loss(pred, tgt))
+            for cname, cidx in class_index_map.items():
+                cls_logits = self.task_heads[cname](h_task)
+                log_probs = F.log_softmax(cls_logits, dim=-1)
+                combined = torch.logsumexp(log_probs.index_select(-1, cidx), dim=-1)
+                terms.append(class_target_weight * (-combined.mean()))
+            return preds, terms
+
+        def _stack(values: list[torch.Tensor], B: int) -> torch.Tensor:
+            return torch.stack(values, dim=-1) if values else torch.zeros((B, 0), device=device)
+
+        # --- Record initial scores --------------------------------------------------------------
+        with torch.no_grad():
+            w0 = torch.softmax(logits, dim=-1)
+            h0 = torch.tanh(self.encoder(w0 @ kmd_kernel))
+            initial_preds, _ = _heads_forward(h0)
+            initial_score = _stack([p.detach() for p in initial_preds], logits.shape[0])
+
+        # --- Optimisation loop ------------------------------------------------------------------
+        trajectory: list[torch.Tensor] = []
+        for _ in range(steps):
+            optimizer.zero_grad()
+            w = torch.softmax(logits, dim=-1)
+            x = w @ kmd_kernel
+            h_task = torch.tanh(self.encoder(x))
+            preds, terms = _heads_forward(h_task)
+            if sparsity_weight > 0:
+                # Negative entropy of w (minimise entropy → push w toward few-element mixtures).
+                entropy = -(w * w.clamp(min=1e-12).log()).sum(dim=-1).mean()
+                terms.append(sparsity_weight * entropy)
+            loss = torch.stack(terms).mean()
+            loss.backward()
+            optimizer.step()
+            trajectory.append(_stack([p.detach() for p in preds], logits.shape[0]))
+
+        # --- Final state ------------------------------------------------------------------------
+        with torch.no_grad():
+            w_final = torch.softmax(logits, dim=-1)
+            x_final = w_final @ kmd_kernel
+            h_final = torch.tanh(self.encoder(x_final))
+            final_preds, _ = _heads_forward(h_final)
+            final_target = _stack([p.detach() for p in final_preds], logits.shape[0])
+
+        if was_training:
+            self.train()
+
+        return CompositionOptimizationResult(
+            optimized_weights=w_final.detach(),
+            optimized_descriptor=x_final.detach(),
+            optimized_target=final_target,
+            initial_score=initial_score,
+            trajectory=torch.stack(trajectory, dim=0)
+            if trajectory
+            else torch.empty((0, logits.shape[0], 0), device=device),
         )

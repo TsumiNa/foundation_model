@@ -981,6 +981,87 @@ def test_optimize_latent_class_targets_only_no_regression():
     assert res.optimized_target.shape == (4, 1, 0)  # no regression tasks tracked
 
 
+# --- optimize_composition (differentiable KMD) --------------------------------
+
+
+def test_optimize_composition_runs_and_returns_simplex_weights():
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()  # INPUT_DIM=20
+    n_components = 6
+    kmd_kernel = torch.randn(n_components, INPUT_DIM)
+    res = model.optimize_composition(
+        kmd_kernel,
+        task_targets={"prop": 1.0},
+        class_targets={"cls": [1]},
+        class_target_weight=3.0,
+        n_starts=4,
+        steps=10,
+    )
+    assert res.optimized_weights.shape == (4, n_components)
+    # Output is a simplex: non-negative, rows sum to 1.
+    assert (res.optimized_weights >= 0).all()
+    assert torch.allclose(res.optimized_weights.sum(dim=-1), torch.ones(4), atol=1e-5)
+    assert res.optimized_descriptor.shape == (4, INPUT_DIM)
+    # Descriptor matches the matmul exactly (no round-trip).
+    assert torch.allclose(res.optimized_descriptor, res.optimized_weights @ kmd_kernel, atol=1e-5)
+    assert res.optimized_target.shape == (4, 1)
+    assert res.trajectory.shape == (10, 4, 1)
+
+
+def test_optimize_composition_validates_kernel_and_objectives():
+    model = _make_reg_clf_model()
+    # kernel must be 2D
+    with pytest.raises(ValueError, match="2D torch.Tensor"):
+        model.optimize_composition(torch.randn(6), task_targets={"prop": 1.0}, n_starts=2, steps=2)
+    # kernel's x_dim must match encoder.input_dim
+    with pytest.raises(ValueError, match="encoder.input_dim"):
+        model.optimize_composition(torch.randn(6, INPUT_DIM + 1), task_targets={"prop": 1.0}, n_starts=2, steps=2)
+    # at least one objective required
+    with pytest.raises(ValueError, match="at least one of task_targets"):
+        model.optimize_composition(torch.randn(6, INPUT_DIM), n_starts=2, steps=2)
+
+
+def test_optimize_composition_increases_target_class_probability():
+    """Optimising for a class with high class_target_weight raises P(target) from a uniform seed."""
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    model.eval()
+    kmd_kernel = torch.randn(6, INPUT_DIM)
+    target = [1]
+    init_w = torch.full((4, 6), 1.0 / 6)
+
+    def _prob(w):
+        with torch.no_grad():
+            logits = model.task_heads["cls"](torch.tanh(model.encoder(w @ kmd_kernel)))
+            return torch.softmax(logits, dim=-1)[:, target].sum(dim=-1).mean().item()
+
+    res = model.optimize_composition(
+        kmd_kernel,
+        initial_weights=init_w,
+        class_targets={"cls": target},
+        class_target_weight=5.0,
+        steps=200,
+        lr=0.2,
+    )
+    assert _prob(res.optimized_weights) > _prob(init_w)
+
+
+def test_optimize_composition_uses_kmd_kernel_torch():
+    """End-to-end: a real KMD's kernel_torch flows into optimize_composition."""
+    from foundation_model.utils.kmd_plus import KMD
+
+    rng = np.random.default_rng(0)
+    # 1d with n_features=5, n_grids=4 → x_dim = 20 (matches INPUT_DIM).
+    cf = rng.normal(size=(7, 5))
+    kmd = KMD(cf, method="1d", n_grids=4)
+    model = _make_reg_clf_model()
+    kernel = kmd.kernel_torch()
+    assert kernel.shape == (7, INPUT_DIM)
+    res = model.optimize_composition(kernel, task_targets={"prop": 0.5}, n_starts=3, steps=10)
+    assert res.optimized_weights.shape == (3, 7)
+    assert torch.allclose(res.optimized_weights.sum(dim=-1), torch.ones(3), atol=1e-5)
+
+
 def test_optimize_latent_space_with_ae():
     model = _make_model()
     model.eval()
