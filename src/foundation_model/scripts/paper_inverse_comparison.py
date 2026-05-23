@@ -298,6 +298,10 @@ def _plot_element_frequency_heatmap(
                 )
     cbar = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.01)
     cbar.set_label(f"appearance count (out of {n_per_method} outputs)")
+    # The shared demo style sets ``axes.grid = True`` globally, which on an ``imshow`` heatmap
+    # draws grid lines through every cell centre (major ticks coincide with cell centres). Turn
+    # the grid off here so the cells stay clean — matches what continual_rehearsal_full.py does.
+    ax.grid(False)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
