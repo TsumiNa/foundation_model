@@ -61,10 +61,55 @@ from foundation_model.scripts.eval_inverse_methods import (
     _seed_weights_from_compositions,
 )
 
-# Default feasible alloy palette for the constrained-composition runs. These are the metals most
-# commonly used to form quasicrystals experimentally; the model is free to pick any blend within
-# this set while exploration of e.g. lanthanides / actinides is suppressed.
-DEFAULT_ALLOY_PALETTE = ["Mg", "Al", "Cu", "Ni", "Zn", "Ag", "Pd", "Co", "Fe", "Re", "Ga", "In"]
+# Feasible alloy palette for the constrained-composition runs. Designed per the plan in
+# docs/continual_rehearsal_full_PLAN.md §5: light alkaline-earth + group 13/14 + the full 4th/5th
+# period transition metals (Tc excluded for radioactivity) + Au (needed for Au-Ga-RE seeds) +
+# accessible lanthanides (Pm radioactive, Tm/Lu scarce). 41 symbols total — wide enough to expose
+# multiple QC-prone basins, narrow enough to suppress Pu/F/Cs/Tm-style non-physical model bias.
+DEFAULT_ALLOY_PALETTE = [
+    "Mg",
+    "Ca",
+    "B",
+    "Al",
+    "Ga",
+    "In",
+    "Tl",
+    "Si",
+    "Ge",
+    "Sc",
+    "Ti",
+    "V",
+    "Cr",
+    "Mn",
+    "Fe",
+    "Co",
+    "Ni",
+    "Cu",
+    "Zn",
+    "Y",
+    "Zr",
+    "Nb",
+    "Mo",
+    "Ru",
+    "Rh",
+    "Pd",
+    "Ag",
+    "Cd",
+    "Au",
+    "La",
+    "Ce",
+    "Pr",
+    "Nd",
+    "Sm",
+    "Eu",
+    "Gd",
+    "Tb",
+    "Dy",
+    "Ho",
+    "Er",
+    "Yb",
+]
+assert len(DEFAULT_ALLOY_PALETTE) == 41
 
 # Composition-method configurations. Each row produces one bar in the comparison plot. The first
 # two isolate the seed_blend effect; the next two layer on element constraints; the last drops the
@@ -235,6 +280,9 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
         encoding="utf-8",
     )
     _plot_comparison(results, reg_targets, out_dir / "comparison.png")
+    # The auto-generated README is a compact summary table only. It writes to ``SUMMARY.md``
+    # (not ``README.md``) so a user-written index — pointing to every figure, file, and the
+    # full ANALYSIS.md — can live at ``README.md`` without being overwritten on rerun.
     _write_readme(out_dir, summary, reg_targets, ckpt_path)
     logger.info(f"Paper materials written to {out_dir}")
 
@@ -323,7 +371,7 @@ def _write_readme(out_dir: Path, summary: list[dict[str, Any]], reg_targets: dic
         qc_cell = f"{row['qc_after_mean']:.3f} ± {row['qc_after_std']:.3f}"
         reg_cells = [f"{row[f'{t}_after_mean']:+.2f} ± {row[f'{t}_after_std']:.2f}" for t in reg_targets]
         lines.append(f"| {row['label']} | {qc_cell} | " + " | ".join(reg_cells) + f" | {row['elapsed_s']} |")
-    (out_dir / "README.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (out_dir / "SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _parse_args(argv: list[str] | None = None) -> tuple[ContinualRehearsalConfig, argparse.Namespace]:

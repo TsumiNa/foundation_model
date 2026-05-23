@@ -93,6 +93,17 @@ def finetune(config: ContinualRehearsalConfig, ckpt_path: Path, inverse_heads: t
     logger.info(f"Freezing everything except heads: {sorted(inverse_heads)}")
     freeze_except(model, inverse_heads)
 
+    # Deactivate every non-inverse head so the Trainer's validation_step doesn't try to forward
+    # them on a batch that only carries the three inverse-head columns. ``disable_task`` keeps the
+    # weights in ``model.disabled_task_heads`` (so the saved state_dict still contains them) but
+    # removes them from ``model.task_heads`` so the forward loop iterates only over the inverse
+    # ones. Important for KR heads (e.g. ``dos_density``) whose forward expects a ``t_sequences``
+    # entry that the inverse-only DataModule does not provide.
+    other_active = [name for name in list(model.task_heads.keys()) if name not in inverse_heads]
+    if other_active:
+        logger.info(f"Disabling {len(other_active)} non-inverse head(s) for the duration of fine-tune: {other_active}")
+        model.disable_task(*other_active)
+
     # Use the same task configs as training (built by the runner), but restrict the DataModule to
     # the inverse-head tasks and disable masking (we want all available labels for these heads).
     task_configs = {name: runner._build_task_config(name) for name in inverse_heads}
@@ -118,6 +129,12 @@ def finetune(config: ContinualRehearsalConfig, ckpt_path: Path, inverse_heads: t
         enable_progress_bar=False,
     )
     trainer.fit(model, datamodule=datamodule)
+
+    # Re-activate the heads we hid so the saved state_dict's key layout matches what
+    # paper_inverse_comparison / eval_inverse_methods rebuild (all heads under ``task_heads``).
+    if other_active:
+        logger.info(f"Re-enabling {len(other_active)} previously-disabled head(s) before save.")
+        model.enable_task(*other_active)
 
     out_path = Path(config.output_dir) / "final_model.pt"
     Path(config.output_dir).mkdir(parents=True, exist_ok=True)

@@ -1,11 +1,15 @@
-# Cheaper baseline for inverse-design experiments.
+# Preview baseline for the inverse-design pipeline (per docs/continual_rehearsal_full_PLAN.md).
 #
-# Drops the two expensive kernel-regression tasks (dos_density, power_factor) — they aren't used
-# by inverse design and dominated the cost of the full run. Keeps the 7 other regression tasks for
-# encoder diversity. The last three are still formation_energy → klat → material_type so the
-# inverse heads stay freshest at the end of the continual sequence. final_model.pt is saved so
-# inverse-design experiments (cycle-consistency vs differentiable KMD) can iterate without
-# retraining.
+# Compared to the previous "no KR" baseline this version adds ONE kernel-regression task —
+# ``dos_density`` — right before the inverse-design tail. Rationale: a KR task in the training
+# mix gives the encoder broader inductive coverage of property-vs-T behaviour without paying the
+# cost of the full 7 KR tasks. The last 3 tasks remain formation_energy → klat → material_type
+# so the inverse heads stay freshest at the end of the continual sequence.
+#
+# Inverse-design defaults match plan §5: 17 top-QC dedup seeds + 3 explicit Au-Ga-Ln formers
+# (Au65Ga20{Gd,Tb,Dy}15), giving N=20 seeds per scenario. ``ae_align_scale=0.5`` is the empirical
+# sweet spot from PR #18. final_model.pt is saved so the paper_inverse_comparison + finetune
+# scripts can iterate without retraining.
 #
 #   ./run_continual_rehearsal_demo.sh samples/continual_rehearsal_demo_config_inverse_baseline.toml
 
@@ -16,8 +20,8 @@ magnetic_path = "data/NEMAD_magnetic_20260419.parquet"
 phonix_path = "data/phonix-db-filtered_20260425.parquet"
 output_dir = "artifacts/continual_rehearsal_inverse_baseline"
 
-# 10 tasks, no KR; last 3 = formation_energy, klat, material_type (freshest at inverse-design time).
-task_sequence = ["density", "tc", "pressure", "curie", "magnetization", "neel", "kp", "formation_energy", "klat", "material_type"]
+# 11 tasks: 7 reg + 1 KR (dos_density) + 3 tail (formation_energy → klat → material_type).
+task_sequence = ["density", "tc", "pressure", "curie", "magnetization", "neel", "kp", "dos_density", "formation_energy", "klat", "material_type"]
 replay_ratio = 0.05
 
 max_epochs_per_step = 20
@@ -29,8 +33,8 @@ head_hidden_dim = 64
 head_lr = 0.005
 encoder_lr = 0.005
 
-# Inverse design (defaults match the full config; we'll override via --inverse-only later).
-inverse_n_seeds = 16
+# Inverse design (per plan §5). n_seeds = 17 strategy + 3 explicit = 20 total.
+inverse_n_seeds = 20
 inverse_steps = 300
 inverse_lr = 0.05
 inverse_class_weight = 5.0
@@ -39,6 +43,7 @@ inverse_reg_tasks = ["formation_energy", "klat"]
 inverse_reg_targets = [-2.0, 2.0]
 inverse_seed_strategy = "top_qc"
 inverse_seed_split = "train"
+inverse_seed_explicit_append = ["Au65 Ga20 Gd15", "Au65 Ga20 Tb15", "Au65 Ga20 Dy15"]
 
 random_seed = 2025
 datamodule_random_seed = 42

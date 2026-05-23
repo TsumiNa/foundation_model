@@ -246,6 +246,11 @@ class ContinualRehearsalConfig:
     inverse_seed_strategy: str = "top_qc"
     inverse_seed_split: str = "train"  # split to draw seeds from ("train"/"val"/"test"/"all")
     inverse_seed_compositions: list[str] = field(default_factory=list)  # used when strategy == "explicit"
+    # Compositions appended to the strategy-selected seeds regardless of QC ranking. Each is
+    # required to have a computable descriptor (we fail-fast on those that don't). The output
+    # ``seeds.json`` records the explicit-append entries separately from the strategy-selected
+    # ones — see ``_select_seeds`` below.
+    inverse_seed_explicit_append: list[str] = field(default_factory=list)
 
     random_seed: int = 2025
     datamodule_random_seed: int = 42
@@ -774,14 +779,39 @@ class ContinualRehearsalRunner:
         top-QC list tends to collapse into many near-duplicates of the same alloy family (e.g.
         Mg-Al-Cu in slightly different ratios), which both wastes seed budget and is misleading
         when reporting the diversity of inverse-design outputs.
+
+        If ``inverse_seed_explicit_append`` is non-empty, those compositions are added on top of
+        the strategy-selected seeds (after the same element-system dedup). The strategy budget is
+        reduced by the number of appended seeds, so the total length equals ``inverse_n_seeds``.
+        Appended compositions whose descriptor cannot be computed are rejected fail-fast.
         """
         cfg = self.config
         n = cfg.inverse_n_seeds
 
+        # Pre-validate the explicit-append seeds (if any) so we can fail fast on bad input.
+        appended: list[str] = []
+        for raw in cfg.inverse_seed_explicit_append:
+            norm = normalize_composition(raw) or str(raw)
+            if norm not in self._desc_cache and self.descriptor_fn([norm]).empty:
+                raise ValueError(
+                    f"inverse_seed_explicit_append entry {raw!r} has no computable descriptor "
+                    "(check the formula and that all elements are in DEFAULT_ELEMENTS)."
+                )
+            appended.append(norm)
+        # Dedup the appended list itself by element system (in case the user listed near-duplicates).
+        appended = self._dedupe_by_element_system(appended, len(appended))
+        n_strategy = max(0, n - len(appended))
+
+        def _finalise(strategy_seeds: list[str]) -> list[str]:
+            """Combine strategy seeds + explicit-append, skipping any duplicate element systems."""
+            seen_keys = {self._element_system(c) for c in appended}
+            kept_strategy = [c for c in strategy_seeds if self._element_system(c) not in seen_keys]
+            return kept_strategy[:n_strategy] + appended
+
         if cfg.inverse_seed_strategy == "explicit":
             seeds = [normalize_composition(c) or str(c) for c in cfg.inverse_seed_compositions]
             seeds = [c for c in seeds if c in self._desc_cache or not self.descriptor_fn([c]).empty]
-            return self._dedupe_by_element_system(seeds, n)
+            return _finalise(self._dedupe_by_element_system(seeds, n_strategy))
 
         # Candidate pool: the chosen split of the material_type frame, with a valid descriptor.
         frame = self.task_frames["material_type"]
@@ -790,13 +820,13 @@ class ContinualRehearsalRunner:
         )
         pool = [c for c in index if c in self._desc_cache or not self.descriptor_fn([c]).empty]
         if not pool:
-            return []
+            return appended  # nothing in the pool — fall back to just the explicit appends
 
         if cfg.inverse_seed_strategy == "random":
             rng = np.random.default_rng(cfg.random_seed)
             # Shuffle the whole pool, then dedupe by element system to keep ``n`` unique families.
             shuffled = [pool[i] for i in rng.permutation(len(pool))]
-            return self._dedupe_by_element_system(shuffled, n)
+            return _finalise(self._dedupe_by_element_system(shuffled, n_strategy))
 
         # "top_qc": highest predicted QC probability — dedup keeps the best representative
         # per element set, so 16 seeds means 16 distinct alloy families (not 16 ratio variants
@@ -804,7 +834,7 @@ class ContinualRehearsalRunner:
         x, pool = self._descriptor_tensor(pool, device)
         probs = qc_prob_fn(x)
         ranked = [pool[i] for i in np.argsort(probs)[::-1]]
-        return self._dedupe_by_element_system(ranked, n)
+        return _finalise(self._dedupe_by_element_system(ranked, n_strategy))
 
     @classmethod
     def _dedupe_by_element_system(cls, candidates: list[str], n: int) -> list[str]:
@@ -912,7 +942,6 @@ class ContinualRehearsalRunner:
         plt.close(fig)
 
     def _plot_kr_sequences(self, comps, t_list, true_parts, pred, task_name, step_dir):
-        color = self._task_colors.get(task_name, _PALETTE[0])
         k = min(3, len(comps))
         fig, axes = plt.subplots(1, k, figsize=(4.2 * k, 3.7), squeeze=False)
         offset = 0
@@ -924,7 +953,9 @@ class ContinualRehearsalRunner:
             pred_i = pred[offset : offset + n]
             order = np.argsort(t)  # ensure a clean left-to-right curve
             (line_true,) = ax.plot(t[order], true_i[order], color="#444444", lw=1.8, label="True")
-            (line_pred,) = ax.plot(t[order], pred_i[order], color=color, lw=1.6, ls="--", label="Predicted")
+            # Prediction line uses the same blue as every regression parity scatter, so "Predicted"
+            # reads consistently across regression / kernel-regression panels.
+            (line_pred,) = ax.plot(t[order], pred_i[order], color=_SCATTER_COLOR, lw=1.6, ls="--", label="Predicted")
             ax.set_xlabel("t")
             if i == 0:
                 ax.set_ylabel("Value")
