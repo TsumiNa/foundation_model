@@ -1680,8 +1680,10 @@ class ContinualRehearsalFullRunner:
         ``optimized_weights`` in each path's ``result.json`` gives the (B, n_components) recipes;
         an element is "present" in a recipe when its weight > ``eps``. Cell value = #recipes
         containing the element (0..B). Elements absent from any seed (``seed_element_pool``) are
-        highlighted in the x-axis label (bold + underline + green) as the inverse-design
-        **element-discovery signal**.
+        highlighted on the x-axis label (**bold + orange**) as the inverse-design
+        **element-discovery signal**. Orange (#E67E22) is chosen for high contrast against the
+        Blues heatmap cmap and to stay visually distinct from the project's blue / green / red
+        palette used elsewhere (composition bars / latent bars / target lines).
         """
         path_names = [p for p in INVERSE_PATHS if p in paths]
         if not path_names:
@@ -1706,15 +1708,14 @@ class ContinualRehearsalFullRunner:
         im = ax.imshow(sub, cmap="Blues", aspect="auto")
         ax.set_yticks(range(len(path_names)), path_names)
         ax.set_xticks(range(len(labels)), labels, rotation=0, fontsize=9)
-        # Bold + underline + green for "discovered" elements (not in any seed). This is the
-        # element-discovery signal the §0a / paper narrative leans on.
+        # Bold + orange for "discovered" elements (not in any seed). No underline — bold + a
+        # contrasting non-palette colour is enough to read at a glance, and underlining glyphs
+        # under rotated/tight tick labels was visually noisy.
         for idx, sym in enumerate(labels):
             tick = ax.get_xticklabels()[idx]
             if sym not in seed_element_pool:
                 tick.set_fontweight("bold")
-                tick.set_color("#1c4d2c")
-                # matplotlib doesn't expose a clean "underline" — use the unicode combining mark
-                # by reshaping the label text. Cleaner: render as text below in a second pass.
+                tick.set_color("#E67E22")
         # Cell annotations (counts).
         for i in range(sub.shape[0]):
             for j in range(sub.shape[1]):
@@ -1730,7 +1731,7 @@ class ContinualRehearsalFullRunner:
                     )
         fig.colorbar(im, ax=ax, label="# recipes containing element", fraction=0.025, pad=0.02)
         ax.set_title(
-            f"{scenario_name} — element frequency (top {len(labels)})\nbold green = discovered (not in any seed)",
+            f"{scenario_name} — element frequency (top {len(labels)})\nbold orange = discovered (not in any seed)",
             fontsize=11,
         )
         ax.grid(False)
@@ -2311,7 +2312,7 @@ class ContinualRehearsalFullRunner:
         lines.append("**Supporting figures (per scenario).**")
         for name in scenarios:
             lines.append(
-                f'- [`inverse_design/{name}/element_frequency_heatmap.png`](inverse_design/{name}/element_frequency_heatmap.png) — path × top-25 elements; **bold green** x-tick labels = elements NOT in any seed → "discovered".'
+                f'- [`inverse_design/{name}/element_frequency_heatmap.png`](inverse_design/{name}/element_frequency_heatmap.png) — path × top-25 elements; **bold orange** x-tick labels = elements NOT in any seed → "discovered".'
             )
         lines.append("")
 
@@ -2588,7 +2589,7 @@ class ContinualRehearsalFullRunner:
         lines.append("- `inverse_design/<scenario>/summary.json` — per-scenario aggregated stats.")
         lines.append("- `inverse_design/<scenario>/comparison.png` — 8-config boxplot comparison.")
         lines.append(
-            "- `inverse_design/<scenario>/element_frequency_heatmap.png` — config × element occurrence heatmap; discovered-element x-tick labels are bold + green."
+            "- `inverse_design/<scenario>/element_frequency_heatmap.png` — config × element occurrence heatmap; discovered-element x-tick labels are bold + orange."
         )
         lines.append("- `inverse_design/SUMMARY.md` — compact cross-scenario table.\n")
         lines.append(
@@ -2637,7 +2638,7 @@ class ContinualRehearsalFullRunner:
             "    targets.json                       # primary + secondary objectives",
             "    summary.json                       # per-path mean / std headline stats",
             "    comparison.png                     # 4-path boxplot (QC + each reg target)",
-            "    element_frequency_heatmap.png      # path × top-25 elements (discovered = bold green)",
+            "    element_frequency_heatmap.png      # path × top-25 elements (discovered = bold orange)",
             "    <path>/result.json                 # raw per-seed arrays, optimized_weights, …",
             "SLIDE_PREP.md                          # slide outline + raw-data pointers",
             "ANALYSIS.md                            # long-form analysis",
