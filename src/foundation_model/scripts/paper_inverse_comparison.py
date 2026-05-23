@@ -68,9 +68,11 @@ from foundation_model.scripts.eval_inverse_methods import (
 
 # Feasible alloy palette for the constrained-composition runs. Designed per the plan in
 # docs/continual_rehearsal_full_PLAN.md §5: light alkaline-earth + group 13/14 + the full 4th/5th
-# period transition metals (Tc excluded for radioactivity) + Au (needed for Au-Ga-RE seeds) +
-# accessible lanthanides (Pm radioactive, Tm/Lu scarce). 41 symbols total — wide enough to expose
-# multiple QC-prone basins, narrow enough to suppress Pu/F/Cs/Tm-style non-physical model bias.
+# period transition metals (Tc excluded for radioactivity) + the full Hf–Pt 5d TM row (added
+# 2026-05 to broaden heavy-TM coverage — reaches refractory / noble-metal i-QC families) + Au
+# (needed for Au-Ga-RE seeds) + accessible lanthanides (Pm radioactive, Tm/Lu scarce). 48 symbols
+# total — wide enough to expose multiple QC-prone basins (incl. heavy-TM families), narrow enough
+# to suppress Pu/F/Cs/Tm-style non-physical model bias.
 DEFAULT_ALLOY_PALETTE = [
     "Mg",
     "Ca",
@@ -100,6 +102,15 @@ DEFAULT_ALLOY_PALETTE = [
     "Pd",
     "Ag",
     "Cd",
+    # 5d transition metals (Hf–Pt). Added 2026-05; placed between Cd and Au so the 6th-period TM
+    # block is contiguous. Keeps the palette ordered by period within each group.
+    "Hf",
+    "Ta",
+    "W",
+    "Re",
+    "Os",
+    "Ir",
+    "Pt",
     "Au",
     "La",
     "Ce",
@@ -114,7 +125,7 @@ DEFAULT_ALLOY_PALETTE = [
     "Er",
     "Yb",
 ]
-assert len(DEFAULT_ALLOY_PALETTE) == 41
+assert len(DEFAULT_ALLOY_PALETTE) == 48
 
 # Composition-method configurations. Each row produces one bar in the comparison plot. The first
 # two isolate the seed_blend effect; the next two layer on element constraints; the last drops the

@@ -87,9 +87,13 @@ def test_reg_task_titles_include_scenario_targets():
 
 
 def test_alloy_palette_contents():
-    # Plan §5 specifies exactly 41 elements; the three Au-Ga-Ln explicit seeds must all fit.
-    assert len(ALLOY_PALETTE) == 41
+    # Plan §5 originally specified 41 elements; extended 2026-05 with the full Hf–Pt 5d TM row
+    # (7 symbols) → 48. The three Au-Ga-Ln explicit seeds must still fit.
+    assert len(ALLOY_PALETTE) == 48
     for sym in ("Au", "Ga", "Gd", "Tb", "Dy", "Mg", "Pd", "Al"):
+        assert sym in ALLOY_PALETTE
+    # 5d transition metals (Hf–Pt) — newly added.
+    for sym in ("Hf", "Ta", "W", "Re", "Os", "Ir", "Pt"):
         assert sym in ALLOY_PALETTE
     # Radioactive / unwanted symbols deliberately excluded.
     for sym in ("Pu", "Tc", "Pm"):

@@ -236,11 +236,14 @@ SOURCE_DISPLAY = {
 KIND_LABEL = {"reg": "regression", "kr": "kernel regression", "clf": "classification"}
 
 # --- Inverse design — paths + element constraints ----------------------------
-# 41-element alloy palette for the composition-space ``C-alloy`` path (plan §5). Covers classic
-# i-QC / d-QC formers (Mg–Zn–RE, Al–Mn, Al–Cu–Fe, Al–Ni–Co, Au–Ga–RE …), the Sc–Zn 4th-period TMs,
-# the Y–Cd 5th-period TMs (Tc excluded for radioactivity), Au (Au–Ga–Ln seeds need it), group 13/14
-# enablers (B/Al/Ga/In/Tl, Si/Ge), and the 12 easy lanthanides. Pm/Tc are radioactive; Tm/Lu are
-# scarce. The three explicit-append Au–Ga–Ln seeds (Gd/Tb/Dy) all fit in this palette.
+# 48-element alloy palette for the composition-space ``C-alloy`` path (plan §5, extended). Covers
+# classic i-QC / d-QC formers (Mg–Zn–RE, Al–Mn, Al–Cu–Fe, Al–Ni–Co, Au–Ga–RE …), the Sc–Zn
+# 4th-period TMs, the Y–Cd 5th-period TMs (Tc excluded for radioactivity), the full Hf–Pt 5d TM
+# row (added 2026-05 — broadens the heavy-TM coverage for the composition search and lets the
+# optimiser reach refractory / noble-metal i-QC families like Hf–Pd / Ta–Ni / Ir-based phases),
+# Au (Au–Ga–Ln seeds need it), group 13/14 enablers (B/Al/Ga/In/Tl, Si/Ge), and the 12 easy
+# lanthanides. Pm/Tc are radioactive; Tm/Lu are scarce. The three explicit-append Au–Ga–Ln seeds
+# (Gd/Tb/Dy) all fit in this palette.
 ALLOY_PALETTE: list[str] = [
     "Mg",
     "Ca",
@@ -270,6 +273,15 @@ ALLOY_PALETTE: list[str] = [
     "Pd",
     "Ag",
     "Cd",
+    # 5d transition metals (Hf–Pt). Added 2026-05 to extend the previous 41-element palette;
+    # placed between Cd (end of 5th-period TMs) and Au so the 6th-period TM block is contiguous.
+    "Hf",
+    "Ta",
+    "W",
+    "Re",
+    "Os",
+    "Ir",
+    "Pt",
     "Au",
     "La",
     "Ce",
@@ -290,7 +302,7 @@ ALLOY_PALETTE: list[str] = [
 # side (failure α=0 / mid α=0.25 / max α=1.0) plus five composition configurations that layer
 # blend, palette and diversity-scale knobs against a random-init control. The ``allowed`` field
 # uses the sentinel ``"__palette__"`` to refer to ``config.inverse_composition_allowed_elements``
-# (the 41-element ``ALLOY_PALETTE`` by default); every other field is fixed at the module level so
+# (the 48-element ``ALLOY_PALETTE`` by default); every other field is fixed at the module level so
 # the comparison is a stable plan-§5 ablation across runs.
 _PALETTE_SENTINEL = "__palette__"
 INVERSE_PATH_CONFIGS: list[dict[str, Any]] = [
@@ -449,7 +461,7 @@ class ContinualRehearsalFullConfig:
     inverse_steps: int = 300
     inverse_lr: float = 0.05
     inverse_class_weight: float = 5.0
-    # 41-element ``ALLOY_PALETTE`` for the composition rows that whitelist elements. Configurable
+    # 48-element ``ALLOY_PALETTE`` for the composition rows that whitelist elements. Configurable
     # in case the slide author wants a wider or narrower palette; everything else (ae_align_scale
     # sweep, seed_blend, diversity_scale) is fixed at the module level in ``INVERSE_PATH_CONFIGS``
     # so the comparison is a stable ablation across runs.
@@ -1771,7 +1783,7 @@ class ContinualRehearsalFullRunner:
             "Au-Ga-Ln). Path semantics: **latent** uses `optimize_latent(ae_align_scale=0.5)` "
             "(PR #18 sweet spot); **composition_strict** locks the seed element support "
             "(`seed_blend=1.0`); **composition_alloy** is the paper-headline path "
-            "(`seed_blend≈0.95`, 41-element ALLOY_PALETTE — allows discovery of QC-prone "
+            f"(`seed_blend≈0.95`, {len(ALLOY_PALETTE)}-element ALLOY_PALETTE — allows discovery of QC-prone "
             "elements outside the seeds); **composition_random** ablates the seed entirely "
             "(`n_starts=N`) to surface the model's global QC attractor — useful to motivate the "
             "need for chemistry-constrained palettes when the global attractor falls on "
@@ -2124,7 +2136,7 @@ class ContinualRehearsalFullRunner:
         lines.append("## Slide 6 — Initial seeds, the element palette, and the 8 configurations\n")
         lines.append(
             f"**Takeaway.** Three ingredients shape the search: (a) **{len(all_seeds)} seeds** "
-            "for the optimiser to start from, (b) the **41-element `ALLOY_PALETTE`** the "
+            f"for the optimiser to start from, (b) the **{len(ALLOY_PALETTE)}-element `ALLOY_PALETTE`** the "
             "constrained composition paths are allowed to use, (c) **8 configurations** isolating "
             "ae_align_scale / seed_blend / palette / diversity / random-init effects.\n"
         )
@@ -2148,7 +2160,7 @@ class ContinualRehearsalFullRunner:
             lines.append(f"  - `{s}`")
         lines.append("")
 
-        lines.append("### `ALLOY_PALETTE` (41 elements, slide author renders periodic-table highlight)\n")
+        lines.append(f"### `ALLOY_PALETTE` ({len(ALLOY_PALETTE)} elements, slide author renders periodic-table highlight)\n")
         lines.append(
             "Range design: covers classic i-QC / d-QC formers + easy 4th/5th-period TMs + accessible lanthanides + Au (so Au–Ga–Ln seeds are reachable). Pm / Tc and Pu-class radioactives are excluded; Tm / Lu excluded as rare and expensive.\n"
         )
@@ -2194,7 +2206,7 @@ class ContinualRehearsalFullRunner:
             '- "low diversity" = `diversity_scale = 0`, the most penalised end of the diversity knob → fewest elements per output.\n'
         )
         lines.append(
-            "**Visual asset.** Slide author renders the periodic-table highlight from the 41-element list above. No pre-rendered palette figure.\n"
+            f"**Visual asset.** Slide author renders the periodic-table highlight from the {len(ALLOY_PALETTE)}-element list above. No pre-rendered palette figure.\n"
         )
         lines.append(
             "**Raw-data pointer.** [`inverse_design/seeds.json`](inverse_design/seeds.json) for the seed list; palette literal in [`samples/continual_rehearsal_full_config.toml`](../../samples/continual_rehearsal_full_config.toml).\n"
