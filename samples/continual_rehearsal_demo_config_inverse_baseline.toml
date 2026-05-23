@@ -34,7 +34,7 @@ inverse_n_seeds = 16
 inverse_steps = 300
 inverse_lr = 0.05
 inverse_class_weight = 5.0
-inverse_cycle_weight = 0.0                       # baseline = off; eval script sweeps this
+inverse_ae_align_scale = 0.5                     # [0, 1]; default sweet spot from PR #18
 inverse_reg_tasks = ["formation_energy", "klat"]
 inverse_reg_targets = [-2.0, 2.0]
 inverse_seed_strategy = "top_qc"

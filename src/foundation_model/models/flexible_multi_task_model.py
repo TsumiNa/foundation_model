@@ -1736,7 +1736,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         task_targets: Mapping[str, torch.Tensor | float] | None = None,
         class_targets: Mapping[str, int | Sequence[int]] | None = None,
         class_target_weight: float = 1.0,
-        ae_cycle_weight: float = 0.0,
+        ae_align_scale: float = 0.5,
         optimize_space: str = "input",
     ) -> OptimizationResult:
         """
@@ -1778,12 +1778,21 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Multiplier on each classification objective term relative to the regression terms.
             Use ``> 1`` to make class probability the primary objective and regression targets
             secondary. Default ``1.0``.
-        ae_cycle_weight : float, optional
-            Latent-space optimization only. Adds ``λ · ‖tanh(encoder(AE.decode(h))) − h‖²`` to the
-            loss, pulling the optimized latent toward the AE's decode/encode fixed set
-            (mitigates the decode round-trip drop). Default ``0.0`` (off).
-            Operates in **latent space**; orthogonal to :meth:`optimize_composition`'s
-            ``entropy_weight``, which lives in composition space.
+        ae_align_scale : float, optional
+            Latent-space optimization only. How hard to pull the optimised latent ``h`` toward the
+            AE's decode/encode fixed set, on a [0, 1] scale.
+
+            * ``0.0``: **no alignment penalty** — pure unconstrained latent optimisation. This was
+              shown in PR #18 to fail badly (QC drops from ~0.97 to ~0.35 after the decode/encode
+              round-trip); recorded for completeness as a failure-mode baseline.
+            * ``1.0``: **strong alignment penalty** — keeps ``h`` close to ``encode(decode(h))``,
+              i.e. on the AE's stable manifold. Over-constraining tends to reduce target achievement.
+            * ``0.5`` (default): the empirical sweet spot from PR #18 experiments.
+
+            Implementation detail (skip if not curious): the loss gets a
+            ``ae_align_scale · ‖tanh(encoder(AE.decode(h))) − h‖²`` term added. Operates in
+            **latent space**; orthogonal to :meth:`optimize_composition`'s ``diversity_scale``
+            which lives in composition space.
         optimize_space : str, optional
             ``"input"`` or ``"latent"``. Default ``"input"``.
 
@@ -1852,8 +1861,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     )
                 class_target_map[name] = idxs
 
-        if ae_cycle_weight < 0:
-            raise ValueError(f"ae_cycle_weight must be >= 0, got {ae_cycle_weight}")
+        if not 0.0 <= ae_align_scale <= 1.0:
+            raise ValueError(f"ae_align_scale must be in [0, 1], got {ae_align_scale}.")
 
         # Legacy single-task path (mode / target_value) only when no target maps are given
         if target_tasks is None and class_target_map is None:
@@ -2109,11 +2118,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
                             loss_terms.append(F.mse_loss(pred, expanded_target))
 
                     loss_terms.extend(class_target_weight * term for term in _class_loss_terms(h_task))
-                    if ae_cycle_weight > 0:
-                        # Pull the optimized latent toward what the AE faithfully reconstructs:
+                    if ae_align_scale > 0:
+                        # Pull the optimised latent toward what the AE faithfully reconstructs:
                         # decode it to a descriptor, re-encode, and penalise the drift in h_task.
+                        # The user-facing knob is [0, 1] with 0 = no penalty / 1 = strong penalty.
                         re_h_task = torch.tanh(self.encoder(self.task_heads[_AE_TASK](h_task)))
-                        loss_terms.append(ae_cycle_weight * F.mse_loss(re_h_task, h_task))
+                        loss_terms.append(ae_align_scale * F.mse_loss(re_h_task, h_task))
                     per_task_values_tensor = _stack_scores(per_task_values)  # (B, T)
 
                     if loss_terms:
@@ -2176,7 +2186,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         task_targets: Mapping[str, torch.Tensor | float] | None = None,
         class_targets: Mapping[str, int | Sequence[int]] | None = None,
         class_target_weight: float = 1.0,
-        entropy_weight: float = 0.0,
+        diversity_scale: float = 1.0,
         allowed_elements: str | list[str] = "all",
         element_step_scale: float | Mapping[str, float] = 1.0,
         seed_blend: float = 0.95,
@@ -2211,12 +2221,26 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Same semantics as :meth:`optimize_latent`. Regression targets are matched by MSE;
             classification objectives add ``-log P(target classes)`` (scaled by
             ``class_target_weight``).
-        entropy_weight : float, optional
-            Adds a Shannon-entropy term ``λ · H(w) = −λ · Σ w_i log w_i`` to the loss, penalising
-            high-entropy (flat) ``w`` and softly pushing the solution toward peakier (few-element)
-            mixtures. Default 0 (no pressure). Note this is the *entropy* of ``w``, not literal
-            L1 sparsity; in practice both bias toward few-element solutions, but entropy is the
-            differentiable form on a simplex.
+        diversity_scale : float, optional
+            How spread-out the per-output element mixture is allowed to be, on a [0, 1] scale.
+            Bigger = more diverse / multi-element per output.
+
+            * ``1.0`` (default): **no penalty** on having many elements — the optimiser is free
+              to land on a many-element recipe if the main objective likes it.
+            * ``0.0``: **strong penalty** on having many elements — the optimiser is pushed
+              toward peaky few-element recipes (e.g. binary alloys).
+            * ``0.5`` etc.: linearly interpolates between the two.
+
+            The point is to give users a simple [0, 1] knob without needing to know the underlying
+            math. **Implementation detail** (skip if not curious): the loss gets a
+            ``(1 − diversity_scale) · H(w)`` term added, where ``H(w) = −Σ w_i log w_i`` is the
+            Shannon entropy of the per-row weight vector. ``diversity_scale = 1`` zeros that
+            coefficient (no penalty); ``diversity_scale = 0`` applies the full entropy penalty.
+
+            Important: this is a **per-output complexity** knob, not a diversity-*between*-outputs
+            knob. Increasing it lets each of the ``B`` outputs individually use more elements;
+            whether the ``B`` outputs are different from each other (pairwise L1) depends on the
+            optimisation landscape, not on this knob.
         allowed_elements : str | list[str], optional
             Element whitelist for the optimisation. ``"all"`` (default) imposes no constraint.
             A non-empty list of element symbols (e.g. ``["Mg", "Al", "Cu", "Ni"]``) restricts the
@@ -2320,8 +2344,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         if target_tasks is None and class_target_map is None:
             raise ValueError("Provide at least one of task_targets / class_targets.")
-        if entropy_weight < 0:
-            raise ValueError(f"entropy_weight must be >= 0, got {entropy_weight}")
+        if not 0.0 <= diversity_scale <= 1.0:
+            raise ValueError(f"diversity_scale must be in [0, 1], got {diversity_scale}.")
         if not 0.0 <= seed_blend <= 1.0:
             raise ValueError(f"seed_blend must be in [0, 1], got {seed_blend}")
 
@@ -2560,11 +2584,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 x = w @ kmd_kernel
                 h_task = torch.tanh(self.encoder(x))
                 preds, terms = _heads_forward(h_task)
-                if entropy_weight > 0:
-                    # Shannon entropy of w; positive weight penalises high-entropy (flat) ``w``
-                    # and softly pushes the solution toward peakier (few-element) mixtures.
+                if diversity_scale < 1.0:
+                    # The penalty strength is (1 − diversity_scale): user sees a [0, 1] knob
+                    # where 1 means "no penalty / most diverse" and 0 means "max penalty / most
+                    # peaky". The internal term is `(1 − diversity_scale) · H(w)` added to loss.
                     entropy = -(w * w.clamp(min=1e-12).log()).sum(dim=-1).mean()
-                    terms.append(entropy_weight * entropy)
+                    terms.append((1.0 - diversity_scale) * entropy)
                 loss = torch.stack(terms).mean()
                 loss.backward()
                 if step_scale is not None and logits.grad is not None:

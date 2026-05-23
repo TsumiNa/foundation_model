@@ -981,18 +981,26 @@ def test_optimize_latent_class_targets_only_no_regression():
     assert res.optimized_target.shape == (4, 1, 0)  # no regression tasks tracked
 
 
-def test_optimize_latent_ae_cycle_rejects_negative():
+def test_optimize_latent_ae_align_validates_range():
+    """ae_align_scale lives in [0, 1] — out-of-range values are rejected."""
     model = _make_reg_clf_model()
-    with pytest.raises(ValueError, match="ae_cycle_weight must be >= 0"):
+    with pytest.raises(ValueError, match=r"ae_align_scale must be in \[0, 1\]"):
         model.optimize_latent(
             initial_input=torch.randn(2, INPUT_DIM),
             task_targets={"prop": 1.0},
             optimize_space="latent",
-            ae_cycle_weight=-0.1,
+            ae_align_scale=-0.1,
+        )
+    with pytest.raises(ValueError, match=r"ae_align_scale must be in \[0, 1\]"):
+        model.optimize_latent(
+            initial_input=torch.randn(2, INPUT_DIM),
+            task_targets={"prop": 1.0},
+            optimize_space="latent",
+            ae_align_scale=1.5,
         )
 
 
-def test_optimize_latent_ae_cycle_runs_in_latent_space():
+def test_optimize_latent_ae_align_runs_in_latent_space():
     torch.manual_seed(0)
     model = _make_reg_clf_model()  # enable_autoencoder=True, so AE head is available
     x = torch.randn(4, INPUT_DIM)
@@ -1001,7 +1009,7 @@ def test_optimize_latent_ae_cycle_runs_in_latent_space():
         task_targets={"prop": 1.0},
         class_targets={"cls": [1]},
         class_target_weight=3.0,
-        ae_cycle_weight=0.5,  # pull latent toward AE-reconstructible fixed set
+        ae_align_scale=0.5,  # default empirical sweet spot
         optimize_space="latent",
         steps=10,
     )
@@ -1464,19 +1472,41 @@ def test_optimize_composition_random_init_uses_n_starts():
     assert torch.allclose(res.optimized_weights[:, disallowed], torch.zeros_like(res.optimized_weights[:, disallowed]))
 
 
-def test_optimize_composition_entropy_weight_rejects_negative():
+def test_optimize_composition_diversity_scale_validates_range():
+    """diversity_scale lives in [0, 1] — out-of-range values are rejected."""
     model, kernel, _ = _build_aligned_model_and_kernel()
-    with pytest.raises(ValueError, match="entropy_weight must be >= 0"):
-        model.optimize_composition(kernel, task_targets={"prop": 0.0}, entropy_weight=-0.1, n_starts=2, steps=2)
+    with pytest.raises(ValueError, match=r"diversity_scale must be in \[0, 1\]"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, diversity_scale=-0.1, n_starts=2, steps=2)
+    with pytest.raises(ValueError, match=r"diversity_scale must be in \[0, 1\]"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, diversity_scale=1.5, n_starts=2, steps=2)
 
 
-def test_optimize_composition_entropy_weight_runs():
-    """entropy_weight>0 just needs to run cleanly and still produce simplex rows."""
+def test_optimize_composition_diversity_scale_endpoints_run():
+    """Both endpoints (0 = max penalty, 1 = no penalty default) run cleanly and stay on the simplex."""
     torch.manual_seed(0)
     model, kernel, _ = _build_aligned_model_and_kernel()
-    res = model.optimize_composition(kernel, task_targets={"prop": 1.0}, n_starts=3, entropy_weight=0.5, steps=5)
-    assert res.optimized_weights.shape[0] == 3
-    assert torch.allclose(res.optimized_weights.sum(dim=-1), torch.ones(3), atol=1e-5)
+    for scale in (0.0, 0.5, 1.0):
+        res = model.optimize_composition(kernel, task_targets={"prop": 1.0}, n_starts=3, diversity_scale=scale, steps=5)
+        assert res.optimized_weights.shape[0] == 3
+        assert torch.allclose(res.optimized_weights.sum(dim=-1), torch.ones(3), atol=1e-5)
+
+
+def test_optimize_composition_diversity_scale_direction():
+    """diversity_scale=1 (no penalty) keeps a higher per-output entropy than diversity_scale=0 (max penalty)."""
+    torch.manual_seed(0)
+    model, kernel, _ = _build_aligned_model_and_kernel()
+    res_peaky = model.optimize_composition(
+        kernel, task_targets={"prop": 1.0}, n_starts=4, diversity_scale=0.0, steps=60, lr=0.2
+    )
+    torch.manual_seed(0)
+    res_spread = model.optimize_composition(
+        kernel, task_targets={"prop": 1.0}, n_starts=4, diversity_scale=1.0, steps=60, lr=0.2
+    )
+
+    def _mean_entropy(w):
+        return float(-(w * w.clamp(min=1e-12).log()).sum(dim=-1).mean())
+
+    assert _mean_entropy(res_spread.optimized_weights) > _mean_entropy(res_peaky.optimized_weights)
 
 
 def test_optimize_composition_uses_kmd_kernel_torch():

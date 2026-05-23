@@ -234,7 +234,9 @@ class ContinualRehearsalConfig:
     inverse_class_weight: float = 5.0  # weight of the QC objective relative to the regression ones
     # Cycle-consistency: pulls the optimized latent toward what the AE can faithfully reconstruct,
     # so after-decode predictions stay close to in-latent values. 0 = off; 0.1–1.0 typical.
-    inverse_cycle_weight: float = 0.0
+    # ae_align_scale for the latent inverse-design path: [0, 1], 0 = no alignment penalty (the
+    # failure-mode baseline shown in PR #18), 1 = strong alignment, 0.5 = empirical sweet spot.
+    inverse_ae_align_scale: float = 0.5
     inverse_reg_tasks: list[str] = field(default_factory=lambda: ["formation_energy", "klat"])
     inverse_reg_targets: list[float] = field(default_factory=lambda: [-2.0, 2.0])  # low f.e., high klat
     # How the optimization's starting latents are seeded:
@@ -573,7 +575,7 @@ class ContinualRehearsalRunner:
     def run_inverse_only(self, ckpt_path: Path) -> None:
         """Skip training; load a saved checkpoint and run only the inverse-design stage.
 
-        Use this to iterate on the inverse-design objective (e.g. ``inverse_cycle_weight``) without
+        Use this to iterate on the inverse-design objective (e.g. ``inverse_ae_align_scale``) without
         repeating the multi-hour training. Data loading + descriptor computation still happen, but
         no Trainer.fit calls.
         """
@@ -720,7 +722,7 @@ class ContinualRehearsalRunner:
             task_targets=reg_targets,
             class_targets={"material_type": QC_CLASSES},
             class_target_weight=cfg.inverse_class_weight,  # QC probability is the primary objective
-            ae_cycle_weight=cfg.inverse_cycle_weight,  # keep optimized latent on the AE manifold
+            ae_align_scale=cfg.inverse_ae_align_scale,  # keep optimised latent on the AE manifold
             optimize_space="latent",
             steps=cfg.inverse_steps,
             lr=cfg.inverse_lr,

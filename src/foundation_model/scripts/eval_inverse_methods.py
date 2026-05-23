@@ -4,8 +4,8 @@
 """
 Compare two inverse-design methods on a single trained checkpoint.
 
-Method A — latent-space optimisation with AE-cycle penalty
-    optimize_latent(optimize_space="latent", class_target_weight=…, ae_cycle_weight=λ).
+Method A — latent-space optimisation with AE-alignment penalty
+    optimize_latent(optimize_space="latent", class_target_weight=…, ae_align_scale=λ).
     The optimised latent is decoded back to a descriptor through the AE; the heads' values at
     the **decoded** descriptor are reported (so "round-trip drift" is the key failure mode and
     cycle-consistency is the proposed mitigation, swept over λ).
@@ -23,7 +23,7 @@ This script is independent of the rehearsal demo — its own CLI, own output dir
         --config-file samples/continual_rehearsal_demo_config_inverse_baseline.toml \\
         --checkpoint artifacts/inverse_heads_finetuned/final_model.pt \\
         --output-dir artifacts/inverse_methods_eval \\
-        --cycle-weights 0,0.1,0.5,1,2,5
+        --align-scales 0,0.25,0.5,0.75,1.0
 """
 
 from __future__ import annotations
@@ -109,7 +109,7 @@ def _run_latent_method(
     x_seed: torch.Tensor,
     reg_targets: dict[str, float],
     class_weight: float,
-    cycle_weight: float,
+    align_scale: float,
     steps: int,
     lr: float,
 ) -> dict[str, Any]:
@@ -120,7 +120,7 @@ def _run_latent_method(
         task_targets=reg_targets,
         class_targets={"material_type": QC_CLASSES},
         class_target_weight=class_weight,
-        ae_cycle_weight=cycle_weight,
+        ae_align_scale=align_scale,
         optimize_space="latent",
         steps=steps,
         lr=lr,
@@ -133,16 +133,22 @@ def _run_latent_method(
     after_qc = _qc_prob(model, optimized_desc)
     after_reg = _reg_preds(model, optimized_desc, reg_names)
     decoded = _decode_latent_path(runner._kmd, optimized_desc.detach().cpu().numpy())
+    # Recover the per-seed element weights too, so downstream replotting (per-element bar charts,
+    # ratio histograms, similarity matrices) doesn't need to re-run the optimisation.
+    optimized_weights = runner._kmd.inverse(optimized_desc.detach().cpu().numpy())
 
     return {
         "method": "latent",
-        "cycle_weight": cycle_weight,
+        "align_scale": align_scale,
         "elapsed_s": elapsed,
         "seeds": list(seeds),
         "qc_after_decode": after_qc.tolist(),
         "reg_achieved_latent": {t: achieved_latent[:, j].tolist() for j, t in enumerate(reg_names)},
         "reg_after_decode": {t: after_reg[t].tolist() for t in reg_names},
         "decoded_composition": decoded,
+        # Raw arrays for replotting without rerunning: (B, x_dim) descriptor and (B, n_components) weights.
+        "optimized_descriptor": optimized_desc.detach().cpu().numpy().tolist(),
+        "optimized_weights": optimized_weights.tolist(),
     }
 
 
@@ -184,7 +190,7 @@ def _run_composition_method(
 
     return {
         "method": "composition",
-        "cycle_weight": None,
+        "align_scale": None,
         "elapsed_s": elapsed,
         "seeds": list(seeds),
         # In composition space there is no "after-decode" drift — the model values AT the optimised
@@ -193,6 +199,9 @@ def _run_composition_method(
         "reg_achieved_latent": {t: achieved[:, j].tolist() for j, t in enumerate(reg_names)},
         "reg_after_decode": {t: final_reg[t].tolist() for t in reg_names},
         "decoded_composition": _format_weights(w_final),
+        # Raw arrays for replotting without rerunning: (B, x_dim) descriptor and (B, n_components) weights.
+        "optimized_descriptor": optimized_desc.detach().cpu().numpy().tolist(),
+        "optimized_weights": w_final.tolist(),
     }
 
 
@@ -203,7 +212,7 @@ def _plot_summary(results: list[dict[str, Any]], reg_targets: dict[str, float], 
     """Side-by-side: QC prob and each regression target across methods (mean ± seeds)."""
     fig, axes = plt.subplots(1, 1 + len(reg_targets), figsize=(4.6 * (1 + len(reg_targets)), 4.2), squeeze=False)
     axes = axes[0]
-    labels = [f"latent (λ={r['cycle_weight']})" if r["method"] == "latent" else "composition" for r in results]
+    labels = [f"latent (α={r['align_scale']})" if r["method"] == "latent" else "composition" for r in results]
 
     # QC probability
     qc_means = [float(np.mean(r["qc_after_decode"])) for r in results]
@@ -238,7 +247,7 @@ def _plot_summary(results: list[dict[str, Any]], reg_targets: dict[str, float], 
 def evaluate(
     config: ContinualRehearsalConfig,
     ckpt_path: Path,
-    cycle_weights: list[float],
+    align_scales: list[float],
     allowed_elements: "str | list[str]" = "all",
     element_step_scale: "float | dict[str, float]" = 1.0,
 ) -> None:
@@ -268,9 +277,9 @@ def evaluate(
 
     results: list[dict[str, Any]] = []
 
-    # Method A: latent-space, sweep cycle weight.
-    for lam in cycle_weights:
-        logger.info(f"--- Latent method, ae_cycle_weight = {lam} ---")
+    # Method A: latent-space, sweep ae_align_scale ∈ [0, 1].
+    for lam in align_scales:
+        logger.info(f"--- Latent method, ae_align_scale = {lam} ---")
         results.append(
             _run_latent_method(
                 runner,
@@ -279,7 +288,7 @@ def evaluate(
                 x_seed,
                 reg_targets,
                 class_weight=config.inverse_class_weight,
-                cycle_weight=float(lam),
+                align_scale=float(lam),
                 steps=config.inverse_steps,
                 lr=config.inverse_lr,
             )
@@ -314,7 +323,7 @@ def evaluate(
     summary = []
     for r in results:
         row = {
-            "label": f"latent λ={r['cycle_weight']}" if r["method"] == "latent" else "composition",
+            "label": f"latent α={r['align_scale']}" if r["method"] == "latent" else "composition",
             "elapsed_s": round(r["elapsed_s"], 2),
             "qc_after_mean": round(float(np.mean(r["qc_after_decode"])), 4),
         }
@@ -339,10 +348,10 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ContinualRehearsalConfig
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
-        "--cycle-weights",
+        "--align-scales",
         type=str,
-        default="0,0.1,0.5,1,2,5",
-        help="Comma-separated λ values for ae_cycle_weight in the latent method.",
+        default="0,0.25,0.5,0.75,1.0",
+        help="Comma-separated values in [0, 1] for ae_align_scale in the latent method.",
     )
     parser.add_argument(
         "--allowed-elements",
@@ -393,7 +402,7 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ContinualRehearsalConfig
 
 def main(argv: list[str] | None = None) -> None:
     config, args = _parse_args(argv)
-    cycle_weights = [float(x) for x in args.cycle_weights.split(",") if x.strip()]
+    align_scales = [float(x) for x in args.align_scales.split(",") if x.strip()]
     allowed_syms = [s.strip() for s in args.allowed_elements.split(",") if s.strip()]
     locked_syms = [s.strip() for s in args.locked_elements.split(",") if s.strip()]
     # Pass symbols straight through to optimize_composition's symbol-based API.
@@ -404,7 +413,7 @@ def main(argv: list[str] | None = None) -> None:
     evaluate(
         config,
         args.checkpoint,
-        cycle_weights,
+        align_scales,
         allowed_elements=allowed_arg,
         element_step_scale=step_scale_arg,
     )

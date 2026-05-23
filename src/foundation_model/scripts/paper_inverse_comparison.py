@@ -11,7 +11,7 @@ ready to drop into a paper draft. Reuses the per-method helpers from
 
 The study covers:
 
-* **Latent method** with AE-cycle weight λ ∈ {0, 0.1, 0.5, 1, 2, 5}.
+* **Latent method** with AE-alignment scale α ∈ {0, 0.1, 0.25, 0.5, 0.75, 1.0} on [0, 1].
 * **Composition method** (differentiable KMD) under five configurations chosen to expose how
   ``seed_blend``, the element whitelist, and seeding strategy affect novelty / diversity:
     1. ``seed_blend = 1.0`` — strict seed init (the original behaviour, baseline for "no new
@@ -19,8 +19,8 @@ The study covers:
     2. ``seed_blend = 0.95`` — new default; non-seed-element logits become reachable by Adam,
        letting the optimiser introduce elements outside the seed when helpful;
     3. (2) + ``allowed_elements`` restricted to a feasible alloy palette;
-    4. (3) + ``entropy_weight`` (formerly ``sparsity_weight``) to softly prefer few-element
-       formulas;
+    4. (3) + ``diversity_scale`` (positive value rewards multi-element recipes, negative rewards
+       peaky ones) — included as an ablation to show how per-output complexity can be biased;
     5. Random initialisation (``initial_weights=None``, ``n_starts=B``) — completely free
        exploration, no seed bias at all (Scheme D control).
 
@@ -70,27 +70,29 @@ DEFAULT_ALLOY_PALETTE = ["Mg", "Al", "Cu", "Ni", "Zn", "Ag", "Pd", "Co", "Fe", "
 # two isolate the seed_blend effect; the next two layer on element constraints; the last drops the
 # seed entirely (random init) as the no-seed-bias control (Scheme D).
 COMPOSITION_CONFIGS: list[dict[str, Any]] = [
-    {"label": "comp\n(strict seed)", "init": "seed", "blend": 1.0, "allowed": "all", "scale": 1.0, "entropy": 0.0},
-    {"label": "comp\n(blended seed)", "init": "seed", "blend": 0.95, "allowed": "all", "scale": 1.0, "entropy": 0.0},
+    # diversity = 1.0 = no entropy penalty (default user-facing behaviour).
+    {"label": "comp\n(strict seed)", "init": "seed", "blend": 1.0, "allowed": "all", "scale": 1.0, "diversity": 1.0},
+    {"label": "comp\n(blended seed)", "init": "seed", "blend": 0.95, "allowed": "all", "scale": 1.0, "diversity": 1.0},
     {
         "label": "comp\n(alloy palette)",
         "init": "seed",
         "blend": 0.95,
         "allowed": DEFAULT_ALLOY_PALETTE,
         "scale": 1.0,
-        "entropy": 0.0,
+        "diversity": 1.0,
     },
     {
-        "label": "comp\n(alloy + entropy)",
+        # Ablation: clamp diversity to 0 → max entropy penalty → forced peaky few-element recipes.
+        "label": "comp\n(alloy + peaky)",
         "init": "seed",
         "blend": 0.95,
         "allowed": DEFAULT_ALLOY_PALETTE,
         "scale": 1.0,
-        "entropy": 0.5,
+        "diversity": 0.0,
     },
-    {"label": "comp\n(random init)", "init": "random", "blend": 0.95, "allowed": "all", "scale": 1.0, "entropy": 0.0},
+    {"label": "comp\n(random init)", "init": "random", "blend": 0.95, "allowed": "all", "scale": 1.0, "diversity": 1.0},
 ]
-LATENT_CYCLE_WEIGHTS = [0.0, 0.1, 0.5, 1.0, 2.0, 5.0]
+LATENT_ALIGN_SCALES = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]  # ae_align_scale ∈ [0, 1]
 
 
 def _plot_comparison(results: list[dict[str, Any]], reg_targets: dict[str, float], out_path: Path) -> None:
@@ -129,7 +131,7 @@ def _plot_comparison(results: list[dict[str, Any]], reg_targets: dict[str, float
         ax.set_title(t)
         ax.legend(fontsize=9, loc="best")
 
-    fig.suptitle("Inverse-design comparison: latent (cycle sweep) vs differentiable KMD (configs)", y=1.00)
+    fig.suptitle("Inverse-design comparison: latent (ae_align_scale sweep) vs differentiable KMD (configs)", y=1.00)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     logger.info(f"Wrote comparison plot to {out_path}")
@@ -141,7 +143,7 @@ def _summarise(results: list[dict[str, Any]], reg_targets: dict[str, float]) -> 
         row = {
             "label": r["label"].replace("\n", " "),
             "method": r["method"],
-            "cycle_weight": r.get("cycle_weight"),
+            "align_scale": r.get("align_scale"),
             "config": r.get("config"),
             "elapsed_s": round(r["elapsed_s"], 2),
             "qc_after_mean": round(float(np.mean(r["qc_after_decode"])), 4),
@@ -188,9 +190,9 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
     reg_targets = {t: v for t, v in zip(config.inverse_reg_tasks, config.inverse_reg_targets)}
     results: list[dict[str, Any]] = []
 
-    # Latent method: cycle weight sweep.
-    for lam in LATENT_CYCLE_WEIGHTS:
-        logger.info(f"--- Latent method, ae_cycle_weight = {lam} ---")
+    # Latent method: ae_align_scale sweep over [0, 1].
+    for lam in LATENT_ALIGN_SCALES:
+        logger.info(f"--- Latent method, ae_align_scale = {lam} ---")
         r = _run_latent_method(
             runner,
             model,
@@ -198,12 +200,12 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
             x_seed,
             reg_targets,
             class_weight=config.inverse_class_weight,
-            cycle_weight=lam,
+            align_scale=lam,
             steps=config.inverse_steps,
             lr=config.inverse_lr,
         )
-        r["label"] = f"latent\nλ={lam:g}"
-        r["config"] = {"ae_cycle_weight": lam}
+        r["label"] = f"latent\nα={lam:g}"
+        r["config"] = {"ae_align_scale": lam}
         results.append(r)
 
     # Composition method: walk through the configuration matrix.
@@ -220,7 +222,7 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
             cfg=cfg,
         )
         r["label"] = cfg["label"]
-        r["config"] = {k: cfg[k] for k in ("init", "blend", "allowed", "scale", "entropy")}
+        r["config"] = {k: cfg[k] for k in ("init", "blend", "allowed", "scale", "diversity")}
         results.append(r)
 
     summary = _summarise(results, reg_targets)
@@ -271,7 +273,7 @@ def _run_composition_config(
         task_targets=reg_targets,
         class_targets={"material_type": QC_CLASSES},
         class_target_weight=class_weight,
-        entropy_weight=cfg["entropy"],
+        diversity_scale=cfg["diversity"],
         allowed_elements=cfg["allowed"],
         element_step_scale=cfg["scale"],
         steps=steps,
@@ -282,16 +284,22 @@ def _run_composition_config(
 
     reg_names = list(reg_targets)
     optimized_desc = res.optimized_descriptor
+    w_final = res.optimized_weights.cpu().numpy()
     return {
         "method": "composition",
-        "cycle_weight": None,
+        "align_scale": None,
         "elapsed_s": elapsed,
         # For random init the "seeds" entry is informational only — there's no per-row correspondence.
         "seeds": list(seeds) if cfg["init"] == "seed" else [f"random_start_{i}" for i in range(len(seeds))],
         "qc_after_decode": _qc_prob(model, optimized_desc).tolist(),
         "reg_achieved_latent": {t: res.optimized_target.cpu().numpy()[:, j].tolist() for j, t in enumerate(reg_names)},
         "reg_after_decode": {t: _reg_preds(model, optimized_desc, [t])[t].tolist() for t in reg_names},
-        "decoded_composition": _format_weights(res.optimized_weights.cpu().numpy()),
+        "decoded_composition": _format_weights(w_final),
+        # Raw arrays — keep so future replots (per-element bar charts, similarity matrices, etc.)
+        # don't have to re-run the optimisation. ``optimized_weights`` is (B, n_components),
+        # ``optimized_descriptor`` is (B, x_dim); element order matches DEFAULT_ELEMENTS.
+        "optimized_descriptor": optimized_desc.detach().cpu().numpy().tolist(),
+        "optimized_weights": w_final.tolist(),
     }
 
 
