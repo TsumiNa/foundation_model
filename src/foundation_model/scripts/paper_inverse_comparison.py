@@ -45,7 +45,9 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
+from matplotlib.offsetbox import AnnotationBbox, HPacker, TextArea
 import numpy as np
 import torch
 from lightning import seed_everything
@@ -308,6 +310,156 @@ def _plot_element_frequency_heatmap(
     logger.info(f"Wrote element-frequency heatmap to {out_path}")
 
 
+# --- seed → optimised composition mapping plot -------------------------------------------------
+
+
+def _parse_formula_to_fractions(formula: str) -> dict[str, float]:
+    """Parse a composition string into ``{element: fraction}`` summing to 1.
+
+    Handles both raw-amount formulas (``"Au65 Ga20 Gd15"`` → sum=100 → normalised to 1) and
+    pre-fractional formulas (``"Mg0.691 Cd0.309"`` → already sums to ~1).
+    """
+    out: dict[str, float] = {}
+    for el, amt in _COMP_RE.findall(formula):
+        if not el:
+            continue
+        a = float(amt) if amt else 1.0
+        out[el] = out.get(el, 0.0) + a
+    tot = sum(out.values())
+    return {k: v / tot for k, v in out.items()} if tot > 0 else out
+
+
+def _render_composition_row(
+    ax,
+    x_axes_frac: float,
+    y_data: float,
+    comp: dict[str, float],
+    element_counts: Counter,
+    n_outputs: int,
+    cmap,
+) -> None:
+    """Draw one composition as a left-aligned sequence of colored "El amount" fragments.
+
+    Element symbols are bold + colored by their global appearance count in the optimised pool;
+    amount values stay in plain monospaced black. Layout is built with HPacker so the spacing
+    is independent of font-metrics quirks.
+    """
+    if not comp:
+        return
+    # Sort elements by descending amount so the formula reads "dominant first".
+    items = sorted(comp.items(), key=lambda kv: -kv[1])
+    parts: list = []
+    for el, frac in items:
+        count = element_counts.get(el, 0)
+        # Elements absent from the optimised pool fall back to gray; otherwise the cmap maps the
+        # appearance count into the colour scale. count == n_outputs would land at the cmap's
+        # bright end.
+        color = cmap(count / max(n_outputs, 1)) if count > 0 else "#999999"
+        parts.append(
+            TextArea(
+                el,
+                textprops=dict(color=color, fontweight="bold", fontsize=10, fontfamily="monospace"),
+            )
+        )
+        parts.append(
+            TextArea(
+                f"{frac * 100:.1f} ",
+                textprops=dict(color="#222", fontsize=10, fontfamily="monospace"),
+            )
+        )
+    box = HPacker(children=parts, align="baseline", pad=0, sep=2)
+    ab = AnnotationBbox(
+        box,
+        (x_axes_frac, y_data),
+        xycoords=("axes fraction", "data"),
+        frameon=False,
+        box_alignment=(0, 0.5),
+        pad=0,
+    )
+    ax.add_artist(ab)
+
+
+def _plot_seed_to_optimized_mapping(
+    seeds: list[str],
+    decoded: list[str],
+    out_path: Path,
+    *,
+    title: str,
+) -> None:
+    """Per-seed 1:1 view — left column shows each seed, right column shows the optimiser's output.
+
+    Both compositions are normalised to fractions and rendered as percent (so the user-facing
+    numbers match the seed-side ``"Au65 Ga20 Gd15"`` convention). Element symbols are coloured by
+    their appearance count in the **optimised** pool — gray for elements absent from it — and a
+    color bar on the right shows the scale. The intent is to visualise *which seed lands where*
+    under each composition config, complementing the aggregated ``element_frequency_heatmap.png``.
+    """
+    n = len(seeds)
+    if n == 0 or len(decoded) != n:
+        logger.warning(
+            f"_plot_seed_to_optimized_mapping: seeds ({n}) / decoded ({len(decoded)}) mismatch — skipping plot."
+        )
+        return
+
+    seed_dicts = [_parse_formula_to_fractions(s) for s in seeds]
+    decoded_dicts = [_parse_formula_to_fractions(d) for d in decoded]
+
+    # Element-presence count over the optimised pool — used for both colouring and the color bar.
+    element_counts: Counter = Counter()
+    for d in decoded_dicts:
+        for el in d:
+            element_counts[el] += 1
+
+    cmap = plt.cm.plasma
+    norm = mcolors.Normalize(vmin=0, vmax=n)
+
+    fig, (ax_main, ax_cbar) = plt.subplots(
+        1, 2, figsize=(15, max(8.0, 0.45 * n + 1.4)), gridspec_kw={"width_ratios": [40, 1]}
+    )
+    ax_main.set_xlim(0, 1)
+    ax_main.set_ylim(-0.6, n - 0.4)
+    ax_main.invert_yaxis()
+    ax_main.set_axis_off()
+    # Column headers anchored above the first row.
+    ax_main.text(0.02, -0.55, "Seed (fraction × 100)", fontsize=11, fontweight="bold", ha="left", va="bottom")
+    ax_main.text(
+        0.55, -0.55, "Optimised composition (fraction × 100)", fontsize=11, fontweight="bold", ha="left", va="bottom"
+    )
+
+    for i, (s_dict, d_dict) in enumerate(zip(seed_dicts, decoded_dicts)):
+        _render_composition_row(
+            ax_main,
+            x_axes_frac=0.02,
+            y_data=i,
+            comp=s_dict,
+            element_counts=element_counts,
+            n_outputs=n,
+            cmap=cmap,
+        )
+        ax_main.text(0.51, i, "→", fontsize=14, color="#888", ha="center", va="center")
+        _render_composition_row(
+            ax_main,
+            x_axes_frac=0.55,
+            y_data=i,
+            comp=d_dict,
+            element_counts=element_counts,
+            n_outputs=n,
+            cmap=cmap,
+        )
+
+    # Color bar: appearance count in optimised pool.
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cb = fig.colorbar(sm, cax=ax_cbar)
+    cb.set_label(f"Element appearance count\nin optimised pool (out of {n})")
+    cb.ax.tick_params(labelsize=9)
+
+    fig.suptitle(title, fontsize=12, y=0.995)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    logger.info(f"Wrote seed→optimised mapping plot to {out_path}")
+
+
 def _summarise(results: list[dict[str, Any]], reg_targets: dict[str, float]) -> list[dict[str, Any]]:
     summary = []
     for r in results:
@@ -410,6 +562,23 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
     # signal (bold orange on the x-axis) is part of every paper-comparison output — the slide
     # author / downstream reader doesn't need to find or rerun a separate post-hoc script.
     _plot_element_frequency_heatmap(results, list(seeds), out_dir / "element_frequency_heatmap.png")
+    # Seed → optimised 1:1 mapping plot, one figure per seed-based composition config. The
+    # aggregated heatmap shows column-level concentration; this complements it with per-seed
+    # detail — each seed's row reveals which elements the optimiser kept, dropped, or
+    # introduced. ``comp (random)`` is excluded since its ``seeds`` field is a placeholder
+    # ``random_start_N`` rather than a real composition (no per-row correspondence).
+    for r in results:
+        if r["method"] != "composition":
+            continue
+        if r.get("config", {}).get("init") != "seed":
+            continue
+        slug = re.sub(r"[^a-z0-9]+", "_", r["label"].lower()).strip("_")
+        _plot_seed_to_optimized_mapping(
+            seeds=list(seeds),
+            decoded=list(r["decoded_composition"]),
+            out_path=out_dir / f"seed_to_optimized__{slug}.png",
+            title=f"Seed → optimised composition · {r['label'].replace(chr(10), ' ')}",
+        )
     # The auto-generated README is a compact summary table only. It writes to ``SUMMARY.md``
     # (not ``README.md``) so a user-written index — pointing to every figure, file, and the
     # full ANALYSIS.md — can live at ``README.md`` without being overwritten on rerun.
