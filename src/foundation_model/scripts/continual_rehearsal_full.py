@@ -62,6 +62,7 @@ from lightning import Trainer, seed_everything
 from lightning.pytorch.callbacks import Callback, EarlyStopping
 from loguru import logger
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, r2_score  # type: ignore[import-untyped]
+from torch.utils.data import DataLoader
 
 from foundation_model.data.composition_sources import normalize_composition
 from foundation_model.data.datamodule import CompoundDataModule
@@ -512,6 +513,37 @@ class ContinualRehearsalFullConfig:
             raise ValueError("task_sequence must contain 'material_type' (QC classifier for inverse design).")
 
 
+class _DropLastTrainCompoundDataModule(CompoundDataModule):
+    """``CompoundDataModule`` variant whose train loader sets ``drop_last=True``.
+
+    PyTorch ``BatchNorm1d`` in training mode raises ``ValueError: Expected more than 1 value per
+    channel`` on a batch of size 1. With ``shuffle=True`` and ``drop_last=False`` (the upstream
+    default), any train subset whose size ``mod batch_size == 1`` will eventually feed that
+    single-row tail batch into the encoder's ``fc_layers`` BN and crash mid-epoch — exactly what
+    happened in the first attempted full-data MPS run (Step 1, ``density``).
+
+    Dropping the final partial batch costs at most ``batch_size − 1`` rows per epoch (~256 / 35k
+    rows in the qc train split ≈ 0.7 %), which is well within the noise of the rehearsal mask. We
+    only touch the train loader; val / test / predict keep ``drop_last=False`` so every held-out
+    row is evaluated. ``_train_sampler`` (used only by the DDP path) is left untouched — we are
+    not using DDP here.
+    """
+
+    def train_dataloader(self):
+        base = super().train_dataloader()
+        if base is None:
+            return None
+        return DataLoader(
+            base.dataset,
+            batch_size=base.batch_size,
+            shuffle=True,
+            num_workers=base.num_workers,
+            pin_memory=base.pin_memory,
+            collate_fn=base.collate_fn,
+            drop_last=True,
+        )
+
+
 class ContinualRehearsalFullRunner:
     def __init__(self, config: ContinualRehearsalFullConfig):
         self.config = config
@@ -740,7 +772,7 @@ class ContinualRehearsalFullRunner:
                     ratio = cfg.replay_ratio
                 task_configs[name].task_masking_ratio = ratio
 
-            datamodule = CompoundDataModule(
+            datamodule = _DropLastTrainCompoundDataModule(
                 task_configs=[task_configs[name] for name in active],
                 descriptor_fn=self.descriptor_fn,
                 task_frames={name: self.task_frames[name] for name in active},
