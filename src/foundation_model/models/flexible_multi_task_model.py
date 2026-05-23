@@ -2175,6 +2175,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
         class_targets: Mapping[str, int | Sequence[int]] | None = None,
         class_target_weight: float = 1.0,
         sparsity_weight: float = 0.0,
+        allowed_elements: torch.Tensor | None = None,
+        element_step_scale: torch.Tensor | None = None,
         steps: int = 300,
         lr: float = 0.05,
     ) -> CompositionOptimizationResult:
@@ -2209,6 +2211,17 @@ class FlexibleMultiTaskModel(L.LightningModule):
         sparsity_weight : float, optional
             Adds a negative-entropy term ``λ · H(w)`` to the loss, pushing ``w`` toward few-element
             mixtures. Default 0 (no sparsity pressure).
+        allowed_elements : torch.Tensor | None, optional
+            Whitelist of element columns the optimisation may use. Accepts either a 1-D bool mask
+            of shape ``(n_components,)`` or a 1-D long tensor of element indices. Disallowed
+            elements are forced to ``w = 0`` for every step (their logits are masked to ``-inf``
+            inside the softmax), so no gradient ever lifts them. Use to encode experimental
+            feasibility constraints. ``None`` => every element allowed (default).
+        element_step_scale : torch.Tensor | None, optional
+            Per-element gradient multiplier ``∈ [0, ∞)``, shape ``(n_components,)``. Scales each
+            element's logit gradient before the optimiser step: ``0`` freezes that element at its
+            current value (e.g. lock the seed framework), ``0.1`` lets it drift only slowly,
+            ``1.0`` is the default. Combine with ``allowed_elements`` for hard + soft constraints.
         steps : int
             Adam optimisation steps. Default 300.
         lr : float
@@ -2277,6 +2290,44 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if sparsity_weight < 0:
             raise ValueError(f"sparsity_weight must be >= 0, got {sparsity_weight}")
 
+        # --- Per-element constraints --------------------------------------------------------------
+        # ``allowed_elements`` is a hard whitelist; ``element_step_scale`` is a soft per-element
+        # learning-rate multiplier (0 = frozen). Validate shapes/values here before state changes.
+        elem_mask_arg: torch.Tensor | None = None
+        if allowed_elements is not None:
+            if allowed_elements.ndim != 1:
+                raise ValueError(
+                    f"allowed_elements must be 1-D (bool mask or index list); got shape {tuple(allowed_elements.shape)}."
+                )
+            if allowed_elements.dtype == torch.bool:
+                if allowed_elements.shape[0] != n_components:
+                    raise ValueError(
+                        f"allowed_elements bool mask must have length n_components ({n_components}); "
+                        f"got {allowed_elements.shape[0]}."
+                    )
+                elem_mask_arg = allowed_elements.to(dtype=torch.bool)
+            else:
+                idx = allowed_elements.to(dtype=torch.long)
+                if (idx < 0).any() or (idx >= n_components).any():
+                    raise ValueError(
+                        f"allowed_elements indices must be in [0, {n_components}); got out-of-range values."
+                    )
+                elem_mask_arg = torch.zeros(n_components, dtype=torch.bool)
+                elem_mask_arg[idx] = True
+            if not elem_mask_arg.any():
+                raise ValueError("allowed_elements must allow at least one element (all False mask given).")
+
+        step_scale_arg: torch.Tensor | None = None
+        if element_step_scale is not None:
+            if element_step_scale.ndim != 1 or element_step_scale.shape[0] != n_components:
+                raise ValueError(
+                    f"element_step_scale must be 1-D of length n_components ({n_components}); "
+                    f"got shape {tuple(element_step_scale.shape)}."
+                )
+            if (element_step_scale < 0).any():
+                raise ValueError("element_step_scale values must be >= 0.")
+            step_scale_arg = element_step_scale
+
         # --- Validate the seed (BEFORE touching model state, so a bad input doesn't leave the
         #     model in eval() / with params switched off). ---------------------------------------
         if initial_weights is None:
@@ -2336,6 +2387,17 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     for name, idxs in class_target_map.items()
                 }
 
+            # Move the element-constraint tensors onto the right device (validated above).
+            elem_mask = elem_mask_arg.to(device=device) if elem_mask_arg is not None else None
+            step_scale = step_scale_arg.to(device=device, dtype=dtype) if step_scale_arg is not None else None
+
+            def _w_from_logits(lg: torch.Tensor) -> torch.Tensor:
+                """Softmax over logits, with disallowed elements masked to weight 0."""
+                if elem_mask is None:
+                    return torch.softmax(lg, dim=-1)
+                masked = lg.masked_fill(~elem_mask, float("-inf"))
+                return torch.softmax(masked, dim=-1)
+
             def _heads_forward(h_task: torch.Tensor) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
                 """Run regression heads, return (per-task predictions, loss terms)."""
                 preds, terms = [], []
@@ -2363,7 +2425,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
             # --- Record initial scores --------------------------------------------------------------
             with torch.no_grad():
-                w0_tensor = torch.softmax(logits, dim=-1)
+                w0_tensor = _w_from_logits(logits)
                 h0 = torch.tanh(self.encoder(w0_tensor @ kmd_kernel))
                 initial_preds, _ = _heads_forward(h0)
                 initial_score = _stack([p.detach() for p in initial_preds], logits.shape[0])
@@ -2374,7 +2436,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             trajectory: list[torch.Tensor] = []
             for _ in range(steps):
                 optimizer.zero_grad()
-                w = torch.softmax(logits, dim=-1)
+                w = _w_from_logits(logits)
                 x = w @ kmd_kernel
                 h_task = torch.tanh(self.encoder(x))
                 preds, terms = _heads_forward(h_task)
@@ -2384,12 +2446,15 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     terms.append(sparsity_weight * entropy)
                 loss = torch.stack(terms).mean()
                 loss.backward()
+                if step_scale is not None and logits.grad is not None:
+                    # Soft per-element constraint: scale each element's logit gradient (0 = frozen).
+                    logits.grad.mul_(step_scale)
                 optimizer.step()
                 trajectory.append(_stack([p.detach() for p in preds], logits.shape[0]))
 
             # --- Final state ------------------------------------------------------------------------
             with torch.no_grad():
-                w_final = torch.softmax(logits, dim=-1)
+                w_final = _w_from_logits(logits)
                 x_final = w_final @ kmd_kernel
                 h_final = torch.tanh(self.encoder(x_final))
                 final_preds, _ = _heads_forward(h_final)

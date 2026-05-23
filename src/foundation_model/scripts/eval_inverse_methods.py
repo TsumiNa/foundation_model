@@ -154,6 +154,8 @@ def _run_composition_method(
     class_weight: float,
     steps: int,
     lr: float,
+    allowed_elements: torch.Tensor | None = None,
+    element_step_scale: torch.Tensor | None = None,
 ) -> dict[str, Any]:
     device, dtype = next(model.parameters()).device, next(model.parameters()).dtype
     kernel = runner._kmd.kernel_torch(device=device, dtype=dtype)
@@ -166,6 +168,8 @@ def _run_composition_method(
         task_targets=reg_targets,
         class_targets={"material_type": QC_CLASSES},
         class_target_weight=class_weight,
+        allowed_elements=allowed_elements,
+        element_step_scale=element_step_scale,
         steps=steps,
         lr=lr,
     )
@@ -231,7 +235,40 @@ def _plot_summary(results: list[dict[str, Any]], reg_targets: dict[str, float], 
 # --- Main flow ----------------------------------------------------------------
 
 
-def evaluate(config: ContinualRehearsalConfig, ckpt_path: Path, cycle_weights: list[float]) -> None:
+def _resolve_element_constraints(
+    allowed_syms: list[str] | None,
+    locked_syms: list[str] | None,
+    step_value: float,
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    """Convert symbol lists to (allowed_elements bool mask, element_step_scale tensor)."""
+    n = len(DEFAULT_ELEMENTS)
+    sym_to_idx = {sym: i for i, sym in enumerate(DEFAULT_ELEMENTS)}
+
+    def _to_idx(symbols: list[str]) -> list[int]:
+        bad = [s for s in symbols if s not in sym_to_idx]
+        if bad:
+            raise ValueError(f"Unknown element symbol(s): {bad}. Valid: e.g. {DEFAULT_ELEMENTS[:8]}…")
+        return [sym_to_idx[s] for s in symbols]
+
+    allowed_mask = None
+    if allowed_syms:
+        allowed_mask = torch.zeros(n, dtype=torch.bool)
+        allowed_mask[_to_idx(allowed_syms)] = True
+
+    step_scale = None
+    if locked_syms:
+        step_scale = torch.ones(n)
+        step_scale[_to_idx(locked_syms)] = step_value
+    return allowed_mask, step_scale
+
+
+def evaluate(
+    config: ContinualRehearsalConfig,
+    ckpt_path: Path,
+    cycle_weights: list[float],
+    allowed_elements: torch.Tensor | None = None,
+    element_step_scale: torch.Tensor | None = None,
+) -> None:
     seed_everything(config.random_seed, workers=True)
     runner = ContinualRehearsalRunner(config)
     model = runner._build_full_model()
@@ -275,8 +312,14 @@ def evaluate(config: ContinualRehearsalConfig, ckpt_path: Path, cycle_weights: l
             )
         )
 
-    # Method B: differentiable KMD, single run (no λ).
+    # Method B: differentiable KMD, single run (no λ). Element constraints (if any) only apply here.
     logger.info("--- Composition method (differentiable KMD) ---")
+    if allowed_elements is not None:
+        logger.info(f"  allowed_elements: {int(allowed_elements.sum())} of {len(DEFAULT_ELEMENTS)} elements")
+    if element_step_scale is not None:
+        locked = [DEFAULT_ELEMENTS[i] for i in (element_step_scale == 0).nonzero(as_tuple=True)[0].tolist()]
+        if locked:
+            logger.info(f"  locked elements (step_scale=0): {locked}")
     results.append(
         _run_composition_method(
             runner,
@@ -286,6 +329,8 @@ def evaluate(config: ContinualRehearsalConfig, ckpt_path: Path, cycle_weights: l
             class_weight=config.inverse_class_weight,
             steps=config.inverse_steps,
             lr=config.inverse_lr,
+            allowed_elements=allowed_elements,
+            element_step_scale=element_step_scale,
         )
     )
 
@@ -326,6 +371,30 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ContinualRehearsalConfig
         default="0,0.1,0.5,1,2,5",
         help="Comma-separated λ values for cycle_consistency_weight in the latent method.",
     )
+    parser.add_argument(
+        "--allowed-elements",
+        type=str,
+        default="",
+        help=(
+            "Comma-separated element symbols the composition method is allowed to use (hard "
+            "whitelist; e.g. 'Mg,Al,Cu,Ni,Zn,Ag'). Empty means every element allowed."
+        ),
+    )
+    parser.add_argument(
+        "--locked-elements",
+        type=str,
+        default="",
+        help=(
+            "Comma-separated element symbols whose composition weight is frozen at the seed "
+            "value (sets element_step_scale to --locked-step-scale; default 0 = fully locked)."
+        ),
+    )
+    parser.add_argument(
+        "--locked-step-scale",
+        type=float,
+        default=0.0,
+        help="Gradient multiplier for locked elements (0 = fully locked; 0.1 = slow drift).",
+    )
     args = parser.parse_args(argv)
 
     import tomllib
@@ -352,7 +421,16 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ContinualRehearsalConfig
 def main(argv: list[str] | None = None) -> None:
     config, args = _parse_args(argv)
     cycle_weights = [float(x) for x in args.cycle_weights.split(",") if x.strip()]
-    evaluate(config, args.checkpoint, cycle_weights)
+    allowed_syms = [s.strip() for s in args.allowed_elements.split(",") if s.strip()]
+    locked_syms = [s.strip() for s in args.locked_elements.split(",") if s.strip()]
+    allowed_mask, step_scale = _resolve_element_constraints(allowed_syms, locked_syms, args.locked_step_scale)
+    evaluate(
+        config,
+        args.checkpoint,
+        cycle_weights,
+        allowed_elements=allowed_mask,
+        element_step_scale=step_scale,
+    )
 
 
 if __name__ == "__main__":

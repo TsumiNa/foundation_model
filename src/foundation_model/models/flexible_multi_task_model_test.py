@@ -1165,6 +1165,119 @@ def test_optimize_composition_restores_model_state_on_error():
     assert [p.requires_grad for p in model.parameters()] == before_req_grad
 
 
+def test_optimize_composition_allowed_elements_hard_mask():
+    """Disallowed elements stay at exactly zero weight, regardless of seed or n_starts."""
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    n_components = 6
+    kernel = torch.randn(n_components, INPUT_DIM)
+
+    # Whitelist as indices: only elements {0, 2, 4} may be non-zero.
+    allowed = torch.tensor([0, 2, 4], dtype=torch.long)
+    res = model.optimize_composition(
+        kernel,
+        task_targets={"prop": 1.0},
+        class_targets={"cls": [1]},
+        class_target_weight=3.0,
+        n_starts=4,
+        allowed_elements=allowed,
+        steps=20,
+        lr=0.2,
+    )
+    w = res.optimized_weights
+    # Forbidden columns must be exactly zero across every row.
+    forbidden = [1, 3, 5]
+    assert torch.all(w[:, forbidden] == 0)
+    # Allowed columns still sum to 1.
+    assert torch.allclose(w[:, allowed].sum(dim=-1), torch.ones(4), atol=1e-5)
+
+    # Same outcome with the bool-mask form.
+    mask = torch.zeros(n_components, dtype=torch.bool)
+    mask[allowed] = True
+    res2 = model.optimize_composition(
+        kernel,
+        task_targets={"prop": 1.0},
+        n_starts=3,
+        allowed_elements=mask,
+        steps=5,
+    )
+    assert torch.all(res2.optimized_weights[:, forbidden] == 0)
+
+
+def test_optimize_composition_allowed_elements_validation():
+    model = _make_reg_clf_model()
+    kernel = torch.randn(6, INPUT_DIM)
+    with pytest.raises(ValueError, match="1-D"):
+        model.optimize_composition(
+            kernel,
+            task_targets={"prop": 0.0},
+            allowed_elements=torch.zeros(6, 1, dtype=torch.bool),
+            n_starts=2,
+            steps=2,
+        )
+    with pytest.raises(ValueError, match="length n_components"):
+        model.optimize_composition(
+            kernel, task_targets={"prop": 0.0}, allowed_elements=torch.ones(5, dtype=torch.bool), n_starts=2, steps=2
+        )
+    with pytest.raises(ValueError, match="out-of-range"):
+        model.optimize_composition(
+            kernel, task_targets={"prop": 0.0}, allowed_elements=torch.tensor([0, 7]), n_starts=2, steps=2
+        )
+    with pytest.raises(ValueError, match="allow at least one"):
+        model.optimize_composition(
+            kernel,
+            task_targets={"prop": 0.0},
+            allowed_elements=torch.zeros(6, dtype=torch.bool),
+            n_starts=2,
+            steps=2,
+        )
+
+
+def test_optimize_composition_element_step_scale_freezes_elements():
+    """element_step_scale=0 on chosen elements keeps their weights at the seed value."""
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    n_components = 6
+    kernel = torch.randn(n_components, INPUT_DIM)
+
+    # Seed: equal mass on 4 elements (the "locked framework"), zero on others.
+    init_w = torch.tensor([[0.25, 0.25, 0.25, 0.25, 0.0, 0.0]])
+    # Freeze elements 0 and 1 at their seed values; let 2..5 move freely.
+    step_scale = torch.tensor([0.0, 0.0, 1.0, 1.0, 1.0, 1.0])
+    res = model.optimize_composition(
+        kernel,
+        task_targets={"prop": 5.0},
+        initial_weights=init_w,
+        element_step_scale=step_scale,
+        steps=50,
+        lr=0.3,
+    )
+    w = res.optimized_weights
+    # Elements 0 and 1 must keep the same relative weight as at seed (logits unchanged).
+    # Note: softmax(seed_logits) at start = init_w; with grad=0 on those logits and no movement,
+    # their LOGIT stays constant. But the softmax over the FULL vector can still rescale them if
+    # other elements grow. We instead check the ratio of their LOGITS is preserved (frozen logits).
+    # A simpler check: w[0,0] / w[0,1] should be 1.0 (same as the seed ratio) within tolerance.
+    assert torch.isclose(w[0, 0] / w[0, 1], torch.tensor(1.0), atol=1e-4)
+
+
+def test_optimize_composition_element_step_scale_validation():
+    model = _make_reg_clf_model()
+    kernel = torch.randn(6, INPUT_DIM)
+    with pytest.raises(ValueError, match="length n_components"):
+        model.optimize_composition(
+            kernel, task_targets={"prop": 0.0}, element_step_scale=torch.ones(5), n_starts=2, steps=2
+        )
+    with pytest.raises(ValueError, match=">= 0"):
+        model.optimize_composition(
+            kernel,
+            task_targets={"prop": 0.0},
+            element_step_scale=torch.tensor([1.0, -0.1, 1.0, 1.0, 1.0, 1.0]),
+            n_starts=2,
+            steps=2,
+        )
+
+
 def test_optimize_composition_uses_kmd_kernel_torch():
     """End-to-end: a real KMD's kernel_torch flows into optimize_composition."""
     from foundation_model.utils.kmd_plus import KMD
@@ -1179,6 +1292,8 @@ def test_optimize_composition_uses_kmd_kernel_torch():
     res = model.optimize_composition(kernel, task_targets={"prop": 0.5}, n_starts=3, steps=10)
     assert res.optimized_weights.shape == (3, 7)
     assert torch.allclose(res.optimized_weights.sum(dim=-1), torch.ones(3), atol=1e-5)
+
+
 def test_optimize_latent_space_with_ae():
     model = _make_model()
     model.eval()
