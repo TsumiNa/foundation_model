@@ -55,3 +55,27 @@ datamodule_random_seed = 42
 accelerator = "auto"
 devices = 1
 num_workers = 0
+
+# Three inverse-design scenarios (per docs/continual_rehearsal_full_PLAN.md §5). Consumed by the
+# orchestrator ``paper_inverse_3scenarios.py``. The plan uses ``magnetic_moment`` as the magnetic
+# target, but the current 11-task baseline trained on ``magnetization`` (a sibling NEMAD-magnetic
+# column) — they encode the same "more-magnetic" intent in z-scored space, and the substitution
+# is the only way to run the 3 scenarios *without* a base-model retrain. Documented in the
+# top-level ANALYSIS.md of the run folder.
+#
+# NOTE: TOML array-of-tables must be at the file END — any top-level scalar after a [[...]]
+# header would be absorbed into that table. Keep below this line empty of scalars.
+[[inverse_scenarios]]
+name = "scenario1_fe_down_magnetic_up"
+reg_tasks = ["formation_energy", "magnetization"]
+reg_targets = [-2.0, 2.0]
+
+[[inverse_scenarios]]
+name = "scenario2_fe_down_tc_up_magnetic_up"
+reg_tasks = ["formation_energy", "tc", "magnetization"]
+reg_targets = [-2.0, 2.0, 2.0]
+
+[[inverse_scenarios]]
+name = "scenario3_fe_down_klat_up"
+reg_tasks = ["formation_energy", "klat"]
+reg_targets = [-2.0, 2.0]
