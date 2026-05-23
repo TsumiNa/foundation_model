@@ -103,6 +103,81 @@ def test_call_matches_transform(method, kwargs, weight, component_features):
     np.testing.assert_array_equal(kmd(weight), kmd.transform(weight))
 
 
+# --- differentiable torch transform -----------------------------------------
+
+
+@pytest.mark.parametrize("method,kwargs", [("1d", {"n_grids": 10}), ("md", {})])
+def test_transform_torch_matches_numpy(method, kwargs, weight, component_features):
+    import torch
+
+    kmd = KMD(component_features, method=method, **kwargs)
+    np_out = kmd.transform(weight)
+    torch_out = kmd.transform_torch(torch.as_tensor(weight, dtype=torch.float64))
+    assert torch.allclose(torch_out, torch.as_tensor(np_out), atol=1e-10)
+
+
+def test_transform_torch_is_differentiable(component_features):
+    """Gradients flow through transform_torch back to the weight tensor."""
+    import torch
+
+    kmd = KMD(component_features, method="1d", n_grids=10)
+    w = torch.rand(3, component_features.shape[0], dtype=torch.float64, requires_grad=True)
+    desc = kmd.transform_torch(w)
+    loss = desc.pow(2).sum()
+    loss.backward()
+    assert w.grad is not None
+    assert w.grad.shape == w.shape
+    assert torch.any(w.grad != 0)
+
+
+def test_kernel_torch_mutation_does_not_affect_numpy_kmd(component_features, weight):
+    """Backwards-compatibility lock: torch additions never affect the numpy KMD path.
+
+    The legacy ``transform`` / ``inverse`` callers must keep working unchanged even after we
+    hand out torch views of the kernel — including the worst case where downstream code
+    accidentally mutates the returned tensor in place.
+    """
+    import torch
+
+    kmd = KMD(component_features, method="1d", n_grids=10)
+    before = kmd.transform(weight)
+    # Try to mutate the returned tensor in place (worst-case adversarial use).
+    t = kmd.kernel_torch()
+    t.zero_()
+    t2 = kmd.kernel_torch()
+    t2.add_(1000.0)
+    # The numpy transform must still produce the original output.
+    after = kmd.transform(weight)
+    np.testing.assert_array_equal(before, after)
+    # And a fresh kernel_torch call must still match the numpy kernel.
+    fresh = kmd.kernel_torch()
+    np.testing.assert_allclose(fresh.numpy(), kmd.transform(np.eye(component_features.shape[0])))
+
+
+def test_transform_torch_reuses_internal_cache(component_features):
+    """transform_torch must not deep-copy the kernel on every call (perf-critical for loops)."""
+    import torch
+
+    kmd = KMD(component_features, method="1d", n_grids=10)
+    w = torch.rand(2, component_features.shape[0])
+    _ = kmd.transform_torch(w)  # first call seeds the internal cache
+    cached = kmd._internal_kernel_torch(device=w.device, dtype=w.dtype)
+    again = kmd._internal_kernel_torch(device=w.device, dtype=w.dtype)
+    assert cached is again  # same (device, dtype) key returns the cached tensor
+
+
+def test_transform_torch_preserves_input_dtype():
+    """The torch transform should respect the caller's dtype (e.g. fp64 stays fp64)."""
+    import torch
+
+    cf = np.random.default_rng(0).normal(size=(6, 3))
+    kmd = KMD(cf, method="1d", n_grids=8)
+    w_fp64 = torch.rand(2, 6, dtype=torch.float64)
+    assert kmd.transform_torch(w_fp64).dtype == torch.float64
+    w_fp32 = w_fp64.to(torch.float32)
+    assert kmd.transform_torch(w_fp32).dtype == torch.float32
+
+
 # --- roundtrip ---------------------------------------------------------------
 
 

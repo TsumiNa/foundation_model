@@ -150,6 +150,70 @@ class KMD:
         """Alias for :meth:`transform`."""
         return self.transform(weight)
 
+    def _internal_kernel_torch(self, *, device=None, dtype=None):  # type: ignore[no-untyped-def]
+        """Cached torch kernel for **internal** read-only use (no clone, no exposure).
+
+        Keyed by ``(device, dtype)`` so repeated calls in a gradient loop avoid the deep-copy
+        cost of :meth:`kernel_torch`. The cached tensor must never be returned to callers — they
+        could mutate it in place and break :meth:`transform` / :meth:`inverse`.
+        """
+        import torch
+
+        if not hasattr(self, "_kernel_torch_cache"):
+            self._kernel_torch_cache: dict[tuple[str, str], "torch.Tensor"] = {}
+        key = (str(device) if device is not None else "default", str(dtype) if dtype is not None else "default")
+        cached = self._kernel_torch_cache.get(key)
+        if cached is None:
+            # First time for this (device, dtype): build an independent copy of the numpy kernel.
+            base = torch.from_numpy(np.array(self._kernel, copy=True))
+            if device is not None or dtype is not None:
+                base = base.to(device=device, dtype=dtype)
+            self._kernel_torch_cache[key] = base
+            cached = base
+        return cached
+
+    def kernel_torch(self, *, device=None, dtype=None):  # type: ignore[no-untyped-def]
+        """Return the precomputed kernel as a fresh ``torch.Tensor`` (safe to mutate).
+
+        Each call returns an independently-allocated tensor (no memory sharing with the numpy
+        kernel, the internal cache, or any previous return), so in-place mutations on the result
+        cannot affect :meth:`transform` / :meth:`inverse` — :class:`KMD` itself stays 100%
+        numpy-only and backwards-compatible. For hot loops that just need a read-only view, use
+        :meth:`transform_torch` (which reuses an internal cache).
+
+        Parameters
+        ----------
+        device, dtype:
+            Optional torch device / dtype overrides for the returned tensor.
+        """
+        return self._internal_kernel_torch(device=device, dtype=dtype).clone()
+
+    def transform_torch(self, weight, *, device=None, dtype=None):  # type: ignore[no-untyped-def]
+        """Differentiable torch counterpart of :meth:`transform`.
+
+        :meth:`transform` is a single matrix multiplication ``weight @ K`` with ``K`` constant —
+        so the only step needed for end-to-end gradient flow into composition weights (e.g. for
+        gradient-based inverse design in composition space) is doing that matmul in torch.
+
+        Uses the internal kernel cache (matmul reads, never mutates), so repeated calls inside
+        an optimisation loop are constant-time after the first.
+
+        Parameters
+        ----------
+        weight : torch.Tensor
+            Mixing ratios, shape ``(n_samples, n_components)``. Any ``device`` / ``dtype``.
+            Gradients flow through this argument.
+        device, dtype : optional
+            Overrides for the kernel view; defaults to ``weight``'s device/dtype.
+
+        Returns
+        -------
+        torch.Tensor
+            Descriptors, same shape as :meth:`transform` would produce.
+        """
+        kernel = self._internal_kernel_torch(device=device or weight.device, dtype=dtype or weight.dtype)
+        return weight @ kernel
+
     def inverse(self, kmd: npt.ArrayLike) -> npt.NDArray[np.float64]:
         """Recover mixing weights from descriptors (descriptors → materials).
 
