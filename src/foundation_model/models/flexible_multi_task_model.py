@@ -1736,6 +1736,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         task_targets: Mapping[str, torch.Tensor | float] | None = None,
         class_targets: Mapping[str, int | Sequence[int]] | None = None,
         class_target_weight: float = 1.0,
+        cycle_consistency_weight: float = 0.0,
         optimize_space: str = "input",
     ) -> OptimizationResult:
         """
@@ -1777,6 +1778,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Multiplier on each classification objective term relative to the regression terms.
             Use ``> 1`` to make class probability the primary objective and regression targets
             secondary. Default ``1.0``.
+        cycle_consistency_weight : float, optional
+            Latent-space optimization only. Adds ``λ · ‖tanh(encoder(AE.decode(h))) − h‖²`` to the
+            loss, pulling the optimized latent toward the manifold the AE can faithfully reconstruct
+            (mitigates the decode round-trip drop). Default ``0.0`` (off).
         optimize_space : str, optional
             ``"input"`` or ``"latent"``. Default ``"input"``.
 
@@ -1844,6 +1849,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
                         f"{num_classes}-class head; valid indices are [0, {num_classes})."
                     )
                 class_target_map[name] = idxs
+
+        if cycle_consistency_weight < 0:
+            raise ValueError(f"cycle_consistency_weight must be >= 0, got {cycle_consistency_weight}")
 
         # Legacy single-task path (mode / target_value) only when no target maps are given
         if target_tasks is None and class_target_map is None:
@@ -2099,6 +2107,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
                             loss_terms.append(F.mse_loss(pred, expanded_target))
 
                     loss_terms.extend(class_target_weight * term for term in _class_loss_terms(h_task))
+                    if cycle_consistency_weight > 0:
+                        # Pull the optimized latent toward what the AE faithfully reconstructs:
+                        # decode it to a descriptor, re-encode, and penalise the drift in h_task.
+                        re_h_task = torch.tanh(self.encoder(self.task_heads[_AE_TASK](h_task)))
+                        loss_terms.append(cycle_consistency_weight * F.mse_loss(re_h_task, h_task))
                     per_task_values_tensor = _stack_scores(per_task_values)  # (B, T)
 
                     if loss_terms:

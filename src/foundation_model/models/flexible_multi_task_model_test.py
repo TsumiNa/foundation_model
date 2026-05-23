@@ -981,6 +981,34 @@ def test_optimize_latent_class_targets_only_no_regression():
     assert res.optimized_target.shape == (4, 1, 0)  # no regression tasks tracked
 
 
+def test_optimize_latent_cycle_consistency_rejects_negative():
+    model = _make_reg_clf_model()
+    with pytest.raises(ValueError, match="cycle_consistency_weight must be >= 0"):
+        model.optimize_latent(
+            initial_input=torch.randn(2, INPUT_DIM),
+            task_targets={"prop": 1.0},
+            optimize_space="latent",
+            cycle_consistency_weight=-0.1,
+        )
+
+
+def test_optimize_latent_cycle_consistency_runs_in_latent_space():
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()  # enable_autoencoder=True, so AE head is available
+    x = torch.randn(4, INPUT_DIM)
+    res = model.optimize_latent(
+        initial_input=x,
+        task_targets={"prop": 1.0},
+        class_targets={"cls": [1]},
+        class_target_weight=3.0,
+        cycle_consistency_weight=0.5,  # pull latent toward AE-reconstructible manifold
+        optimize_space="latent",
+        steps=10,
+    )
+    assert res.optimized_input.shape == (4, 1, INPUT_DIM)
+    assert res.optimized_target.shape == (4, 1, 1)
+
+
 def test_optimize_latent_class_target_weight_rejects_nonpositive():
     model = _make_reg_clf_model()
     with pytest.raises(ValueError, match="class_target_weight must be > 0"):
