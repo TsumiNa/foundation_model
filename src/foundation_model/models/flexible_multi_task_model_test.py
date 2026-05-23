@@ -1240,31 +1240,99 @@ def test_optimize_composition_allowed_elements_validation():
 
 
 def test_optimize_composition_element_step_scale_locks_symbols():
-    """A symbol→0.0 mapping freezes those elements' weights at their seed values."""
+    """A symbol→0.0 mapping freezes those elements' weights at their **absolute** seed values.
+
+    The previous version of this test only checked that the locked elements' ratio stayed at 1.0
+    (which holds even if both drift together, since their logits move in lockstep). That doesn't
+    actually verify "frozen": with the bare gradient-zeroing implementation, ``w[Mg]`` drifts
+    because the softmax denominator changes whenever other (unlocked) logits move. This test
+    now asserts each locked element holds its **un-blended seed value** to within float tolerance.
+    """
     torch.manual_seed(0)
     model, kernel, elements = _build_aligned_model_and_kernel()
 
-    # Seed: equal mass on 4 specific symbols, zero on the rest.
+    # Seed: asymmetric mass on 4 specific symbols, zero on the rest. The asymmetry matters —
+    # equal-mass locks would survive ratio-only checks even if both drift together.
     locked_syms = ["Mg", "Al"]
     free_syms = ["Cu", "Ni"]
-    seed_syms = locked_syms + free_syms
     init_w = torch.zeros(1, len(elements))
-    for s in seed_syms:
-        init_w[0, elements.index(s)] = 0.25
+    init_w[0, elements.index("Mg")] = 0.30
+    init_w[0, elements.index("Al")] = 0.20
+    init_w[0, elements.index("Cu")] = 0.30
+    init_w[0, elements.index("Ni")] = 0.20
 
     res = model.optimize_composition(
         kernel,
         task_targets={"prop": 5.0},
         initial_weights=init_w,
         element_step_scale={s: 0.0 for s in locked_syms},
-        steps=50,
-        lr=0.3,
+        steps=80,
+        lr=0.5,  # large enough that any drift in locked weights would show up
     )
-    w = res.optimized_weights
-    # The two locked symbols had equal seed weight; their logits don't move, so the softmax ratio
-    # stays at 1.0 regardless of how other elements grow.
+    w = res.optimized_weights[0]
     mg, al = elements.index("Mg"), elements.index("Al")
-    assert torch.isclose(w[0, mg] / w[0, al], torch.tensor(1.0), atol=1e-4)
+    assert torch.isclose(w[mg], torch.tensor(0.30, dtype=w.dtype), atol=1e-4)
+    assert torch.isclose(w[al], torch.tensor(0.20, dtype=w.dtype), atol=1e-4)
+    # And the unlocked elements share the remaining 0.50 mass.
+    free_total = w.sum() - w[mg] - w[al]
+    assert torch.isclose(free_total, torch.tensor(0.50, dtype=w.dtype), atol=1e-4)
+
+
+def test_optimize_composition_element_step_scale_locks_with_unlocked_drift():
+    """Locked elements stay at seed even while unlocked elements actually move."""
+    torch.manual_seed(0)
+    model, kernel, elements = _build_aligned_model_and_kernel()
+    init_w = torch.zeros(1, len(elements))
+    init_w[0, elements.index("Mg")] = 0.40  # locked
+    init_w[0, elements.index("Cu")] = 0.30  # free
+    init_w[0, elements.index("Ni")] = 0.30  # free
+
+    res = model.optimize_composition(
+        kernel,
+        task_targets={"prop": 5.0},
+        initial_weights=init_w,
+        element_step_scale={"Mg": 0.0},
+        steps=80,
+        lr=0.5,
+    )
+    w = res.optimized_weights[0]
+    # Mg held exactly.
+    assert torch.isclose(w[elements.index("Mg")], torch.tensor(0.40, dtype=w.dtype), atol=1e-4)
+    # The unlocked elements ended up in different ratios than they started (proves they moved).
+    cu0, ni0 = init_w[0, elements.index("Cu")], init_w[0, elements.index("Ni")]
+    cu_f, ni_f = w[elements.index("Cu")], w[elements.index("Ni")]
+    assert not torch.isclose(cu_f / ni_f, cu0 / ni0, atol=1e-3), "unlocked weights didn't actually move"
+    # And the unlocked mass equals 1 - locked mass.
+    assert torch.isclose(w.sum() - w[elements.index("Mg")], torch.tensor(0.60, dtype=w.dtype), atol=1e-4)
+
+
+def test_optimize_composition_element_step_scale_lock_requires_initial_weights():
+    """A hard lock with random init is rejected (no seed to lock to)."""
+    model, kernel, _ = _build_aligned_model_and_kernel()
+    with pytest.raises(ValueError, match="hard lock.*initial_weights"):
+        model.optimize_composition(
+            kernel,
+            task_targets={"prop": 0.0},
+            element_step_scale={"Mg": 0.0},
+            n_starts=2,
+            steps=2,
+        )
+
+
+def test_optimize_composition_element_step_scale_lock_must_be_allowed():
+    """Locking an element that's not in allowed_elements is contradictory and rejected."""
+    model, kernel, elements = _build_aligned_model_and_kernel()
+    init_w = torch.zeros(1, len(elements))
+    init_w[0, elements.index("Mg")] = 1.0
+    with pytest.raises(ValueError, match="must also be in allowed_elements"):
+        model.optimize_composition(
+            kernel,
+            task_targets={"prop": 0.0},
+            initial_weights=init_w,
+            allowed_elements=["Al", "Cu"],
+            element_step_scale={"Mg": 0.0},
+            steps=2,
+        )
 
 
 def test_optimize_composition_element_step_scale_uniform_scalar():

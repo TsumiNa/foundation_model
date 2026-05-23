@@ -2226,12 +2226,26 @@ class FlexibleMultiTaskModel(L.LightningModule):
             :data:`~foundation_model.utils.kmd_plus.DEFAULT_ELEMENTS`; the kernel must therefore
             have ``n_components == len(DEFAULT_ELEMENTS)`` when symbols are used.
         element_step_scale : float | Mapping[str, float], optional
-            Per-element gradient multiplier ``∈ [0, ∞)`` applied to each logit's gradient before
-            the optimiser step. A scalar applies uniformly to every element (default ``1.0`` =
-            no constraint). A symbol→float mapping overrides specific elements while leaving the
-            rest at ``1.0``: ``{"Mg": 0.0, "Al": 0.0}`` freezes those elements at their seed
-            values (lock the seed framework); ``0.1`` lets an element drift slowly. Symbols are
-            resolved against ``DEFAULT_ELEMENTS`` (kernel alignment required, as above).
+            Per-element constraint on how fast each element's weight can move during optimisation.
+            A scalar applies uniformly to every element (default ``1.0`` = no constraint). A
+            symbol→float mapping overrides specific elements while leaving the rest at ``1.0``.
+
+            Two regimes with different mechanics:
+
+            * **Hard lock (value = 0):** ``{"Mg": 0.0, "Al": 0.0}`` pins those elements' weights
+              at their un-blended ``initial_weights`` values for the entire optimisation. The
+              implementation rewrites the softmax output to paste seed values back at locked
+              positions and renormalises the unlocked positions over the remaining
+              ``1 − Σ_locked seed`` mass — so the locked weights truly do not drift, even when
+              other (unlocked) logits move. Requires ``initial_weights`` (no seed → nothing to
+              lock to) and the locked elements must be in ``allowed_elements`` if a whitelist
+              is set.
+            * **Soft constraint (0 < value < 1):** the element's logit gradient is multiplied by
+              the scale before each Adam step, slowing (but not freezing) its drift. ``0.1`` lets
+              an element move at 10 % of the normal speed. The softmax denominator still couples
+              it to the rest of the row, so this is a soft preference, not a hard guarantee.
+
+            Symbols are resolved against ``DEFAULT_ELEMENTS`` (kernel alignment required, as above).
         seed_blend : float, optional
             How much of the (per-row) seed prior to keep when ``initial_weights`` is given;
             ``w0 ← seed_blend · seed + (1 − seed_blend) · uniform_over_allowed``. Default ``0.95``
@@ -2402,6 +2416,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
             kmd_kernel = kmd_kernel.to(device=device, dtype=dtype)
 
             # --- Build logits over n_components ---------------------------------------------------
+            # We additionally capture the *un-blended* normalised seed (``w0_seed``) — the
+            # locked-element hard-lock below uses these values, not the post-blend ones, so a
+            # user who writes ``element_step_scale={"Mg": 0.0}`` with ``initial_weights`` placing
+            # Mg at 0.30 sees Mg held at exactly 0.30 (not the slightly blended 0.286).
+            w0_seed: torch.Tensor | None = None
             if initial_weights is None:
                 # Use the caller's existing global RNG state — don't reseed here (would defeat
                 # the intended diversity across repeated calls and would leak state outward).
@@ -2414,6 +2433,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             else:
                 w0 = initial_weights.to(device=device, dtype=dtype)
                 w0 = w0 / w0.sum(dim=-1, keepdim=True)
+                w0_seed = w0.detach().clone()  # un-blended; used as the lock reference below
                 # Blend in a uniform prior so non-seed-element logits are reachable by Adam.
                 # Without this, log(0) → −∞ (clamped to log(1e-12) ≈ −27.6); the softmax Jacobian
                 # is proportional to w_i, so the per-step gradient on those logits is ≈ 1e-12 and
@@ -2451,12 +2471,52 @@ class FlexibleMultiTaskModel(L.LightningModule):
             elem_mask = elem_mask_arg.to(device=device) if elem_mask_arg is not None else None
             step_scale = step_scale_arg.to(device=device, dtype=dtype) if step_scale_arg is not None else None
 
+            # --- Hard-lock setup for elements with step_scale == 0 ----------------------------------
+            # Zeroing ``logit_i.grad`` keeps that logit constant but does NOT keep ``w_i`` constant,
+            # because softmax renormalises across all logits — when other (unlocked) logits move, the
+            # softmax denominator changes and so does the locked weight. To truly honour the docstring
+            # promise "freezes those elements at their seed values", we (a) detect locked indices, (b)
+            # capture their per-row seed weights, and (c) inside ``_w_from_logits`` paste those seed
+            # values back over the softmax output and renormalise the unlocked positions to fill the
+            # remaining ``1 − Σ locked_w`` mass per row. The gradient through the locked indices is
+            # automatically zero (the lock branch uses a constant), so we no longer need the
+            # ``step_scale.mul_`` zeroing for them — but we leave that path active for the genuinely
+            # soft case ``0 < step_scale < 1``.
+            locked_mask: torch.Tensor | None = None
+            locked_w0: torch.Tensor | None = None
+            if step_scale is not None:
+                locked_idx_mask = step_scale == 0
+                if locked_idx_mask.any():
+                    if w0_seed is None:
+                        raise ValueError(
+                            "element_step_scale = 0 (hard lock) requires initial_weights — there's no "
+                            "per-row seed to lock to when initial_weights=None."
+                        )
+                    if elem_mask is not None and (~elem_mask[locked_idx_mask]).any():
+                        raise ValueError(
+                            "Locked elements (element_step_scale = 0) must also be in allowed_elements; "
+                            "locking a disallowed element is contradictory."
+                        )
+                    locked_mask = locked_idx_mask  # (n_components,) bool, on device
+                    # (B, n_components): seed values at locked positions, 0 elsewhere — constant.
+                    locked_w0 = (w0_seed * locked_mask.to(dtype)).detach()
+
             def _w_from_logits(lg: torch.Tensor) -> torch.Tensor:
-                """Softmax over logits, with disallowed elements masked to weight 0."""
-                if elem_mask is None:
-                    return torch.softmax(lg, dim=-1)
-                masked = lg.masked_fill(~elem_mask, float("-inf"))
-                return torch.softmax(masked, dim=-1)
+                """Softmax over logits; mask disallowed elements; hard-lock the chosen ones at seed."""
+                if elem_mask is not None:
+                    lg = lg.masked_fill(~elem_mask, float("-inf"))
+                w = torch.softmax(lg, dim=-1)
+                if locked_mask is None:
+                    return w
+                # Locked rows hold their seed values; unlocked rows are renormalised to fill the
+                # remaining mass ``1 − Σ_locked seed``. Differentiable: the lock branch is a constant
+                # so its gradient is 0; the unlocked branch's gradient flows through the rescale.
+                free_mask_f = (~locked_mask).to(w.dtype)  # (n_components,)
+                w_unlocked = w * free_mask_f  # zero at locked positions
+                # type: ignore[union-attr] — locked_w0 is set together with locked_mask above.
+                free_mass = (1.0 - locked_w0.sum(dim=-1, keepdim=True)).clamp(min=0.0)
+                w_unlocked = w_unlocked / w_unlocked.sum(dim=-1, keepdim=True).clamp(min=1e-12) * free_mass
+                return w_unlocked + locked_w0
 
             def _heads_forward(h_task: torch.Tensor) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
                 """Run regression heads, return (per-task predictions, loss terms)."""

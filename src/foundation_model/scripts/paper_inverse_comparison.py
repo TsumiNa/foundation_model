@@ -167,8 +167,11 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
 
     out_dir = Path(config.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Copy the checkpoint so this folder is a self-contained paper artefact.
-    shutil.copy2(ckpt_path, out_dir / "final_model.pt")
+    # Copy the checkpoint so this folder is a self-contained paper artefact (skip when
+    # the source and destination resolve to the same file — happens on idempotent reruns).
+    dst = out_dir / "final_model.pt"
+    if ckpt_path.resolve() != dst.resolve():
+        shutil.copy2(ckpt_path, dst)
 
     device = next(model.parameters()).device
 

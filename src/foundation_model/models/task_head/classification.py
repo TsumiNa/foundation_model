@@ -61,16 +61,23 @@ class ClassificationHead(BaseTaskHead):
 
         self.num_classes = num_classes
 
-        # Optional per-class loss weights (registered as a buffer so they follow the model's device
-        # and are saved/restored with it). ``None`` => unweighted cross-entropy.
+        # Per-class loss weights. We **always** register a real tensor buffer so the state_dict
+        # key ``class_weights`` is present regardless of whether per-class weights were configured
+        # — without this, a checkpoint saved with a configured head couldn't strict-load into one
+        # built without weights (or vice versa). When weights aren't configured we register ones,
+        # which is the identity for both ``F.cross_entropy(..., weight=w)`` and the per-sample
+        # reduction below, so the unweighted behaviour is unchanged.
         class_weights = getattr(config, "class_weights", None)
         if class_weights is not None:
             weights = torch.as_tensor(class_weights, dtype=torch.float)
             if weights.numel() != num_classes:
                 raise ValueError(f"class_weights length ({weights.numel()}) must equal num_classes ({num_classes}).")
-            self.register_buffer("class_weights", weights)
         else:
-            self.class_weights = None
+            weights = torch.ones(num_classes, dtype=torch.float)
+        self.register_buffer("class_weights", weights)
+        # Keep a flag so callers / code paths that branch on "did the user actually pass weights?"
+        # don't have to compare against ones. Not part of state_dict.
+        self._has_class_weights = class_weights is not None
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         """

@@ -42,7 +42,15 @@ DEFAULT_INVERSE_HEADS = ("formation_energy", "klat", "material_type")
 
 
 def freeze_except(model, keep_heads: Iterable[str]) -> dict[str, bool]:
-    """Freeze encoder + every head NOT in ``keep_heads``; return the prior requires_grad state."""
+    """Freeze encoder + every head NOT in ``keep_heads`` + task_log_sigmas; return prior requires_grad state.
+
+    The model's ``task_log_sigmas`` ParameterDict holds the learnable loss-balancer coefficients
+    (one scalar per task, active when ``enable_learnable_loss_balancer=True``). Without freezing
+    them, ``configure_optimizers`` still picks them up and they move during the "head-only"
+    fine-tune — which would silently change the inverse-design objectives' relative weights and
+    make the comparison apples-to-oranges. We freeze every per-task balancer scalar here too,
+    so this script really is head-only.
+    """
     keep = set(keep_heads)
     saved: dict[str, bool] = {}
     for name, p in model.named_parameters():
@@ -53,6 +61,9 @@ def freeze_except(model, keep_heads: Iterable[str]) -> dict[str, bool]:
         train = head_name in keep
         for p in head.parameters():
             p.requires_grad_(train)
+    # Freeze every learnable-loss-balancer scalar (no-op when the balancer is disabled).
+    for p in model.task_log_sigmas.parameters():
+        p.requires_grad_(False)
     return saved
 
 

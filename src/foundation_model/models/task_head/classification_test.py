@@ -43,3 +43,17 @@ def test_class_weights_applied_in_loss():
 def test_class_weights_length_must_match_num_classes():
     with pytest.raises(ValueError, match="class_weights length"):
         _head(class_weights=[1.0, 2.0], num_classes=3)
+
+
+def test_class_weights_state_dict_key_present_when_unset():
+    """Whether class_weights is configured or not, the ``class_weights`` buffer key must exist
+    in the state_dict — so a checkpoint saved with weights can strict-load into a head built
+    without them (and vice versa). Without ``register_buffer("class_weights", None)`` the key
+    only appears when weights are set, which breaks cross-config checkpoint compatibility."""
+    head_unweighted = _head(class_weights=None)
+    head_weighted = _head(class_weights=[1.0, 2.0, 0.5])
+    assert "class_weights" in head_unweighted.state_dict()
+    assert "class_weights" in head_weighted.state_dict()
+    # And strict-loading across configs works in both directions (the missing/present None case).
+    head_unweighted.load_state_dict(head_weighted.state_dict(), strict=True)
+    head_weighted.load_state_dict(head_unweighted.state_dict(), strict=True)
