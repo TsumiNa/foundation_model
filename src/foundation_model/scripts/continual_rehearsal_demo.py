@@ -67,6 +67,24 @@ from foundation_model.models.model_config import (
     OptimizerConfig,
     RegressionTaskConfig,
 )
+
+# Shared evaluation / plot helpers, used by both demo and full runners. Live in a sibling module
+# so the two runners can't drift again (the ``_plot_kr_sequences`` ``NameError`` regression that
+# motivated this refactor only existed because demo and full each carried their own copy).
+# ``MATERIAL_TYPE_CLASSES`` / ``MATERIAL_TYPE_DISPLAY_ORDER`` / ``_SCATTER_COLOR`` are re-exported
+# from this module for backward compatibility — ``continual_rehearsal_full`` and other callers
+# previously did ``from continual_rehearsal_demo import _SCATTER_COLOR``.
+from foundation_model.scripts.continual_rehearsal_common import (  # noqa: F401  (re-exports)
+    MATERIAL_TYPE_CLASSES,
+    MATERIAL_TYPE_DISPLAY_ORDER,
+    SCATTER_COLOR as _SCATTER_COLOR,
+    dump_kr_predictions,
+    dump_metrics,
+    dump_predictions,
+    plot_confusion,
+    plot_kr_sequences,
+    plot_parity,
+)
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, KMD, element_features, formula_to_composition
 
 # --- Task catalogue ----------------------------------------------------------
@@ -115,9 +133,10 @@ DEFAULT_SEQUENCE = [
 # and finely split to learn, so we merge the approximant/quasicrystal pairs into 3 classes:
 #   AC = DAC + IAC, QC = DQC + IQC, others.  (index == merged class id)
 _MATERIAL_TYPE_MERGE = {0: 0, 2: 0, 1: 1, 3: 1, 4: 2}
-MATERIAL_TYPE_CLASSES = ["AC", "QC", "others"]  # index == merged class id
-# Confusion-matrix display order (bottom-left → top-right), so the diagonal reads others→AC→QC.
-MATERIAL_TYPE_DISPLAY_ORDER = ["others", "AC", "QC"]
+# ``MATERIAL_TYPE_CLASSES`` (canonical index order) and ``MATERIAL_TYPE_DISPLAY_ORDER`` (bottom-
+# left → top-right confusion-matrix order) now live in ``continual_rehearsal_common`` and are
+# re-exported through this module's import block above so existing ``from … import`` paths
+# still work for callers (notably continual_rehearsal_full).
 # Quasicrystal class index (merged) used as the inverse-design classification objective.
 QC_CLASSES = [1]
 
@@ -154,7 +173,9 @@ _PALETTE = [
     "#17BECF",
 ]
 # Single colour for every regression parity scatter (per-task colours stay for the line plots).
-_SCATTER_COLOR = "#2563EB"
+# Defined in ``continual_rehearsal_common.SCATTER_COLOR`` and re-exported above as
+# ``_SCATTER_COLOR`` so any caller doing ``from continual_rehearsal_demo import _SCATTER_COLOR``
+# (notably continual_rehearsal_full) keeps working.
 
 
 def _display(task: str) -> str:
@@ -665,9 +686,9 @@ class ContinualRehearsalRunner:
                         "primary": r2,
                     }
                     if is_new:
-                        self._plot_parity(true, pred, task_name, r2, step_dir)
-                    self._dump_predictions(task_name, step_dir, comps=list(comps), true=true, pred=pred)
-                    self._dump_metrics(task_name, step_dir, metric)
+                        plot_parity(true, pred, task_name, r2, step_dir, title=_title(task_name))
+                    dump_predictions(task_name, step_dir, comps=list(comps), true=true, pred=pred)
+                    dump_metrics(task_name, step_dir, metric)
                     return metric
                 logits = head(h)
                 pred = logits.argmax(dim=-1).cpu().numpy()
@@ -680,9 +701,18 @@ class ContinualRehearsalRunner:
                     "primary": acc,
                 }
                 if is_new:
-                    self._plot_confusion(true, pred, task_name, acc, step_dir, spec["num_classes"])
-                self._dump_predictions(task_name, step_dir, comps=list(comps), true=true, pred=pred)
-                self._dump_metrics(task_name, step_dir, metric)
+                    plot_confusion(
+                        true,
+                        pred,
+                        task_name,
+                        acc,
+                        step_dir,
+                        spec["num_classes"],
+                        title=_display(task_name),
+                        special_material_type=(task_name == "material_type"),
+                    )
+                dump_predictions(task_name, step_dir, comps=list(comps), true=true, pred=pred)
+                dump_metrics(task_name, step_dir, metric)
                 return metric
 
             # kernel regression
@@ -713,10 +743,10 @@ class ContinualRehearsalRunner:
                 "primary": r2,
             }
             if is_new:
-                self._plot_kr_sequences(keep, t_list, true_parts, pred, task_name, step_dir)
+                plot_kr_sequences(keep, t_list, true_parts, pred, task_name, step_dir, title=_title(task_name))
             # For KR tasks the parquet carries the t and y series per composition so the curves
             # are fully reconstructible without rerunning the encoder.
-            self._dump_kr_predictions(
+            dump_kr_predictions(
                 task_name,
                 step_dir,
                 comps=list(keep),
@@ -724,46 +754,13 @@ class ContinualRehearsalRunner:
                 true_parts=true_parts,
                 pred=pred,
             )
-            self._dump_metrics(task_name, step_dir, metric)
+            dump_metrics(task_name, step_dir, metric)
             return metric
 
     # --- per-step persistence helpers --------------------------------------------------------
-
-    def _dump_predictions(self, task_name: str, step_dir: Path, *, comps: list[str], true, pred) -> None:
-        """Persist (composition, true, pred) for a regression or classification task."""
-        df = pd.DataFrame({"composition": comps, "true": true, "pred": pred})
-        df.to_parquet(step_dir / f"{task_name}_pred.parquet")
-
-    def _dump_kr_predictions(
-        self,
-        task_name: str,
-        step_dir: Path,
-        *,
-        comps: list[str],
-        t_list: list[np.ndarray],
-        true_parts: list[np.ndarray],
-        pred,
-    ) -> None:
-        """Persist KR test predictions in long-form: one row per (composition, t)."""
-        rows: list[dict[str, object]] = []
-        offset = 0
-        for comp, t_arr, y_true in zip(comps, t_list, true_parts):
-            n = int(y_true.size)
-            for k in range(n):
-                rows.append(
-                    {
-                        "composition": comp,
-                        "t": float(t_arr[k]),
-                        "true": float(y_true[k]),
-                        "pred": float(pred[offset + k]),
-                    }
-                )
-            offset += n
-        pd.DataFrame(rows).to_parquet(step_dir / f"{task_name}_pred.parquet")
-
-    def _dump_metrics(self, task_name: str, step_dir: Path, metric: dict[str, float]) -> None:
-        """Persist the per-task metric dict next to the parquet for easy human / scripted inspection."""
-        (step_dir / f"{task_name}_metrics.json").write_text(json.dumps(metric, indent=2), encoding="utf-8")
+    # ``dump_predictions`` / ``dump_kr_predictions`` / ``dump_metrics`` now live in
+    # :mod:`continual_rehearsal_common` and are imported at the top of this file; the bound-method
+    # versions used to sit here but were verbatim duplicates of full's copies and caused drift.
 
     # ------------------------------------------------------------------ inverse design
 
@@ -942,125 +939,13 @@ class ContinualRehearsalRunner:
 
     # ------------------------------------------------------------------ plots
 
-    def _plot_parity(self, true, pred, task_name, r2, step_dir):
-        fig, ax = plt.subplots(figsize=(5, 5))
-        # Uniform colour/alpha for every regression parity scatter.
-        ax.scatter(true, pred, s=14, alpha=0.55, color=_SCATTER_COLOR, edgecolor="none")
-        lo, hi = float(min(true.min(), pred.min())), float(max(true.max(), pred.max()))
-        ax.plot([lo, hi], [lo, hi], color="#444444", ls="--", lw=1.2, label="ideal")
-        ax.set_xlabel("True")
-        ax.set_ylabel("Predicted")
-        ax.set_title(_title(task_name))
-        ax.text(
-            0.04,
-            0.96,
-            f"R² = {r2:.3f}\nn = {len(true)}",
-            transform=ax.transAxes,
-            ha="left",
-            va="top",
-            fontsize=10,
-            bbox=dict(boxstyle="round,pad=0.4", facecolor="white", edgecolor="#d0d0d0", alpha=0.9),
-        )
-        ax.legend(loc="lower right")
-        fig.savefig(step_dir / f"{task_name}_parity.png")
-        plt.close(fig)
-
-    def _plot_confusion(self, true, pred, task_name, acc, step_dir, num_classes):
-        counts = np.zeros((num_classes, num_classes), dtype=int)
-        for t, p in zip(true, pred):
-            if 0 <= t < num_classes and 0 <= p < num_classes:
-                counts[t, p] += 1
-        # Display order + bottom-left origin so the correct-prediction diagonal runs bottom-left
-        # → top-right. material_type is shown as others → AC → QC.
-        if task_name == "material_type":
-            labels = MATERIAL_TYPE_DISPLAY_ORDER[:num_classes]
-            perm = [MATERIAL_TYPE_CLASSES.index(lbl) for lbl in labels]
-        else:
-            labels = [str(i) for i in range(num_classes)]
-            perm = list(range(num_classes))
-        counts = counts[np.ix_(perm, perm)]
-        # Colour by row-normalized fraction (per-true-class recall) so a dominant class doesn't
-        # leave every other row invisible; annotate each cell with that fraction + the raw count.
-        row_sums = counts.sum(axis=1, keepdims=True)
-        row_frac = np.divide(counts, row_sums, out=np.zeros(counts.shape, dtype=float), where=row_sums > 0)
-        fig, ax = plt.subplots(figsize=(5.6, 5.2))
-        im = ax.imshow(row_frac, cmap="Blues", vmin=0.0, vmax=1.0, origin="lower")
-        fig.colorbar(im, ax=ax, label="row-normalized fraction (recall)", fraction=0.046, pad=0.04)
-        ax.set_xticks(range(num_classes), labels, rotation=45, ha="right")
-        ax.set_yticks(range(num_classes), labels)
-        for i in range(num_classes):
-            for j in range(num_classes):
-                if counts[i, j]:
-                    ax.text(
-                        j,
-                        i,
-                        f"{row_frac[i, j] * 100:.0f}%\n{counts[i, j]}",
-                        ha="center",
-                        va="center",
-                        fontsize=8,
-                        color="white" if row_frac[i, j] > 0.5 else "#333333",
-                    )
-        ax.grid(False)
-        ax.set_xlabel("Predicted")
-        ax.set_ylabel("True")
-        ax.set_title(_display(task_name))
-        ax.text(
-            0.5,
-            -0.22,
-            f"accuracy = {acc:.3f}  ·  n = {int(counts.sum())}",
-            transform=ax.transAxes,
-            ha="center",
-            va="top",
-            fontsize=10,
-        )
-        fig.savefig(step_dir / f"{task_name}_confusion.png")
-        plt.close(fig)
-
-    def _plot_kr_sequences(self, comps, t_list, true_parts, pred, task_name, step_dir):
-        k = min(3, len(comps))
-        fig, axes = plt.subplots(1, k, figsize=(4.2 * k, 3.7), squeeze=False)
-        offset = 0
-        for i in range(k):
-            ax = axes[0][i]
-            n = true_parts[i].size
-            t = t_list[i].cpu().numpy()
-            true_i = np.asarray(true_parts[i])
-            pred_i = pred[offset : offset + n]
-            order = np.argsort(t)  # ensure a clean left-to-right curve
-            (line_true,) = ax.plot(t[order], true_i[order], color="#444444", lw=1.8, label="True")
-            # Prediction line uses the same blue as every regression parity scatter, so "Predicted"
-            # reads consistently across regression / kernel-regression panels.
-            (line_pred,) = ax.plot(t[order], pred_i[order], color=_SCATTER_COLOR, lw=1.6, ls="--", label="Predicted")
-            ax.set_xlabel("t")
-            if i == 0:
-                ax.set_ylabel("Value")
-            # Per-composition R² (each panel is one composition's sequence); top-right, clear of legend.
-            r2_i = float(r2_score(true_i, pred_i)) if n >= 2 and float(np.var(true_i)) > 0 else float("nan")
-            ax.text(
-                0.96,
-                0.96,
-                f"R² = {r2_i:.3f}",
-                transform=ax.transAxes,
-                ha="right",
-                va="top",
-                fontsize=9,
-                bbox=dict(boxstyle="round,pad=0.4", facecolor="white", edgecolor="#d0d0d0", alpha=0.9),
-            )
-            ax.set_title(comps[i], fontsize=9)
-            offset += n
-        # Horizontal legend above the panels, left edge aligned to the first panel (not the figure
-        # margin) and above the panel titles, so it clears both the titles and the R² boxes.
-        fig.legend(
-            [line_true, line_pred],
-            ["True", "Predicted"],
-            loc="lower left",
-            ncol=2,
-            bbox_to_anchor=(0.0, 1.10),
-            bbox_transform=axes[0][0].transAxes,
-        )
-        fig.suptitle(_title(task_name), y=1.24)
-        fig.savefig(step_dir / f"{task_name}_sequences.png")
-        plt.close(fig)
+    # ------------------------------------------------------------------ plots
+    # ``plot_parity`` / ``plot_confusion`` / ``plot_kr_sequences`` now live in
+    # :mod:`continual_rehearsal_common`. They used to be bound methods here, but every line
+    # was a verbatim copy of full's version — the duplication caused PR #18's K=0
+    # ``NameError`` to ship in demo for several PRs before being noticed. The runner-specific
+    # plots that DO need ``self`` state (``_plot_forgetting`` below, ``_plot_inverse_design``)
+    # stay as bound methods.
 
     def _plot_forgetting(self, metric_history):
         # Wide enough to spread many steps; legend sits outside so it scales to dozens of tasks.

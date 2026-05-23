@@ -17,10 +17,11 @@ relative to the demo, adds:
   ``<task>_metrics.json`` and a per-step ``checkpoint.pt`` (model state + active-task metadata).
   Everything lives under ``training/stepNN_<task>/`` so any intermediate stage can be revisited.
 * **Final checkpoint** — ``training/final_model.pt`` + ``training/final_model_taskconfigs.json``.
-* **Multiple inverse-design scenarios** — the same final model is optimized through **four PR #18
-  paths per scenario** (latent with cycle-consistency + composition strict / alloy-palette /
-  random init), with results, a 4-path comparison plot, an element-frequency heatmap (discovered
-  elements highlighted), and `targets.json` written to ``inverse_design/<scenario>/``.
+* **Multiple inverse-design scenarios** — the same final model is optimized through **eight
+  PR #18 paths per scenario** (3 latent ``ae_align_scale`` sweep points + 5 composition configs:
+  strict seed / blended seed / alloy palette / alloy + low diversity / random init), with
+  results, an 8-path comparison plot, an element-frequency heatmap (discovered elements
+  highlighted in bold orange), and `targets.json` written to ``inverse_design/<scenario>/``.
 * **Slide-prep deliverables (no auto PPT / HTML)** — the runner emits ``SLIDE_PREP.md`` (9-section
   outline + raw-data pointers), ``ANALYSIS.md`` (long-form English narrative), ``README.md``
   (directory index), and per-scenario ``comparison.png`` / ``element_frequency_heatmap.png``
@@ -74,10 +75,20 @@ from foundation_model.models.model_config import (
 )
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, KMD, element_features, formula_to_composition
 
-# Reuse the spec-independent helpers + HTML shell from the demo (no behaviour change to the demo).
+# Shared dump/plot helpers live in the common module. The material_type constants and the
+# scatter colour are consumed *inside* the common functions, so this file no longer needs to
+# import them directly — they used to be imported here because the bound-method plot helpers
+# inlined them.
+from foundation_model.scripts.continual_rehearsal_common import (
+    dump_kr_predictions,
+    dump_metrics,
+    dump_predictions,
+    plot_confusion,
+    plot_kr_sequences,
+    plot_parity,
+)
 from foundation_model.scripts.continual_rehearsal_demo import (
     _PALETTE,
-    _SCATTER_COLOR,
     _apply_plot_style,
     _as_float_array,
     _composition_key,
@@ -183,9 +194,9 @@ DEFAULT_SEQUENCE = [
 DEFAULT_FIXED_TAIL = ["formation_energy", "magnetic_moment", "tc", "klat", "material_type"]
 
 # 5 fine labels merged into AC / QC / others (index == merged class id).
+# ``MATERIAL_TYPE_CLASSES`` / ``MATERIAL_TYPE_DISPLAY_ORDER`` now live in
+# :mod:`continual_rehearsal_common` and are imported above; the runner-specific merge map stays.
 _MATERIAL_TYPE_MERGE = {0: 0, 2: 0, 1: 1, 3: 1, 4: 2}
-MATERIAL_TYPE_CLASSES = ["AC", "QC", "others"]
-MATERIAL_TYPE_DISPLAY_ORDER = ["others", "AC", "QC"]
 QC_CLASSES = [1]  # merged quasicrystal class index — inverse-design classification objective.
 
 # --- Presentation -------------------------------------------------------------
@@ -432,7 +443,7 @@ class ContinualRehearsalFullConfig:
     kr_decay: float = 5e-5
 
     # Inverse design (shared across scenarios). Primary objective is QC probability ↑; each
-    # scenario runs the four PR #18 paths (latent + 3 composition configs) — see plan §5.
+    # scenario runs the eight PR #18 paths (3 latent + 5 composition configs) — see plan §5.
     inverse_n_seeds: int = 20  # 17 top-QC dedup + 3 explicit Au-Ga-Ln formers (plan §5)
     inverse_steps: int = 300
     inverse_lr: float = 0.05
@@ -912,10 +923,10 @@ class ContinualRehearsalFullRunner:
                         "samples": len(comps),
                         "primary": r2,
                     }
-                    self._dump_predictions(task_name, step_dir, comps=list(comps), true=true, pred=pred)
-                    self._dump_metrics(task_name, step_dir, metric)
+                    dump_predictions(task_name, step_dir, comps=list(comps), true=true, pred=pred)
+                    dump_metrics(task_name, step_dir, metric)
                     if is_new:
-                        self._plot_parity(true, pred, task_name, r2, step_dir)
+                        plot_parity(true, pred, task_name, r2, step_dir, title=_title(task_name))
                     return metric
                 logits = head(h)
                 pred = logits.argmax(dim=-1).cpu().numpy()
@@ -927,10 +938,19 @@ class ContinualRehearsalFullRunner:
                     "samples": len(comps),
                     "primary": acc,
                 }
-                self._dump_predictions(task_name, step_dir, comps=list(comps), true=true, pred=pred)
-                self._dump_metrics(task_name, step_dir, metric)
+                dump_predictions(task_name, step_dir, comps=list(comps), true=true, pred=pred)
+                dump_metrics(task_name, step_dir, metric)
                 if is_new:
-                    self._plot_confusion(true, pred, task_name, acc, step_dir, spec["num_classes"])
+                    plot_confusion(
+                        true,
+                        pred,
+                        task_name,
+                        acc,
+                        step_dir,
+                        spec["num_classes"],
+                        title=_display(task_name),
+                        special_material_type=(task_name == "material_type"),
+                    )
                 return metric
 
             # kernel regression
@@ -960,7 +980,7 @@ class ContinualRehearsalFullRunner:
                 "points": int(true.size),
                 "primary": r2,
             }
-            self._dump_kr_predictions(
+            dump_kr_predictions(
                 task_name,
                 step_dir,
                 comps=keep,
@@ -968,49 +988,16 @@ class ContinualRehearsalFullRunner:
                 true_parts=true_parts,
                 pred=pred,
             )
-            self._dump_metrics(task_name, step_dir, metric)
+            dump_metrics(task_name, step_dir, metric)
             if is_new:
-                self._plot_kr_sequences(keep, t_list, true_parts, pred, task_name, step_dir)
+                plot_kr_sequences(keep, t_list, true_parts, pred, task_name, step_dir, title=_title(task_name))
             return metric
 
-    # --- per-task artifact dump helpers (PR #18 demo factoring) ---------------
-
-    def _dump_predictions(self, task_name: str, step_dir: Path, *, comps: list[str], true, pred) -> None:
-        """Persist ``(composition, true, pred)`` for a regression or classification task."""
-        pd.DataFrame({"composition": comps, "true": true, "pred": pred}).to_parquet(
-            step_dir / f"{task_name}_pred.parquet"
-        )
-
-    def _dump_kr_predictions(
-        self,
-        task_name: str,
-        step_dir: Path,
-        *,
-        comps: list[str],
-        t_list: list[np.ndarray],
-        true_parts: list[np.ndarray],
-        pred,
-    ) -> None:
-        """Persist KR test predictions in long-form: one row per ``(composition, t)``."""
-        rows: list[dict[str, object]] = []
-        offset = 0
-        for comp, t_arr, y_true in zip(comps, t_list, true_parts):
-            n = int(y_true.size)
-            for k in range(n):
-                rows.append(
-                    {
-                        "composition": comp,
-                        "t": float(t_arr[k]),
-                        "true": float(y_true[k]),
-                        "pred": float(pred[offset + k]),
-                    }
-                )
-            offset += n
-        pd.DataFrame(rows).to_parquet(step_dir / f"{task_name}_pred.parquet")
-
-    def _dump_metrics(self, task_name: str, step_dir: Path, metric: dict[str, float]) -> None:
-        """Persist the per-task metric dict alongside the parquet for easy human / scripted inspection."""
-        (step_dir / f"{task_name}_metrics.json").write_text(json.dumps(metric, indent=2), encoding="utf-8")
+    # --- per-task artifact dump helpers --------------------------------------
+    # ``dump_predictions`` / ``dump_kr_predictions`` / ``dump_metrics`` now live in
+    # :mod:`continual_rehearsal_common`; imported at the top of this file and called inline
+    # in ``_evaluate_task``. The bound-method versions were verbatim copies of demo's and
+    # caused drift (PR #18 code review).
 
     # ------------------------------------------------------------------ inverse design
 
@@ -1133,7 +1120,7 @@ class ContinualRehearsalFullRunner:
                 h = torch.tanh(model.encoder(x))
                 return {t: model.task_heads[t](h).squeeze(-1).cpu().numpy() for t in tasks}
 
-        # Same seeds for every scenario, so the four paths are directly comparable.
+        # Same seeds for every scenario, so all eight paths are directly comparable.
         seed_split = self._select_seeds(model, device, _qc_prob)
         seeds_all = seed_split["strategy_seeds"] + seed_split["explicit_seeds"]
         if not seeds_all:
@@ -1153,7 +1140,7 @@ class ContinualRehearsalFullRunner:
         # Top-level seeds.json with the strategy / explicit split (single source of truth across
         # all scenarios). Per-path subdirs record their own ``seeds`` field for completeness.
         seeds_meta = {
-            "strategy_strategy": cfg.inverse_seed_strategy,
+            "strategy": cfg.inverse_seed_strategy,
             "strategy_split": cfg.inverse_seed_split,
             "n_target": cfg.inverse_n_seeds,
             "n_used": len(seeds),
@@ -1255,10 +1242,15 @@ class ContinualRehearsalFullRunner:
             self._plot_inverse_scenario(sc, before_qc, before_reg, paths, reg_targets, sc_dir)
             self._element_frequency_heatmap(sc.name, paths, seed_element_pool, sc_dir / "element_frequency_heatmap.png")
 
-            qc_summary = " · ".join(
-                f"{name}={paths[name]['qc_after_decode'] and np.mean(paths[name]['qc_after_decode']):.3f}"
-                for name in INVERSE_PATHS
-            )
+            # Explicit guard: ``list and float`` was a clever but fragile non-empty check —
+            # an empty ``qc_after_decode`` (no successful seeds for a path) returned the empty
+            # list, which then crashed ``f"{...:.3f}"`` with ``TypeError`` on format. NaN keeps
+            # the join uniform and is the natural "no data" sentinel for downstream readers.
+            def _qc_mean(path_name: str) -> float:
+                qc = paths[path_name].get("qc_after_decode") or []
+                return float(np.mean(qc)) if qc else float("nan")
+
+            qc_summary = " · ".join(f"{name}={_qc_mean(name):.3f}" for name in INVERSE_PATHS)
             logger.info(f"[{sc.name}] QC after-decode mean — {qc_summary}")
 
             out["scenarios"][sc.name] = {**scenario_summary, "paths_details": paths}
@@ -1405,120 +1397,11 @@ class ContinualRehearsalFullRunner:
         return result
 
     # ------------------------------------------------------------------ plots
-
-    def _plot_parity(self, true, pred, task_name, r2, step_dir):
-        fig, ax = plt.subplots(figsize=(5, 5))
-        ax.scatter(true, pred, s=14, alpha=0.55, color=_SCATTER_COLOR, edgecolor="none")
-        lo, hi = float(min(true.min(), pred.min())), float(max(true.max(), pred.max()))
-        ax.plot([lo, hi], [lo, hi], color="#444444", ls="--", lw=1.2, label="ideal")
-        ax.set_xlabel("True")
-        ax.set_ylabel("Predicted")
-        ax.set_title(_title(task_name))
-        ax.text(
-            0.04,
-            0.96,
-            f"R² = {r2:.3f}\nn = {len(true)}",
-            transform=ax.transAxes,
-            ha="left",
-            va="top",
-            fontsize=10,
-            bbox=dict(boxstyle="round,pad=0.4", facecolor="white", edgecolor="#d0d0d0", alpha=0.9),
-        )
-        ax.legend(loc="lower right")
-        fig.savefig(step_dir / f"{task_name}_parity.png")
-        plt.close(fig)
-
-    def _plot_confusion(self, true, pred, task_name, acc, step_dir, num_classes):
-        counts = np.zeros((num_classes, num_classes), dtype=int)
-        for t, p in zip(true, pred):
-            if 0 <= t < num_classes and 0 <= p < num_classes:
-                counts[t, p] += 1
-        if task_name == "material_type":
-            labels = MATERIAL_TYPE_DISPLAY_ORDER[:num_classes]
-            perm = [MATERIAL_TYPE_CLASSES.index(lbl) for lbl in labels]
-        else:
-            labels = [str(i) for i in range(num_classes)]
-            perm = list(range(num_classes))
-        counts = counts[np.ix_(perm, perm)]
-        row_sums = counts.sum(axis=1, keepdims=True)
-        row_frac = np.divide(counts, row_sums, out=np.zeros(counts.shape, dtype=float), where=row_sums > 0)
-        fig, ax = plt.subplots(figsize=(5.6, 5.2))
-        im = ax.imshow(row_frac, cmap="Blues", vmin=0.0, vmax=1.0, origin="lower")
-        fig.colorbar(im, ax=ax, label="row-normalized fraction (recall)", fraction=0.046, pad=0.04)
-        ax.set_xticks(range(num_classes), labels, rotation=45, ha="right")
-        ax.set_yticks(range(num_classes), labels)
-        for i in range(num_classes):
-            for j in range(num_classes):
-                if counts[i, j]:
-                    ax.text(
-                        j,
-                        i,
-                        f"{row_frac[i, j] * 100:.0f}%\n{counts[i, j]}",
-                        ha="center",
-                        va="center",
-                        fontsize=8,
-                        color="white" if row_frac[i, j] > 0.5 else "#333333",
-                    )
-        ax.grid(False)
-        ax.set_xlabel("Predicted")
-        ax.set_ylabel("True")
-        ax.set_title(_display(task_name))
-        ax.text(
-            0.5,
-            -0.22,
-            f"accuracy = {acc:.3f}  ·  n = {int(counts.sum())}",
-            transform=ax.transAxes,
-            ha="center",
-            va="top",
-            fontsize=10,
-        )
-        fig.savefig(step_dir / f"{task_name}_confusion.png")
-        plt.close(fig)
-
-    def _plot_kr_sequences(self, comps, t_list, true_parts, pred, task_name, step_dir):
-        k = min(3, len(comps))
-        fig, axes = plt.subplots(1, k, figsize=(4.2 * k, 3.7), squeeze=False)
-        offset = 0
-        line_true = line_pred = None
-        for i in range(k):
-            ax = axes[0][i]
-            n = true_parts[i].size
-            t = t_list[i].cpu().numpy()
-            true_i = np.asarray(true_parts[i])
-            pred_i = pred[offset : offset + n]
-            order = np.argsort(t)
-            (line_true,) = ax.plot(t[order], true_i[order], color="#444444", lw=1.8, label="True")
-            # Same blue as every regression parity scatter — keeps "Predicted" colour consistent
-            # across regression / kernel-regression panels (mirrors the demo's fix in PR #18).
-            (line_pred,) = ax.plot(t[order], pred_i[order], color=_SCATTER_COLOR, lw=1.6, ls="--", label="Predicted")
-            ax.set_xlabel("t")
-            if i == 0:
-                ax.set_ylabel("Value")
-            r2_i = float(r2_score(true_i, pred_i)) if n >= 2 and float(np.var(true_i)) > 0 else float("nan")
-            ax.text(
-                0.96,
-                0.96,
-                f"R² = {r2_i:.3f}",
-                transform=ax.transAxes,
-                ha="right",
-                va="top",
-                fontsize=9,
-                bbox=dict(boxstyle="round,pad=0.4", facecolor="white", edgecolor="#d0d0d0", alpha=0.9),
-            )
-            ax.set_title(comps[i], fontsize=9)
-            offset += n
-        if line_true is not None:
-            fig.legend(
-                [line_true, line_pred],
-                ["True", "Predicted"],
-                loc="lower left",
-                ncol=2,
-                bbox_to_anchor=(0.0, 1.10),
-                bbox_transform=axes[0][0].transAxes,
-            )
-        fig.suptitle(_title(task_name), y=1.24)
-        fig.savefig(step_dir / f"{task_name}_sequences.png")
-        plt.close(fig)
+    # ``plot_parity`` / ``plot_confusion`` / ``plot_kr_sequences`` now live in
+    # :mod:`continual_rehearsal_common`; they were verbatim copies of demo's and caused PR
+    # #18's K=0 ``NameError`` to ship in demo for several PRs. The runner-specific plots
+    # below (``_plot_forgetting`` uses ``self._task_colors``; the inverse-design plotters use
+    # the 8-path layout) stay as bound methods.
 
     def _plot_forgetting(self, metric_history):
         n_tasks = sum(1 for pts in metric_history.values() if pts)
@@ -2118,10 +2001,13 @@ class ContinualRehearsalFullRunner:
             "**Primary figure:** [`training/forgetting_trajectory.png`](training/forgetting_trajectory.png) "
             "— per-step metric for every active head across all stages."
         )
+        # Build the tail-task chain from whatever ``fixed_tail`` actually contains, instead of
+        # hard-indexing ``[0..4]`` — a smaller-scale config might legitimately have fewer tail
+        # tasks, and a future plan revision could change the count.
+        tail_chain = " → ".join(cfg.fixed_tail) if cfg.fixed_tail else "(no fixed tail)"
         lines.append(
-            "Annotate the fixed-tail tasks (the last 5 steps, "
-            f"`{cfg.fixed_tail[0]} → {cfg.fixed_tail[1]} → {cfg.fixed_tail[2]} → {cfg.fixed_tail[3]} → {cfg.fixed_tail[4]}`) "
-            "as the focus for the inverse-design section that follows.\n"
+            f"Annotate the fixed-tail tasks (the last {len(cfg.fixed_tail)} steps, "
+            f"`{tail_chain}`) as the focus for the inverse-design section that follows.\n"
         )
         lines.append("**Final-step metrics for the inverse-design heads** (the heads inverse design actually uses):\n")
         lines.append("| Head | Type | Final-step metric |")
@@ -2637,7 +2523,7 @@ class ContinualRehearsalFullRunner:
             "  <scenario>/",
             "    targets.json                       # primary + secondary objectives",
             "    summary.json                       # per-path mean / std headline stats",
-            "    comparison.png                     # 4-path boxplot (QC + each reg target)",
+            "    comparison.png                     # 8-path boxplot (QC + each reg target)",
             "    element_frequency_heatmap.png      # path × top-25 elements (discovered = bold orange)",
             "    <path>/result.json                 # raw per-seed arrays, optimized_weights, …",
             "SLIDE_PREP.md                          # slide outline + raw-data pointers",
