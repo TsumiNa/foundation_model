@@ -181,3 +181,31 @@ def test_plot_qc_vs_reg_scatter_skips_on_empty_reg_targets(tmp_path):
     out = tmp_path / "should_not_exist.png"
     _plot_qc_vs_reg_scatter(results, {}, out, title="no targets")
     assert not out.exists()
+
+
+def test_plot_qc_vs_reg_scatter_with_seed_layer(tmp_path):
+    """Optional ``seed_qc`` / ``seed_reg`` draw the per-seed baseline as orange ★ stars.
+
+    Verifies the figure still renders (the layer is added before the optimised clouds and
+    drops cleanly when the kwarg is omitted — see the no-arg test above).
+    """
+    results = [
+        _scatter_result("latent", "latent\nα=1"),
+        _scatter_result("composition", "comp\n(seed)"),
+    ]
+    reg_targets = {"formation_energy": -2.0, "klat": 2.0}
+    n_seeds = 5
+    rng = np.random.default_rng(123)
+    out = tmp_path / "qc_with_seeds.png"
+    _plot_qc_vs_reg_scatter(
+        results,
+        reg_targets,
+        out,
+        title="with seeds",
+        seed_qc=rng.uniform(0.1, 0.6, size=n_seeds),
+        seed_reg={
+            "formation_energy": rng.uniform(0.5, 2.5, size=n_seeds),
+            "klat": rng.uniform(-0.5, 1.0, size=n_seeds),
+        },
+    )
+    assert out.exists()

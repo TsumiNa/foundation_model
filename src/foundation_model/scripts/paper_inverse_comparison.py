@@ -607,6 +607,12 @@ _SCATTER_MARKERS = {"latent": "o", "composition": "^"}
 #: we step the colormap to encode the parameter-config ordering — see ``_group_color_ramp``.
 _SCATTER_CMAPS = {"latent": plt.cm.Greens, "composition": plt.cm.Blues}
 
+#: Seed-layer style: star marker + the project's discovered-element orange. Distinct shape and
+#: a third colour family (not Blues / Greens / red-target-lines) so the seed cloud reads as a
+#: separate "starting point" anchor without competing with the optimised clouds.
+_SEED_MARKER = "*"
+_SEED_COLOR = DISCOVERED_ELEMENT_COLOR  # ``#E67E22`` — same orange used for new elements in the heatmap
+
 
 def _group_color_ramp(cmap, n: int) -> list:
     """Evenly stepped colors across the upper portion of ``cmap``.
@@ -628,6 +634,8 @@ def _plot_qc_vs_reg_scatter(
     out_path: Path,
     *,
     title: str | None = None,
+    seed_qc: np.ndarray | None = None,
+    seed_reg: dict[str, np.ndarray] | None = None,
 ) -> None:
     """One panel per secondary regression target, plotting QC prob vs that target across all paths.
 
@@ -638,6 +646,11 @@ def _plot_qc_vs_reg_scatter(
     Red dashed lines mark the joint target (vertical at ``QC=1.0``, horizontal at the per-task
     regression target). A figure-level legend at the bottom lists every method label once across
     all panels.
+
+    When ``seed_qc`` and ``seed_reg`` are provided, the per-seed *baseline* predictions are also
+    drawn — as orange ★ stars — so the reader can see how far each method moved each seed in
+    QC-vs-secondary space. ``seed_reg`` must carry one array per key in ``reg_targets``; missing
+    keys silently skip the seed layer in that panel.
     """
     if not reg_targets:
         logger.warning("_plot_qc_vs_reg_scatter: no reg_targets — skipping plot.")
@@ -661,12 +674,31 @@ def _plot_qc_vs_reg_scatter(
     for r, c in zip(comp_results, comp_colors):
         color_by_result[id(r)] = c
 
+    # Seeds layer: drawn first so the optimised clouds overplot it (the seed cloud is the
+    # "context"; the optimised clouds are the headline data).
+    has_seeds = seed_qc is not None and seed_reg is not None
+    seed_qc_arr = np.asarray(seed_qc, dtype=float) if has_seeds else None
+
     n_panels = len(reg_targets)
     fig, axes = plt.subplots(1, n_panels, figsize=(5.6 * n_panels, 6.4), squeeze=False)
     axes = axes[0]
 
     for ax, (task, tgt) in zip(axes, reg_targets.items()):
         arrow = _target_arrow(tgt)
+        # Seeds first (under) — only if seed_reg has this panel's task.
+        if has_seeds and task in seed_reg:
+            seed_reg_arr = np.asarray(seed_reg[task], dtype=float)
+            ax.scatter(
+                seed_qc_arr,
+                seed_reg_arr,
+                marker=_SEED_MARKER,
+                color=_SEED_COLOR,
+                s=110,
+                alpha=0.85,
+                edgecolor="#222",
+                linewidths=0.7,
+                zorder=2,
+            )
         for r in results:
             qc = np.asarray(r["qc_after_decode"], dtype=float)
             reg = np.asarray(r["reg_after_decode"][task], dtype=float)
@@ -680,6 +712,7 @@ def _plot_qc_vs_reg_scatter(
                 edgecolor="#222",
                 linewidths=0.6,
                 label=r["label"].replace("\n", " "),
+                zorder=3,
             )
         ax.axvline(1.0, color="#C44E52", ls="--", lw=1.3, alpha=0.8)
         ax.axhline(tgt, color="#C44E52", ls="--", lw=1.3, alpha=0.8)
@@ -689,11 +722,24 @@ def _plot_qc_vs_reg_scatter(
         ax.set_title(f"QC vs {_REG_DISPLAY_SHORT.get(task, task)} {arrow}  (target = {tgt:+.1f})", fontsize=11)
 
     # Figure-level legend across all panels. Use proxy handles so the legend orders by group
-    # (latent first, then comp) rather than by whichever panel happened to draw which marker
-    # first. Add a single red-dashed "target" entry at the end.
+    # (seeds → latent → composition → target) rather than by whichever panel happened to draw
+    # which marker first.
     from matplotlib.lines import Line2D
 
     handles: list[Line2D] = []
+    if has_seeds:
+        handles.append(
+            Line2D(
+                [0],
+                [0],
+                marker=_SEED_MARKER,
+                color="none",
+                markerfacecolor=_SEED_COLOR,
+                markeredgecolor="#222",
+                markersize=11,
+                label="seed (baseline)",
+            )
+        )
     for r in latent_results:
         handles.append(
             Line2D(
@@ -892,14 +938,16 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
             reg_targets=reg_targets,
         )
     # Scatter view of QC prob vs each secondary reg target, grouped by method (latent = circle /
-    # green ramp, composition = triangle / blue ramp). Complements the bar chart: the bar chart
-    # collapses each method to a mean ± std, the scatter shows the per-seed cloud so the reader
-    # can see how tight each method's outputs are around the joint target.
+    # green ramp, composition = triangle / blue ramp), with the per-seed baseline drawn as orange
+    # ★ stars so the reader sees how far each method moved each seed. Complements the bar chart:
+    # the bar chart collapses each method to a mean ± std, the scatter shows the per-seed cloud.
     _plot_qc_vs_reg_scatter(
         results,
         reg_targets,
         out_dir / "qc_vs_secondary_scatter.png",
         title="QC probability vs secondary properties (per-seed outputs)",
+        seed_qc=seed_qc,
+        seed_reg=seed_reg,
     )
     # The auto-generated README is a compact summary table only. It writes to ``SUMMARY.md``
     # (not ``README.md``) so a user-written index — pointing to every figure, file, and the
