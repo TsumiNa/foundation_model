@@ -2260,23 +2260,32 @@ class FlexibleMultiTaskModel(L.LightningModule):
         # --- Set up the optimisation variable: logits over n_components -------------------------
         was_training = self.training
         self.eval()
-        device = next(self.parameters()).device
-        kmd_kernel = kmd_kernel.to(device=device, dtype=torch.float32)
+        params = next(self.parameters())
+        device, dtype = params.device, params.dtype  # match the model's precision (fp32/fp16/bf16/fp64)
+        kmd_kernel = kmd_kernel.to(device=device, dtype=dtype)
 
         if initial_weights is None:
             if n_starts < 1:
                 raise ValueError("n_starts must be >= 1 when initial_weights is None.")
-            torch.manual_seed(torch.initial_seed())  # respect outer seeding
-            logits = torch.randn(n_starts, n_components, device=device) * 0.5
+            # Use the caller's existing global RNG state — don't reseed here (would defeat the
+            # intended diversity across repeated calls and would leak state to surrounding code).
+            logits = torch.randn(n_starts, n_components, device=device, dtype=dtype) * 0.5
         else:
             if initial_weights.ndim != 2 or initial_weights.shape[1] != n_components:
                 raise ValueError(
                     f"initial_weights must have shape (B, {n_components}); got {tuple(initial_weights.shape)}."
                 )
-            w0 = initial_weights.to(device=device, dtype=torch.float32).clamp(min=1e-9)
-            # softmax(log w0) recovers w0 (up to the simplex normalisation), so this lets the user
-            # seed from real compositions and have step-0 logits reproduce them.
-            logits = torch.log(w0).detach().clone()
+            w0 = initial_weights.to(device=device, dtype=dtype)
+            if (w0 < 0).any():
+                raise ValueError("initial_weights must be non-negative (no silent clamping).")
+            row_sums = w0.sum(dim=-1)
+            if (row_sums <= 0).any():
+                raise ValueError("initial_weights rows must have a positive sum.")
+            # Normalise to the simplex (so callers may pass un-normalised positive weights), then
+            # convert to logits via log. A tiny floor only avoids log(0) for legitimate zero
+            # entries (e.g. sparse element-presence seeds).
+            w0 = w0 / row_sums.unsqueeze(-1)
+            logits = torch.log(w0.clamp(min=1e-12)).detach().clone()
         logits = logits.requires_grad_(True)
         optimizer = optim.Adam([logits], lr=lr)
 
@@ -2284,7 +2293,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         target_tensor_map: dict[str, torch.Tensor] = {}
         if target_tasks is not None:
             target_tensor_map = {
-                name: torch.as_tensor(val, device=device, dtype=torch.float32) for name, val in target_tasks.items()
+                name: torch.as_tensor(val, device=device, dtype=dtype) for name, val in target_tasks.items()
             }
         class_index_map: dict[str, torch.Tensor] = {}
         if class_target_map is not None:
@@ -2312,8 +2321,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 terms.append(class_target_weight * (-combined.mean()))
             return preds, terms
 
+        n_reg_tracked = len(tasks_for_optimization)
+
         def _stack(values: list[torch.Tensor], B: int) -> torch.Tensor:
-            return torch.stack(values, dim=-1) if values else torch.zeros((B, 0), device=device)
+            return torch.stack(values, dim=-1) if values else torch.zeros((B, 0), device=device, dtype=dtype)
 
         # --- Record initial scores --------------------------------------------------------------
         with torch.no_grad():
@@ -2355,7 +2366,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
             optimized_descriptor=x_final.detach(),
             optimized_target=final_target,
             initial_score=initial_score,
+            # Preserve the (steps, B, T) shape contract even when steps == 0.
             trajectory=torch.stack(trajectory, dim=0)
             if trajectory
-            else torch.empty((0, logits.shape[0], 0), device=device),
+            else torch.empty((0, logits.shape[0], n_reg_tracked), device=device, dtype=dtype),
         )

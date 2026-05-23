@@ -151,25 +151,24 @@ class KMD:
         return self.transform(weight)
 
     def kernel_torch(self, *, device=None, dtype=None):  # type: ignore[no-untyped-def]
-        """Return the precomputed kernel as a (cached) ``torch.Tensor``.
+        """Return the precomputed kernel as a fresh ``torch.Tensor``.
 
-        The kernel is constant after construction, so we cache the torch view once and move it
-        to the caller's device/dtype on demand.
+        Each call materialises an independently-allocated tensor (no memory sharing with the
+        numpy kernel or any previous return), so in-place mutations on the result cannot affect
+        :meth:`transform` / :meth:`inverse` — :class:`KMD` itself remains 100% numpy-only and
+        backwards-compatible.
 
         Parameters
         ----------
         device, dtype:
-            Optional torch device / dtype overrides for the returned view.
+            Optional torch device / dtype overrides for the returned tensor.
         """
         import torch
 
-        cached = getattr(self, "_kernel_torch", None)
-        if cached is None:
-            cached = torch.as_tensor(self._kernel)
-            self._kernel_torch = cached
+        out = torch.from_numpy(np.array(self._kernel, copy=True))
         if device is not None or dtype is not None:
-            return cached.to(device=device, dtype=dtype)
-        return cached
+            out = out.to(device=device, dtype=dtype)
+        return out
 
     def transform_torch(self, weight, *, device=None, dtype=None):  # type: ignore[no-untyped-def]
         """Differentiable torch counterpart of :meth:`transform`.

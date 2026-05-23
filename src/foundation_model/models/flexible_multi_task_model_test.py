@@ -1046,6 +1046,40 @@ def test_optimize_composition_increases_target_class_probability():
     assert _prob(res.optimized_weights) > _prob(init_w)
 
 
+def test_optimize_composition_rejects_negative_initial_weights():
+    model = _make_reg_clf_model()
+    kernel = torch.randn(6, INPUT_DIM)
+    bad = torch.tensor([[1.0, -0.1, 0.2, 0.2, 0.2, 0.5]])
+    with pytest.raises(ValueError, match="non-negative"):
+        model.optimize_composition(kernel, initial_weights=bad, task_targets={"prop": 0.0}, steps=2)
+    zero_row = torch.zeros(1, 6)
+    with pytest.raises(ValueError, match="positive sum"):
+        model.optimize_composition(kernel, initial_weights=zero_row, task_targets={"prop": 0.0}, steps=2)
+
+
+def test_optimize_composition_does_not_reset_global_rng():
+    """The method must not rewind the global RNG (would defeat n_starts diversity)."""
+    torch.manual_seed(42)
+    model = _make_reg_clf_model()
+    kernel = torch.randn(6, INPUT_DIM)
+    state_before = torch.random.get_rng_state().clone()
+    model.optimize_composition(kernel, task_targets={"prop": 0.0}, n_starts=4, steps=2)
+    state_after = torch.random.get_rng_state()
+    # The RNG must have advanced (some random was consumed), not been reset.
+    assert not torch.equal(state_before, state_after)
+
+
+def test_optimize_composition_trajectory_shape_when_zero_steps():
+    """Empty trajectory still carries the regression-task width T (not 0)."""
+    model = _make_reg_clf_model()
+    kernel = torch.randn(6, INPUT_DIM)
+    res = model.optimize_composition(
+        kernel, task_targets={"prop": 0.0}, class_targets={"cls": [1]}, n_starts=3, steps=0
+    )
+    # tasks_for_optimization = ["prop"] → T == 1
+    assert res.trajectory.shape == (0, 3, 1)
+
+
 def test_optimize_composition_uses_kmd_kernel_torch():
     """End-to-end: a real KMD's kernel_torch flows into optimize_composition."""
     from foundation_model.utils.kmd_plus import KMD
