@@ -248,3 +248,21 @@ def test_parse_args_unknown_key_ignored(tmp_path: Path):
     cfg, _args = _parse_args(["--config-file", str(toml)])
     assert cfg.replay_ratio == 0.05
     assert not hasattr(cfg, "totally_unknown_key")
+
+
+def test_demo_inverse_plot_helpers_imported():
+    """The runner relies on two helpers imported from ``paper_inverse_comparison`` to draw the
+    ``qc_vs_secondary_scatter`` and ``seed_to_optimized__*`` figures. If those imports drift
+    the inverse-design loop silently loses both figure groups (no test would catch a missing
+    plot without this guard, because the runner's training loop is only smoke-tested).
+    """
+    from foundation_model.scripts import continual_rehearsal_full as crf
+    from foundation_model.scripts.paper_inverse_comparison import (
+        _plot_qc_vs_reg_scatter as demo_scatter,
+    )
+    from foundation_model.scripts.paper_inverse_comparison import (
+        _plot_seed_to_optimized_mapping as demo_mapping,
+    )
+
+    assert crf._plot_qc_vs_reg_scatter is demo_scatter
+    assert crf._plot_seed_to_optimized_mapping is demo_mapping

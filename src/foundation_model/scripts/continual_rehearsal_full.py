@@ -95,6 +95,10 @@ from foundation_model.scripts.continual_rehearsal_demo import (
     _composition_key,
     _init_kernels,
 )
+from foundation_model.scripts.paper_inverse_comparison import (
+    _plot_qc_vs_reg_scatter,
+    _plot_seed_to_optimized_mapping,
+)
 
 # --- Task catalogue ----------------------------------------------------------
 # source: dataset the task's targets come from. qc columns are pre-normalized; raw NEMAD/phonix
@@ -1285,6 +1289,58 @@ class ContinualRehearsalFullRunner:
             (sc_dir / "summary.json").write_text(json.dumps(scenario_summary, indent=2), encoding="utf-8")
             self._plot_inverse_scenario(sc, before_qc, before_reg, paths, reg_targets, sc_dir)
             self._element_frequency_heatmap(sc.name, paths, seed_element_pool, sc_dir / "element_frequency_heatmap.png")
+
+            # ── per-scenario figures copied from the demo's ``paper_inverse_comparison.py`` ──
+            # The runner used to emit only the (boxplot) ``comparison.png`` and the
+            # ``element_frequency_heatmap.png``; the per-seed scatter and 1:1 mapping figures
+            # lived only in the demo. We import and call the demo's helpers directly so the
+            # two surfaces never drift on plot style or legend ordering. Inputs are built once
+            # per scenario from the same ``paths`` dict the existing plotters consume — no extra
+            # forward passes, no training touch-up.
+            results_for_demo_helpers = [
+                {
+                    "method": paths[c["key"]]["method"],
+                    "label": paths[c["key"]]["label"],
+                    "qc_after_decode": paths[c["key"]]["qc_after_decode"],
+                    "reg_after_decode": paths[c["key"]]["reg_after_decode"],
+                    # ``_plot_seed_to_optimized_mapping`` doesn't need these but the scatter
+                    # helper's legend grouping reads ``method``; carry them anyway so a future
+                    # change picking up ``align_scale`` doesn't break silently.
+                    "align_scale": paths[c["key"]].get("ae_align_scale"),
+                    "decoded_composition": paths[c["key"]].get("decoded_composition", []),
+                }
+                for c in INVERSE_PATH_CONFIGS
+                if c["key"] in paths
+            ]
+            _plot_qc_vs_reg_scatter(
+                results_for_demo_helpers,
+                reg_targets,
+                sc_dir / "qc_vs_secondary_scatter.png",
+                title=f"QC probability vs secondary properties · {sc.name}",
+                seed_qc=before_qc,
+                seed_reg=before_reg,
+            )
+            # Per-path seed → optimised composition mapping. Skip ``comp_random`` (no per-row
+            # seed correspondence — its ``seeds`` field is a ``random_start_N`` placeholder).
+            for c in INVERSE_PATH_CONFIGS:
+                key = c["key"]
+                if key not in paths or key == "comp_random":
+                    continue
+                p = paths[key]
+                decoded = p.get("decoded_composition", [])
+                if not decoded:
+                    continue
+                _plot_seed_to_optimized_mapping(
+                    seeds=list(seeds),
+                    decoded=list(decoded),
+                    out_path=sc_dir / f"seed_to_optimized__{key}.png",
+                    title=f"Seed → optimised composition · {c['label']}",
+                    seed_qc=before_qc,
+                    seed_reg=before_reg,
+                    optimized_qc=np.asarray(p["qc_after_decode"]),
+                    optimized_reg={t: np.asarray(p["reg_after_decode"][t]) for t in reg_targets},
+                    reg_targets=reg_targets,
+                )
 
             # Explicit guard: ``list and float`` was a clever but fragile non-empty check —
             # an empty ``qc_after_decode`` (no successful seeds for a path) returned the empty
