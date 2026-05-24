@@ -31,7 +31,10 @@ What's NOT in scope here:
 from __future__ import annotations
 
 import json
+import re
+from collections import Counter
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -46,6 +49,12 @@ from sklearn.metrics import r2_score  # type: ignore[import-untyped]
 #: panels. PR #18 settled on this exact tone.
 SCATTER_COLOR = "#2563EB"
 
+#: Orange used to highlight inverse-design "discovered" elements (element symbols that appear in
+#: at least one optimised composition but not in any of the seeds). Used both by the element-
+#: frequency heatmap (x-tick label) and by the seed-vs-optimised mapping plot (legend / arrow tip)
+#: so the colour meaning is consistent across figures.
+DISCOVERED_ELEMENT_COLOR = "#E67E22"
+
 #: The merged material_type label set (5 fine classes → 3). The order here is the *canonical*
 #: index order (so ``MATERIAL_TYPE_CLASSES[0] == "AC"`` means merged class 0 is AC, etc.).
 MATERIAL_TYPE_CLASSES: tuple[str, ...] = ("AC", "QC", "others")
@@ -54,6 +63,20 @@ MATERIAL_TYPE_CLASSES: tuple[str, ...] = ("AC", "QC", "others")
 #: minority QC class in the upper-right corner, mirroring the canonical "others → AC → QC"
 #: progression the project standardised on in PR #18.
 MATERIAL_TYPE_DISPLAY_ORDER: tuple[str, ...] = ("others", "AC", "QC")
+
+#: Element-symbol regex: capital + optional lowercase, paired with an optional stoichiometry
+#: suffix. Same pattern both runners' seed parsing uses, kept centrally so the heatmap and any
+#: future seed-parsing utility can't drift.
+_COMP_RE = re.compile(r"([A-Z][a-z]?)([\d.]*)")
+
+
+def element_set(formula: str) -> frozenset[str]:
+    """Set of element symbols in a composition string, ignoring stoichiometry.
+
+    Handles both human-friendly forms (``"Mg2 Zn1 Y1"``) and the project's KMD-decoded form
+    (``"Al0.473 Cu0.130 Fe0.109 …"``). Whitespace is irrelevant.
+    """
+    return frozenset(el for el, _ in _COMP_RE.findall(formula) if el)
 
 
 # --- Pure dumpers --------------------------------------------------------------------------
@@ -276,4 +299,117 @@ def plot_kr_sequences(
         )
     fig.suptitle(title, y=1.24)
     fig.savefig(step_dir / f"{task_name}_sequences.png")
+    plt.close(fig)
+
+
+def plot_element_frequency_heatmap(
+    methods: list[dict[str, Any]],
+    seeds: list[str],
+    out_path: Path,
+    *,
+    top_k: int = 25,
+) -> None:
+    """Per-method × top-K-element occurrence heatmap.
+
+    For each method we count how many of its decoded recipes contain each element (i.e. its
+    symbol appears anywhere in the formatted ``decoded_composition`` string). The top ``top_k``
+    elements globally are shown as columns; methods are rows. Elements absent from every seed
+    in ``seeds`` are highlighted on the x-axis as **bold orange** — the inverse-design
+    *element-discovery* signal. Underline is omitted (visually noisy under tight rotated
+    labels); bold + a distinct colour is enough.
+
+    Parameters
+    ----------
+    methods
+        One dict per row of the heatmap. Each dict must carry:
+
+        * ``label`` — the human-readable y-tick label
+          (e.g. ``"latent α=0.25"``, ``"comp (seed, 5% all)"``). ``\\n`` is collapsed to a
+          single space so labels stay on one line.
+        * ``decoded_composition`` — list of formatted composition strings (``"Al0.473 Cu0.13 …"``
+          or ``"Mg2 Zn1 Y1"``); typically one entry per seed for that method.
+    seeds
+        The seed composition list used by every method. Drives the "in any seed?" check that
+        marks elements as discovered (no underline; just bold + ``DISCOVERED_ELEMENT_COLOR``).
+    out_path
+        Full path to the PNG to write.
+    top_k
+        How many columns (elements) to show, ranked globally across methods (default 25).
+    """
+    n = len(methods)
+    if n == 0:
+        logger.warning("plot_element_frequency_heatmap: no methods supplied; skipping.")
+        return
+    labels = [m["label"].replace("\n", " ") for m in methods]
+
+    # Seed element multiplicity — used to decide which elements are "discovered" (0 in seeds).
+    seed_cnt: Counter[str] = Counter()
+    for s in seeds:
+        for el in element_set(s):
+            seed_cnt[el] += 1
+
+    # Per-method element-presence counts.
+    per_method: list[Counter[str]] = []
+    for m in methods:
+        c: Counter[str] = Counter()
+        for d in m.get("decoded_composition", []) or []:
+            for el in element_set(d):
+                c[el] += 1
+        per_method.append(c)
+
+    # Globally top elements (rank by sum-of-top-8-per-method so single-method blow-ups don't
+    # dominate — matches the ranking the standalone post-hoc script used).
+    global_cnt: Counter[str] = Counter()
+    for c in per_method:
+        for el, k in c.most_common(8):
+            global_cnt[el] += k
+    top_elems = [e for e, _ in global_cnt.most_common(top_k)]
+    if not top_elems:
+        logger.warning(f"plot_element_frequency_heatmap: no elements found across methods; skipping {out_path}.")
+        return
+
+    n_per_method = len(methods[0].get("decoded_composition") or []) or len(seeds) or 1
+    mat = np.zeros((n, len(top_elems)), dtype=int)
+    for i, c in enumerate(per_method):
+        for j, el in enumerate(top_elems):
+            mat[i, j] = c[el]
+
+    fig, ax = plt.subplots(figsize=(13, 6))
+    im = ax.imshow(mat, aspect="auto", cmap="Blues", vmin=0, vmax=n_per_method)
+    ax.set_xticks(range(len(top_elems)))
+    ax.set_xticklabels(top_elems, fontsize=11)
+    ax.set_yticks(range(n))
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.set_title(
+        f"Element appearance counts per method (top {len(top_elems)})\n"
+        f"Bold orange element symbols = NOT in any of the {len(seeds)} seeds (introduced by the optimiser)",
+        fontsize=11,
+        pad=12,
+    )
+    # Bold + orange for discovered elements; everything else stays in the default style.
+    for tick_label, el in zip(ax.get_xticklabels(), top_elems):
+        if seed_cnt[el] == 0:
+            tick_label.set_fontweight("bold")
+            tick_label.set_color(DISCOVERED_ELEMENT_COLOR)
+    # Cell annotations.
+    for i in range(n):
+        for j in range(len(top_elems)):
+            if mat[i, j]:
+                ax.text(
+                    j,
+                    i,
+                    str(mat[i, j]),
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color="white" if mat[i, j] > n_per_method * 0.5 else "#333",
+                )
+    cbar = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.01)
+    cbar.set_label(f"appearance count (out of {n_per_method} outputs)")
+    # The shared plot style sets ``axes.grid = True`` globally, which on an ``imshow`` heatmap
+    # draws grid lines through every cell centre (major ticks coincide with cell centres). Turn
+    # the grid off here so the cells stay clean.
+    ax.grid(False)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)

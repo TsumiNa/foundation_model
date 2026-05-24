@@ -327,7 +327,8 @@ PR #18 paper run 里同时跑了 `composition (blended seed, unconstrained)` 与
 
 总 N = 20。
 
-- **17 个 top-QC 去重种子**：在 material_type 训练集中按预测 QC 概率排序，按**元素系**（element symbols set，忽略比例）去重，每个元素系保留最高的代表，取前 17 个。代码已在 PR #18 `_select_seeds` 中实现 `_dedupe_by_element_system`。
+- **17 个 top-QC 去重种子**：在 material_type **测试集（test split）** 中按模型预测 QC 概率排序，按**元素系**（element symbols set，忽略比例）去重，每个元素系保留最高的代表，取前 17 个。代码已在 PR #18 `_select_seeds` 中实现 `_dedupe_by_element_system`。
+  - **为什么用测试集而不是训练集**：训练集组成模型在持续学习中已经见过，"top-QC" 排序里有 memorization 成分；测试集是 hold-out，QC 排序是模型真正的预测 → 这些 seed 才是**真候选**而不是训练数据的回放。`inverse_seed_split = "test"` 是正式 run 的默认；只有复刻 demo / paper baseline 时才回退到 `"train"`。
 - **3 个固定 Au–Ga–Ln 配方**（强制追加，无论 QC 预测值如何）：
   - `Au65 Ga20 Gd15`
   - `Au65 Ga20 Tb15`

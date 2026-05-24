@@ -53,6 +53,10 @@ import torch
 from lightning import seed_everything
 from loguru import logger
 
+from foundation_model.scripts.continual_rehearsal_common import (
+    DISCOVERED_ELEMENT_COLOR,
+    plot_element_frequency_heatmap,
+)
 from foundation_model.scripts.continual_rehearsal_demo import (
     QC_CLASSES,
     ContinualRehearsalConfig,
@@ -213,115 +217,12 @@ def _plot_comparison(results: list[dict[str, Any]], reg_targets: dict[str, float
     logger.info(f"Wrote comparison plot to {out_path}")
 
 
-#: Discovered-element x-tick colour: bright orange. High contrast against the heatmap's Blues
-#: cmap, and visually distinct from the project's #2563EB / #55A868 / #C44E52 palette so readers
-#: don't have to re-map colour meaning. Synced with the matching helper in
-#: ``continual_rehearsal_full.py``.
-DISCOVERED_ELEMENT_COLOR = "#E67E22"
-
-# Element-symbol grouping regex used both here and in seed parsing — capital + optional lowercase.
-_COMP_RE = re.compile(r"([A-Z][a-z]?)([\d.]*)")
-
-
-def _element_set(formula: str) -> frozenset[str]:
-    """Set of element symbols in a composition string (ignoring stoichiometry)."""
-    return frozenset(el for el, _ in _COMP_RE.findall(formula) if el)
-
-
-def _plot_element_frequency_heatmap(
-    results: list[dict[str, Any]],
-    seeds: list[str],
-    out_path: Path,
-    *,
-    top_k: int = 25,
-) -> None:
-    """Per-method × top-K-element occurrence heatmap.
-
-    For each method we count how many of its B decoded recipes contain each element (i.e.
-    ``element_symbol`` appears anywhere in the formatted ``decoded_composition`` string). The
-    top ``top_k`` elements globally are shown as columns; methods are rows. Elements absent
-    from every seed in ``seeds`` are highlighted on the x-axis as **bold orange** — the
-    inverse-design *element-discovery* signal. No underline (visually noisy under tight
-    rotated labels); bold + a distinct colour is enough.
-    """
-    n = len(results)
-    labels = [r["label"].replace("\n", " ") for r in results]
-
-    # Seed element multiplicity — used to decide which elements are "new" (0 in seeds).
-    seed_cnt = Counter()
-    for s in seeds:
-        for el in _element_set(s):
-            seed_cnt[el] += 1
-
-    # Per-method element-presence counts.
-    per_method = []
-    for r in results:
-        c = Counter()
-        for d in r["decoded_composition"]:
-            for el in _element_set(d):
-                c[el] += 1
-        per_method.append(c)
-
-    # Globally top elements (rank by sum-of-top-8-per-method so single-method blow-ups don't
-    # dominate). Matches the ranking the standalone post-hoc script used.
-    global_cnt = Counter()
-    for c in per_method:
-        for el, k in c.most_common(8):
-            global_cnt[el] += k
-    top_elems = [e for e, _ in global_cnt.most_common(top_k)]
-    if not top_elems:
-        logger.warning("No elements found in decoded_composition; skipping heatmap.")
-        return
-
-    n_per_method = len(results[0]["decoded_composition"]) if results else 20
-    mat = np.zeros((n, len(top_elems)), dtype=int)
-    for i, c in enumerate(per_method):
-        for j, el in enumerate(top_elems):
-            mat[i, j] = c[el]
-
-    fig, ax = plt.subplots(figsize=(13, 6))
-    im = ax.imshow(mat, aspect="auto", cmap="Blues", vmin=0, vmax=n_per_method)
-    ax.set_xticks(range(len(top_elems)))
-    ax.set_xticklabels(top_elems, fontsize=11)
-    ax.set_yticks(range(n))
-    ax.set_yticklabels(labels, fontsize=9)
-    ax.set_title(
-        f"Element appearance counts per method (top {len(top_elems)})\n"
-        f"Bold orange element symbols = NOT in any of the {len(seeds)} seeds (introduced by the optimiser)",
-        fontsize=11,
-        pad=12,
-    )
-    # Bold + orange for discovered elements; everything else stays in the default style.
-    for tick_label, el in zip(ax.get_xticklabels(), top_elems):
-        if seed_cnt[el] == 0:
-            tick_label.set_fontweight("bold")
-            tick_label.set_color(DISCOVERED_ELEMENT_COLOR)
-    # Cell annotations.
-    for i in range(n):
-        for j in range(len(top_elems)):
-            if mat[i, j]:
-                ax.text(
-                    j,
-                    i,
-                    str(mat[i, j]),
-                    ha="center",
-                    va="center",
-                    fontsize=8,
-                    color="white" if mat[i, j] > n_per_method * 0.5 else "#333",
-                )
-    cbar = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.01)
-    cbar.set_label(f"appearance count (out of {n_per_method} outputs)")
-    # The shared demo style sets ``axes.grid = True`` globally, which on an ``imshow`` heatmap
-    # draws grid lines through every cell centre (major ticks coincide with cell centres). Turn
-    # the grid off here so the cells stay clean — matches what continual_rehearsal_full.py does.
-    ax.grid(False)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    logger.info(f"Wrote element-frequency heatmap to {out_path}")
-
-
 # --- seed → optimised composition mapping plot -------------------------------------------------
+
+#: Element-symbol + optional stoichiometry regex used by ``_parse_formula_to_fractions`` below.
+#: ``continual_rehearsal_common.element_set`` carries the same pattern for the *set* of element
+#: symbols; here we additionally need the amount (the second capture group) to recover fractions.
+_COMP_RE = re.compile(r"([A-Z][a-z]?)([\d.]*)")
 
 
 def _parse_formula_to_fractions(formula: str) -> dict[str, float]:
@@ -911,7 +812,7 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
     # Per-method × top-25-element occurrence heatmap. Always written so the discovered-element
     # signal (bold orange on the x-axis) is part of every paper-comparison output — the slide
     # author / downstream reader doesn't need to find or rerun a separate post-hoc script.
-    _plot_element_frequency_heatmap(results, list(seeds), out_dir / "element_frequency_heatmap.png")
+    plot_element_frequency_heatmap(results, list(seeds), out_dir / "element_frequency_heatmap.png")
     # Seed → optimised 1:1 mapping plot. One figure per path that has per-seed correspondence
     # (every method except ``comp (random)``, whose ``seeds`` field is a ``random_start_N``
     # placeholder rather than a real composition). Each plot's right side carries the QC% and

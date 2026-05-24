@@ -85,6 +85,7 @@ from foundation_model.scripts.continual_rehearsal_common import (
     dump_metrics,
     dump_predictions,
     plot_confusion,
+    plot_element_frequency_heatmap,
     plot_kr_sequences,
     plot_parity,
 )
@@ -361,6 +362,7 @@ INVERSE_PATH_CONFIGS: list[dict[str, Any]] = [
     },
 ]
 INVERSE_PATHS: list[str] = [c["key"] for c in INVERSE_PATH_CONFIGS]
+INVERSE_PATH_CONFIGS_BY_KEY: dict[str, dict[str, Any]] = {c["key"]: c for c in INVERSE_PATH_CONFIGS}
 
 # Per-regression-task panel title (units + arrow). Matches the demo's REG_TASK_TITLES so plots
 # read the same across both runners. Falls back to the bare task name if a task isn't listed.
@@ -471,7 +473,11 @@ class ContinualRehearsalFullConfig:
     # so the comparison is a stable ablation across runs.
     inverse_composition_allowed_elements: list[str] = field(default_factory=lambda: list(ALLOY_PALETTE))
     inverse_seed_strategy: str = "top_qc"  # "top_qc" | "random" | "explicit"
-    inverse_seed_split: str = "train"  # "train" | "val" | "test" | "all"
+    # Held-out test split is the right default for the formal full run: the model has seen the
+    # train compositions during training, so its top-QC ranking there is part memorisation; test
+    # compositions are held out, so the ranking is a genuine prediction → seeds are real novel QC
+    # candidates. (Override to "train" only when reproducing the demo / paper baseline.)
+    inverse_seed_split: str = "test"  # "train" | "val" | "test" | "all"
     inverse_seed_compositions: list[str] = field(default_factory=list)
     # Compositions appended to the strategy-selected seeds regardless of QC ranking. Each must
     # have a computable descriptor (fail-fast in _select_seeds). The strategy budget is reduced
@@ -891,10 +897,18 @@ class ContinualRehearsalFullRunner:
     def run_inverse_only(self, ckpt_path: Path) -> None:
         """Skip training; load a saved ``final_model.pt`` and run only the inverse-design stage.
 
-        Use this to iterate on inverse-design knobs (palette, seeds, scenarios, …) without
+        Use this to iterate on inverse-design knobs (seed split, palette, scenarios, …) without
         repeating the multi-hour training. Data loading + descriptor computation still happen —
         they're prerequisites for seed selection and the composition-path kernel — but no
         ``Trainer.fit`` is called.
+
+        After the inverse-design pass we also **refresh the slide-prep deliverables**
+        (``ANALYSIS.md`` / ``SLIDE_PREP.md`` / ``README.md``) by loading the previous run's
+        ``training/experiment_records.json`` — without that, those documents would still quote
+        the inverse-design numbers from the previous pass. The training-derived sections
+        (forgetting trajectory, headline-task R² / accuracy) come from ``records`` unchanged.
+        If the records file is missing (e.g. inverse-only against a checkpoint from a different
+        run that didn't expose it), the deliverables are skipped with a warning.
         """
         logger.info(f"=== Inverse-only mode: loading model checkpoint {ckpt_path} ===")
         seed_everything(self.config.random_seed, workers=True)
@@ -906,6 +920,21 @@ class ContinualRehearsalFullRunner:
         inverse = self._inverse_design(model)
         (self.inverse_root / "inverse_design.json").write_text(json.dumps(inverse, indent=2), encoding="utf-8")
         self._write_inverse_summary_md(inverse)
+
+        # Refresh the slide-prep deliverables so their inverse-design tables / seed lists match
+        # the values we just re-ran. The training records live next to the checkpoint.
+        records_path = self.training_dir / "experiment_records.json"
+        if records_path.exists():
+            records = json.loads(records_path.read_text(encoding="utf-8"))
+            self._write_analysis_md(records, inverse)
+            self._write_slide_prep_md(records, inverse)
+            self._write_readme(records, inverse)
+            logger.info(f"Refreshed ANALYSIS.md / SLIDE_PREP.md / README.md from {records_path}")
+        else:
+            logger.warning(
+                f"{records_path} not found — keeping previous ANALYSIS.md / SLIDE_PREP.md / "
+                "README.md unchanged. Inverse-design numbers in those docs may be stale."
+            )
         logger.info(f"Inverse-only done. Outputs in {self.output_dir}")
 
     def _write_metrics_table(self, records: list[dict[str, Any]]) -> None:
@@ -1205,11 +1234,9 @@ class ContinualRehearsalFullRunner:
         }
         (inv_root / "seeds.json").write_text(json.dumps(seeds_meta, indent=2), encoding="utf-8")
 
-        # Union of element symbols present in any seed — used by the element-frequency
-        # heatmap to flag "discovered" elements (high occurrence but not in any seed).
-        seed_element_pool: set[str] = set()
-        for c in seeds:
-            seed_element_pool |= self._element_system(c)
+        # The shared ``plot_element_frequency_heatmap`` reads the seed list directly so it can
+        # mark x-tick labels that are absent from every seed as "discovered" — we no longer
+        # need to pre-compute a seed_element_pool here.
 
         out: dict[str, Any] = {"seeds": seeds_meta, "scenarios": {}}
         for sc in cfg.inverse_scenarios:
@@ -1295,7 +1322,17 @@ class ContinualRehearsalFullRunner:
             }
             (sc_dir / "summary.json").write_text(json.dumps(scenario_summary, indent=2), encoding="utf-8")
             self._plot_inverse_scenario(sc, before_qc, before_reg, paths, reg_targets, sc_dir)
-            self._element_frequency_heatmap(sc.name, paths, seed_element_pool, sc_dir / "element_frequency_heatmap.png")
+            # Shared heatmap: pass per-path ``label`` + ``decoded_composition`` lists so the
+            # x-tick / colourbar / title styling matches the demo's paper_inverse_comparison.
+            heatmap_methods = [
+                {
+                    "label": INVERSE_PATH_CONFIGS_BY_KEY[key]["label"],
+                    "decoded_composition": p.get("decoded_composition", []) or [],
+                }
+                for key, p in paths.items()
+                if key in INVERSE_PATH_CONFIGS_BY_KEY
+            ]
+            plot_element_frequency_heatmap(heatmap_methods, list(seeds), sc_dir / "element_frequency_heatmap.png")
 
             # ── per-scenario figures copied from the demo's ``paper_inverse_comparison.py`` ──
             # The runner used to emit only the (boxplot) ``comparison.png`` and the
@@ -1653,81 +1690,13 @@ class ContinualRehearsalFullRunner:
         headline = ["formation_energy", "magnetic_moment", "tc", "klat", "material_type"]
         return {t: final.get(t, {}) for t in headline if t in self.config.task_sequence}
 
-    # --- element-frequency heatmap (plan §6 / §5 evaluation) ------------------
-
-    def _element_frequency_heatmap(
-        self,
-        scenario_name: str,
-        paths: dict[str, dict[str, Any]],
-        seed_element_pool: set[str],
-        out_path: Path,
-        *,
-        top_k: int = 25,
-        eps: float = 1e-3,
-    ) -> None:
-        """Per-path × top-K-element occurrence heatmap (rows = path, cols = element).
-
-        ``optimized_weights`` in each path's ``result.json`` gives the (B, n_components) recipes;
-        an element is "present" in a recipe when its weight > ``eps``. Cell value = #recipes
-        containing the element (0..B). Elements absent from any seed (``seed_element_pool``) are
-        highlighted on the x-axis label (**bold + orange**) as the inverse-design
-        **element-discovery signal**. Orange (#E67E22) is chosen for high contrast against the
-        Blues heatmap cmap and to stay visually distinct from the project's blue / green / red
-        palette used elsewhere (composition bars / latent bars / target lines).
-        """
-        path_names = [p for p in INVERSE_PATHS if p in paths]
-        if not path_names:
-            return
-        # Build per-path occurrence vector over all elements.
-        n_elem = len(DEFAULT_ELEMENTS)
-        occ = np.zeros((len(path_names), n_elem), dtype=int)
-        for i, p in enumerate(path_names):
-            w = np.asarray(paths[p].get("optimized_weights", []), dtype=float)
-            if w.size == 0:
-                continue
-            occ[i] = (w > eps).sum(axis=0)
-        total = occ.sum(axis=0)
-        order = np.argsort(total)[::-1]
-        keep = [int(k) for k in order if total[k] > 0][:top_k]
-        if not keep:
-            return
-        labels = [DEFAULT_ELEMENTS[k] for k in keep]
-        sub = occ[:, keep]
-
-        fig, ax = plt.subplots(figsize=(max(8.0, 0.42 * len(labels) + 2.0), 0.55 * len(path_names) + 2.4))
-        im = ax.imshow(sub, cmap="Blues", aspect="auto")
-        ax.set_yticks(range(len(path_names)), path_names)
-        ax.set_xticks(range(len(labels)), labels, rotation=0, fontsize=9)
-        # Bold + orange for "discovered" elements (not in any seed). No underline — bold + a
-        # contrasting non-palette colour is enough to read at a glance, and underlining glyphs
-        # under rotated/tight tick labels was visually noisy.
-        for idx, sym in enumerate(labels):
-            tick = ax.get_xticklabels()[idx]
-            if sym not in seed_element_pool:
-                tick.set_fontweight("bold")
-                tick.set_color("#E67E22")
-        # Cell annotations (counts).
-        for i in range(sub.shape[0]):
-            for j in range(sub.shape[1]):
-                if sub[i, j]:
-                    ax.text(
-                        j,
-                        i,
-                        str(int(sub[i, j])),
-                        ha="center",
-                        va="center",
-                        fontsize=7.5,
-                        color="white" if sub[i, j] > sub.max() * 0.55 else "#333333",
-                    )
-        fig.colorbar(im, ax=ax, label="# recipes containing element", fraction=0.025, pad=0.02)
-        ax.set_title(
-            f"{scenario_name} — element frequency (top {len(labels)})\nbold orange = discovered (not in any seed)",
-            fontsize=11,
-        )
-        ax.grid(False)
-        fig.savefig(out_path)
-        plt.close(fig)
-        logger.info(f"Saved element-frequency heatmap to {out_path}")
+    # --- element-frequency heatmap ------------------------------------------
+    # The runner used to carry its own bound-method heatmap that consumed the per-path
+    # ``optimized_weights`` directly; we now share ``plot_element_frequency_heatmap`` from
+    # ``continual_rehearsal_common`` with the demo runner (same x-tick discovered-element
+    # styling, same colourbar label, same title format). The shared helper reads from the
+    # already-decoded ``decoded_composition`` strings (already in ``paths[key]``), so we
+    # don't need ``DEFAULT_ELEMENTS`` order or an ``eps`` threshold here.
 
     # --- markdown writers (plan §6) -------------------------------------------
 
@@ -2223,7 +2192,9 @@ class ContinualRehearsalFullRunner:
             lines.append(f"  - `{s}`")
         lines.append("")
 
-        lines.append(f"### `ALLOY_PALETTE` ({len(ALLOY_PALETTE)} elements, slide author renders periodic-table highlight)\n")
+        lines.append(
+            f"### `ALLOY_PALETTE` ({len(ALLOY_PALETTE)} elements, slide author renders periodic-table highlight)\n"
+        )
         lines.append(
             "Range design: covers classic i-QC / d-QC formers + easy 4th/5th-period TMs + accessible lanthanides + Au (so Au–Ga–Ln seeds are reachable). Pm / Tc and Pu-class radioactives are excluded; Tm / Lu excluded as rare and expensive.\n"
         )

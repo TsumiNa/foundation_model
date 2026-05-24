@@ -75,7 +75,12 @@ inverse_steps = 300
 inverse_lr = 0.05
 inverse_class_weight = 5.0                                  # QC probability is the primary objective
 inverse_seed_strategy = "top_qc"
-inverse_seed_split = "train"
+# Use the **test** split for seed selection: the model has seen the train compositions during
+# training, so its top-QC ranking on train is part memorisation; test compositions are held out,
+# so the ranking is a genuine prediction → seeds are real novel QC candidates, not training data
+# the model already saw. (The demo / paper run defaulted to "train" because it was a self-
+# contained baseline; the formal full run wants held-out candidates.)
+inverse_seed_split = "test"
 # Three Au-Ga-Ln formers appended to top-QC seeds (strategy budget reduced by 3).
 inverse_seed_explicit_append = ["Au65 Ga20 Gd15", "Au65 Ga20 Tb15", "Au65 Ga20 Dy15"]
 # 48-element alloy palette (plan §5, extended 2026-05 with the full Hf–Pt 5d TM row) — restricts
