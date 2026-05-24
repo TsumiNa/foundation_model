@@ -1044,6 +1044,28 @@ def test_optimize_latent_class_target_weight_runs_with_combined_objectives():
     assert res.optimized_target.shape == (4, 1, 1)  # one regression task tracked
 
 
+def test_optimize_latent_restores_requires_grad_after_call():
+    """Regression test for the requires_grad leak: optimize_latent must leave every model
+    parameter's ``requires_grad`` flag as it was before the call. Previously only ``training``
+    mode was restored, so subsequent ``model.fit(...)`` calls silently froze the encoder /
+    heads and "training stopped moving the weights" became annoying to bisect.
+    """
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    # Snapshot whatever pattern the caller had (all True by default, but the test should hold
+    # for any non-trivial pattern too).
+    expected = [p.requires_grad for p in model.parameters()]
+    model.optimize_latent(
+        initial_input=torch.randn(3, INPUT_DIM),
+        task_targets={"prop": 1.0},
+        class_targets={"cls": [1]},
+        optimize_space="input",
+        steps=5,
+    )
+    actual = [p.requires_grad for p in model.parameters()]
+    assert actual == expected
+
+
 # --- optimize_composition (differentiable KMD) --------------------------------
 
 

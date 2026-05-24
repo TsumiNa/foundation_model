@@ -292,6 +292,18 @@ class ContinualRehearsalConfig:
             raise ValueError("inverse_seed_split must be 'train', 'val', 'test', or 'all'.")
         if self.inverse_seed_strategy == "explicit" and not self.inverse_seed_compositions:
             raise ValueError("inverse_seed_strategy='explicit' requires inverse_seed_compositions.")
+        # ``n_seeds <= 0`` is silently broken — ``_select_seeds`` returns only the
+        # explicit-append entries (sometimes zero of them), and downstream code crashes much
+        # later with confusing shape errors. Fail loudly at config-load time instead.
+        if self.inverse_n_seeds <= 0:
+            raise ValueError(f"inverse_n_seeds must be > 0, got {self.inverse_n_seeds}.")
+        # ``ae_align_scale ∉ [0, 1]`` would eventually be rejected by ``optimize_latent`` at
+        # runtime; catching it at the config layer points the user at the TOML, not at a
+        # backtrace inside the model.
+        if not 0.0 <= self.inverse_ae_align_scale <= 1.0:
+            raise ValueError(
+                f"inverse_ae_align_scale must be in [0, 1], got {self.inverse_ae_align_scale}."
+            )
 
 
 def _as_float_array(cell: Any) -> np.ndarray:
@@ -629,7 +641,6 @@ class ContinualRehearsalRunner:
         inverse = self._inverse_design(model)
         (self.output_dir / "inverse_design.json").write_text(json.dumps(inverse, indent=2), encoding="utf-8")
         logger.info(f"Inverse-only done. Outputs in {self.output_dir}")
-        logger.info(f"Done. Outputs in {self.output_dir}")
 
     # ------------------------------------------------------------------ eval
 
@@ -876,9 +887,7 @@ class ContinualRehearsalRunner:
 
         def _finalise(strategy_seeds: list[str]) -> list[str]:
             """Combine strategy seeds + explicit-append, skipping any duplicate element systems."""
-            seen_keys = {self._element_system(c) for c in appended}
-            kept_strategy = [c for c in strategy_seeds if self._element_system(c) not in seen_keys]
-            return kept_strategy[:n_strategy] + appended
+            return self._merge_strategy_and_explicit(strategy_seeds, appended, n_strategy)
 
         if cfg.inverse_seed_strategy == "explicit":
             seeds = [normalize_composition(c) or str(c) for c in cfg.inverse_seed_compositions]
@@ -922,6 +931,25 @@ class ContinualRehearsalRunner:
             if len(out) >= n:
                 break
         return out
+
+    @classmethod
+    def _merge_strategy_and_explicit(
+        cls,
+        strategy_seeds: list[str],
+        appended: list[str],
+        n_strategy: int,
+    ) -> list[str]:
+        """Combine strategy-selected seeds with explicit-append seeds, deduping by element-system.
+
+        Strategy seeds whose element-system collides with any appended seed are dropped, then the
+        list is truncated to ``n_strategy`` so the final total length is ``n_strategy + len(appended)``.
+        Appended seeds always survive (they were already deduped against themselves upstream).
+        Extracted from ``_select_seeds._finalise`` so the dedup contract is unit-testable without
+        the full runner.
+        """
+        seen_keys = {cls._element_system(c) for c in appended}
+        kept_strategy = [c for c in strategy_seeds if cls._element_system(c) not in seen_keys]
+        return kept_strategy[:n_strategy] + appended
 
     def _decode_compositions(self, descriptors: np.ndarray) -> list[str]:
         """KMD.inverse: descriptor -> element weights -> compact formula string."""

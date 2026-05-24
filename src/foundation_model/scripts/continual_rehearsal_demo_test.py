@@ -90,6 +90,24 @@ def test_config_explicit_strategy_requires_compositions():
         ContinualRehearsalConfig(**_base_kwargs(inverse_seed_strategy="explicit", inverse_seed_compositions=[]))
 
 
+def test_config_rejects_nonpositive_n_seeds():
+    """``inverse_n_seeds <= 0`` would silently return only the explicit-append entries; fail
+    loudly at config-load time so the misuse points at the TOML, not at a downstream shape error."""
+    with pytest.raises(ValueError, match="inverse_n_seeds must be > 0"):
+        ContinualRehearsalConfig(**_base_kwargs(inverse_n_seeds=0))
+    with pytest.raises(ValueError, match="inverse_n_seeds must be > 0"):
+        ContinualRehearsalConfig(**_base_kwargs(inverse_n_seeds=-3))
+
+
+def test_config_rejects_ae_align_scale_out_of_range():
+    """``ae_align_scale ∉ [0, 1]`` is rejected by the model at runtime; we catch it earlier so
+    the error message points at the TOML field rather than a deep model backtrace."""
+    with pytest.raises(ValueError, match="inverse_ae_align_scale must be in"):
+        ContinualRehearsalConfig(**_base_kwargs(inverse_ae_align_scale=-0.1))
+    with pytest.raises(ValueError, match="inverse_ae_align_scale must be in"):
+        ContinualRehearsalConfig(**_base_kwargs(inverse_ae_align_scale=1.5))
+
+
 # --- material-type 5→3 merge map ------------------------------------------------------------
 
 
@@ -137,6 +155,38 @@ def test_dedupe_by_element_system_respects_n_cap():
 def test_dedupe_by_element_system_ignores_empty_strings():
     out = ContinualRehearsalRunner._dedupe_by_element_system(["", "Mg1", "  ", "Al1"], n=5)
     assert out == ["Mg1", "Al1"]
+
+
+def test_merge_strategy_and_explicit_drops_strategy_seeds_sharing_element_system():
+    """When an explicit-append seed (Au-Ga-Gd) shares an element-system with a strategy seed,
+    the *strategy* seed is dropped — the explicit-append wins because it's the user's deliberate
+    pick. Mirrors ``_select_seeds._finalise``'s contract end-to-end."""
+    strategy = [
+        "Mg12 Cu3 Ni3",  # {Mg, Cu, Ni} — kept
+        "Au70 Ga20 Gd10",  # {Au, Ga, Gd} — *dropped*, overlaps the explicit append
+        "Y8 Mg34 Zn58",  # {Y, Mg, Zn} — kept
+        "Al6 Co1 Cu3",  # {Al, Co, Cu} — kept
+    ]
+    appended = ["Au65 Ga20 Gd15"]  # {Au, Ga, Gd}
+    out = ContinualRehearsalRunner._merge_strategy_and_explicit(strategy, appended, n_strategy=3)
+    assert out == ["Mg12 Cu3 Ni3", "Y8 Mg34 Zn58", "Al6 Co1 Cu3", "Au65 Ga20 Gd15"]
+
+
+def test_merge_strategy_and_explicit_caps_strategy_after_dedup():
+    """``n_strategy`` is the post-dedup cap on the strategy portion. Total output length is
+    ``n_strategy + len(appended)`` — the appended entries are always preserved."""
+    strategy = ["Mg1 Cu1", "Al1 Fe1", "Zn1 Cd1"]
+    appended = ["Au1 Ga1"]
+    out = ContinualRehearsalRunner._merge_strategy_and_explicit(strategy, appended, n_strategy=2)
+    assert out == ["Mg1 Cu1", "Al1 Fe1", "Au1 Ga1"]
+
+
+def test_merge_strategy_and_explicit_handles_empty_appended():
+    """No explicit-append entries ⇒ just truncates the (already-deduped) strategy list."""
+    out = ContinualRehearsalRunner._merge_strategy_and_explicit(
+        ["Mg1 Cu1", "Al1 Fe1", "Zn1 Cd1"], [], n_strategy=2
+    )
+    assert out == ["Mg1 Cu1", "Al1 Fe1"]
 
 
 def test_element_system_extracts_symbols_ignoring_amounts():

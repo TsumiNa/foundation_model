@@ -1056,12 +1056,19 @@ class ContinualRehearsalFullRunner:
 
     @classmethod
     def _dedupe_by_element_system(cls, candidates: list[str], n: int) -> list[str]:
-        """Walk ``candidates`` in order, keep the first occurrence of each element set, cap at ``n``."""
+        """Walk ``candidates`` in order, keep the first occurrence of each element set, cap at ``n``.
+
+        Empty / malformed compositions (those that parse to an empty element-set) are silently
+        skipped so a bad row in the source dataframe doesn't blow up the seed picker — matches
+        the demo runner's behaviour at ``continual_rehearsal_demo._dedupe_by_element_system``
+        (the two used to differ; aligning them prevents drift when this gets shared into
+        ``continual_rehearsal_common``).
+        """
         seen: set[frozenset[str]] = set()
         out: list[str] = []
         for comp in candidates:
             key = cls._element_system(comp)
-            if key in seen:
+            if not key or key in seen:
                 continue
             seen.add(key)
             out.append(comp)
@@ -2246,7 +2253,7 @@ class ContinualRehearsalFullRunner:
             "| `comp (seed, 5% all)` | `seed_blend = 0.95`, all allowed | Adds 5 % uniform mass over all 94 elements so non-seed elements have reachable logits. Optimiser *can* introduce new elements but otherwise unconstrained. |"
         )
         lines.append(
-            "| `comp (seed, 5% all, element list)` | (above) + `allowed_elements = ALLOY_PALETTE` | Restricts the support set to the 41 feasible alloy elements. **Practical materials-design mode.** |"
+            f"| `comp (seed, 5% all, element list)` | (above) + `allowed_elements = ALLOY_PALETTE` | Restricts the support set to the {len(ALLOY_PALETTE)} feasible alloy elements. **Practical materials-design mode.** |"
         )
         lines.append(
             "| `comp (seed, 5% all, element list, low diversity)` | (above) + `diversity_scale = 0` | Adds max entropy penalty → forces peaky few-element recipes. Tests whether peaky recipes still satisfy the targets. |"

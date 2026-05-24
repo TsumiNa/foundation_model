@@ -1892,9 +1892,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if num_restarts < 1:
             raise ValueError(f"num_restarts must be >= 1, got {num_restarts}")
 
-        # Store original training state
+        # Store original training state. We also snapshot every parameter's ``requires_grad``
+        # because the optimisation only differentiates through ``optim_input`` / ``optim_latent``
+        # — leaving ``requires_grad=True`` on the model parameters would let ``loss.backward()``
+        # populate stale ``.grad`` tensors on the encoder / heads. Mirrors the same pattern used
+        # by :meth:`optimize_composition` so a later ``model.fit(...)`` works as expected.
         was_training = self.training
+        saved_req_grad: list[tuple[torch.nn.Parameter, bool]] = [(p, p.requires_grad) for p in self.parameters()]
         self.eval()
+        for p, _ in saved_req_grad:
+            p.requires_grad_(False)
 
         device = next(self.parameters()).device
         if initial_input is None:
@@ -2159,8 +2166,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 traj_tensor = torch.stack(step_traj, dim=0)  # (steps, B, T)
                 trajectories.append(traj_tensor)
 
-        # Restore training state
+        # Restore training state + per-parameter ``requires_grad``. Without the latter, every
+        # encoder / head parameter would be left frozen for any later ``.fit()`` in the same
+        # Python session — the symptom is "training silently stops moving the encoder" which
+        # is annoying to bisect.
         self.train(was_training)
+        for p, prev in saved_req_grad:
+            p.requires_grad_(prev)
 
         # Stack outputs
         opt_input_tensor = torch.stack(optimized_inputs, dim=1)  # (B, R, D)

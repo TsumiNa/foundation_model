@@ -78,15 +78,17 @@ inverse_seed_strategy = "top_qc"
 inverse_seed_split = "train"
 # Three Au-Ga-Ln formers appended to top-QC seeds (strategy budget reduced by 3).
 inverse_seed_explicit_append = ["Au65 Ga20 Gd15", "Au65 Ga20 Tb15", "Au65 Ga20 Dy15"]
-# 41-element alloy palette (plan §5) — restricts the C-alloy composition path. Covers classic
-# i-QC / d-QC formers, group 13/14 enablers, easy lanthanides; excludes Tc/Pm radioactives.
+# 48-element alloy palette (plan §5, extended 2026-05 with the full Hf–Pt 5d TM row) — restricts
+# the C-alloy composition path. Covers classic i-QC / d-QC formers, group 13/14 enablers, the
+# full 4th/5th-period TMs (Tc excluded), the full 6th-period TMs (Hf–Au), and easy lanthanides
+# (Pm/Tm/Lu excluded). Keep aligned with ``ALLOY_PALETTE`` in ``continual_rehearsal_full.py``.
 inverse_composition_allowed_elements = [
     "Mg", "Ca",
     "B", "Al", "Ga", "In", "Tl",
     "Si", "Ge",
     "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",
     "Y", "Zr", "Nb", "Mo", "Ru", "Rh", "Pd", "Ag", "Cd",
-    "Au",
+    "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au",
     "La", "Ce", "Pr", "Nd", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Yb",
 ]
 
