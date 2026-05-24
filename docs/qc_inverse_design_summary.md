@@ -105,13 +105,56 @@ Written so each bullet maps to either a slide or a paragraph of the paper.
     with red dashed target lines.
   * `seed_to_optimized__*.png` × 7 — per-method 1:1 mapping (seed → optimised composition) with
     per-row `(QC%, ΔFE, Δklat, …)` deltas.
+  * `trajectories/<path_slug>.{png,gif,html}` per path — normalised per-step target curves
+    (static `.png`), and the same curves animated alongside a per-step element bar chart
+    (default `.gif`, self-contained interactive `.html` on request). Raw per-step arrays
+    `(steps, B, T)` for targets and `(steps, B, n_components)` for weights persisted as
+    `trajectories/<path_slug>.npz` so re-plots don't need to rerun the optimisation.
   * `results.json` + `SUMMARY.md` — raw arrays and a markdown table.
 * Configs, seeds, and the trained checkpoint are all saved per run, so any figure can be
   regenerated from `results.json` alone (no re-running the optimisation needed for re-plots).
 * The orchestrator (`paper_inverse_3scenarios`) writes the three scenarios into sibling
   subfolders so the full study is one directory.
 
-### 8. Constraints and honest limitations.
+### 8. Per-step optimisation trajectories explain why the same seed → different scenarios → different recipes.
+
+Each path's per-step `(targets, weights)` are now persisted as
+`<scenario>/trajectories/<path_slug>.npz`; the corresponding `trajectory__*.png` /
+`.gif` / `.html` plots normalise each target to "progress" (0 = seed baseline,
+1 = at target) and overlay all targets on one axis. The headline finding is
+that **secondary targets converge on very different time-scales**, and the
+fastest-converging one locks in the recipe early:
+
+| Scenario | Path | Per-target trajectory (300 steps) | What it tells you |
+|---|---|---|---|
+| 3: FE↓ + klat↑ | `comp (seed, 5% all, element list)` | **klat overshoots** to progress ≈ 1.5 by step ~100 then plateaus; **FE crawls** to ~0.32 across all 300 steps | klat dominates the gradient early; once a klat-favourable recipe is locked, the remaining 200 steps only nudge FE in the residual subspace |
+| 1: FE↓ + mag↑ | same path | **FE** crawls to ~0.26; **magnetisation** essentially flat at ~0.01 | the model can't find compositions that increase magnetisation without dropping QC — magnetisation is a *stuck* target on this manifold |
+| 2: FE↓ + tc↑ + mag↑ | same path | **FE and tc** rise together to ~0.22 by step ~200 (coupled); **magnetisation** plateaus at ~0.08 | when two targets pull on similar element directions they couple cleanly; the orthogonal one (mag) again barely moves |
+
+Three consequences for interpreting the per-scenario heatmaps:
+
+* "Same seed, different scenario, different recipe" is not optimisation noise —
+  it's the *dominant target* taking over the gradient in the first ~50–100 steps
+  and steering the composition into a different chemistry basin. The trajectory
+  plot lets you see this happening in real time (left-panel target curves +
+  right-panel evolving element bars in the GIF / HTML).
+* Most paths have flatlined by step ~150–200, so the configured `inverse_steps =
+  300` is enough headroom; further steps would mainly refine the slow tail. The
+  bottleneck is not training time, it's the magnetisation-style "model can't
+  reach this target from any QC-prone basin" failure mode.
+* The klat overshoot (progress > 1.0) is honest signal: the optimiser keeps
+  pushing klat past the target because the joint loss is still falling on the
+  other axes. Reading the `seed_to_optimized__*.png` per-row Δreg values gives
+  the absolute (not relative) numbers if "did it actually overshoot" matters
+  for the application.
+
+The "best-per-target representative seed" used in the GIF / HTML's composition
+panel is picked by `paper_inverse_trajectory.best_seed_by_target_distance`
+(minimises the joint normalised distance to QC = 1 and every reg target). To
+see all 20 seeds individually instead of the mean, rerun with
+`--per-seed-trajectories`.
+
+### 9. Constraints and honest limitations.
 
 * The 48-element `ALLOY_PALETTE` is a *chemistry-aware whitelist*, not a synthesisability
   predictor. The optimiser will still happily propose Al-Pd-Pt at a ratio nobody has yet
