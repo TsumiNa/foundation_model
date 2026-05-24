@@ -76,7 +76,7 @@ class TransformerEncoderConfig(BaseEncoderConfig):
     """Configuration for the transformer foundation encoder.
 
     ``use_cls_token`` determines how the encoder aggregates feature tokens
-    before passing them into the deposit layer: enabling it selects the
+    before the model-level ``tanh`` and the task heads: enabling it selects the
     contextualised ``[CLS]`` embedding, while disabling it applies mean pooling
     over all tokens. In both cases gradients still reach every feature token via
     the self-attention blocks.
