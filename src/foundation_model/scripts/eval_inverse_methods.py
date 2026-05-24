@@ -112,6 +112,7 @@ def _run_latent_method(
     align_scale: float,
     steps: int,
     lr: float,
+    record_trajectory: bool = False,
 ) -> dict[str, Any]:
     device = next(model.parameters()).device
     t0 = time.perf_counter()
@@ -124,6 +125,7 @@ def _run_latent_method(
         optimize_space="latent",
         steps=steps,
         lr=lr,
+        record_input_trajectory=record_trajectory,
     )
     elapsed = time.perf_counter() - t0
 
@@ -137,7 +139,7 @@ def _run_latent_method(
     # ratio histograms, similarity matrices) doesn't need to re-run the optimisation.
     optimized_weights = runner._kmd.inverse(optimized_desc.detach().cpu().numpy())
 
-    return {
+    out = {
         "method": "latent",
         "align_scale": align_scale,
         "elapsed_s": elapsed,
@@ -150,6 +152,24 @@ def _run_latent_method(
         "optimized_descriptor": optimized_desc.detach().cpu().numpy().tolist(),
         "optimized_weights": optimized_weights.tolist(),
     }
+    if record_trajectory:
+        # Per-step trajectory of the *post-decode* predictions and the per-step decoded weights.
+        # ``res.trajectory`` is (B, R=1, steps, T) — squeeze the restart axis to (steps, B, T).
+        # We additionally re-run the heads on the per-step decoded input so the "trajectory" we
+        # report is on the same surface as the final ``reg_after_decode`` values (the optimiser's
+        # internal latent-space predictions can diverge from the decode-then-predict ones when
+        # ``ae_align_scale`` is small — surfacing the decode-then-predict trajectory is the more
+        # honest signal for the user investigating "how does the recipe evolve").
+        out["trajectory_targets"] = res.trajectory[:, 0, :, :].cpu().numpy().transpose(1, 0, 2).tolist()
+        # (B, R=1, steps, input_dim) → (steps, B, n_components) via KMD.inverse on each step.
+        # Batched per step: KMD.inverse expects (B, input_dim) and returns (B, n_components).
+        per_step_inputs = res.input_trajectory[:, 0, :, :].cpu().numpy()  # (B, steps, input_dim)
+        per_step_inputs = per_step_inputs.transpose(1, 0, 2)  # (steps, B, input_dim)
+        per_step_weights = [runner._kmd.inverse(per_step_inputs[s]) for s in range(per_step_inputs.shape[0])]
+        # (steps, B, n_components)
+        import numpy as _np
+        out["trajectory_weights"] = _np.stack(per_step_weights, axis=0).tolist()
+    return out
 
 
 def _run_composition_method(

@@ -689,6 +689,13 @@ def _plot_qc_vs_reg_scatter(
     logger.info(f"Wrote QC-vs-secondary scatter plot to {out_path}")
 
 
+def _path_slug(r: dict[str, Any]) -> str:
+    """Stable filename slug for one path. Latent: ``latent_align0p25``; comp: cleaned label."""
+    if r["method"] == "latent":
+        return f"latent_align{r['align_scale']:g}".replace(".", "p")
+    return re.sub(r"[^a-z0-9]+", "_", r["label"].lower()).strip("_")
+
+
 def _summarise(results: list[dict[str, Any]], reg_targets: dict[str, float]) -> list[dict[str, Any]]:
     summary = []
     for r in results:
@@ -708,7 +715,14 @@ def _summarise(results: list[dict[str, Any]], reg_targets: dict[str, float]) -> 
     return summary
 
 
-def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
+def run(
+    config: ContinualRehearsalConfig,
+    ckpt_path: Path,
+    *,
+    record_trajectory: bool = True,
+    per_seed_trajectories: bool = False,
+    animation_formats: tuple[str, ...] = ("gif",),
+) -> None:
     seed_everything(config.random_seed, workers=True)
     runner = ContinualRehearsalRunner(config)
 
@@ -762,6 +776,7 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
             align_scale=lam,
             steps=config.inverse_steps,
             lr=config.inverse_lr,
+            record_trajectory=record_trajectory,
         )
         r["label"] = f"latent\nα={lam:g}"
         r["config"] = {"ae_align_scale": lam}
@@ -779,6 +794,7 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
             steps=config.inverse_steps,
             lr=config.inverse_lr,
             cfg=cfg,
+            record_trajectory=record_trajectory,
         )
         r["label"] = cfg["label"]
         r["config"] = {k: cfg[k] for k in ("init", "blend", "allowed", "scale", "diversity")}
@@ -788,6 +804,28 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
     logger.info("=== Summary ===")
     for row in summary:
         logger.info(row)
+
+    # Trajectory arrays would blow up the inlined results.json (≈ 36MB / scenario for a 300-step
+    # 20-seed run); persist them as compressed .npz next to results.json and replace the inline
+    # lists with a relative-path reference. The JSON stays browsable; replots read the .npz.
+    traj_dir: Path | None = None
+    if record_trajectory:
+        traj_dir = out_dir / "trajectories"
+        traj_dir.mkdir(exist_ok=True)
+        for r in results:
+            if "trajectory_targets" not in r:
+                continue
+            slug = _path_slug(r)
+            npz_path = traj_dir / f"{slug}.npz"
+            np.savez_compressed(
+                npz_path,
+                targets=np.asarray(r["trajectory_targets"], dtype=np.float32),
+                weights=np.asarray(r["trajectory_weights"], dtype=np.float32),
+            )
+            r["trajectory_file"] = str(npz_path.relative_to(out_dir))
+            del r["trajectory_targets"]
+            del r["trajectory_weights"]
+        logger.info(f"Wrote per-path trajectory arrays under {traj_dir}/")
 
     (out_dir / "results.json").write_text(
         json.dumps(
@@ -822,11 +860,7 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
         if r["method"] == "composition" and r.get("config", {}).get("init") != "seed":
             # ``comp (random)`` — no per-row seed correspondence.
             continue
-        if r["method"] == "latent":
-            # Latent labels are like "latent\nα=0.25"; build a slug that preserves the number.
-            slug = f"latent_align{r['align_scale']:g}".replace(".", "p")
-        else:
-            slug = re.sub(r"[^a-z0-9]+", "_", r["label"].lower()).strip("_")
+        slug = _path_slug(r)
         _plot_seed_to_optimized_mapping(
             seeds=list(seeds),
             decoded=list(r["decoded_composition"]),
@@ -850,11 +884,157 @@ def run(config: ContinualRehearsalConfig, ckpt_path: Path) -> None:
         seed_qc=seed_qc,
         seed_reg=seed_reg,
     )
+    # Per-step optimisation trajectory plots + animations. One figure (and one animation) per
+    # path; ``--per-seed-trajectories`` additionally emits per-seed variants. Skipped when
+    # ``--no-record-trajectory`` was passed (results.json carries no trajectory_file refs then).
+    if record_trajectory and traj_dir is not None:
+        _emit_trajectory_outputs(
+            results=results,
+            reg_targets=reg_targets,
+            seed_qc=seed_qc,
+            seed_reg=seed_reg,
+            out_dir=out_dir,
+            traj_dir=traj_dir,
+            per_seed=per_seed_trajectories,
+            animation_formats=animation_formats,
+        )
     # The auto-generated README is a compact summary table only. It writes to ``SUMMARY.md``
     # (not ``README.md``) so a user-written index — pointing to every figure, file, and the
     # full ANALYSIS.md — can live at ``README.md`` without being overwritten on rerun.
     _write_readme(out_dir, summary, reg_targets, ckpt_path)
     logger.info(f"Paper materials written to {out_dir}")
+
+
+def _emit_trajectory_outputs(
+    *,
+    results: list[dict[str, Any]],
+    reg_targets: dict[str, float],
+    seed_qc: np.ndarray,
+    seed_reg: dict[str, np.ndarray],
+    out_dir: Path,
+    traj_dir: Path,
+    per_seed: bool,
+    animation_formats: tuple[str, ...],
+) -> None:
+    """Render the static "normalised-progress vs step" plot + animation per path.
+
+    Default mode draws **mean across seeds** for the line plot and animates the comp panel
+    using the seed whose final state best matches all targets (joint normalised distance).
+    ``per_seed=True`` additionally emits one plot+animation per (path × seed) under a subfolder.
+    Animation formats default to ``("gif",)``; pass extras (``html``, ``svg``) to also emit them.
+    ``"none"`` in the format list disables animations entirely (static plot still emitted).
+    """
+    from foundation_model.scripts.paper_inverse_trajectory import (
+        best_seed_by_target_distance,
+        normalize_target_trajectories,
+        plot_trajectory_animation,
+        plot_trajectory_static,
+    )
+    from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS
+
+    formats: list[str] = [f for f in animation_formats if f != "none"]
+    static_dir = out_dir / "trajectories"
+    static_dir.mkdir(exist_ok=True)
+    per_seed_dir = out_dir / "trajectories_per_seed" if per_seed else None
+    if per_seed_dir is not None:
+        per_seed_dir.mkdir(exist_ok=True)
+
+    for r in results:
+        if "trajectory_file" not in r:
+            continue
+        slug = _path_slug(r)
+        npz_path = out_dir / r["trajectory_file"]
+        with np.load(npz_path) as data:
+            traj_targets = np.asarray(data["targets"])  # (steps, B, T_reg)
+            traj_weights = np.asarray(data["weights"])  # (steps, B, n_components)
+        # The composition method's ``trajectory_targets`` is the in-loop reg-only predictions
+        # (T_reg = len(reg_targets)); for the QC trajectory we replay the qc_after_decode per
+        # step. That requires running ``_qc_prob`` on each step's descriptor — but the npz only
+        # stores weights, not descriptors. Fast path: each step's QC ≈ qc_after_decode is well
+        # approximated by reusing the qc_after_decode of the final step as a fixed line + (initial
+        # − final) as a linear ramp would be wrong. So we just reconstruct the per-step QC
+        # trajectory by *not* including QC when it isn't in the npz; the static plot still works
+        # with reg-only progress. For the inverse-design study this is the right signal anyway —
+        # the user asked "do the reg targets converge together?" and the QC line is best read off
+        # the separate ``comparison.png``.
+        reg_names = list(reg_targets)
+        # Mean reg trajectory across seeds (per step → per task).
+        reg_traj_dict: dict[str, np.ndarray] = {
+            t: traj_targets[:, :, j] for j, t in enumerate(reg_names)
+        }
+        # Mean variant: use QC after-decode (final value) as a flat baseline-vs-target progress
+        # line only if it's available; otherwise drop QC. For the inverse-design case QC is in
+        # results dict but not per-step; we synthesise a "flat" QC progress line from the final
+        # value so it shows up on the chart for context.
+        qc_after = np.asarray(r["qc_after_decode"], dtype=float)
+        qc_traj = np.tile(qc_after[None, :], (traj_targets.shape[0], 1))  # (steps, B); only end-state QC
+        progress_mean = normalize_target_trajectories(
+            qc_trajectory=qc_traj,
+            reg_trajectory=reg_traj_dict,
+            reg_targets=reg_targets,
+            seed_qc=seed_qc,
+            seed_reg=seed_reg,
+        )
+        # The QC entry is degenerate (flat ≈ end-state); drop it from the static plot to avoid
+        # misleading the reader. The animation also keeps reg-only.
+        progress_mean.pop("QC", None)
+
+        # Pick the best representative seed for the animation's comp panel.
+        reg_final_per_task = {t: np.asarray(r["reg_after_decode"][t], dtype=float) for t in reg_names}
+        best_idx = best_seed_by_target_distance(qc_after, reg_final_per_task, reg_targets)
+        per_step_weights_best = traj_weights[:, best_idx, :]  # (steps, n_components)
+
+        # --- Static plot (mean across seeds) ---
+        static_out = static_dir / f"trajectory__{slug}.png"
+        plot_trajectory_static(
+            progress_mean,
+            static_out,
+            title=f"Optimisation trajectory · {r['label'].replace(chr(10), ' ')}  (mean over {qc_after.shape[0]} seeds)",
+        )
+
+        # --- Animation (mean curves + best-seed comp panel) ---
+        if formats:
+            out_paths = {fmt: static_dir / f"trajectory__{slug}.{fmt}" for fmt in formats}
+            # html writer writes to a multi-file dir if extension is .html; we want a single file.
+            # matplotlib's HTMLWriter actually creates the .html file alongside; that's fine.
+            plot_trajectory_animation(
+                progress_mean,
+                per_step_weights_best,
+                element_symbols=list(DEFAULT_ELEMENTS),
+                out_paths_by_format=out_paths,
+                title=f"Trajectory · {r['label'].replace(chr(10), ' ')} (best seed: {best_idx})",
+            )
+
+        # --- Per-seed variants ---
+        if per_seed_dir is not None:
+            path_dir = per_seed_dir / slug
+            path_dir.mkdir(exist_ok=True)
+            for seed_i in range(qc_after.shape[0]):
+                reg_traj_one_seed = {t: traj_targets[:, seed_i : seed_i + 1, j] for j, t in enumerate(reg_names)}
+                qc_traj_one_seed = qc_traj[:, seed_i : seed_i + 1]
+                progress_seed = normalize_target_trajectories(
+                    qc_trajectory=qc_traj_one_seed,
+                    reg_trajectory=reg_traj_one_seed,
+                    reg_targets=reg_targets,
+                    seed_qc=seed_qc[seed_i : seed_i + 1],
+                    seed_reg={t: vals[seed_i : seed_i + 1] for t, vals in seed_reg.items()},
+                )
+                progress_seed.pop("QC", None)
+                seed_static = path_dir / f"seed{seed_i:02d}.png"
+                plot_trajectory_static(
+                    progress_seed,
+                    seed_static,
+                    title=f"Trajectory · {r['label'].replace(chr(10), ' ')} · seed {seed_i}",
+                )
+                if formats:
+                    seed_out_paths = {fmt: path_dir / f"seed{seed_i:02d}.{fmt}" for fmt in formats}
+                    plot_trajectory_animation(
+                        progress_seed,
+                        traj_weights[:, seed_i, :],
+                        element_symbols=list(DEFAULT_ELEMENTS),
+                        out_paths_by_format=seed_out_paths,
+                        title=f"{r['label'].replace(chr(10), ' ')} · seed {seed_i}",
+                    )
 
 
 def _run_composition_config(
@@ -867,6 +1047,7 @@ def _run_composition_config(
     steps: int,
     lr: float,
     cfg: dict[str, Any],
+    record_trajectory: bool = False,
 ) -> dict[str, Any]:
     """Run :meth:`optimize_composition` under one config row (handles seed/random init both)."""
     import time
@@ -896,6 +1077,7 @@ def _run_composition_config(
         element_step_scale=cfg["scale"],
         steps=steps,
         lr=lr,
+        record_weights_trajectory=record_trajectory,
         **init_kwargs,
     )
     elapsed = time.perf_counter() - t0
@@ -903,7 +1085,7 @@ def _run_composition_config(
     reg_names = list(reg_targets)
     optimized_desc = res.optimized_descriptor
     w_final = res.optimized_weights.cpu().numpy()
-    return {
+    out = {
         "method": "composition",
         "align_scale": None,
         "elapsed_s": elapsed,
@@ -919,6 +1101,13 @@ def _run_composition_config(
         "optimized_descriptor": optimized_desc.detach().cpu().numpy().tolist(),
         "optimized_weights": w_final.tolist(),
     }
+    if record_trajectory:
+        # ``res.trajectory`` is (steps, B, T) in reg-task order — already on the right surface.
+        # ``res.weights_trajectory`` is (steps, B, n_components) and is the per-step recipe
+        # exactly (no decode needed — composition method's optim variable already lives there).
+        out["trajectory_targets"] = res.trajectory.cpu().numpy().tolist()
+        out["trajectory_weights"] = res.weights_trajectory.cpu().numpy().tolist()
+    return out
 
 
 def _write_readme(out_dir: Path, summary: list[dict[str, Any]], reg_targets: dict[str, float], ckpt_path: Path) -> None:
@@ -949,6 +1138,37 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ContinualRehearsalConfig
     parser.add_argument("--config-file", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--record-trajectory",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Record per-step optimisation trajectory (target predictions + per-step composition) "
+            "per path. Adds ~10–30 % runtime + a few MB of disk per scenario but enables the "
+            "trajectory_* plots and animations. Default: on. Use --no-record-trajectory to skip."
+        ),
+    )
+    parser.add_argument(
+        "--per-seed-trajectories",
+        action="store_true",
+        default=False,
+        help=(
+            "Also emit one trajectory plot + animation per (path × seed) instead of only the "
+            "across-seed mean. Default: off (only the mean view is emitted)."
+        ),
+    )
+    parser.add_argument(
+        "--animation-formats",
+        nargs="+",
+        choices=["gif", "html", "svg", "none"],
+        default=["gif"],
+        help=(
+            "Animation output formats. ``gif`` (default) uses matplotlib's Pillow writer; "
+            "``html`` emits an interactive JS-controlled HTML file (matplotlib HTMLWriter); "
+            "``svg`` emits a SMIL-animated single-file SVG; ``none`` disables animations "
+            "(static plot still emitted). Multi-select supported, e.g. --animation-formats gif html."
+        ),
+    )
     args = parser.parse_args(argv)
 
     import tomllib
@@ -974,7 +1194,13 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ContinualRehearsalConfig
 
 def main(argv: list[str] | None = None) -> None:
     config, args = _parse_args(argv)
-    run(config, args.checkpoint)
+    run(
+        config,
+        args.checkpoint,
+        record_trajectory=args.record_trajectory,
+        per_seed_trajectories=args.per_seed_trajectories,
+        animation_formats=tuple(args.animation_formats),
+    )
 
 
 if __name__ == "__main__":

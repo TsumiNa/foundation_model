@@ -84,6 +84,26 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         help="Parent folder; each scenario writes into <output-dir>/<scenario.name>/.",
     )
+    # Trajectory flags — forwarded verbatim to each scenario's ``paper_inverse_comparison.run()``.
+    parser.add_argument(
+        "--record-trajectory",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Record per-step trajectory (default on; --no-record-trajectory to skip).",
+    )
+    parser.add_argument(
+        "--per-seed-trajectories",
+        action="store_true",
+        default=False,
+        help="Also emit per-(path × seed) trajectory plots/animations.",
+    )
+    parser.add_argument(
+        "--animation-formats",
+        nargs="+",
+        choices=["gif", "html", "svg", "none"],
+        default=["gif"],
+        help="One or more trajectory-animation formats (default: gif).",
+    )
     return parser.parse_args(argv)
 
 
@@ -117,7 +137,13 @@ def main(argv: list[str] | None = None) -> None:
         logger.info(f"  reg_tasks   : {sc['reg_tasks']}")
         logger.info(f"  reg_targets : {sc['reg_targets']}")
         logger.info(f"  output      : {sc_dir}")
-        paper_run(sc_config, args.checkpoint)
+        paper_run(
+            sc_config,
+            args.checkpoint,
+            record_trajectory=args.record_trajectory,
+            per_seed_trajectories=args.per_seed_trajectories,
+            animation_formats=tuple(args.animation_formats),
+        )
         # Drop a per-scenario meta file so future readers don't need to chase results.json's
         # `config` block to learn what this folder represents.
         (sc_dir / "scenario.json").write_text(

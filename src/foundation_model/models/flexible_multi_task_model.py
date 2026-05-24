@@ -56,16 +56,25 @@ from .task_head.classification import ClassificationHead
 from .task_head.kernel_regression import KernelRegressionHead
 from .task_head.regression import RegressionHead
 
-# Named tuple for optimization results
+# Named tuple for optimization results. ``input_trajectory`` is None unless the caller passes
+# ``record_input_trajectory=True`` to :meth:`optimize_latent` (gated because storing it costs
+# O(B·R·steps·input_dim) memory and per-step latent-→-input decodes); when present it has shape
+# ``(B, R, steps, input_dim)`` — used by the inverse-design trajectory animations to decode the
+# per-step composition without rerunning the optimisation.
 OptimizationResult = namedtuple(
-    "OptimizationResult", ["optimized_input", "optimized_target", "initial_score", "trajectory"]
+    "OptimizationResult",
+    ["optimized_input", "optimized_target", "initial_score", "trajectory", "input_trajectory"],
+    defaults=[None],
 )
 
 # Composition-space optimization (gradient descent over element weights w ∈ simplex). The optimised
 # w *is* the recipe (no AE-decode round-trip), so it is reported alongside the descriptor x = w @ K.
+# ``weights_trajectory`` is None unless the caller passes ``record_weights_trajectory=True`` to
+# :meth:`optimize_composition`; when present it has shape ``(steps, B, n_components)``.
 CompositionOptimizationResult = namedtuple(
     "CompositionOptimizationResult",
-    ["optimized_weights", "optimized_descriptor", "optimized_target", "initial_score", "trajectory"],
+    ["optimized_weights", "optimized_descriptor", "optimized_target", "initial_score", "trajectory", "weights_trajectory"],
+    defaults=[None],
 )
 
 
@@ -1738,6 +1747,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         class_target_weight: float = 1.0,
         ae_align_scale: float = 0.5,
         optimize_space: str = "input",
+        record_input_trajectory: bool = False,
     ) -> OptimizationResult:
         """
         Optimize inputs to drive one or multiple regression heads toward targets or extremes.
@@ -1968,6 +1978,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         optimized_inputs: list[torch.Tensor] = []
         optimized_targets: list[torch.Tensor] = []
         trajectories: list[torch.Tensor] = []
+        # When ``record_input_trajectory=True`` we snapshot the per-step input every iteration
+        # (input-space: ``optim_input`` directly; latent-space: ``AE.decode(tanh(h))``). Stored on
+        # CPU to keep GPU memory flat on long trajectories. One per restart, stacked at the end.
+        input_trajectories: list[torch.Tensor] = []
         initial_scores_list: list[torch.Tensor] = []
 
         for restart_idx in range(num_restarts):
@@ -1997,6 +2011,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
                 # Optimization loop
                 step_traj: list[torch.Tensor] = []
+                step_input_traj: list[torch.Tensor] = []
                 sign = 1.0 if mode == "max" else -1.0
 
                 for step in range(steps):
@@ -2045,6 +2060,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
                     # Record history
                     step_traj.append(score_for_history)
+                    if record_input_trajectory:
+                        # Input-space optim variable IS the input — just snapshot it.
+                        step_input_traj.append(optim_input.detach().cpu())
 
                 # Get final optimized values
                 with torch.no_grad():
@@ -2061,6 +2079,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 optimized_targets.append(per_task_final_tensor)  # (B, T)
                 traj_tensor = torch.stack(step_traj, dim=0)  # (steps, B, T)
                 trajectories.append(traj_tensor)
+                if record_input_trajectory:
+                    input_trajectories.append(torch.stack(step_input_traj, dim=0))  # (steps, B, D)
 
             else:  # optimize_space == "latent"
                 # Latent space optimization: encode X -> optimize latent -> decode via AE
@@ -2091,6 +2111,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
                 # Optimization loop
                 step_traj: list[torch.Tensor] = []
+                step_input_traj: list[torch.Tensor] = []
                 sign = 1.0 if mode == "max" else -1.0
 
                 for step in range(steps):
@@ -2147,6 +2168,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
                     # Record history
                     step_traj.append(score_for_history)
+                    if record_input_trajectory:
+                        # Latent-space optim: decode the current h via the AE head to recover the
+                        # per-step input. ``no_grad`` keeps this from polluting the optim graph.
+                        with torch.no_grad():
+                            step_input = self.task_heads[_AE_TASK](torch.tanh(optim_latent))
+                        step_input_traj.append(step_input.detach().cpu())
 
                 # Get final optimized values and reconstruct via AE
                 with torch.no_grad():
@@ -2165,6 +2192,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 optimized_targets.append(per_task_final_tensor)  # (B, T)
                 traj_tensor = torch.stack(step_traj, dim=0)  # (steps, B, T)
                 trajectories.append(traj_tensor)
+                if record_input_trajectory:
+                    input_trajectories.append(torch.stack(step_input_traj, dim=0))  # (steps, B, D)
 
         # Restore training state + per-parameter ``requires_grad``. Without the latter, every
         # encoder / head parameter would be left frozen for any later ``.fit()`` in the same
@@ -2182,11 +2211,17 @@ class FlexibleMultiTaskModel(L.LightningModule):
         initial_score_tensor = torch.stack(initial_scores_list, dim=0)  # (R, B, T)
         initial_score_tensor = initial_score_tensor.permute(1, 0, 2)  # (B, R, T)
 
+        input_traj_tensor: torch.Tensor | None = None
+        if record_input_trajectory and input_trajectories:
+            input_traj_tensor = torch.stack(input_trajectories, dim=0)  # (R, steps, B, D)
+            input_traj_tensor = input_traj_tensor.permute(2, 0, 1, 3)  # (B, R, steps, D)
+
         return OptimizationResult(
             optimized_input=opt_input_tensor,
             optimized_target=opt_target_tensor,
             initial_score=initial_score_tensor,
             trajectory=traj_tensor,
+            input_trajectory=input_traj_tensor,
         )
 
     def optimize_composition(
@@ -2204,6 +2239,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         seed_blend: float = 0.95,
         steps: int = 300,
         lr: float = 0.05,
+        record_weights_trajectory: bool = False,
     ) -> CompositionOptimizationResult:
         """Gradient-based inverse design in **composition space**.
 
@@ -2590,6 +2626,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # With every model parameter at ``requires_grad=False``, ``loss.backward()`` populates
             # gradient only on ``logits`` — no stale grads accumulate on encoder/heads.
             trajectory: list[torch.Tensor] = []
+            weights_trajectory: list[torch.Tensor] = [] if record_weights_trajectory else []
             for _ in range(steps):
                 optimizer.zero_grad()
                 w = _w_from_logits(logits)
@@ -2609,6 +2646,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     logits.grad.mul_(step_scale)
                 optimizer.step()
                 trajectory.append(_stack([p.detach() for p in preds], logits.shape[0]))
+                if record_weights_trajectory:
+                    # Snapshot the post-step weights (after the softmax+hard-lock applied next iter
+                    # would re-clean them, but the user wants what the *current* recipe looks like).
+                    # Stored on CPU to keep GPU memory flat for long trajectories on large B.
+                    with torch.no_grad():
+                        weights_trajectory.append(_w_from_logits(logits).detach().cpu())
 
             # --- Final state ------------------------------------------------------------------------
             with torch.no_grad():
@@ -2617,6 +2660,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 h_final = torch.tanh(self.encoder(x_final))
                 final_preds, _ = _heads_forward(h_final)
                 final_target = _stack([p.detach() for p in final_preds], logits.shape[0])
+
+            weights_traj_tensor: torch.Tensor | None = None
+            if record_weights_trajectory:
+                # (steps, B, n_components). Same empty-steps fallback as ``trajectory`` so the
+                # downstream code can rely on the shape contract without a None branch.
+                weights_traj_tensor = (
+                    torch.stack(weights_trajectory, dim=0)
+                    if weights_trajectory
+                    else torch.empty((0, logits.shape[0], n_components), dtype=torch.float32)
+                )
 
             return CompositionOptimizationResult(
                 optimized_weights=w_final.detach(),
@@ -2627,6 +2680,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 trajectory=torch.stack(trajectory, dim=0)
                 if trajectory
                 else torch.empty((0, logits.shape[0], n_reg_tracked), device=device, dtype=dtype),
+                weights_trajectory=weights_traj_tensor,
             )
         finally:
             if was_training:
