@@ -35,23 +35,19 @@ DescriptorFn = Callable[[list[str]], pd.DataFrame]
 _SPLIT_PRECEDENCE: dict[str, int] = {"train": 1, "val": 2, "test": 3}
 VALID_SPLIT_LABELS = frozenset(_SPLIT_PRECEDENCE)
 
-# Decimal places used when rendering element amounts in a canonical composition key. Six is
-# enough for typical fractional stoichiometries while collapsing float-representation noise.
-_COMPOSITION_AMOUNT_DECIMALS = 6
-
-
-def normalize_composition(value: object, *, decimals: int = _COMPOSITION_AMOUNT_DECIMALS) -> str | None:
-    """Canonical, float-amount composition key shared across every data source.
+def normalize_composition(value: object) -> str | None:
+    """Canonical composition key shared across every data source.
 
     Different files spell the same composition differently — a pymatgen ``Composition`` /
     element-amount ``dict`` (the qc dataset) versus a formula string (NEMAD / phonix), and
-    ``"Fe3O2"`` versus ``"Fe3.0O2.0"``. This maps any of them through pymatgen to a single
-    canonical string so the composition-keyed DataModule can join them by exact match.
+    ``"Fe3O2"`` versus ``"Fe3.0O2.0"``. Routing all of them through pymatgen and returning the
+    (non-reduced) ``Composition.formula`` yields a single readable canonical string — pymatgen
+    already normalizes element order and integer-vs-decimal amounts — so the composition-keyed
+    DataModule joins heterogeneous sources by exact match. Compositions that pymatgen considers
+    equal collapse to the same key, which is exactly the duplicate the DataModule then keeps once.
 
-    The amounts are **not reduced** (``Fe2O3`` ≠ ``Fe4O6``) because some descriptors aggregate
-    by sum rather than by mean, so the absolute stoichiometry must be preserved. Every amount is
-    rendered as a fixed-precision float and elements are sorted by symbol, making the key
-    invariant to integer-vs-decimal spelling and to element ordering.
+    The amounts are **not reduced** (``Fe2O3`` ≠ ``Fe4O6``) because some descriptors aggregate by
+    sum rather than by mean, so the absolute stoichiometry must be preserved.
 
     Parameters
     ----------
@@ -59,13 +55,11 @@ def normalize_composition(value: object, *, decimals: int = _COMPOSITION_AMOUNT_
         A formula string, a pymatgen ``Composition``, or an element→amount mapping. Mapping
         entries that are ``None`` or non-positive are dropped (the qc ``composition`` column
         stores every element with mostly-``None`` amounts).
-    decimals : int, optional
-        Decimal places for each amount. Defaults to six.
 
     Returns
     -------
     str | None
-        e.g. ``"Fe2.000000 O3.000000"``; ``None`` if the input is empty or unparseable.
+        e.g. ``"Fe2 O3"``; ``None`` if the input is empty or unparseable.
     """
     from pymatgen.core.composition import Composition  # local import; pymatgen is heavy
 
@@ -86,10 +80,9 @@ def normalize_composition(value: object, *, decimals: int = _COMPOSITION_AMOUNT_
             comp = Composition(text)
     except Exception:
         return None
-    amounts = comp.get_el_amt_dict()
-    if not amounts:
+    if len(comp) == 0:
         return None
-    return " ".join(f"{el}{amounts[el]:.{decimals}f}" for el in sorted(amounts))
+    return comp.formula
 
 
 CompositionNormalizer = Callable[[object], str | None]

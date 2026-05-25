@@ -18,7 +18,9 @@ magnetic_path = "data/NEMAD_magnetic_20260419.parquet"
 phonix_path = "data/phonix-db-filtered_20260425.parquet"
 output_dir = "artifacts/continual_rehearsal"
 
-task_sequence = ["density", "formation_energy", "dos_density", "power_factor", "material_type", "tc", "pressure", "curie", "magnetization", "neel", "kp", "klat"]
+# Last three fixed as formation_energy -> klat -> material_type (the inverse-design heads), so the
+# QC classifier in particular is freshest when inverse design runs; the first nine order is free.
+task_sequence = ["density", "dos_density", "power_factor", "tc", "pressure", "curie", "magnetization", "neel", "kp", "formation_energy", "klat", "material_type"]
 replay_ratio = 0.05
 # sample_per_dataset = 8000  # uncomment to cap rows per dataset for a faster run
 
@@ -37,8 +39,13 @@ kr_decay = 5e-5
 inverse_n_seeds = 16
 inverse_steps = 300
 inverse_lr = 0.05
-inverse_reg_tasks = ["density", "formation_energy"]
-inverse_reg_targets = [1.5, -1.5]
+inverse_class_weight = 5.0                       # QC probability is the primary objective
+inverse_reg_tasks = ["formation_energy", "klat"]
+inverse_reg_targets = [-2.0, 2.0]                # secondary: low formation energy, high klat
+# Seed (starting latent) selection: "top_qc" | "random" | "explicit".
+inverse_seed_strategy = "top_qc"
+inverse_seed_split = "train"                     # pool for top_qc / random: train | val | test | all
+# inverse_seed_compositions = ["Al65 Cu23 Fe12", "Ho9 Mg34 Zn57"]  # used when strategy = "explicit"
 
 random_seed = 2025
 datamodule_random_seed = 42

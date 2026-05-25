@@ -981,6 +981,91 @@ def test_optimize_latent_class_targets_only_no_regression():
     assert res.optimized_target.shape == (4, 1, 0)  # no regression tasks tracked
 
 
+def test_optimize_latent_ae_align_validates_range():
+    """ae_align_scale lives in [0, 1] — out-of-range values are rejected."""
+    model = _make_reg_clf_model()
+    with pytest.raises(ValueError, match=r"ae_align_scale must be in \[0, 1\]"):
+        model.optimize_latent(
+            initial_input=torch.randn(2, INPUT_DIM),
+            task_targets={"prop": 1.0},
+            optimize_space="latent",
+            ae_align_scale=-0.1,
+        )
+    with pytest.raises(ValueError, match=r"ae_align_scale must be in \[0, 1\]"):
+        model.optimize_latent(
+            initial_input=torch.randn(2, INPUT_DIM),
+            task_targets={"prop": 1.0},
+            optimize_space="latent",
+            ae_align_scale=1.5,
+        )
+
+
+def test_optimize_latent_ae_align_runs_in_latent_space():
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()  # enable_autoencoder=True, so AE head is available
+    x = torch.randn(4, INPUT_DIM)
+    res = model.optimize_latent(
+        initial_input=x,
+        task_targets={"prop": 1.0},
+        class_targets={"cls": [1]},
+        class_target_weight=3.0,
+        ae_align_scale=0.5,  # default empirical sweet spot
+        optimize_space="latent",
+        steps=10,
+    )
+    assert res.optimized_input.shape == (4, 1, INPUT_DIM)
+    assert res.optimized_target.shape == (4, 1, 1)
+
+
+def test_optimize_latent_class_target_weight_rejects_nonpositive():
+    model = _make_reg_clf_model()
+    with pytest.raises(ValueError, match="class_target_weight must be > 0"):
+        model.optimize_latent(
+            initial_input=torch.randn(2, INPUT_DIM),
+            class_targets={"cls": [1]},
+            class_target_weight=0.0,
+            optimize_space="input",
+        )
+
+
+def test_optimize_latent_class_target_weight_runs_with_combined_objectives():
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    x = torch.randn(4, INPUT_DIM)
+    res = model.optimize_latent(
+        initial_input=x,
+        task_targets={"prop": 1.0},
+        class_targets={"cls": [1]},
+        class_target_weight=5.0,  # class probability is the primary objective
+        optimize_space="input",
+        steps=10,
+    )
+    assert res.optimized_input.shape == (4, 1, INPUT_DIM)
+    assert res.optimized_target.shape == (4, 1, 1)  # one regression task tracked
+
+
+def test_optimize_latent_restores_requires_grad_after_call():
+    """Regression test for the requires_grad leak: optimize_latent must leave every model
+    parameter's ``requires_grad`` flag as it was before the call. Previously only ``training``
+    mode was restored, so subsequent ``model.fit(...)`` calls silently froze the encoder /
+    heads and "training stopped moving the weights" became annoying to bisect.
+    """
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    # Snapshot whatever pattern the caller had (all True by default, but the test should hold
+    # for any non-trivial pattern too).
+    expected = [p.requires_grad for p in model.parameters()]
+    model.optimize_latent(
+        initial_input=torch.randn(3, INPUT_DIM),
+        task_targets={"prop": 1.0},
+        class_targets={"cls": [1]},
+        optimize_space="input",
+        steps=5,
+    )
+    actual = [p.requires_grad for p in model.parameters()]
+    assert actual == expected
+
+
 # --- optimize_composition (differentiable KMD) --------------------------------
 
 
@@ -1108,6 +1193,342 @@ def test_optimize_composition_restores_model_state_on_error():
     # Mode and requires_grad must be exactly as we left them.
     assert model.training == before_mode
     assert [p.requires_grad for p in model.parameters()] == before_req_grad
+
+
+def _build_aligned_model_and_kernel():
+    """Helper for symbol-based tests: a tiny model + kernel whose first dim == len(DEFAULT_ELEMENTS).
+
+    Symbol-based ``allowed_elements`` / ``element_step_scale`` require the kernel to align with
+    the bundled element registry. The kernel is random (matmul correctness is irrelevant here);
+    we just need the right shape so the symbol→index mapping is unambiguous.
+    """
+    from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS
+
+    n_components = len(DEFAULT_ELEMENTS)
+    enc = MLPEncoderConfig(hidden_dims=[INPUT_DIM, 16, LATENT_DIM])
+    tasks = [
+        RegressionTaskConfig(name="prop", data_column="prop", dims=[LATENT_DIM, 8, 1]),
+        ClassificationTaskConfig(name="cls", data_column="cls", num_classes=3, dims=[LATENT_DIM, 8, 3]),
+    ]
+    model = FlexibleMultiTaskModel(task_configs=tasks, encoder_config=enc, enable_autoencoder=True)
+    kernel = torch.randn(n_components, INPUT_DIM)
+    return model, kernel, DEFAULT_ELEMENTS
+
+
+def test_optimize_composition_allowed_elements_symbol_whitelist():
+    """A list of element symbols restricts w to those elements; the rest stay at exactly 0."""
+    torch.manual_seed(0)
+    model, kernel, elements = _build_aligned_model_and_kernel()
+    whitelist = ["Mg", "Al", "Cu", "Ni"]
+    res = model.optimize_composition(
+        kernel,
+        task_targets={"prop": 1.0},
+        class_targets={"cls": [1]},
+        class_target_weight=3.0,
+        n_starts=3,
+        allowed_elements=whitelist,
+        steps=15,
+        lr=0.2,
+    )
+    w = res.optimized_weights
+    allowed_idx = [elements.index(s) for s in whitelist]
+    forbidden_idx = [i for i in range(len(elements)) if i not in allowed_idx]
+    assert torch.all(w[:, forbidden_idx] == 0)
+    assert torch.allclose(w[:, allowed_idx].sum(dim=-1), torch.ones(3), atol=1e-5)
+
+
+def test_optimize_composition_allowed_elements_default_all():
+    """The default ``allowed_elements='all'`` imposes no constraint."""
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    kernel = torch.randn(6, INPUT_DIM)  # any kernel size works when no symbols are used
+    res = model.optimize_composition(kernel, task_targets={"prop": 0.5}, n_starts=2, steps=5)
+    # All columns can carry weight; nothing should be forced to zero by the default.
+    assert (res.optimized_weights > 0).all()
+
+
+def test_optimize_composition_allowed_elements_validation():
+    model, kernel, _ = _build_aligned_model_and_kernel()
+    # "all" is the only acceptable string.
+    with pytest.raises(ValueError, match="must be 'all'"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, allowed_elements="everything", steps=2)
+    # Empty list rejected.
+    with pytest.raises(ValueError, match="non-empty"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, allowed_elements=[], steps=2)
+    # Unknown symbol rejected.
+    with pytest.raises(ValueError, match="Unknown element symbol"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, allowed_elements=["Mg", "NotAnElement"], steps=2)
+    # Wrong type rejected.
+    with pytest.raises(TypeError, match="non-empty list"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, allowed_elements=42, steps=2)  # type: ignore[arg-type]
+    # Symbols with a non-aligned kernel rejected.
+    small_kernel = torch.randn(6, INPUT_DIM)
+    with pytest.raises(ValueError, match="align with DEFAULT_ELEMENTS"):
+        model.optimize_composition(
+            small_kernel, task_targets={"prop": 0.0}, allowed_elements=["Mg", "Al"], n_starts=2, steps=2
+        )
+
+
+def test_optimize_composition_element_step_scale_locks_symbols():
+    """A symbol→0.0 mapping freezes those elements' weights at their **absolute** seed values.
+
+    The previous version of this test only checked that the locked elements' ratio stayed at 1.0
+    (which holds even if both drift together, since their logits move in lockstep). That doesn't
+    actually verify "frozen": with the bare gradient-zeroing implementation, ``w[Mg]`` drifts
+    because the softmax denominator changes whenever other (unlocked) logits move. This test
+    now asserts each locked element holds its **un-blended seed value** to within float tolerance.
+    """
+    torch.manual_seed(0)
+    model, kernel, elements = _build_aligned_model_and_kernel()
+
+    # Seed: asymmetric mass on 4 specific symbols, zero on the rest. The asymmetry matters —
+    # equal-mass locks would survive ratio-only checks even if both drift together.
+    locked_syms = ["Mg", "Al"]
+    free_syms = ["Cu", "Ni"]
+    init_w = torch.zeros(1, len(elements))
+    init_w[0, elements.index("Mg")] = 0.30
+    init_w[0, elements.index("Al")] = 0.20
+    init_w[0, elements.index("Cu")] = 0.30
+    init_w[0, elements.index("Ni")] = 0.20
+
+    res = model.optimize_composition(
+        kernel,
+        task_targets={"prop": 5.0},
+        initial_weights=init_w,
+        element_step_scale={s: 0.0 for s in locked_syms},
+        steps=80,
+        lr=0.5,  # large enough that any drift in locked weights would show up
+    )
+    w = res.optimized_weights[0]
+    mg, al = elements.index("Mg"), elements.index("Al")
+    assert torch.isclose(w[mg], torch.tensor(0.30, dtype=w.dtype), atol=1e-4)
+    assert torch.isclose(w[al], torch.tensor(0.20, dtype=w.dtype), atol=1e-4)
+    # And the unlocked elements share the remaining 0.50 mass.
+    free_total = w.sum() - w[mg] - w[al]
+    assert torch.isclose(free_total, torch.tensor(0.50, dtype=w.dtype), atol=1e-4)
+
+
+def test_optimize_composition_element_step_scale_locks_with_unlocked_drift():
+    """Locked elements stay at seed even while unlocked elements actually move."""
+    torch.manual_seed(0)
+    model, kernel, elements = _build_aligned_model_and_kernel()
+    init_w = torch.zeros(1, len(elements))
+    init_w[0, elements.index("Mg")] = 0.40  # locked
+    init_w[0, elements.index("Cu")] = 0.30  # free
+    init_w[0, elements.index("Ni")] = 0.30  # free
+
+    res = model.optimize_composition(
+        kernel,
+        task_targets={"prop": 5.0},
+        initial_weights=init_w,
+        element_step_scale={"Mg": 0.0},
+        steps=80,
+        lr=0.5,
+    )
+    w = res.optimized_weights[0]
+    # Mg held exactly.
+    assert torch.isclose(w[elements.index("Mg")], torch.tensor(0.40, dtype=w.dtype), atol=1e-4)
+    # The unlocked elements ended up in different ratios than they started (proves they moved).
+    cu0, ni0 = init_w[0, elements.index("Cu")], init_w[0, elements.index("Ni")]
+    cu_f, ni_f = w[elements.index("Cu")], w[elements.index("Ni")]
+    assert not torch.isclose(cu_f / ni_f, cu0 / ni0, atol=1e-3), "unlocked weights didn't actually move"
+    # And the unlocked mass equals 1 - locked mass.
+    assert torch.isclose(w.sum() - w[elements.index("Mg")], torch.tensor(0.60, dtype=w.dtype), atol=1e-4)
+
+
+def test_optimize_composition_element_step_scale_lock_requires_initial_weights():
+    """A hard lock with random init is rejected (no seed to lock to)."""
+    model, kernel, _ = _build_aligned_model_and_kernel()
+    with pytest.raises(ValueError, match="hard lock.*initial_weights"):
+        model.optimize_composition(
+            kernel,
+            task_targets={"prop": 0.0},
+            element_step_scale={"Mg": 0.0},
+            n_starts=2,
+            steps=2,
+        )
+
+
+def test_optimize_composition_element_step_scale_lock_must_be_allowed():
+    """Locking an element that's not in allowed_elements is contradictory and rejected."""
+    model, kernel, elements = _build_aligned_model_and_kernel()
+    init_w = torch.zeros(1, len(elements))
+    init_w[0, elements.index("Mg")] = 1.0
+    with pytest.raises(ValueError, match="must also be in allowed_elements"):
+        model.optimize_composition(
+            kernel,
+            task_targets={"prop": 0.0},
+            initial_weights=init_w,
+            allowed_elements=["Al", "Cu"],
+            element_step_scale={"Mg": 0.0},
+            steps=2,
+        )
+
+
+def test_optimize_composition_element_step_scale_uniform_scalar():
+    """A scalar element_step_scale=0 freezes every element at the seed (uniform behaviour)."""
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    kernel = torch.randn(6, INPUT_DIM)
+    init_w = torch.tensor([[0.2, 0.2, 0.2, 0.2, 0.1, 0.1]])
+    res = model.optimize_composition(
+        kernel,
+        task_targets={"prop": 5.0},
+        initial_weights=init_w,
+        element_step_scale=0.0,  # everything frozen
+        seed_blend=1.0,  # strict seed → no uniform mixing, so w should match init_w exactly
+        steps=30,
+        lr=0.5,
+    )
+    # With every element frozen and equal seed proportions kept, w should match init_w (normalised).
+    assert torch.allclose(res.optimized_weights, init_w, atol=1e-5)
+
+
+def test_optimize_composition_element_step_scale_validation():
+    model, kernel, _ = _build_aligned_model_and_kernel()
+    # Negative scalar rejected.
+    with pytest.raises(ValueError, match=">= 0"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, element_step_scale=-0.5, steps=2)
+    # Unknown symbol rejected.
+    with pytest.raises(ValueError, match="Unknown element symbol"):
+        model.optimize_composition(
+            kernel, task_targets={"prop": 0.0}, element_step_scale={"Mg": 0.5, "NotAnElement": 0.0}, steps=2
+        )
+    # Negative value in mapping rejected.
+    with pytest.raises(ValueError, match="values must be >= 0"):
+        model.optimize_composition(
+            kernel, task_targets={"prop": 0.0}, element_step_scale={"Mg": 0.5, "Al": -0.1}, steps=2
+        )
+    # Wrong type rejected.
+    with pytest.raises(TypeError, match="non-negative float or a mapping"):
+        model.optimize_composition(
+            kernel,
+            task_targets={"prop": 0.0},
+            element_step_scale=[1.0, 1.0],
+            steps=2,  # type: ignore[arg-type]
+        )
+    # Symbol dict with a non-aligned kernel rejected.
+    small_kernel = torch.randn(6, INPUT_DIM)
+    with pytest.raises(ValueError, match="align with DEFAULT_ELEMENTS"):
+        model.optimize_composition(
+            small_kernel, task_targets={"prop": 0.0}, element_step_scale={"Mg": 0.0}, n_starts=2, steps=2
+        )
+
+
+def test_optimize_composition_seed_blend_validates_range():
+    """seed_blend must be in [0, 1]."""
+    model, kernel, elements = _build_aligned_model_and_kernel()
+    w = torch.zeros(1, len(elements))
+    w[0, 0] = 1.0
+    with pytest.raises(ValueError, match=r"seed_blend must be in \[0, 1\]"):
+        model.optimize_composition(kernel, initial_weights=w, task_targets={"prop": 0.0}, seed_blend=-0.1, steps=2)
+    with pytest.raises(ValueError, match=r"seed_blend must be in \[0, 1\]"):
+        model.optimize_composition(kernel, initial_weights=w, task_targets={"prop": 0.0}, seed_blend=1.5, steps=2)
+
+
+def test_optimize_composition_seed_blend_strict_freezes_support_set():
+    """seed_blend=1.0 reproduces the old strict-seed behaviour: non-seed elements stay ~0."""
+    torch.manual_seed(0)
+    model, kernel, elements = _build_aligned_model_and_kernel()
+
+    # Seed places all mass on Mg + Al; with seed_blend=1.0 every other element starts at logit
+    # log(1e-12) ≈ −27.6 and can't escape in a handful of steps.
+    init_w = torch.zeros(1, len(elements))
+    init_w[0, elements.index("Mg")] = 0.6
+    init_w[0, elements.index("Al")] = 0.4
+
+    res = model.optimize_composition(
+        kernel,
+        initial_weights=init_w,
+        task_targets={"prop": 5.0},
+        seed_blend=1.0,
+        steps=40,
+        lr=0.1,
+    )
+    w = res.optimized_weights[0]
+    seed_mass = w[elements.index("Mg")] + w[elements.index("Al")]
+    # Strict seed: non-seed elements never recruited — essentially all mass stays on Mg+Al.
+    assert seed_mass > 0.999
+
+
+def test_optimize_composition_seed_blend_allows_new_elements():
+    """seed_blend<1.0 lifts non-seed logits enough that Adam can recruit new elements."""
+    torch.manual_seed(0)
+    model, kernel, elements = _build_aligned_model_and_kernel()
+
+    init_w = torch.zeros(1, len(elements))
+    init_w[0, elements.index("Mg")] = 0.6
+    init_w[0, elements.index("Al")] = 0.4
+
+    res = model.optimize_composition(
+        kernel,
+        initial_weights=init_w,
+        task_targets={"prop": 5.0},
+        seed_blend=0.5,  # heavy blend so the test is robust to model init
+        steps=80,
+        lr=0.2,
+    )
+    w = res.optimized_weights[0]
+    non_seed = sum(w[i].item() for i, s in enumerate(elements) if s not in {"Mg", "Al"})
+    # Some non-seed mass should accumulate (the toy model has no specific preference, so we
+    # only require the floor to be measurably above zero — the strict-seed test above shows
+    # the same setup gives ~0 when seed_blend=1.0).
+    assert non_seed > 0.05
+
+
+def test_optimize_composition_random_init_uses_n_starts():
+    """initial_weights=None falls back to n_starts random simplex points; allowed_elements still binds."""
+    torch.manual_seed(0)
+    model, kernel, elements = _build_aligned_model_and_kernel()
+    allowed = ["Mg", "Al", "Cu", "Ni"]
+    res = model.optimize_composition(
+        kernel,
+        task_targets={"prop": 1.0},
+        n_starts=5,
+        allowed_elements=allowed,
+        steps=5,
+    )
+    assert res.optimized_weights.shape == (5, len(elements))
+    # Disallowed elements stay at exactly zero (mask is applied at every step).
+    disallowed = [i for i, s in enumerate(elements) if s not in allowed]
+    assert torch.allclose(res.optimized_weights[:, disallowed], torch.zeros_like(res.optimized_weights[:, disallowed]))
+
+
+def test_optimize_composition_diversity_scale_validates_range():
+    """diversity_scale lives in [0, 1] — out-of-range values are rejected."""
+    model, kernel, _ = _build_aligned_model_and_kernel()
+    with pytest.raises(ValueError, match=r"diversity_scale must be in \[0, 1\]"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, diversity_scale=-0.1, n_starts=2, steps=2)
+    with pytest.raises(ValueError, match=r"diversity_scale must be in \[0, 1\]"):
+        model.optimize_composition(kernel, task_targets={"prop": 0.0}, diversity_scale=1.5, n_starts=2, steps=2)
+
+
+def test_optimize_composition_diversity_scale_endpoints_run():
+    """Both endpoints (0 = max penalty, 1 = no penalty default) run cleanly and stay on the simplex."""
+    torch.manual_seed(0)
+    model, kernel, _ = _build_aligned_model_and_kernel()
+    for scale in (0.0, 0.5, 1.0):
+        res = model.optimize_composition(kernel, task_targets={"prop": 1.0}, n_starts=3, diversity_scale=scale, steps=5)
+        assert res.optimized_weights.shape[0] == 3
+        assert torch.allclose(res.optimized_weights.sum(dim=-1), torch.ones(3), atol=1e-5)
+
+
+def test_optimize_composition_diversity_scale_direction():
+    """diversity_scale=1 (no penalty) keeps a higher per-output entropy than diversity_scale=0 (max penalty)."""
+    torch.manual_seed(0)
+    model, kernel, _ = _build_aligned_model_and_kernel()
+    res_peaky = model.optimize_composition(
+        kernel, task_targets={"prop": 1.0}, n_starts=4, diversity_scale=0.0, steps=60, lr=0.2
+    )
+    torch.manual_seed(0)
+    res_spread = model.optimize_composition(
+        kernel, task_targets={"prop": 1.0}, n_starts=4, diversity_scale=1.0, steps=60, lr=0.2
+    )
+
+    def _mean_entropy(w):
+        return float(-(w * w.clamp(min=1e-12).log()).sum(dim=-1).mean())
+
+    assert _mean_entropy(res_spread.optimized_weights) > _mean_entropy(res_peaky.optimized_weights)
 
 
 def test_optimize_composition_uses_kmd_kernel_torch():

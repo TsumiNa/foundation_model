@@ -61,6 +61,24 @@ class ClassificationHead(BaseTaskHead):
 
         self.num_classes = num_classes
 
+        # Per-class loss weights. We **always** register a real tensor buffer so the state_dict
+        # key ``class_weights`` is present regardless of whether per-class weights were configured
+        # — without this, a checkpoint saved with a configured head couldn't strict-load into one
+        # built without weights (or vice versa). When weights aren't configured we register ones,
+        # which is the identity for both ``F.cross_entropy(..., weight=w)`` and the per-sample
+        # reduction below, so the unweighted behaviour is unchanged.
+        class_weights = getattr(config, "class_weights", None)
+        if class_weights is not None:
+            weights = torch.as_tensor(class_weights, dtype=torch.float)
+            if weights.numel() != num_classes:
+                raise ValueError(f"class_weights length ({weights.numel()}) must equal num_classes ({num_classes}).")
+        else:
+            weights = torch.ones(num_classes, dtype=torch.float)
+        self.register_buffer("class_weights", weights)
+        # Keep a flag so callers / code paths that branch on "did the user actually pass weights?"
+        # don't have to compare against ones. Not part of state_dict.
+        self._has_class_weights = class_weights is not None
+
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         """
         Forward pass of the classification head.
@@ -147,7 +165,9 @@ class ClassificationHead(BaseTaskHead):
         # 4. Individual sample losses
         # Use mask mechanism only (no ignore_index) for unified missing data handling
         # Missing data placeholders (-100) in targets won't affect loss due to mask filtering
-        losses = F.cross_entropy(pred, final_target_for_loss, reduction="none")  # losses is (B,)
+        losses = F.cross_entropy(
+            pred, final_target_for_loss, weight=self.class_weights, reduction="none"
+        )  # losses is (B,)
         masked_losses = losses * mask_1d  # Apply 1D mask, result is (B,)
 
         # 5. Total loss - simple division without defensive clamp

@@ -1,0 +1,443 @@
+# Copyright 2025 TsumiNa.
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+Compare two inverse-design methods on a single trained checkpoint.
+
+Method A — latent-space optimisation with AE-alignment penalty
+    optimize_latent(optimize_space="latent", class_target_weight=…, ae_align_scale=λ).
+    The optimised latent is decoded back to a descriptor through the AE; the heads' values at
+    the **decoded** descriptor are reported (so "round-trip drift" is the key failure mode and
+    cycle-consistency is the proposed mitigation, swept over λ).
+
+Method B — composition-space optimisation via differentiable KMD
+    optimize_composition(kmd_kernel, class_target_weight=…). The optimisation variable IS the
+    element-weight recipe ``w``; descriptor is ``w @ K``; there is no AE in the loop.
+
+Both methods run on the **same model**, **same seed compositions**, and **same targets** so the
+two columns are directly comparable. Output is a JSON summary + a comparison PNG.
+
+This script is independent of the rehearsal demo — its own CLI, own output dir, no rehearsal.
+
+    python -m foundation_model.scripts.eval_inverse_methods \\
+        --config-file samples/continual_rehearsal_demo_config_inverse_baseline.toml \\
+        --checkpoint artifacts/inverse_heads_finetuned/final_model.pt \\
+        --output-dir artifacts/inverse_methods_eval \\
+        --align-scales 0,0.25,0.5,0.75,1.0
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import time
+from pathlib import Path
+from typing import Any
+
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from lightning import seed_everything
+from loguru import logger
+
+from foundation_model.scripts.continual_rehearsal_demo import (
+    QC_CLASSES,
+    ContinualRehearsalConfig,
+    ContinualRehearsalRunner,
+)
+from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, formula_to_composition
+
+
+# --- Helpers ------------------------------------------------------------------
+
+
+def _qc_prob(model, x: torch.Tensor) -> np.ndarray:
+    with torch.no_grad():
+        h = torch.tanh(model.encoder(x))
+        probs = torch.softmax(model.task_heads["material_type"](h), dim=-1)
+        return probs[:, QC_CLASSES].sum(dim=-1).cpu().numpy()
+
+
+def _reg_preds(model, x: torch.Tensor, tasks: list[str]) -> dict[str, np.ndarray]:
+    with torch.no_grad():
+        h = torch.tanh(model.encoder(x))
+        return {t: model.task_heads[t](h).squeeze(-1).cpu().numpy() for t in tasks}
+
+
+def _seed_weights_from_compositions(seeds: list[str], n_components: int) -> torch.Tensor:
+    """Element-weight tensor (B, n_components) for ``optimize_composition`` seeding."""
+    rows = []
+    for c in seeds:
+        w = formula_to_composition(c)
+        if w is None:
+            raise ValueError(f"Cannot parse seed composition '{c}' to element weights.")
+        rows.append(np.asarray(w, dtype=np.float64))
+    return torch.tensor(np.stack(rows), dtype=torch.float64)
+
+
+def _decode_latent_path(kmd, descriptors: np.ndarray) -> list[str]:
+    """Latent path's composition output: AE-decoded descriptor → KMD.inverse → formula string."""
+    try:
+        weights = kmd.inverse(descriptors)
+    except Exception as exc:  # pragma: no cover
+        logger.warning(f"KMD.inverse failed ({exc}); skipping composition decoding.")
+        return ["<undecodable>"] * descriptors.shape[0]
+    return _format_weights(weights)
+
+
+def _format_weights(weights: np.ndarray, top_k: int = 6, eps: float = 1e-3) -> list[str]:
+    """Render element-weight rows as compact formula strings (top-K elements above ``eps``)."""
+    out: list[str] = []
+    for row in weights:
+        order = np.argsort(row)[::-1]
+        parts = [f"{DEFAULT_ELEMENTS[i]}{row[i]:.3f}" for i in order[:top_k] if row[i] > eps]
+        out.append(" ".join(parts) if parts else "<empty>")
+    return out
+
+
+# --- Methods ------------------------------------------------------------------
+
+
+def _run_latent_method(
+    runner: ContinualRehearsalRunner,
+    model,
+    seeds: list[str],
+    x_seed: torch.Tensor,
+    reg_targets: dict[str, float],
+    class_weight: float,
+    align_scale: float,
+    steps: int,
+    lr: float,
+    record_trajectory: bool = False,
+) -> dict[str, Any]:
+    device = next(model.parameters()).device
+    t0 = time.perf_counter()
+    res = model.optimize_latent(
+        initial_input=x_seed,
+        task_targets=reg_targets,
+        class_targets={"material_type": QC_CLASSES},
+        class_target_weight=class_weight,
+        ae_align_scale=align_scale,
+        optimize_space="latent",
+        steps=steps,
+        lr=lr,
+        record_input_trajectory=record_trajectory,
+    )
+    elapsed = time.perf_counter() - t0
+
+    reg_names = list(reg_targets.keys())
+    achieved_latent = res.optimized_target[:, 0, :].cpu().numpy()  # (B, T) in reg_targets order
+    optimized_desc = res.optimized_input[:, 0, :]  # (B, x_dim) — AE-decoded descriptor
+    after_qc = _qc_prob(model, optimized_desc)
+    after_reg = _reg_preds(model, optimized_desc, reg_names)
+    decoded = _decode_latent_path(runner._kmd, optimized_desc.detach().cpu().numpy())
+    # Recover the per-seed element weights too, so downstream replotting (per-element bar charts,
+    # ratio histograms, similarity matrices) doesn't need to re-run the optimisation.
+    optimized_weights = runner._kmd.inverse(optimized_desc.detach().cpu().numpy())
+
+    out = {
+        "method": "latent",
+        "align_scale": align_scale,
+        "elapsed_s": elapsed,
+        "seeds": list(seeds),
+        "qc_after_decode": after_qc.tolist(),
+        "reg_achieved_latent": {t: achieved_latent[:, j].tolist() for j, t in enumerate(reg_names)},
+        "reg_after_decode": {t: after_reg[t].tolist() for t in reg_names},
+        "decoded_composition": decoded,
+        # Raw arrays for replotting without rerunning: (B, x_dim) descriptor and (B, n_components) weights.
+        "optimized_descriptor": optimized_desc.detach().cpu().numpy().tolist(),
+        "optimized_weights": optimized_weights.tolist(),
+    }
+    if record_trajectory:
+        # Per-step trajectory of the *post-decode* predictions and the per-step decoded weights.
+        # ``res.trajectory`` is (B, R=1, steps, T) — squeeze the restart axis to (steps, B, T).
+        # We additionally re-run the heads on the per-step decoded input so the "trajectory" we
+        # report is on the same surface as the final ``reg_after_decode`` values (the optimiser's
+        # internal latent-space predictions can diverge from the decode-then-predict ones when
+        # ``ae_align_scale`` is small — surfacing the decode-then-predict trajectory is the more
+        # honest signal for the user investigating "how does the recipe evolve").
+        out["trajectory_targets"] = res.trajectory[:, 0, :, :].cpu().numpy().transpose(1, 0, 2).tolist()
+        # (B, R=1, steps, input_dim) → (steps, B, n_components) via KMD.inverse on each step.
+        # Batched per step: KMD.inverse expects (B, input_dim) and returns (B, n_components).
+        per_step_inputs = res.input_trajectory[:, 0, :, :].cpu().numpy()  # (B, steps, input_dim)
+        per_step_inputs = per_step_inputs.transpose(1, 0, 2)  # (steps, B, input_dim)
+        per_step_weights = [runner._kmd.inverse(per_step_inputs[s]) for s in range(per_step_inputs.shape[0])]
+        # (steps, B, n_components)
+        import numpy as _np
+        out["trajectory_weights"] = _np.stack(per_step_weights, axis=0).tolist()
+    return out
+
+
+def _run_composition_method(
+    runner: ContinualRehearsalRunner,
+    model,
+    seeds: list[str],
+    reg_targets: dict[str, float],
+    class_weight: float,
+    steps: int,
+    lr: float,
+    allowed_elements: "str | list[str]" = "all",
+    element_step_scale: "float | dict[str, float]" = 1.0,
+) -> dict[str, Any]:
+    device, dtype = next(model.parameters()).device, next(model.parameters()).dtype
+    kernel = runner._kmd.kernel_torch(device=device, dtype=dtype)
+    w_seed = _seed_weights_from_compositions(seeds, n_components=len(DEFAULT_ELEMENTS))
+
+    t0 = time.perf_counter()
+    res = model.optimize_composition(
+        kernel,
+        initial_weights=w_seed,
+        task_targets=reg_targets,
+        class_targets={"material_type": QC_CLASSES},
+        class_target_weight=class_weight,
+        allowed_elements=allowed_elements,
+        element_step_scale=element_step_scale,
+        steps=steps,
+        lr=lr,
+    )
+    elapsed = time.perf_counter() - t0
+
+    reg_names = list(reg_targets.keys())
+    achieved = res.optimized_target.cpu().numpy()  # (B, T)
+    optimized_desc = res.optimized_descriptor  # (B, x_dim) — w @ K, no decode
+    final_qc = _qc_prob(model, optimized_desc)
+    final_reg = _reg_preds(model, optimized_desc, reg_names)
+    w_final = res.optimized_weights.cpu().numpy()
+
+    return {
+        "method": "composition",
+        "align_scale": None,
+        "elapsed_s": elapsed,
+        "seeds": list(seeds),
+        # In composition space there is no "after-decode" drift — the model values AT the optimised
+        # ``w`` are the same as at the descriptor ``w @ K``. We still report both for symmetry.
+        "qc_after_decode": final_qc.tolist(),
+        "reg_achieved_latent": {t: achieved[:, j].tolist() for j, t in enumerate(reg_names)},
+        "reg_after_decode": {t: final_reg[t].tolist() for t in reg_names},
+        "decoded_composition": _format_weights(w_final),
+        # Raw arrays for replotting without rerunning: (B, x_dim) descriptor and (B, n_components) weights.
+        "optimized_descriptor": optimized_desc.detach().cpu().numpy().tolist(),
+        "optimized_weights": w_final.tolist(),
+    }
+
+
+# --- Plot ---------------------------------------------------------------------
+
+
+def _plot_summary(results: list[dict[str, Any]], reg_targets: dict[str, float], out_path: Path) -> None:
+    """Side-by-side: QC prob and each regression target across methods (mean ± seeds)."""
+    fig, axes = plt.subplots(1, 1 + len(reg_targets), figsize=(4.6 * (1 + len(reg_targets)), 4.2), squeeze=False)
+    axes = axes[0]
+    labels = [f"latent (α={r['align_scale']})" if r["method"] == "latent" else "composition" for r in results]
+
+    # QC probability
+    qc_means = [float(np.mean(r["qc_after_decode"])) for r in results]
+    qc_stds = [float(np.std(r["qc_after_decode"])) for r in results]
+    x = np.arange(len(results))
+    axes[0].bar(x, qc_means, yerr=qc_stds, color="#55A868", capsize=3)
+    axes[0].axhline(1.0, color="#C44E52", ls="--", lw=1.4, label="target = 1.0")
+    axes[0].set_xticks(x, labels, rotation=30, ha="right")
+    axes[0].set_ylim(-0.02, 1.05)
+    axes[0].set_ylabel("P(quasicrystal)")
+    axes[0].set_title("Quasicrystal Probability (primary)")
+    axes[0].legend(fontsize=9, loc="lower right")
+
+    for ax, (t, tgt) in zip(axes[1:], reg_targets.items()):
+        means = [float(np.mean(r["reg_after_decode"][t])) for r in results]
+        stds = [float(np.std(r["reg_after_decode"][t])) for r in results]
+        ax.bar(x, means, yerr=stds, color="#4C72B0", capsize=3)
+        ax.axhline(tgt, color="#C44E52", ls="--", lw=1.4, label=f"target = {tgt:+.1f}")
+        ax.set_xticks(x, labels, rotation=30, ha="right")
+        ax.set_ylabel("Predicted value")
+        ax.set_title(f"{t}")
+        ax.legend(fontsize=9, loc="best")
+
+    fig.suptitle("Inverse-design methods compared (same model, same seeds, same targets)", y=1.04)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+# --- Main flow ----------------------------------------------------------------
+
+
+def evaluate(
+    config: ContinualRehearsalConfig,
+    ckpt_path: Path,
+    align_scales: list[float],
+    allowed_elements: "str | list[str]" = "all",
+    element_step_scale: "float | dict[str, float]" = 1.0,
+) -> None:
+    seed_everything(config.random_seed, workers=True)
+    runner = ContinualRehearsalRunner(config)
+    model = runner._build_full_model()
+
+    state = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+    state_dict = state["model"] if isinstance(state, dict) and "model" in state else state
+    model.load_state_dict(state_dict)
+    model.eval()
+
+    # Deterministic seed compositions: same set for both methods. We reuse the demo's "top-QC
+    # training composition" selector so this matches what users see from continual_rehearsal_demo.
+    device = next(model.parameters()).device
+
+    def _qc_prob_fn(x: torch.Tensor) -> np.ndarray:
+        return _qc_prob(model, x)
+
+    seeds = runner._select_seeds(model, device, _qc_prob_fn)
+    if not seeds:
+        raise RuntimeError("No seed compositions selected (check inverse_seed_strategy / data).")
+    x_seed, seeds = runner._descriptor_tensor(seeds, device)
+    logger.info(f"Selected {len(seeds)} seed compositions")
+
+    reg_targets = {t: v for t, v in zip(config.inverse_reg_tasks, config.inverse_reg_targets)}
+
+    results: list[dict[str, Any]] = []
+
+    # Method A: latent-space, sweep ae_align_scale ∈ [0, 1].
+    for lam in align_scales:
+        logger.info(f"--- Latent method, ae_align_scale = {lam} ---")
+        results.append(
+            _run_latent_method(
+                runner,
+                model,
+                seeds,
+                x_seed,
+                reg_targets,
+                class_weight=config.inverse_class_weight,
+                align_scale=float(lam),
+                steps=config.inverse_steps,
+                lr=config.inverse_lr,
+            )
+        )
+
+    # Method B: differentiable KMD, single run (no λ). Element constraints (if any) only apply here.
+    logger.info("--- Composition method (differentiable KMD) ---")
+    if isinstance(allowed_elements, list):
+        logger.info(f"  allowed_elements: {len(allowed_elements)} symbol(s) — {allowed_elements}")
+    if isinstance(element_step_scale, dict):
+        logger.info(f"  element_step_scale: {element_step_scale}")
+    elif isinstance(element_step_scale, (int, float)) and float(element_step_scale) != 1.0:
+        logger.info(f"  element_step_scale (uniform): {element_step_scale}")
+    results.append(
+        _run_composition_method(
+            runner,
+            model,
+            seeds,
+            reg_targets,
+            class_weight=config.inverse_class_weight,
+            steps=config.inverse_steps,
+            lr=config.inverse_lr,
+            allowed_elements=allowed_elements,
+            element_step_scale=element_step_scale,
+        )
+    )
+
+    out_dir = Path(config.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Compact human-readable summary alongside the full per-seed JSON.
+    summary = []
+    for r in results:
+        row = {
+            "label": f"latent α={r['align_scale']}" if r["method"] == "latent" else "composition",
+            "elapsed_s": round(r["elapsed_s"], 2),
+            "qc_after_mean": round(float(np.mean(r["qc_after_decode"])), 4),
+        }
+        for t in reg_targets:
+            row[f"{t}_after_mean"] = round(float(np.mean(r["reg_after_decode"][t])), 3)
+        summary.append(row)
+    logger.info("=== Summary ===")
+    for row in summary:
+        logger.info(row)
+
+    (out_dir / "eval_inverse_methods.json").write_text(
+        json.dumps({"reg_targets": reg_targets, "results": results, "summary": summary}, indent=2),
+        encoding="utf-8",
+    )
+    _plot_summary(results, reg_targets, out_dir / "eval_inverse_methods.png")
+    logger.info(f"Wrote {out_dir / 'eval_inverse_methods.json'} and the comparison plot.")
+
+
+def _parse_args(argv: list[str] | None = None) -> tuple[ContinualRehearsalConfig, argparse.Namespace]:
+    parser = argparse.ArgumentParser(description="Compare inverse-design methods on a trained checkpoint.")
+    parser.add_argument("--config-file", type=Path, required=True)
+    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--align-scales",
+        type=str,
+        default="0,0.25,0.5,0.75,1.0",
+        help="Comma-separated values in [0, 1] for ae_align_scale in the latent method.",
+    )
+    parser.add_argument(
+        "--allowed-elements",
+        type=str,
+        default="",
+        help=(
+            "Comma-separated element symbols the composition method is allowed to use (hard "
+            "whitelist; e.g. 'Mg,Al,Cu,Ni,Zn,Ag'). Empty means every element allowed."
+        ),
+    )
+    parser.add_argument(
+        "--locked-elements",
+        type=str,
+        default="",
+        help=(
+            "Comma-separated element symbols whose composition weight is frozen at the seed "
+            "value (sets element_step_scale to --locked-step-scale; default 0 = fully locked)."
+        ),
+    )
+    parser.add_argument(
+        "--locked-step-scale",
+        type=float,
+        default=0.0,
+        help="Gradient multiplier for locked elements (0 = fully locked; 0.1 = slow drift).",
+    )
+    args = parser.parse_args(argv)
+
+    import tomllib
+
+    data = tomllib.loads(args.config_file.read_text(encoding="utf-8"))
+    data["output_dir"] = str(args.output_dir)
+    field_names = set(ContinualRehearsalConfig.__dataclass_fields__)
+    path_fields = {
+        "qc_data_path",
+        "qc_preprocessing_path",
+        "superconductor_path",
+        "magnetic_path",
+        "phonix_path",
+        "output_dir",
+    }
+    kwargs: dict[str, object] = {}
+    for key, value in data.items():
+        if key not in field_names:
+            continue
+        kwargs[key] = Path(value) if key in path_fields and value is not None else value
+    return ContinualRehearsalConfig(**kwargs), args
+
+
+def main(argv: list[str] | None = None) -> None:
+    config, args = _parse_args(argv)
+    align_scales = [float(x) for x in args.align_scales.split(",") if x.strip()]
+    allowed_syms = [s.strip() for s in args.allowed_elements.split(",") if s.strip()]
+    locked_syms = [s.strip() for s in args.locked_elements.split(",") if s.strip()]
+    # Pass symbols straight through to optimize_composition's symbol-based API.
+    allowed_arg: "str | list[str]" = allowed_syms if allowed_syms else "all"
+    step_scale_arg: "float | dict[str, float]" = (
+        {s: args.locked_step_scale for s in locked_syms} if locked_syms else 1.0
+    )
+    evaluate(
+        config,
+        args.checkpoint,
+        align_scales,
+        allowed_elements=allowed_arg,
+        element_step_scale=step_scale_arg,
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -2,304 +2,301 @@
 
 ```
 foundation_model/
-├── src/
-│   └── foundation_model/    # Main Python package
-│       ├── models/          # Neural network models and components
-│       │   ├── components/  # Reusable model parts (encoders, fusion, SSL)
-│       │   └── task_head/   # Task-specific prediction heads (regression, classification, sequence)
-│       ├── data/            # Data handling (Dataset, DataModule, splitter)
-│       ├── utils/           # Utility functions (plotting, training helpers)
-│       ├── configs/         # Configuration models
-│       └── scripts/         # Execution scripts (e.g., train.py)
-
-├── data/                    # Placeholder for larger, persistent datasets (e.g., raw data)
+├── src/foundation_model/        # Main Python package
+│   ├── models/                  # Neural network models
+│   │   ├── components/          # Reusable encoder + utility blocks
+│   │   │   ├── fc_layers.py     # LinearBlock / LinearLayer
+│   │   │   └── foundation_encoder.py  # MLP / Transformer backbones
+│   │   ├── task_head/           # Task-specific prediction heads
+│   │   │   ├── regression.py
+│   │   │   ├── classification.py
+│   │   │   ├── kernel_regression.py
+│   │   │   └── autoencoder.py   # Reconstructs x from h_task; powers optimize_latent
+│   │   ├── flexible_multi_task_model.py
+│   │   └── model_config.py      # EncoderConfig + per-task config dataclasses
+│   ├── data/                    # CompoundDataModule + per-task data sources + splitter
+│   ├── utils/                   # KMD + plotting / training helpers
+│   └── scripts/                 # Entry points (see below)
+│       ├── train.py                       # fm-trainer (LightningCLI)
+│       ├── continual_rehearsal_demo.py    # demo runner (training + inverse design)
+│       ├── continual_rehearsal_full.py    # formal runner (11- or 24-task + 3 scenarios)
+│       ├── continual_rehearsal_common.py  # shared dump / plot helpers
+│       ├── finetune_inverse_heads.py      # head-only fine-tune of inverse heads
+│       ├── eval_inverse_methods.py        # piecewise latent-vs-composition eval
+│       ├── paper_inverse_comparison.py    # single-scenario paper-grade sweep
+│       └── paper_inverse_3scenarios.py    # 3-scenario orchestrator
 │
-├── results/                 # Default output directory for models, logs, figures
+├── data/                        # Persistent datasets
+├── artifacts/                   # Run outputs (gitignored)
+├── samples/                     # TOML / YAML config templates
+├── docs/                        # Plan + algorithm reference + summary
+├── notebooks/                   # Experiments / analysis
 │
-├── notebooks/               # Jupyter notebooks for experiments, analysis, and visualization
-│   └── experiments/         # Older experimental notebooks
-│
-├── samples/                 # Example configurations, data, and helper scripts
-│   ├── cli_examples/        # Shell script examples for CLI usage
-│   ├── fake_data/           # Small fake datasets for testing
-│   ├── generated_configs/   # Example generated YAML configurations
-│   └── helper_tools/        # Utility scripts for data/config generation
-│
-├── .gitignore
-├── .python-version
-├── ARCHITECTURE.md          # Detailed model architecture documentation
-├── CHANGES.md               # Changelog
-├── pyproject.toml           # Project metadata and dependencies
-├── README.md                # This file
-└── uv.lock                  # uv lock file
+├── ARCHITECTURE.md              # This file
+├── CHANGES.md                   # Changelog
+├── CLAUDE.md / AGENTS.md        # Repo-level coding guidelines
+├── README.md                    # Top-level overview + quickstart
+├── pyproject.toml               # Dependencies + fm-trainer entry point
+└── uv.lock
 ```
 
-# Model Architecture Documentation
+# Model architecture
 
-This document provides a detailed overview of the `FlexibleMultiTaskModel` architecture, its components, and data flow.
+`FlexibleMultiTaskModel` ([src/foundation_model/models/flexible_multi_task_model.py](src/foundation_model/models/flexible_multi_task_model.py))
+is a single-encoder, multi-head supervised model. Composition descriptors enter the encoder,
+get `tanh`'d at the model level, and feed every active task head.
 
-## Detailed Architecture Diagram
-
-The following diagram illustrates the comprehensive structure of the `FlexibleMultiTaskModel`, including support for multi-modal inputs (formula and structure), various task heads (regression, classification, sequence), and internal data pathways.
+## Diagram
 
 ```mermaid
 graph TD
-    %% ---------------- Legend ----------------
-    subgraph Legend["Tensor Shape Legend"]
+    subgraph Legend["Tensor-shape legend"]
         direction LR
-        Legend_B["B: Batch size"]
-        Legend_L["L: Sequence length"]
-        Legend_D["D: Feature dimension"]
+        B["B: batch size"]
+        L["L: sequence length"]
+        D["D: feature dim"]
     end
 
-    %% ---------------- Inputs ----------------
-    subgraph InputLayer["Input Layer"]
-        X_formula["x_formula (B, D_in_formula)"]
-        X_structure["x_structure (B, D_in_structure)"]
-        Task_Sequence_Data_Batch["task_sequence_data_batch (Dict[task_name,&nbsp;Tensor(B,L,1)])"]
+    %% ---------- Inputs ----------
+    subgraph InputLayer["Input layer"]
+        X_formula["x_formula  (B, input_dim)"]
+        Task_Seq_Data["task_sequence_data_batch<br/>Dict[task_name, Tensor(B, L, 1)]<br/>(KernelRegression heads only)"]
     end
 
-    %% -------- Foundation Encoder --------
+    %% ---------- Foundation encoder ----------
     subgraph FoundationEncoderModule["FoundationEncoder (self.encoder)"]
         direction TB
-
-        FormulaEncoder["Configurable Shared Encoder<br/>(MLP or Transformer)<br/>(self.encoder.shared)"]
-        Aggregation["Token Aggregation<br/>([CLS] or Mean Pool)"]
-        DepositBlock["Deposit Block (Linear + Tanh)<br/>(self.encoder.deposit)<br/>D_latent → D_deposit"]
-
-        X_formula --> FormulaEncoder
-        FormulaEncoder -- "Token embeddings (B, L, D_model)" --> Aggregation
-        Aggregation -- "h_latent (B, D_latent)" --> DepositBlock
-        Aggregation -.-> H_Latent_Output_Point["h_latent"]
-        H_Latent_Output_Point --> DepositBlock
+        SharedEncoder["Configurable Shared Encoder<br/>(MLPEncoderConfig or TransformerEncoderConfig)<br/>self.encoder.shared"]
+        Aggregation["Token aggregation<br/>([CLS] or mean pool — Transformer only)"]
+        X_formula --> SharedEncoder
+        SharedEncoder -- "Token embeddings  (B, L, D_model)<br/>or h_latent  (B, latent_dim)" --> Aggregation
+        Aggregation -- "h_latent  (B, latent_dim)" --> H_Latent["h_latent"]
     end
 
-    %% Junctions to heads
-    DepositBlock -- "h_task (B, D_deposit)" --> AttrTaskHeadsJunction{"To Attribute / Classification Heads"}
-    DepositBlock -- "h_task (B, D_deposit)" --> SeqTaskHeadsJunction{"To Sequence Heads"}
+    %% ---------- Model-level tanh ----------
+    H_Latent --> TANH["torch.tanh<br/>(model-level, applied in FlexibleMultiTaskModel.forward)"]
+    TANH -- "h_task  (B, latent_dim)" --> HeadsJunction{"To every active task head"}
 
-    %% ---------------- Task Heads ----------------
-    subgraph TaskHeadsModule["Task Heads"]
+    %% ---------- Task heads ----------
+    subgraph TaskHeadsModule["Task heads (self.task_heads)"]
         direction TB
-
-        %% Attribute / Classification
-        subgraph AttrClassHeads["Attribute / Classification Heads"]
-            direction LR
-            RegHead["RegressionHead: task_A<br/>(MLP from D_deposit)"]
-            ClassHead["ClassificationHead: task_B<br/>(MLP from D_deposit)"]
-        end
-
-        %% Sequence heads
-        subgraph SeqHeads["Sequence Heads"]
-            direction LR
-            SeqHeadRNN["SequenceRNNHead: task_C<br/>(Uses h_task&nbsp;+&nbsp;task_sequence_data_C)"]
-            SeqHeadTransformer["SequenceTransformerHead: task_D<br/>(Uses h_task&nbsp;+&nbsp;task_sequence_data_D)"]
-        end
+        RegHead["RegressionHead<br/>MLP from latent_dim"]
+        ClassHead["ClassificationHead<br/>MLP + softmax, optional per-class weights"]
+        KRHead["KernelRegressionHead<br/>(takes h_task + t-sequence)"]
+        AEHead["AutoEncoderHead<br/>(reconstructs x_formula from h_task;<br/>required for optimize_latent's latent space)"]
     end
-    
-    AttrTaskHeadsJunction --> RegHead
-    AttrTaskHeadsJunction --> ClassHead
-    
-    SeqTaskHeadsJunction --> SeqHeadRNN
-    Task_Sequence_Data_Batch -- "task_sequence_data_C" --> SeqHeadRNN
-    SeqTaskHeadsJunction --> SeqHeadTransformer
-    Task_Sequence_Data_Batch -- "task_sequence_data_D" --> SeqHeadTransformer
 
-    %% ---------------- Outputs ----------------
-    RegHead -- "pred_A (B, D_out_A)" --> OutputLayer["Model Outputs (Dictionary)"]
-    ClassHead -- "pred_B (B, D_out_B)" --> OutputLayer
-    SeqHeadRNN -- "pred_C (B, L, D_out_C)" --> OutputLayer
-    SeqHeadTransformer -- "pred_D (B, L, D_out_D)" --> OutputLayer
+    HeadsJunction --> RegHead
+    HeadsJunction --> ClassHead
+    HeadsJunction --> KRHead
+    Task_Seq_Data -- "t-sequence for KR task" --> KRHead
+    HeadsJunction --> AEHead
 
-    %% ----------- Style definitions -----------
-    classDef input       fill:#E0EFFF,stroke:#5C9DFF,stroke-width:2px,color:#000;
-    classDef foundation  fill:#DFF0D8,stroke:#77B55A,stroke-width:2px,color:#000;
-    classDef fusion      fill:#D9EDF7,stroke:#6BADCF,stroke-width:2px,color:#000;
-    classDef taskhead    fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000;
-    classDef seqtaskhead fill:#F2DEDE,stroke:#D9534F,stroke-width:2px,color:#000;
-    classDef output      fill:#EAEAEA,stroke:#888888,stroke-width:2px,color:#000;
-    classDef junction    fill:#FFFFFF,stroke:#AAAAAA,stroke-width:1px,color:#000,shape:circle;
-    classDef point       fill:#FFFFFF,stroke:#AAAAAA,stroke-width:1px,color:#000;
+    %% ---------- Outputs ----------
+    RegHead -- "pred  (B, D_out)" --> Outputs["Outputs (Dict[str, Tensor])"]
+    ClassHead -- "logits  (B, num_classes)" --> Outputs
+    KRHead -- "pred  (B, L, 1)" --> Outputs
+    AEHead -- "x̂  (B, input_dim)" --> Outputs
+
+    %% ---------- Styles ----------
+    classDef input        fill:#E0EFFF,stroke:#5C9DFF,stroke-width:2px,color:#000;
+    classDef foundation   fill:#DFF0D8,stroke:#77B55A,stroke-width:2px,color:#000;
+    classDef tanh         fill:#D9EDF7,stroke:#6BADCF,stroke-width:2px,color:#000;
+    classDef taskhead     fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000;
+    classDef kr           fill:#F2DEDE,stroke:#D9534F,stroke-width:2px,color:#000;
+    classDef ae           fill:#EFE0F7,stroke:#9067C6,stroke-width:2px,color:#000;
+    classDef output       fill:#EAEAEA,stroke:#888888,stroke-width:2px,color:#000;
+    classDef junction     fill:#FFFFFF,stroke:#AAAAAA,stroke-width:1px,color:#000,shape:circle;
     classDef legend_style fill:#f9f9f9,stroke:#ccc,stroke-width:1px,color:#333;
 
-    %% ---------- Class assignments ----------
-    class Legend_B,Legend_L,Legend_D legend_style
-    class X_formula,X_structure,Task_Sequence_Data_Batch input
-    class FormulaEncoder,Aggregation,DepositBlock foundation
-    class Fusion fusion
-    class H_Latent_Output_Point point
-    class AttrTaskHeadsJunction,SeqTaskHeadsJunction junction
+    class B,L,D legend_style
+    class X_formula,Task_Seq_Data input
+    class SharedEncoder,Aggregation,H_Latent foundation
+    class TANH tanh
+    class HeadsJunction junction
     class RegHead,ClassHead taskhead
-    class SeqHeadRNN,SeqHeadTransformer seqtaskhead
-    class OutputLayer output
+    class KRHead kr
+    class AEHead ae
+    class Outputs output
 ```
 
-## Component Explanations
+## Component explanations
 
-### 1. Input Layer
-The model can accept several types of inputs:
--   **`x_formula`**: Tensor representing formula-based features (e.g., chemical composition, elemental descriptors). Shape: `(BatchSize, D_in_formula)`. This is the primary input.
--   **`task_sequence_data_batch`** (Optional): A dictionary where keys are sequence task names and values are tensors representing sequence input data (e.g., temperatures, time steps) for those tasks. Shape of each tensor: `(BatchSize, SequenceLength, NumFeaturesPerPoint)` (typically `(B,L,1)`).
+### 1. Input layer
+- **`x_formula`** — composition descriptors, shape `(B, input_dim)`. Typically the output of a
+  `descriptor_fn` (see `data/composition_sources.py`) cached per unique composition.
+- **`task_sequence_data_batch`** *(KernelRegression heads only)* — `Dict[task_name, Tensor(B,L,1)]`
+  carrying the sequence x-axis (e.g. energies for DOS, temperatures for ZT) the KR head consumes.
 
 ### 2. Foundation Encoder (`self.encoder`)
-This is the core shared part of the model. It processes formula descriptors with a configurable backbone and produces task-ready representations. The behavior is driven by `encoder_config`, which declares its mode with the `EncoderType` enum (`encoder_config.type`) defined in `model_config.py`.
+A `FoundationEncoder` wrapping either an MLP or a Transformer backbone (mode chosen by
+`encoder_config.type`):
 
--   **`shared` (Configurable Backbone)**: Projects `x_formula` into a latent space.
-    -   **MLP Mode** (`MLPEncoderConfig`): Applies the feed-forward stack defined by `hidden_dims`, optional normalization, and residual settings. The final hidden size becomes `latent_dim`.
-    -   **Transformer Mode** (`TransformerEncoderConfig`): Treats each scalar feature as a token, learns per-token embeddings, and runs a stack of Transformer encoder blocks. Token outputs are aggregated through either a learnable `[CLS]` token or mean pooling depending on `use_cls_token`. The aggregated representation becomes `h_latent`.
--   **`deposit` (Linear + Tanh)**: Processes `h_latent`.
-    -   Input: `h_latent` (dimension defined by the chosen encoder’s `latent_dim`).
-    -   Output: `h_task` (task-specific input representation, dimension `D_deposit`). `D_deposit` is typically the input dimension expected by the first non-sequence task head.
+- **MLP mode** — `MLPEncoderConfig(hidden_dims=[input_dim, …, latent_dim])` runs a
+  `LinearBlock` (Linear + optional BatchNorm1d + LeakyReLU, optional residuals). `hidden_dims[0]`
+  is the input dim; `hidden_dims[-1]` is the latent dim.
+- **Transformer mode** — `TransformerEncoderConfig(d_model=…, num_layers=…, nhead=…)` treats
+  each scalar feature as a token, learns per-token embeddings, runs Transformer encoder blocks,
+  and aggregates via either a learnable `[CLS]` token or mean pooling. `latent_dim = d_model`.
 
-The output `h_task` (from the `deposit` layer) serves as the primary contextual input for ALL task heads (Attribute, Classification, and Sequence). The `h_latent` representation is the intermediate output within the `FoundationEncoder` before the `deposit` layer, whether it originates from the final MLP layer or the Transformer aggregation.
+The encoder's output is a raw `h_latent` of shape `(B, latent_dim)` — there is **no** deposit
+layer. The Tanh activation is applied *at the model level*, see below.
 
-### 3. Task Heads (`self.task_heads`)
-This is an `nn.ModuleDict` containing individual prediction heads for each configured task.
+### 3. Model-level Tanh
+`FlexibleMultiTaskModel.forward` applies `torch.tanh(self.encoder(x))` once and reuses the
+resulting `h_task` for every task head and for `optimize_latent` / `optimize_composition`. This
+keeps the head-input distribution bounded and lets the AutoEncoder head learn a stable
+reconstruction target for inverse design.
 
--   **General Input**:
-    -   All task heads (Attribute Regression, Classification, and Sequence Prediction) receive `h_task` (output of the `deposit` block) as their primary input.
-    -   Sequence Prediction heads additionally receive their specific sequence data (e.g., temperature points, time steps) from `task_sequence_data_batch['task_name']`.
+### 4. Task heads (`self.task_heads`)
+An `nn.ModuleDict`. All heads consume `h_task` of shape `(B, latent_dim)`.
 
--   **`RegressionHead`**:
-    -   Typically an MLP defined by `config.dims` (e.g., `[D_deposit, hidden_dim, 1]`).
-    -   Outputs a continuous value (or vector) for each sample. Shape: `(BatchSize, D_out_regression)`.
+| Head | Config | Output |
+|---|---|---|
+| `RegressionHead` | `RegressionTaskConfig(dims=[latent_dim, …, 1])` | `(B, D_out)` |
+| `ClassificationHead` | `ClassificationTaskConfig(num_classes=K, class_weights=[…]?)` | logits `(B, K)`; optional per-class loss weights for imbalanced labels (PR #18) |
+| `KernelRegressionHead` | `KernelRegressionTaskConfig(x_dim=…, t_dim=…)` | `(B, L, 1)` (one value per t-point) |
+| `AutoEncoderHead` | enabled by `FlexibleMultiTaskModel(enable_autoencoder=True)` | `x̂ (B, input_dim)` — reconstruction of the original descriptor; **required for `optimize_latent(optimize_space="latent")`** |
 
--   **`ClassificationHead`**:
-    -   Typically an MLP defined by `config.dims` (e.g., `[D_deposit, hidden_dim, num_classes]`).
-    -   Outputs logits for each class. Shape: `(BatchSize, NumClasses)`.
+`disabled_task_heads` holds heads taken offline mid-run (e.g. by `model.disable_task(...)` during
+the head-only fine-tune in `finetune_inverse_heads`), preserving their weights in the state-dict.
 
--   **Sequence Heads (e.g., `SequenceRNNHead`, `SequenceTransformerHead`, `SequenceTCNFiLMHead`)**:
-    -   These heads have more complex internal architectures (RNNs, Transformers, TCNs).
-    -   They combine the contextual vector (`h_task`) with the input sequence points (`task_sequence_data_batch['task_name']`).
-    -   Output a sequence of predictions. Shape: `(BatchSize, SequenceLength, D_out_sequence_point)`.
+### 5. Model outputs
+`forward` returns a `Dict[str, Tensor]` keyed by task name. `predict_step` further unwraps each
+head's output via the head's own `predict` method (so e.g. classification gives both `*_logits`
+and `*_probabilities`).
 
-### 4. Model Outputs
-The `forward` method of `FlexibleMultiTaskModel` returns a dictionary.
--   Keys: Task names as defined in `task_configs`.
--   Values: The corresponding prediction tensors from each enabled task head.
+## Data flow + dimensionality summary
 
-During `predict_step`, the output dictionary keys are further processed by each head's `predict` method, often resulting in keys like `task_name_value` or `task_name_probabilities`.
+| Stage | Shape |
+|---|---|
+| `x_formula` | `(B, input_dim)` |
+| After encoder (`h_latent`) | `(B, latent_dim)` |
+| After model-level tanh (`h_task`) | `(B, latent_dim)` — feeds every head |
+| Regression / Classification / AutoEncoder output | `(B, D_out)` |
+| KernelRegression output | `(B, L, 1)` |
 
-## Data Flow and Dimensionality Summary
+## Loss calculation and weighting
 
--   **Input (`x_formula`)**: `(B, shared_block_dims[0])`
--   **After Formula/Shared Encoder**: `h_latent` or `h_formula` is `(B, shared_block_dims[-1])`
--   **After Structure Encoder (if applicable)**: `h_structure` is `(B, struct_block_dims[-1])` (must be same as `shared_block_dims[-1]`)
--   **After Fusion (if applicable)**: `h_fused` is `(B, shared_block_dims[-1])`
--   **After Deposit Layer**: `h_task` is `(B, D_deposit)`
--   **Regression/Classification Head Output**: `(B, task_specific_output_dim)`
--   **Sequence Head Output**: `(B, SequenceLength, task_specific_output_dim_per_point)`
+### 1. Raw task losses
+Each head computes its own loss $\mathcal{L}_t$:
 
-This structure allows for flexible combination of shared representations with task-specific processing.
+- **Regression** — MSE (often on z-scored targets).
+- **Classification** — cross-entropy with optional per-class weights (`class_weights` on the
+  task config). When `class_weights=None`, the head registers a buffer of ones so the
+  `state_dict` shape is stable across with/without configurations.
+- **Kernel regression** — sequence-wise MSE.
+- **AutoEncoder** — reconstruction MSE between `h_task` and the round-trip
+  `tanh(encoder(decoder(h_task)))`.
 
-## Loss Calculation and Weighting
+### 2. Optional learnable uncertainty (Kendall et al. CVPR 2018)
+When `enable_learnable_loss_balancer=True`, the model registers $\log\sigma_t$ per task in
+`model.task_log_sigmas` (a `ParameterDict`) and scales each contribution as:
 
-The `FlexibleMultiTaskModel` employs a sophisticated strategy for calculating and weighting losses from multiple supervised tasks to enable stable and effective multi-task learning. This section details the approach, including the use of learnable uncertainty weighting.
+$$ \mathcal{L}'_{t} = \tfrac{1}{2}\,w_t\,\exp(-2\log\sigma_t)\,\mathcal{L}_t + \log\sigma_t $$
 
-### 1. Raw Task Losses
-Each individual task head (e.g., `RegressionHead`, `ClassificationHead`, `SequenceRNNHead`) computes its own "raw" loss ($\mathcal{L}_t$). This is typically a standard loss function appropriate for the task type:
--   **Regression Tasks**: Mean Squared Error (MSE) is common, often calculated on target values that may have been pre-scaled by a `target_scaler` (e.g., `StandardScaler`) for numerical stability.
--   **Classification Tasks**: Cross-Entropy Loss is typical.
--   **Sequence Tasks**: Depends on the nature of the sequence; could be MSE per time step or another sequence-appropriate loss, also potentially on scaled targets.
+with $w_t$ = `loss_weight` from the task config (default 1.0). The $\log\sigma_t$ term
+regularises against $\sigma_t \to 0$.
 
-Self-supervised tasks (MFM, contrastive, cross-reconstruction) also compute their respective raw losses.
+### 3. Total loss
+$$ \mathcal{L}_{\text{train}} = \sum_{t} \mathcal{L}'_{t} $$
 
-### 2. Learnable Uncertainty Weighting for Supervised Tasks
-
-To address challenges with balancing tasks that may have different loss scales or learning difficulties, the model implements learnable uncertainty weighting for supervised tasks, inspired by the work of Kendall, Gal, and Cipolla, "Multi-task Learning Using Uncertainty to Weigh Losses for Scene Geometry and Semantics," CVPR 2018.
-
-#### Conceptual Basis: Homoscedastic Uncertainty
-Homoscedastic uncertainty refers to task-dependent uncertainty that is constant for all input samples of a given task but varies between tasks. The model learns these task-specific uncertainties ($\sigma_t$) and uses them to automatically balance the contribution of each task's loss.
-
-#### Probabilistic Formulation
-For a regression task $t$, modeling the likelihood $p(y_t | f_t(\mathbf{x}), \sigma_t^2)$ as a Gaussian $\mathcal{N}(y_t | f_t(\mathbf{x}), \sigma_t^2)$, the negative log-likelihood (NLL) to be minimized is proportional to:
-$$ \mathcal{L}'_t = \frac{1}{2\sigma_t^2} \mathcal{L}_t + \log \sigma_t $$
-where $\mathcal{L}_t = (y_t - f_t(\mathbf{x}))^2$ is the raw squared error. A similar formulation applies to classification tasks.
-
-#### Practical Implementation
-The model learns $\log \sigma_t$ for each supervised task $t$, stored in `model.task_log_sigmas`. With an optional per-task scalar `loss_weight = w_t`, the final loss component becomes:
-$$ \mathcal{L}'_{t, \text{final}} = \frac{w_t \cdot \exp(-2 \log \sigma_t)}{2} \mathcal{L}_t + \log \sigma_t $$
-Where:
--   $\mathcal{L}_t$: The raw, unweighted loss for task $t$.
--   $\log \sigma_t$: The learnable log uncertainty for task $t$.
--   $\exp(-2 \log \sigma_t)$: Equivalent to $1/\sigma_t^2$ (precision). If $\mathcal{L}_t$ is large (task is hard/noisy), $\log \sigma_t$ increases, down-weighting $\mathcal{L}_t$.
--   $w_t$: User-provided scalar (defaults to 1.0) that scales task $t$'s contribution.
--   The $\log \sigma_t$ term regularizes, preventing $\sigma_t$ from collapsing.
-
-### 3. Total Loss for Optimization
-The total loss optimized during training (`train_final_loss`) is:
-$$ \text{train\_final\_loss} = \sum_{t \in \text{supervised}} \mathcal{L}'_{t, \text{final}} + \sum_{s \in \text{auxiliary}} \mathcal{L}'_{s, \text{final}} $$
-
-When the uncertainty balancer is disabled, each supervised term simplifies to $w_t \cdot \mathcal{L}_t$.
-
-Any auxiliary/self-supervised heads contribute via their own modules; if none are configured this reduces to the supervised sum above.
-
-### 4. Validation Loss
-During validation, the same weighting formulation is applied using the learned $\log \sigma_t$ values (without updating them). The primary metric for callbacks (e.g., `ModelCheckpoint`, `EarlyStopping`) is `val_final_loss`.
-
-### Loss Calculation Flow Diagram
-
-The following diagram illustrates the combination of different loss components:
+When the balancer is disabled (default), each term reduces to $w_t \cdot \mathcal{L}_t$.
 
 ```mermaid
 graph TD
     subgraph OverallLoss["Total Training Loss (train_final_loss)"]
         direction TB
-        SumLosses["Sum All Contributions"]:::output
+        Sum["Σ task contributions"]:::output
+        T1["Task 1 final"]:::taskhead
+        T2["Task 2 final"]:::taskhead
+        TN["…"]:::taskhead
 
-        %% ---------- Supervised tasks ----------
-        subgraph SupervisedLosses["Supervised Tasks Contribution"]
-            direction TB
-            SumSupervised["Sum Task Components"]:::output
-            Task1_Final["Task&nbsp;1: Final Component"]:::taskhead
-            Task2_Final["Task&nbsp;2: Final Component"]:::taskhead
-            TaskN_Final["Task&nbsp;N: Final Component"]:::taskhead
+        T1_raw["L₁ (raw)"]:::rawloss --> Op1["× ½·w₁·exp(−2logσ₁)"]:::operation --> Op1r["+ logσ₁"]:::operation --> T1
+        T2_raw["L₂ (raw)"]:::rawloss --> Op2["× ½·w₂·exp(−2logσ₂)"]:::operation --> Op2r["+ logσ₂"]:::operation --> T2
+        TN_raw["…"]:::rawloss --> TN
 
-            Task1_Raw["Raw Loss (L₁)"]:::rawloss --> Op1_Scale["Scale by 0.5&nbsp;·&nbsp;w₁&nbsp;·&nbsp;e<sup>−2logσ₁</sup>"]:::operation
-            Op1_Scale --> Op1_AddReg["Add&nbsp;logσ₁"]:::operation
-            Op1_AddReg --> Task1_Final
-
-            Task2_Raw["Raw Loss (L₂)"]:::rawloss --> Op2_Scale["Scale by 0.5&nbsp;·&nbsp;w₂&nbsp;·&nbsp;e<sup>−2logσ₂</sup>"]:::operation
-            Op2_Scale --> Op2_AddReg["Add&nbsp;logσ₂"]:::operation
-            Op2_AddReg --> Task2_Final
-            
-            TaskN_Raw["..."]:::rawloss --> TaskN_Final
-            
-            Task1_Final --> SumSupervised
-            Task2_Final --> SumSupervised
-            TaskN_Final --> SumSupervised
-        end
-        SumSupervised --> SumLosses
+        T1 --> Sum
+        T2 --> Sum
+        TN --> Sum
     end
 
-    %% ---------- Inputs ----------
-    subgraph InputsToLossCalc["Inputs to Loss Calculation"]
-        L1_Head["Task 1 Head"]:::taskhead --> Task1_Raw
-        L2_Head["Task 2 Head"]:::taskhead --> Task2_Raw
-        LN_Head["..."]:::taskhead --> TaskN_Raw
-        
-        Learnable_LogSigmas["Learnable: task_log_sigmas (logσ_t)"]:::inputsrc -.-> Op1_Scale
-        Learnable_LogSigmas -.-> Op1_AddReg
-        Learnable_LogSigmas -.-> Op2_Scale
-        Learnable_LogSigmas -.-> Op2_AddReg
-        LossWeight1["Config: loss_weight (w₁)"]:::inputsrc -.-> Op1_Scale
-        LossWeight2["Config: loss_weight (w₂)"]:::inputsrc -.-> Op2_Scale
-    end
+    Bal["task_log_sigmas  (Parameter)"]:::inputsrc -.-> Op1
+    Bal -.-> Op1r
+    Bal -.-> Op2
+    Bal -.-> Op2r
+    LW1["loss_weight w₁ (config)"]:::inputsrc -.-> Op1
+    LW2["loss_weight w₂ (config)"]:::inputsrc -.-> Op2
 
-    %% ---------- Style definitions ----------
     classDef output      fill:#EAEAEA,stroke:#888888,stroke-width:2px,color:#000;
     classDef taskhead    fill:#FCF8E3,stroke:#F0AD4E,stroke-width:2px,color:#000;
     classDef rawloss     fill:#FFF3CD,stroke:#FFC107,stroke-width:1px,color:#000;
     classDef operation   fill:#E1F5FE,stroke:#0288D1,stroke-width:1px,color:#000;
     classDef inputsrc    fill:#E8EAF6,stroke:#3F51B5,stroke-width:1px,color:#000;
-
-    %% ---------- Class assignments ----------
-    class Task1_Final,Task2_Final,TaskN_Final taskhead
-    class SumLosses,SumSupervised output
-    class L1_Head,L2_Head,LN_Head taskhead
-    class Learnable_LogSigmas,LossWeight1,LossWeight2 inputsrc
-    class Task1_Raw,Task2_Raw,TaskN_Raw rawloss
-    class Op1_Scale,Op1_AddReg,Op2_Scale,Op2_AddReg operation
 ```
 
-This adaptive weighting scheme allows the model to dynamically balance the influence of different tasks based on their learned uncertainties, promoting more robust multi-task training.
+### 4. Validation
+The same formulation is reused with the learned $\log\sigma_t$ frozen. `val_final_loss` is the
+default monitor for `ModelCheckpoint` / `EarlyStopping`.
+
+## Inverse design (added in PR #18)
+
+The same `FlexibleMultiTaskModel` exposes two gradient-based inverse-design methods on a
+trained checkpoint. Both share a regression-MSE + classification-cross-entropy backbone; only
+the third loss term and the optimisation variable differ.
+
+| Method | Optimisation variable | Method-specific loss term | Recipe directly available? |
+|---|---|---|---|
+| `optimize_latent(optimize_space="latent")` | $h$ (latent) | $\alpha \cdot \lVert h - \tanh(E(D(h))) \rVert^2$ — AE-alignment | no — needs AE decode then a `KMD.inverse` |
+| `optimize_composition` | $\theta$, with $w = \text{softmax}(\theta)$ | $(1-d)\,H(w)$ — per-output entropy / peakiness | yes — $w$ is the recipe |
+
+User-facing knobs (all on `[0, 1]` where applicable):
+
+- `ae_align_scale` (`optimize_latent`) — AE manifold alignment; sweet spot ≈ 0.5.
+- `diversity_scale` (`optimize_composition`) — per-output element diversity; 1.0 = no penalty.
+- `seed_blend` — fraction of seed kept at the start, rest is uniform over the whitelist (lets new
+  elements enter the recipe).
+- `allowed_elements` — hard whitelist over element symbols.
+- `element_step_scale` — per-element gradient scaling; `0` hard-locks an element to its seed value.
+- `class_target_weight` — weight on the classification objective vs. the regression targets.
+
+```mermaid
+graph TD
+    subgraph Latent["optimize_latent (latent space)"]
+        direction TB
+        Seed1["Seed x_seed"]
+        Enc1["encoder + tanh"]
+        H["h  (latent — the optimisation variable)"]
+        AE["AE round-trip:<br/>D(h) → x̂ → tanh(E(x̂)) = h'"]
+        Heads1["Task heads (reg + cls)"]
+        AdamL["Adam updates h ← ∇_h L<br/>L = reg_MSE + w_cls·(−log P(QC)) + α·‖h − h'‖²"]
+
+        Seed1 --> Enc1 --> H
+        H --> Heads1
+        H -. round-trip .-> AE
+        AE -. "h' (return arrow weighted by α)" .-> H
+        AdamL -.-> H
+    end
+
+    subgraph Comp["optimize_composition (differentiable KMD)"]
+        direction TB
+        Theta["logits θ  (optimisation variable)"]
+        WSoft["softmax → w  (simplex; the recipe)"]
+        KMD["x = w · K  (KMD transform)"]
+        Enc2["encoder + tanh"]
+        Heads2["Task heads (reg + cls)"]
+        AdamC["Adam updates θ ← ∇_θ L<br/>L = reg_MSE + w_cls·(−log P(QC)) + (1−d)·H(w)"]
+
+        Theta --> WSoft --> KMD --> Enc2 --> Heads2
+        AdamC -.-> Theta
+    end
+
+    classDef latentClass fill:#DFF0D8,stroke:#55A868,stroke-width:2px,color:#000;
+    classDef compClass   fill:#E0EFFF,stroke:#2563EB,stroke-width:2px,color:#000;
+    class Seed1,Enc1,H,AE,Heads1,AdamL latentClass
+    class Theta,WSoft,KMD,Enc2,Heads2,AdamC compClass
+```
+
+For the full per-term design intent and the recommended use of each knob, see
+[docs/inverse_design_algorithms.md](docs/inverse_design_algorithms.md). For the 3-scenario
+study and headline takeaways, see [docs/qc_inverse_design_summary.md](docs/qc_inverse_design_summary.md).

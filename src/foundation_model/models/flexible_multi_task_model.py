@@ -56,16 +56,25 @@ from .task_head.classification import ClassificationHead
 from .task_head.kernel_regression import KernelRegressionHead
 from .task_head.regression import RegressionHead
 
-# Named tuple for optimization results
+# Named tuple for optimization results. ``input_trajectory`` is None unless the caller passes
+# ``record_input_trajectory=True`` to :meth:`optimize_latent` (gated because storing it costs
+# O(B·R·steps·input_dim) memory and per-step latent-→-input decodes); when present it has shape
+# ``(B, R, steps, input_dim)`` — used by the inverse-design trajectory animations to decode the
+# per-step composition without rerunning the optimisation.
 OptimizationResult = namedtuple(
-    "OptimizationResult", ["optimized_input", "optimized_target", "initial_score", "trajectory"]
+    "OptimizationResult",
+    ["optimized_input", "optimized_target", "initial_score", "trajectory", "input_trajectory"],
+    defaults=[None],
 )
 
 # Composition-space optimization (gradient descent over element weights w ∈ simplex). The optimised
 # w *is* the recipe (no AE-decode round-trip), so it is reported alongside the descriptor x = w @ K.
+# ``weights_trajectory`` is None unless the caller passes ``record_weights_trajectory=True`` to
+# :meth:`optimize_composition`; when present it has shape ``(steps, B, n_components)``.
 CompositionOptimizationResult = namedtuple(
     "CompositionOptimizationResult",
-    ["optimized_weights", "optimized_descriptor", "optimized_target", "initial_score", "trajectory"],
+    ["optimized_weights", "optimized_descriptor", "optimized_target", "initial_score", "trajectory", "weights_trajectory"],
+    defaults=[None],
 )
 
 
@@ -1735,7 +1744,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         target_value: torch.Tensor | float | None = None,
         task_targets: Mapping[str, torch.Tensor | float] | None = None,
         class_targets: Mapping[str, int | Sequence[int]] | None = None,
+        class_target_weight: float = 1.0,
+        ae_align_scale: float = 0.5,
         optimize_space: str = "input",
+        record_input_trajectory: bool = False,
     ) -> OptimizationResult:
         """
         Optimize inputs to drive one or multiple regression heads toward targets or extremes.
@@ -1772,6 +1784,25 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Classification objectives: maps a classification task name to the class index (or
             indices) whose combined probability should be *maximized*. Adds a ``-log P(target
             classes)`` term to the objective and may be combined with ``task_targets``.
+        class_target_weight : float, optional
+            Multiplier on each classification objective term relative to the regression terms.
+            Use ``> 1`` to make class probability the primary objective and regression targets
+            secondary. Default ``1.0``.
+        ae_align_scale : float, optional
+            Latent-space optimization only. How hard to pull the optimised latent ``h`` toward the
+            AE's decode/encode fixed set, on a [0, 1] scale.
+
+            * ``0.0``: **no alignment penalty** — pure unconstrained latent optimisation. This was
+              shown in PR #18 to fail badly (QC drops from ~0.97 to ~0.35 after the decode/encode
+              round-trip); recorded for completeness as a failure-mode baseline.
+            * ``1.0``: **strong alignment penalty** — keeps ``h`` close to ``encode(decode(h))``,
+              i.e. on the AE's stable manifold. Over-constraining tends to reduce target achievement.
+            * ``0.5`` (default): the empirical sweet spot from PR #18 experiments.
+
+            Implementation detail (skip if not curious): the loss gets a
+            ``ae_align_scale · ‖tanh(encoder(AE.decode(h))) − h‖²`` term added. Operates in
+            **latent space**; orthogonal to :meth:`optimize_composition`'s ``diversity_scale``
+            which lives in composition space.
         optimize_space : str, optional
             ``"input"`` or ``"latent"``. Default ``"input"``.
 
@@ -1818,6 +1849,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if class_targets is not None:
             if not isinstance(class_targets, Mapping) or len(class_targets) == 0:
                 raise ValueError("class_targets must be a non-empty mapping of task_name -> class index/indices")
+            if class_target_weight <= 0:
+                raise ValueError(f"class_target_weight must be > 0, got {class_target_weight}")
             class_target_map = {}
             for name, classes in class_targets.items():
                 if name not in self.task_heads:
@@ -1837,6 +1870,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
                         f"{num_classes}-class head; valid indices are [0, {num_classes})."
                     )
                 class_target_map[name] = idxs
+
+        if not 0.0 <= ae_align_scale <= 1.0:
+            raise ValueError(f"ae_align_scale must be in [0, 1], got {ae_align_scale}.")
 
         # Legacy single-task path (mode / target_value) only when no target maps are given
         if target_tasks is None and class_target_map is None:
@@ -1866,9 +1902,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if num_restarts < 1:
             raise ValueError(f"num_restarts must be >= 1, got {num_restarts}")
 
-        # Store original training state
+        # Store original training state. We also snapshot every parameter's ``requires_grad``
+        # because the optimisation only differentiates through ``optim_input`` / ``optim_latent``
+        # — leaving ``requires_grad=True`` on the model parameters would let ``loss.backward()``
+        # populate stale ``.grad`` tensors on the encoder / heads. Mirrors the same pattern used
+        # by :meth:`optimize_composition` so a later ``model.fit(...)`` works as expected.
         was_training = self.training
+        saved_req_grad: list[tuple[torch.nn.Parameter, bool]] = [(p, p.requires_grad) for p in self.parameters()]
         self.eval()
+        for p, _ in saved_req_grad:
+            p.requires_grad_(False)
 
         device = next(self.parameters()).device
         if initial_input is None:
@@ -1935,6 +1978,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         optimized_inputs: list[torch.Tensor] = []
         optimized_targets: list[torch.Tensor] = []
         trajectories: list[torch.Tensor] = []
+        # When ``record_input_trajectory=True`` we snapshot the per-step input every iteration
+        # (input-space: ``optim_input`` directly; latent-space: ``AE.decode(tanh(h))``). Stored on
+        # CPU to keep GPU memory flat on long trajectories. One per restart, stacked at the end.
+        input_trajectories: list[torch.Tensor] = []
         initial_scores_list: list[torch.Tensor] = []
 
         for restart_idx in range(num_restarts):
@@ -1964,6 +2011,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
                 # Optimization loop
                 step_traj: list[torch.Tensor] = []
+                step_input_traj: list[torch.Tensor] = []
                 sign = 1.0 if mode == "max" else -1.0
 
                 for step in range(steps):
@@ -1995,7 +2043,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                                 expanded_target = expanded_target.expand(pred.shape)
                             loss_terms.append(F.mse_loss(pred, expanded_target))
 
-                    loss_terms.extend(_class_loss_terms(h_task))
+                    loss_terms.extend(class_target_weight * term for term in _class_loss_terms(h_task))
                     per_task_values_tensor = _stack_scores(per_task_values)  # (B, T)
 
                     if loss_terms:
@@ -2012,6 +2060,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
                     # Record history
                     step_traj.append(score_for_history)
+                    if record_input_trajectory:
+                        # Input-space optim variable IS the input — just snapshot it.
+                        step_input_traj.append(optim_input.detach().cpu())
 
                 # Get final optimized values
                 with torch.no_grad():
@@ -2028,6 +2079,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 optimized_targets.append(per_task_final_tensor)  # (B, T)
                 traj_tensor = torch.stack(step_traj, dim=0)  # (steps, B, T)
                 trajectories.append(traj_tensor)
+                if record_input_trajectory:
+                    input_trajectories.append(torch.stack(step_input_traj, dim=0))  # (steps, B, D)
 
             else:  # optimize_space == "latent"
                 # Latent space optimization: encode X -> optimize latent -> decode via AE
@@ -2058,6 +2111,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
                 # Optimization loop
                 step_traj: list[torch.Tensor] = []
+                step_input_traj: list[torch.Tensor] = []
                 sign = 1.0 if mode == "max" else -1.0
 
                 for step in range(steps):
@@ -2091,7 +2145,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
                                 expanded_target = expanded_target.expand(pred.shape)
                             loss_terms.append(F.mse_loss(pred, expanded_target))
 
-                    loss_terms.extend(_class_loss_terms(h_task))
+                    loss_terms.extend(class_target_weight * term for term in _class_loss_terms(h_task))
+                    if ae_align_scale > 0:
+                        # Pull the optimised latent toward what the AE faithfully reconstructs:
+                        # decode it to a descriptor, re-encode, and penalise the drift in h_task.
+                        # The user-facing knob is [0, 1] with 0 = no penalty / 1 = strong penalty.
+                        re_h_task = torch.tanh(self.encoder(self.task_heads[_AE_TASK](h_task)))
+                        loss_terms.append(ae_align_scale * F.mse_loss(re_h_task, h_task))
                     per_task_values_tensor = _stack_scores(per_task_values)  # (B, T)
 
                     if loss_terms:
@@ -2108,6 +2168,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
                     # Record history
                     step_traj.append(score_for_history)
+                    if record_input_trajectory:
+                        # Latent-space optim: decode the current h via the AE head to recover the
+                        # per-step input. ``no_grad`` keeps this from polluting the optim graph.
+                        with torch.no_grad():
+                            step_input = self.task_heads[_AE_TASK](torch.tanh(optim_latent))
+                        step_input_traj.append(step_input.detach().cpu())
 
                 # Get final optimized values and reconstruct via AE
                 with torch.no_grad():
@@ -2126,9 +2192,16 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 optimized_targets.append(per_task_final_tensor)  # (B, T)
                 traj_tensor = torch.stack(step_traj, dim=0)  # (steps, B, T)
                 trajectories.append(traj_tensor)
+                if record_input_trajectory:
+                    input_trajectories.append(torch.stack(step_input_traj, dim=0))  # (steps, B, D)
 
-        # Restore training state
+        # Restore training state + per-parameter ``requires_grad``. Without the latter, every
+        # encoder / head parameter would be left frozen for any later ``.fit()`` in the same
+        # Python session — the symptom is "training silently stops moving the encoder" which
+        # is annoying to bisect.
         self.train(was_training)
+        for p, prev in saved_req_grad:
+            p.requires_grad_(prev)
 
         # Stack outputs
         opt_input_tensor = torch.stack(optimized_inputs, dim=1)  # (B, R, D)
@@ -2138,11 +2211,17 @@ class FlexibleMultiTaskModel(L.LightningModule):
         initial_score_tensor = torch.stack(initial_scores_list, dim=0)  # (R, B, T)
         initial_score_tensor = initial_score_tensor.permute(1, 0, 2)  # (B, R, T)
 
+        input_traj_tensor: torch.Tensor | None = None
+        if record_input_trajectory and input_trajectories:
+            input_traj_tensor = torch.stack(input_trajectories, dim=0)  # (R, steps, B, D)
+            input_traj_tensor = input_traj_tensor.permute(2, 0, 1, 3)  # (B, R, steps, D)
+
         return OptimizationResult(
             optimized_input=opt_input_tensor,
             optimized_target=opt_target_tensor,
             initial_score=initial_score_tensor,
             trajectory=traj_tensor,
+            input_trajectory=input_traj_tensor,
         )
 
     def optimize_composition(
@@ -2154,9 +2233,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
         task_targets: Mapping[str, torch.Tensor | float] | None = None,
         class_targets: Mapping[str, int | Sequence[int]] | None = None,
         class_target_weight: float = 1.0,
-        sparsity_weight: float = 0.0,
+        diversity_scale: float = 1.0,
+        allowed_elements: str | list[str] = "all",
+        element_step_scale: float | Mapping[str, float] = 1.0,
+        seed_blend: float = 0.95,
         steps: int = 300,
         lr: float = 0.05,
+        record_weights_trajectory: bool = False,
     ) -> CompositionOptimizationResult:
         """Gradient-based inverse design in **composition space**.
 
@@ -2186,9 +2269,64 @@ class FlexibleMultiTaskModel(L.LightningModule):
             Same semantics as :meth:`optimize_latent`. Regression targets are matched by MSE;
             classification objectives add ``-log P(target classes)`` (scaled by
             ``class_target_weight``).
-        sparsity_weight : float, optional
-            Adds a negative-entropy term ``λ · H(w)`` to the loss, pushing ``w`` toward few-element
-            mixtures. Default 0 (no sparsity pressure).
+        diversity_scale : float, optional
+            How spread-out the per-output element mixture is allowed to be, on a [0, 1] scale.
+            Bigger = more diverse / multi-element per output.
+
+            * ``1.0`` (default): **no penalty** on having many elements — the optimiser is free
+              to land on a many-element recipe if the main objective likes it.
+            * ``0.0``: **strong penalty** on having many elements — the optimiser is pushed
+              toward peaky few-element recipes (e.g. binary alloys).
+            * ``0.5`` etc.: linearly interpolates between the two.
+
+            The point is to give users a simple [0, 1] knob without needing to know the underlying
+            math. **Implementation detail** (skip if not curious): the loss gets a
+            ``(1 − diversity_scale) · H(w)`` term added, where ``H(w) = −Σ w_i log w_i`` is the
+            Shannon entropy of the per-row weight vector. ``diversity_scale = 1`` zeros that
+            coefficient (no penalty); ``diversity_scale = 0`` applies the full entropy penalty.
+
+            Important: this is a **per-output complexity** knob, not a diversity-*between*-outputs
+            knob. Increasing it lets each of the ``B`` outputs individually use more elements;
+            whether the ``B`` outputs are different from each other (pairwise L1) depends on the
+            optimisation landscape, not on this knob.
+        allowed_elements : str | list[str], optional
+            Element whitelist for the optimisation. ``"all"`` (default) imposes no constraint.
+            A non-empty list of element symbols (e.g. ``["Mg", "Al", "Cu", "Ni"]``) restricts the
+            optimisation to those elements only — disallowed elements are forced to ``w = 0`` at
+            every step (their logits are masked to ``-inf`` inside the softmax), so no gradient
+            ever lifts them. Symbols are resolved against
+            :data:`~foundation_model.utils.kmd_plus.DEFAULT_ELEMENTS`; the kernel must therefore
+            have ``n_components == len(DEFAULT_ELEMENTS)`` when symbols are used.
+        element_step_scale : float | Mapping[str, float], optional
+            Per-element constraint on how fast each element's weight can move during optimisation.
+            A scalar applies uniformly to every element (default ``1.0`` = no constraint). A
+            symbol→float mapping overrides specific elements while leaving the rest at ``1.0``.
+
+            Two regimes with different mechanics:
+
+            * **Hard lock (value = 0):** ``{"Mg": 0.0, "Al": 0.0}`` pins those elements' weights
+              at their un-blended ``initial_weights`` values for the entire optimisation. The
+              implementation rewrites the softmax output to paste seed values back at locked
+              positions and renormalises the unlocked positions over the remaining
+              ``1 − Σ_locked seed`` mass — so the locked weights truly do not drift, even when
+              other (unlocked) logits move. Requires ``initial_weights`` (no seed → nothing to
+              lock to) and the locked elements must be in ``allowed_elements`` if a whitelist
+              is set.
+            * **Soft constraint (0 < value < 1):** the element's logit gradient is multiplied by
+              the scale before each Adam step, slowing (but not freezing) its drift. ``0.1`` lets
+              an element move at 10 % of the normal speed. The softmax denominator still couples
+              it to the rest of the row, so this is a soft preference, not a hard guarantee.
+
+            Symbols are resolved against ``DEFAULT_ELEMENTS`` (kernel alignment required, as above).
+        seed_blend : float, optional
+            How much of the (per-row) seed prior to keep when ``initial_weights`` is given;
+            ``w0 ← seed_blend · seed + (1 − seed_blend) · uniform_over_allowed``. Default ``0.95``
+            (5 % uniform mass spread over the allowed elements). The blend lifts non-seed-element
+            logits from ``log(1e-12) ≈ −27.6`` (effectively unreachable by Adam in a few hundred
+            steps) to ``log(0.05 / |allowed|) ≈ −7.6``, so the optimiser can introduce new elements
+            when they help the objective. Set to ``1.0`` to reproduce the strict seed-only behaviour
+            (no new elements can enter the support set); ``0.0`` makes the seed irrelevant and
+            starts from uniform. Ignored when ``initial_weights is None``.
         steps : int
             Adam optimisation steps. Default 300.
         lr : float
@@ -2254,8 +2392,69 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         if target_tasks is None and class_target_map is None:
             raise ValueError("Provide at least one of task_targets / class_targets.")
-        if sparsity_weight < 0:
-            raise ValueError(f"sparsity_weight must be >= 0, got {sparsity_weight}")
+        if not 0.0 <= diversity_scale <= 1.0:
+            raise ValueError(f"diversity_scale must be in [0, 1], got {diversity_scale}.")
+        if not 0.0 <= seed_blend <= 1.0:
+            raise ValueError(f"seed_blend must be in [0, 1], got {seed_blend}")
+
+        # --- Per-element constraints (symbol-based) -----------------------------------------------
+        # ``allowed_elements`` is a hard whitelist; ``element_step_scale`` is a soft per-element
+        # learning-rate multiplier (0 = frozen). Symbol-based inputs are resolved against the
+        # bundled :data:`DEFAULT_ELEMENTS` registry — see argument docs above.
+        from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS  # local import; small list
+
+        elem_mask_arg: torch.Tensor | None = None
+        if isinstance(allowed_elements, str):
+            if allowed_elements != "all":
+                raise ValueError(f"allowed_elements as a string must be 'all'; got {allowed_elements!r}.")
+            # "all": no constraint, leave elem_mask_arg as None.
+        elif isinstance(allowed_elements, (list, tuple)):
+            if len(allowed_elements) == 0:
+                raise ValueError("allowed_elements list must be non-empty.")
+            sym_to_idx = {s: i for i, s in enumerate(DEFAULT_ELEMENTS)}
+            bad = [s for s in allowed_elements if s not in sym_to_idx]
+            if bad:
+                raise ValueError(f"Unknown element symbol(s) in allowed_elements: {bad}.")
+            if n_components != len(DEFAULT_ELEMENTS):
+                raise ValueError(
+                    f"allowed_elements as element symbols requires the kernel to align with "
+                    f"DEFAULT_ELEMENTS (n_components={n_components}, expected {len(DEFAULT_ELEMENTS)})."
+                )
+            elem_mask_arg = torch.zeros(n_components, dtype=torch.bool)
+            for sym in allowed_elements:
+                elem_mask_arg[sym_to_idx[sym]] = True
+        else:
+            raise TypeError(
+                f"allowed_elements must be 'all' or a non-empty list of element symbols; got {type(allowed_elements).__name__}."
+            )
+
+        step_scale_arg: torch.Tensor | None = None
+        if isinstance(element_step_scale, (int, float)) and not isinstance(element_step_scale, bool):
+            if element_step_scale < 0:
+                raise ValueError(f"element_step_scale must be >= 0; got {element_step_scale}.")
+            if float(element_step_scale) != 1.0:
+                step_scale_arg = torch.full((n_components,), float(element_step_scale))
+            # else: 1.0 means "no scaling"; keep step_scale_arg = None for the fast path.
+        elif isinstance(element_step_scale, Mapping):
+            sym_to_idx = {s: i for i, s in enumerate(DEFAULT_ELEMENTS)}
+            bad = [s for s in element_step_scale if s not in sym_to_idx]
+            if bad:
+                raise ValueError(f"Unknown element symbol(s) in element_step_scale: {bad}.")
+            if any(float(v) < 0 for v in element_step_scale.values()):
+                raise ValueError("element_step_scale values must be >= 0.")
+            if n_components != len(DEFAULT_ELEMENTS):
+                raise ValueError(
+                    f"element_step_scale as a symbol dict requires the kernel to align with "
+                    f"DEFAULT_ELEMENTS (n_components={n_components}, expected {len(DEFAULT_ELEMENTS)})."
+                )
+            step_scale_arg = torch.ones(n_components)
+            for sym, val in element_step_scale.items():
+                step_scale_arg[sym_to_idx[sym]] = float(val)
+        else:
+            raise TypeError(
+                f"element_step_scale must be a non-negative float or a mapping of "
+                f"element_symbol → float; got {type(element_step_scale).__name__}."
+            )
 
         # --- Validate the seed (BEFORE touching model state, so a bad input doesn't leave the
         #     model in eval() / with params switched off). ---------------------------------------
@@ -2289,16 +2488,40 @@ class FlexibleMultiTaskModel(L.LightningModule):
             kmd_kernel = kmd_kernel.to(device=device, dtype=dtype)
 
             # --- Build logits over n_components ---------------------------------------------------
+            # We additionally capture the *un-blended* normalised seed (``w0_seed``) — the
+            # locked-element hard-lock below uses these values, not the post-blend ones, so a
+            # user who writes ``element_step_scale={"Mg": 0.0}`` with ``initial_weights`` placing
+            # Mg at 0.30 sees Mg held at exactly 0.30 (not the slightly blended 0.286).
+            w0_seed: torch.Tensor | None = None
             if initial_weights is None:
                 # Use the caller's existing global RNG state — don't reseed here (would defeat
                 # the intended diversity across repeated calls and would leak state outward).
                 logits = torch.randn(n_starts, n_components, device=device, dtype=dtype) * 0.5
+                if elem_mask_arg is not None:
+                    # Push disallowed elements to a deep negative logit so softmax mask works
+                    # consistently for both the random and seeded branches (the per-step mask
+                    # below also enforces this; we mirror it here for the t=0 score).
+                    logits = logits.masked_fill(~elem_mask_arg.to(device=device), -1e9)
             else:
                 w0 = initial_weights.to(device=device, dtype=dtype)
-                # Normalise to the simplex (callers may pass un-normalised positive weights);
-                # log gives logits whose softmax recovers the row. A tiny floor only avoids
-                # log(0) for legitimate zero entries (sparse element-presence seeds).
                 w0 = w0 / w0.sum(dim=-1, keepdim=True)
+                w0_seed = w0.detach().clone()  # un-blended; used as the lock reference below
+                # Blend in a uniform prior so non-seed-element logits are reachable by Adam.
+                # Without this, log(0) → −∞ (clamped to log(1e-12) ≈ −27.6); the softmax Jacobian
+                # is proportional to w_i, so the per-step gradient on those logits is ≈ 1e-12 and
+                # Adam cannot lift them within a few hundred steps — the support set is frozen to
+                # the seed's nonzero elements. ``seed_blend < 1`` spreads a small uniform mass
+                # over the allowed elements so every reachable element starts at a workable logit.
+                if seed_blend < 1.0:
+                    if elem_mask_arg is not None:
+                        uniform_row = elem_mask_arg.to(device=device, dtype=dtype)
+                        uniform_row = uniform_row / uniform_row.sum()
+                    else:
+                        uniform_row = torch.full((n_components,), 1.0 / n_components, device=device, dtype=dtype)
+                    w0 = seed_blend * w0 + (1.0 - seed_blend) * uniform_row
+                    w0 = w0 / w0.sum(dim=-1, keepdim=True)
+                # Tiny floor only to avoid log(0) when an element is both disallowed AND not in
+                # the uniform support (i.e. seed_blend == 1.0 with sparse seeds).
                 logits = torch.log(w0.clamp(min=1e-12)).detach().clone()
             logits = logits.requires_grad_(True)
             optimizer = optim.Adam([logits], lr=lr)
@@ -2315,6 +2538,57 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     name: torch.as_tensor(idxs, device=device, dtype=torch.long)
                     for name, idxs in class_target_map.items()
                 }
+
+            # Move the element-constraint tensors onto the right device (validated above).
+            elem_mask = elem_mask_arg.to(device=device) if elem_mask_arg is not None else None
+            step_scale = step_scale_arg.to(device=device, dtype=dtype) if step_scale_arg is not None else None
+
+            # --- Hard-lock setup for elements with step_scale == 0 ----------------------------------
+            # Zeroing ``logit_i.grad`` keeps that logit constant but does NOT keep ``w_i`` constant,
+            # because softmax renormalises across all logits — when other (unlocked) logits move, the
+            # softmax denominator changes and so does the locked weight. To truly honour the docstring
+            # promise "freezes those elements at their seed values", we (a) detect locked indices, (b)
+            # capture their per-row seed weights, and (c) inside ``_w_from_logits`` paste those seed
+            # values back over the softmax output and renormalise the unlocked positions to fill the
+            # remaining ``1 − Σ locked_w`` mass per row. The gradient through the locked indices is
+            # automatically zero (the lock branch uses a constant), so we no longer need the
+            # ``step_scale.mul_`` zeroing for them — but we leave that path active for the genuinely
+            # soft case ``0 < step_scale < 1``.
+            locked_mask: torch.Tensor | None = None
+            locked_w0: torch.Tensor | None = None
+            if step_scale is not None:
+                locked_idx_mask = step_scale == 0
+                if locked_idx_mask.any():
+                    if w0_seed is None:
+                        raise ValueError(
+                            "element_step_scale = 0 (hard lock) requires initial_weights — there's no "
+                            "per-row seed to lock to when initial_weights=None."
+                        )
+                    if elem_mask is not None and (~elem_mask[locked_idx_mask]).any():
+                        raise ValueError(
+                            "Locked elements (element_step_scale = 0) must also be in allowed_elements; "
+                            "locking a disallowed element is contradictory."
+                        )
+                    locked_mask = locked_idx_mask  # (n_components,) bool, on device
+                    # (B, n_components): seed values at locked positions, 0 elsewhere — constant.
+                    locked_w0 = (w0_seed * locked_mask.to(dtype)).detach()
+
+            def _w_from_logits(lg: torch.Tensor) -> torch.Tensor:
+                """Softmax over logits; mask disallowed elements; hard-lock the chosen ones at seed."""
+                if elem_mask is not None:
+                    lg = lg.masked_fill(~elem_mask, float("-inf"))
+                w = torch.softmax(lg, dim=-1)
+                if locked_mask is None:
+                    return w
+                # Locked rows hold their seed values; unlocked rows are renormalised to fill the
+                # remaining mass ``1 − Σ_locked seed``. Differentiable: the lock branch is a constant
+                # so its gradient is 0; the unlocked branch's gradient flows through the rescale.
+                free_mask_f = (~locked_mask).to(w.dtype)  # (n_components,)
+                w_unlocked = w * free_mask_f  # zero at locked positions
+                # type: ignore[union-attr] — locked_w0 is set together with locked_mask above.
+                free_mass = (1.0 - locked_w0.sum(dim=-1, keepdim=True)).clamp(min=0.0)
+                w_unlocked = w_unlocked / w_unlocked.sum(dim=-1, keepdim=True).clamp(min=1e-12) * free_mass
+                return w_unlocked + locked_w0
 
             def _heads_forward(h_task: torch.Tensor) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
                 """Run regression heads, return (per-task predictions, loss terms)."""
@@ -2343,7 +2617,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
             # --- Record initial scores --------------------------------------------------------------
             with torch.no_grad():
-                w0_tensor = torch.softmax(logits, dim=-1)
+                w0_tensor = _w_from_logits(logits)
                 h0 = torch.tanh(self.encoder(w0_tensor @ kmd_kernel))
                 initial_preds, _ = _heads_forward(h0)
                 initial_score = _stack([p.detach() for p in initial_preds], logits.shape[0])
@@ -2352,28 +2626,50 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # With every model parameter at ``requires_grad=False``, ``loss.backward()`` populates
             # gradient only on ``logits`` — no stale grads accumulate on encoder/heads.
             trajectory: list[torch.Tensor] = []
+            weights_trajectory: list[torch.Tensor] = [] if record_weights_trajectory else []
             for _ in range(steps):
                 optimizer.zero_grad()
-                w = torch.softmax(logits, dim=-1)
+                w = _w_from_logits(logits)
                 x = w @ kmd_kernel
                 h_task = torch.tanh(self.encoder(x))
                 preds, terms = _heads_forward(h_task)
-                if sparsity_weight > 0:
-                    # Negative entropy of w (minimise entropy → push w toward few-element mixtures).
+                if diversity_scale < 1.0:
+                    # The penalty strength is (1 − diversity_scale): user sees a [0, 1] knob
+                    # where 1 means "no penalty / most diverse" and 0 means "max penalty / most
+                    # peaky". The internal term is `(1 − diversity_scale) · H(w)` added to loss.
                     entropy = -(w * w.clamp(min=1e-12).log()).sum(dim=-1).mean()
-                    terms.append(sparsity_weight * entropy)
+                    terms.append((1.0 - diversity_scale) * entropy)
                 loss = torch.stack(terms).mean()
                 loss.backward()
+                if step_scale is not None and logits.grad is not None:
+                    # Soft per-element constraint: scale each element's logit gradient (0 = frozen).
+                    logits.grad.mul_(step_scale)
                 optimizer.step()
                 trajectory.append(_stack([p.detach() for p in preds], logits.shape[0]))
+                if record_weights_trajectory:
+                    # Snapshot the post-step weights (after the softmax+hard-lock applied next iter
+                    # would re-clean them, but the user wants what the *current* recipe looks like).
+                    # Stored on CPU to keep GPU memory flat for long trajectories on large B.
+                    with torch.no_grad():
+                        weights_trajectory.append(_w_from_logits(logits).detach().cpu())
 
             # --- Final state ------------------------------------------------------------------------
             with torch.no_grad():
-                w_final = torch.softmax(logits, dim=-1)
+                w_final = _w_from_logits(logits)
                 x_final = w_final @ kmd_kernel
                 h_final = torch.tanh(self.encoder(x_final))
                 final_preds, _ = _heads_forward(h_final)
                 final_target = _stack([p.detach() for p in final_preds], logits.shape[0])
+
+            weights_traj_tensor: torch.Tensor | None = None
+            if record_weights_trajectory:
+                # (steps, B, n_components). Same empty-steps fallback as ``trajectory`` so the
+                # downstream code can rely on the shape contract without a None branch.
+                weights_traj_tensor = (
+                    torch.stack(weights_trajectory, dim=0)
+                    if weights_trajectory
+                    else torch.empty((0, logits.shape[0], n_components), dtype=torch.float32)
+                )
 
             return CompositionOptimizationResult(
                 optimized_weights=w_final.detach(),
@@ -2384,6 +2680,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 trajectory=torch.stack(trajectory, dim=0)
                 if trajectory
                 else torch.empty((0, logits.shape[0], n_reg_tracked), device=device, dtype=dtype),
+                weights_trajectory=weights_traj_tensor,
             )
         finally:
             if was_training:
