@@ -93,9 +93,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--per-seed-trajectories",
-        action="store_true",
-        default=False,
-        help="Also emit per-(path × seed) trajectory plots/animations.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Per-(path × seed) trajectory plots/animations (default on; --no-per-seed-trajectories to skip).",
     )
     parser.add_argument(
         "--animation-formats",

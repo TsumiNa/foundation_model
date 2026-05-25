@@ -121,6 +121,7 @@ def plot_trajectory_static(
     out_path: Path,
     *,
     title: str,
+    seed_composition: str | None = None,
 ) -> None:
     """Line plot of normalised progress vs step.
 
@@ -130,6 +131,10 @@ def plot_trajectory_static(
     user asked: "do the targets converge together, or does the recipe stabilise early and the
     targets keep moving?" — divergence between the QC line and the reg lines, or between the reg
     lines themselves, surfaces immediately.
+
+    When ``seed_composition`` is provided (the per-seed composition string, e.g.
+    ``"Au65 Ga20 Gd15"``), it's appended to the figure title under the main title in a monospace
+    font — the reader can identify the seed by chemistry rather than by index.
     """
     fig, ax = plt.subplots(figsize=(8.0, 5.0), dpi=150)
     steps = np.arange(len(next(iter(progress.values()))))
@@ -152,7 +157,20 @@ def plot_trajectory_static(
     ax.axhline(0.0, color="#bbb", ls=":", lw=0.8, alpha=0.5)
     ax.set_xlabel("Optimisation step")
     ax.set_ylabel("Progress  (0 = seed, 1 = target)")
-    ax.set_title(title)
+    if seed_composition:
+        # Two-line layout: bold main title on top + seed composition underneath, with extra
+        # ``pad`` so the title doesn't sit flush against the upper axes line. Putting the
+        # seed-comp as a text annotation at y=1.02 collided with the title when matplotlib's
+        # default title-pad was applied — fix is to render both lines via set_title and a
+        # second matching text() at a clearly-distinct y position.
+        ax.set_title(title, fontsize=12, fontweight="bold", pad=22)
+        ax.text(
+            0.5, 1.005, f"seed:  {seed_composition}",
+            transform=ax.transAxes, ha="center", va="bottom",
+            fontsize=10, family="monospace", color="#444",
+        )
+    else:
+        ax.set_title(title, fontsize=12, fontweight="bold")
     ax.legend(loc="best", fontsize=9, frameon=False)
     ax.grid(True, alpha=0.2)
     fig.tight_layout()
@@ -177,6 +195,7 @@ def plot_trajectory_animation(
     out_paths_by_format: Mapping[str, Path],
     *,
     title: str,
+    seed_composition: str | None = None,
     top_k_elements: int = 10,
     fps: int = 15,
     max_frames: int = 120,
@@ -231,7 +250,18 @@ def plot_trajectory_animation(
     ax_line.axhline(0.0, color="#bbb", ls=":", lw=0.8, alpha=0.5)
     ax_line.set_xlabel("Optimisation step")
     ax_line.set_ylabel("Progress  (0 = seed, 1 = target)")
-    ax_line.set_title(title, fontsize=11)
+    if seed_composition:
+        # Two-line title: bold panel title on top + monospace seed-composition underneath. The
+        # ``pad=22`` lifts the title clear of the second line; without the pad they overlap
+        # because matplotlib's default title baseline sits where the text annotation lands.
+        ax_line.set_title(title, fontsize=11, fontweight="bold", pad=22)
+        ax_line.text(
+            0.5, 1.005, f"seed:  {seed_composition}",
+            transform=ax_line.transAxes, ha="center", va="bottom",
+            fontsize=10, family="monospace", color="#444",
+        )
+    else:
+        ax_line.set_title(title, fontsize=11, fontweight="bold")
     ax_line.legend(loc="best", fontsize=8, frameon=False)
     ax_line.grid(True, alpha=0.2)
     marker = ax_line.axvline(0, color="#444", lw=1.2, alpha=0.85)

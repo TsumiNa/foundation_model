@@ -97,6 +97,8 @@ from foundation_model.scripts.continual_rehearsal_demo import (
     _init_kernels,
 )
 from foundation_model.scripts.paper_inverse_comparison import (
+    _emit_trajectory_outputs,
+    _path_slug,
     _plot_qc_vs_reg_scatter,
     _plot_seed_to_optimized_mapping,
 )
@@ -768,7 +770,13 @@ class ContinualRehearsalFullRunner:
             model.add_task(self._build_task_config(task_name))
         return model
 
-    def run(self) -> None:
+    def run(
+        self,
+        *,
+        record_trajectory: bool = True,
+        per_seed_trajectories: bool = False,
+        animation_formats: tuple[str, ...] = ("gif",),
+    ) -> None:
         cfg = self.config
         seed_everything(cfg.random_seed, workers=True)
         model = self._build_empty_model()
@@ -863,7 +871,12 @@ class ContinualRehearsalFullRunner:
         self._write_metrics_table(records)
         self._save_final_model(model, task_configs)
 
-        inverse = self._inverse_design(model)
+        inverse = self._inverse_design(
+            model,
+            record_trajectory=record_trajectory,
+            per_seed_trajectories=per_seed_trajectories,
+            animation_formats=animation_formats,
+        )
         (self.inverse_root / "inverse_design.json").write_text(json.dumps(inverse, indent=2), encoding="utf-8")
 
         # Slide-prep deliverables (plan §6) — no more PPT/HTML; the slide author works from
@@ -894,7 +907,14 @@ class ContinualRehearsalFullRunner:
         )
         logger.info(f"Saved final model checkpoint to {ckpt}")
 
-    def run_inverse_only(self, ckpt_path: Path) -> None:
+    def run_inverse_only(
+        self,
+        ckpt_path: Path,
+        *,
+        record_trajectory: bool = True,
+        per_seed_trajectories: bool = False,
+        animation_formats: tuple[str, ...] = ("gif",),
+    ) -> None:
         """Skip training; load a saved ``final_model.pt`` and run only the inverse-design stage.
 
         Use this to iterate on inverse-design knobs (seed split, palette, scenarios, …) without
@@ -917,7 +937,12 @@ class ContinualRehearsalFullRunner:
         state_dict = state["model"] if isinstance(state, dict) and "model" in state else state
         model.load_state_dict(state_dict)
         model.eval()
-        inverse = self._inverse_design(model)
+        inverse = self._inverse_design(
+            model,
+            record_trajectory=record_trajectory,
+            per_seed_trajectories=per_seed_trajectories,
+            animation_formats=animation_formats,
+        )
         (self.inverse_root / "inverse_design.json").write_text(json.dumps(inverse, indent=2), encoding="utf-8")
         self._write_inverse_summary_md(inverse)
 
@@ -1171,7 +1196,14 @@ class ContinualRehearsalFullRunner:
             return ["<undecodable>"] * descriptors.shape[0]
         return _format_weights(weights)
 
-    def _inverse_design(self, model) -> dict[str, Any]:
+    def _inverse_design(
+        self,
+        model,
+        *,
+        record_trajectory: bool = False,
+        per_seed_trajectories: bool = False,
+        animation_formats: tuple[str, ...] = ("gif",),
+    ) -> dict[str, Any]:
         """Run the 8 inverse-design configurations against each scenario on the same seeds.
 
         The configurations are defined at module level in :data:`INVERSE_PATH_CONFIGS`, mirroring
@@ -1186,6 +1218,13 @@ class ContinualRehearsalFullRunner:
         Saves per-path JSON + plot under ``inverse_design/<scenario>/<path>/`` plus a per-scenario
         ``summary.json`` aggregating headline stats, and a top-level ``seeds.json`` recording the
         strategy- vs explicit-appended seed split.
+
+        When ``record_trajectory`` is set we additionally emit per-step trajectory artefacts
+        (``trajectories/<slug>.npz`` + ``trajectories/trajectory__<slug>.{png,gif,…}``) per
+        scenario, using ``paper_inverse_comparison._emit_trajectory_outputs`` so the figures
+        match the demo verbatim. ``animation_formats`` controls the animation outputs; pass
+        ``("none",)`` to skip animations (the static plot still appears). ``per_seed_trajectories``
+        additionally emits one plot+animation per ``(path × seed)``.
         """
         cfg = self.config
         device, dtype = next(model.parameters()).device, next(model.parameters()).dtype
@@ -1280,6 +1319,7 @@ class ContinualRehearsalFullRunner:
                         label=path_cfg["label"],
                         _qc_prob_fn=_qc_prob,
                         _reg_preds_fn=_reg_preds,
+                        record_trajectory=record_trajectory,
                     )
                 else:
                     # Composition row: resolve the palette sentinel and seed/random init.
@@ -1303,6 +1343,7 @@ class ContinualRehearsalFullRunner:
                         label=path_cfg["label"],
                         _qc_prob_fn=_qc_prob,
                         _reg_preds_fn=_reg_preds,
+                        record_trajectory=record_trajectory,
                     )
 
             scenario_summary = {
@@ -1386,6 +1427,65 @@ class ContinualRehearsalFullRunner:
                     reg_targets=reg_targets,
                 )
 
+            # ── trajectory persistence + figures ──
+            # When ``record_trajectory`` is on, every path's ``_run_*_path`` returned a result
+            # carrying ``trajectory_targets`` (steps, B, T) and ``trajectory_weights``
+            # (steps, B, n_components). For a 300-step / B=20 / 94-component run those arrays
+            # together weigh ~3 MB per path × 8 paths × 3 scenarios ≈ 72 MB — too heavy to inline
+            # into ``inverse_design.json``. Persist as compressed npz next to each scenario's
+            # plots, then pop the inline arrays so the json stays browsable. Filenames use
+            # ``paper_inverse_comparison._path_slug`` so the demo's trajectory consumers can
+            # ingest these files directly.
+            if record_trajectory:
+                traj_dir = sc_dir / "trajectories"
+                traj_dir.mkdir(exist_ok=True)
+                results_for_traj: list[dict[str, Any]] = []
+                for key, p in paths.items():
+                    if "trajectory_targets" not in p or "trajectory_weights" not in p:
+                        continue
+                    # ``_path_slug`` reads ``method``, ``label``, and (for latent) ``align_scale``.
+                    # Our latent rows store ``ae_align_scale``; mirror it onto ``align_scale`` for
+                    # the slug call (and so the demo's ``_emit_trajectory_outputs`` can group
+                    # latents by α).
+                    slug_record: dict[str, Any] = {
+                        "method": p["method"],
+                        "label": p["label"],
+                        "align_scale": p.get("ae_align_scale"),
+                    }
+                    slug = _path_slug(slug_record)
+                    npz_path = traj_dir / f"{slug}.npz"
+                    np.savez_compressed(
+                        npz_path,
+                        targets=np.asarray(p["trajectory_targets"], dtype=np.float32),
+                        weights=np.asarray(p["trajectory_weights"], dtype=np.float32),
+                    )
+                    # Drop the huge arrays now that they live on disk; carry a reference in their
+                    # place so ``inverse_design.json`` consumers can find them.
+                    p.pop("trajectory_targets", None)
+                    p.pop("trajectory_weights", None)
+                    p["trajectory_file"] = str(npz_path.relative_to(sc_dir))
+                    # ``_emit_trajectory_outputs`` reads the npz via ``out_dir / r["trajectory_file"]``,
+                    # so the result dict here has to use the *scenario-relative* path too.
+                    results_for_traj.append(
+                        {
+                            **slug_record,
+                            "qc_after_decode": p["qc_after_decode"],
+                            "reg_after_decode": p["reg_after_decode"],
+                            "trajectory_file": p["trajectory_file"],
+                        }
+                    )
+                if results_for_traj:
+                    _emit_trajectory_outputs(
+                        results=results_for_traj,
+                        reg_targets=reg_targets,
+                        seed_qc=before_qc,
+                        seed_reg=before_reg,
+                        out_dir=sc_dir,
+                        traj_dir=traj_dir,
+                        per_seed=per_seed_trajectories,
+                        animation_formats=animation_formats,
+                    )
+
             # Explicit guard: ``list and float`` was a clever but fragile non-empty check —
             # an empty ``qc_after_decode`` (no successful seeds for a path) returned the empty
             # list, which then crashed ``f"{...:.3f}"`` with ``TypeError`` on format. NaN keeps
@@ -1414,8 +1514,18 @@ class ContinualRehearsalFullRunner:
         label: str,
         _qc_prob_fn,
         _reg_preds_fn,
+        record_trajectory: bool = False,
     ) -> dict[str, Any]:
-        """Latent-space optimisation with cycle-consistency at a fixed ``ae_align_scale``."""
+        """Latent-space optimisation with cycle-consistency at a fixed ``ae_align_scale``.
+
+        When ``record_trajectory`` is set we (a) ask ``optimize_latent`` to keep its per-step
+        AE-decoded input, and (b) decode each step through ``KMD.inverse`` to recover the per-step
+        composition recipe — same trick the demo's ``_run_latent_method`` uses, so the trajectory
+        is on the same surface as the final ``reg_after_decode`` values. The huge ``(steps, B, *)``
+        arrays land in ``result["trajectory_targets"]`` / ``result["trajectory_weights"]``; the
+        caller is responsible for persisting them as a compressed npz and popping them off the
+        result dict so they don't bloat ``inverse_design.json``.
+        """
         cfg = self.config
         path_dir.mkdir(parents=True, exist_ok=True)
         reg_names = list(reg_targets)
@@ -1432,6 +1542,7 @@ class ContinualRehearsalFullRunner:
             optimize_space="latent",
             steps=cfg.inverse_steps,
             lr=cfg.inverse_lr,
+            record_input_trajectory=record_trajectory,
         )
         achieved_latent = res.optimized_target[:, 0, :].cpu().numpy()
         optimized_desc = res.optimized_input[:, 0, :]
@@ -1459,7 +1570,19 @@ class ContinualRehearsalFullRunner:
             "optimized_descriptor": optimized_desc_np.tolist(),
             "optimized_weights": optimized_weights.tolist(),
         }
-        (path_dir / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+        # Trajectory arrays (kept out of result.json — caller persists them as a separate npz).
+        if record_trajectory and res.input_trajectory is not None and res.trajectory is not None:
+            # ``res.trajectory`` is (B, R=1, steps, T) — squeeze restart, permute to (steps, B, T).
+            result["trajectory_targets"] = res.trajectory[:, 0, :, :].cpu().numpy().transpose(1, 0, 2)
+            # ``res.input_trajectory`` is (B, R=1, steps, input_dim) → (steps, B, input_dim);
+            # ``KMD.inverse`` then maps each step's descriptor batch → (B, n_components).
+            per_step_inputs = res.input_trajectory[:, 0, :, :].cpu().numpy().transpose(1, 0, 2)
+            result["trajectory_weights"] = np.stack(
+                [self._kmd.inverse(per_step_inputs[s]) for s in range(per_step_inputs.shape[0])]
+            )  # (steps, B, n_components) — one QP solve per (step × seed), ~10 % overhead.
+        # Write result.json without the trajectory arrays (they live in the npz once persisted).
+        json_payload = {k: v for k, v in result.items() if k not in {"trajectory_targets", "trajectory_weights"}}
+        (path_dir / "result.json").write_text(json.dumps(json_payload, indent=2), encoding="utf-8")
         return result
 
     def _run_composition_path(
@@ -1478,11 +1601,16 @@ class ContinualRehearsalFullRunner:
         label: str,
         _qc_prob_fn,
         _reg_preds_fn,
+        record_trajectory: bool = False,
     ) -> dict[str, Any]:
         """Composition-space optimisation via differentiable KMD (``optimize_composition``).
 
         ``init="seed"`` uses ``w_seed`` + ``seed_blend``; ``init="random"`` ignores ``w_seed`` and
         runs ``n_starts = len(seeds)`` so the per-row budget matches the latent run.
+
+        When ``record_trajectory`` is set, the per-step weight + reg-target trajectories come
+        straight from ``optimize_composition`` (composition's optim variable already lives on the
+        right surface, so no per-step KMD.inverse is needed — unlike the latent path).
         """
         cfg = self.config
         path_dir.mkdir(parents=True, exist_ok=True)
@@ -1506,6 +1634,7 @@ class ContinualRehearsalFullRunner:
             allowed_elements=allowed,
             steps=cfg.inverse_steps,
             lr=cfg.inverse_lr,
+            record_weights_trajectory=record_trajectory,
             **init_kwargs,
         )
         # Composition's result tensors are 2D — ``(B, x_dim)`` / ``(B, n_components)`` /
@@ -1537,7 +1666,14 @@ class ContinualRehearsalFullRunner:
             "optimized_descriptor": optimized_desc_np.tolist(),
             "optimized_weights": w_final.tolist(),
         }
-        (path_dir / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+        # Trajectory arrays — same shape convention as the latent path so ``_emit_trajectory_outputs``
+        # consumes both interchangeably. ``res.trajectory`` is already (steps, B, T) and
+        # ``res.weights_trajectory`` is already (steps, B, n_components) — no transpose / decode.
+        if record_trajectory and res.weights_trajectory is not None and res.trajectory is not None:
+            result["trajectory_targets"] = res.trajectory.cpu().numpy()
+            result["trajectory_weights"] = res.weights_trajectory.cpu().numpy()
+        json_payload = {k: v for k, v in result.items() if k not in {"trajectory_targets", "trajectory_weights"}}
+        (path_dir / "result.json").write_text(json.dumps(json_payload, indent=2), encoding="utf-8")
         return result
 
     # ------------------------------------------------------------------ plots
@@ -2645,6 +2781,30 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ContinualRehearsalFullCo
         metavar="CKPT",
         help="Skip training; load a final_model.pt checkpoint and rerun only the inverse-design stage.",
     )
+    # Trajectory plotting flags — mirror paper_inverse_comparison's CLI so the user can switch
+    # animation format / opt out of per-step recording without code changes.
+    parser.add_argument(
+        "--record-trajectory",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Record per-step optimisation trajectories and emit trajectory plots / animations "
+        "per scenario × path. ``--no-record-trajectory`` skips both (saves ~10 %% on the latent "
+        "path and the animation rendering cost).",
+    )
+    parser.add_argument(
+        "--per-seed-trajectories",
+        action="store_true",
+        help="Additionally emit one plot + animation per (path × seed) under "
+        "``trajectories_per_seed/`` (heavy: 20× more figures). Off by default.",
+    )
+    parser.add_argument(
+        "--animation-formats",
+        nargs="+",
+        choices=["gif", "html", "svg", "none"],
+        default=["gif"],
+        help="Trajectory animation formats. ``none`` disables animations (the static plot is "
+        "still written). Default: gif.",
+    )
     args = parser.parse_args(argv)
 
     data = _load_toml(args.config_file) if args.config_file else {}
@@ -2680,10 +2840,15 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ContinualRehearsalFullCo
 def main(argv: list[str] | None = None) -> None:
     config, args = _parse_args(argv)
     runner = ContinualRehearsalFullRunner(config)
+    traj_kwargs: dict[str, Any] = {
+        "record_trajectory": args.record_trajectory,
+        "per_seed_trajectories": args.per_seed_trajectories,
+        "animation_formats": tuple(args.animation_formats),
+    }
     if args.inverse_only is not None:
-        runner.run_inverse_only(args.inverse_only)
+        runner.run_inverse_only(args.inverse_only, **traj_kwargs)
     else:
-        runner.run()
+        runner.run(**traj_kwargs)
 
 
 if __name__ == "__main__":

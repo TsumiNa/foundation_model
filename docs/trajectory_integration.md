@@ -27,8 +27,9 @@ the wiring itself — not the plotters — can graduate to `common` later.
 | File | Content |
 |---|---|
 | `trajectories/<slug>.npz` | `targets`: `(steps, B, T_reg)` per-step regression predictions. `weights`: `(steps, B, n_components)` per-step element weights. |
-| `trajectories/trajectory__<slug>.png` | Static line plot, x = step, y = normalised progress (0 = seed, 1 = target), all reg targets on one axis. |
-| `trajectories/trajectory__<slug>.{gif,html,svg}` | Same line + per-step top-K composition bar chart of the best representative seed. Format-controlled by `animation_formats`. |
+| `trajectories/trajectory__<slug>.png` | Static **mean-across-seeds** line plot, x = step, y = normalised progress (0 = seed, 1 = target), all reg targets on one axis. |
+| `trajectories/trajectory__<slug>.{gif,html,svg}` | Same line + per-step top-K composition bar chart of the **best representative seed**. The chosen seed's composition formula is rendered under the title. Format-controlled by `animation_formats`. |
+| `trajectories_per_seed/seed{NN}/<slug>.{png,gif,html,svg}` | **Per-(path × seed)** plots/animations under a **seed-major** layout — one folder per seed, with all 8 paths inside. This is the layout you want for "compare how the same seed behaved across paths" workflow. Each title carries the seed's composition formula in monospace under the bold main title. Default on; pass `--no-per-seed-trajectories` to skip (480 PNG + 480 GIF + 480 HTML / scenario when both animation formats are enabled). |
 
 The npz file is the **single source of truth** — both plots and any later
 replot read from it; no need to rerun the optimisation.
@@ -207,6 +208,10 @@ from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS
 if record_trajectory:
     traj_dir = sc_dir / "trajectories"
     traj_dir.mkdir(exist_ok=True)
+    per_seed_dir = sc_dir / "trajectories_per_seed" if per_seed_trajectories else None
+    if per_seed_dir is not None:
+        per_seed_dir.mkdir(exist_ok=True)
+
     for path_key, p in paths.items():
         if "trajectory_targets" not in p:
             continue
@@ -218,32 +223,62 @@ if record_trajectory:
             weights=p["trajectory_weights"].astype(np.float32),
         )
 
-        # --- plots ---
+        # --- shared data ---
         reg_names = list(reg_targets)
         traj_targets = p["trajectory_targets"]  # (steps, B, T)
         traj_weights = p["trajectory_weights"]  # (steps, B, n_components)
         qc_after = np.asarray(p["qc_after_decode"], dtype=float)
+        per_row_seeds = list(p.get("seeds", seeds))   # composition strings per row
+
+        # --- mean across-seeds plot/animation ---
         reg_traj = {t: traj_targets[:, :, j] for j, t in enumerate(reg_names)}
-        progress = normalize_target_trajectories(
-            qc_trajectory=np.tile(qc_after[None, :], (traj_targets.shape[0], 1)),
-            reg_trajectory=reg_traj, reg_targets=reg_targets,
+        qc_traj = np.tile(qc_after[None, :], (traj_targets.shape[0], 1))
+        progress_mean = normalize_target_trajectories(
+            qc_trajectory=qc_traj, reg_trajectory=reg_traj, reg_targets=reg_targets,
             seed_qc=before_qc, seed_reg=before_reg,
         )
-        progress.pop("QC", None)
+        progress_mean.pop("QC", None)
         best_idx = best_seed_by_target_distance(
             qc_after, {t: np.asarray(p["reg_after_decode"][t]) for t in reg_names},
             reg_targets,
         )
-        plot_trajectory_static(progress, traj_dir / f"trajectory__{slug}.png",
-                               title=f"Trajectory · {p['label']}")
-        out_paths = {fmt: traj_dir / f"trajectory__{slug}.{fmt}" for fmt in animation_formats
-                     if fmt != "none"}
-        if out_paths:
+        plot_trajectory_static(progress_mean, traj_dir / f"trajectory__{slug}.png",
+                               title=f"Trajectory · {p['label']}  (mean over {qc_after.shape[0]} seeds)")
+        if animation_formats and animation_formats != ("none",):
+            out_paths = {fmt: traj_dir / f"trajectory__{slug}.{fmt}" for fmt in animation_formats if fmt != "none"}
             plot_trajectory_animation(
-                progress, traj_weights[:, best_idx, :], list(DEFAULT_ELEMENTS),
+                progress_mean, traj_weights[:, best_idx, :], list(DEFAULT_ELEMENTS),
                 out_paths_by_format=out_paths,
                 title=f"Trajectory · {p['label']} (best seed: {best_idx})",
+                seed_composition=per_row_seeds[best_idx],   # ← shows comp under title
             )
+
+        # --- per-seed plot/animation (seed-major layout) ---
+        if per_seed_dir is not None:
+            for seed_i in range(qc_after.shape[0]):
+                seed_dir = per_seed_dir / f"seed{seed_i:02d}"
+                seed_dir.mkdir(exist_ok=True)
+                progress_seed = normalize_target_trajectories(
+                    qc_trajectory=qc_traj[:, seed_i:seed_i+1],
+                    reg_trajectory={t: traj_targets[:, seed_i:seed_i+1, j] for j, t in enumerate(reg_names)},
+                    reg_targets=reg_targets,
+                    seed_qc=before_qc[seed_i:seed_i+1],
+                    seed_reg={t: v[seed_i:seed_i+1] for t, v in before_reg.items()},
+                )
+                progress_seed.pop("QC", None)
+                plot_trajectory_static(
+                    progress_seed, seed_dir / f"{slug}.png",
+                    title=f"{p['label']} · seed {seed_i}",
+                    seed_composition=per_row_seeds[seed_i],
+                )
+                if animation_formats and animation_formats != ("none",):
+                    plot_trajectory_animation(
+                        progress_seed, traj_weights[:, seed_i, :], list(DEFAULT_ELEMENTS),
+                        out_paths_by_format={fmt: seed_dir / f"{slug}.{fmt}"
+                                             for fmt in animation_formats if fmt != "none"},
+                        title=f"{p['label']} · seed {seed_i}",
+                        seed_composition=per_row_seeds[seed_i],
+                    )
 
         # Free memory before the next path — the trajectories are now on disk.
         del p["trajectory_targets"], p["trajectory_weights"]
@@ -271,7 +306,7 @@ existing config):
 
 ```python
 parser.add_argument("--record-trajectory", action=argparse.BooleanOptionalAction, default=True)
-parser.add_argument("--per-seed-trajectories", action="store_true")
+parser.add_argument("--per-seed-trajectories", action=argparse.BooleanOptionalAction, default=True)
 parser.add_argument(
     "--animation-formats", nargs="+",
     choices=["gif", "html", "svg", "none"], default=["gif"],
@@ -280,3 +315,13 @@ parser.add_argument(
 
 Pass them through to the runner's inverse-design loop so users can switch
 formats without code changes.
+
+### Per-seed title convention
+
+Per-seed plots show the seed's composition in monospace under the bold main
+title (e.g. `seed:  Au65 Ga20 Gd15`). The helpers do this automatically when
+the optional `seed_composition: str` kwarg is passed to
+`plot_trajectory_static` / `plot_trajectory_animation`. Pass `r["seeds"][i]`
+(the per-row seed label from the path runner; for `comp (random)` it's the
+`random_start_N` placeholder string). The mean plot does the same for the
+"best representative seed" picked by `best_seed_by_target_distance`.

@@ -105,11 +105,16 @@ Written so each bullet maps to either a slide or a paragraph of the paper.
     with red dashed target lines.
   * `seed_to_optimized__*.png` × 7 — per-method 1:1 mapping (seed → optimised composition) with
     per-row `(QC%, ΔFE, Δklat, …)` deltas.
-  * `trajectories/<path_slug>.{png,gif,html}` per path — normalised per-step target curves
-    (static `.png`), and the same curves animated alongside a per-step element bar chart
-    (default `.gif`, self-contained interactive `.html` on request). Raw per-step arrays
-    `(steps, B, T)` for targets and `(steps, B, n_components)` for weights persisted as
-    `trajectories/<path_slug>.npz` so re-plots don't need to rerun the optimisation.
+  * `trajectories/<path_slug>.{png,gif,html}` per path — **mean-across-seeds** normalised
+    per-step target curves (static `.png`), and the same curves animated alongside a per-step
+    element bar chart of the best representative seed (default `.gif`, self-contained interactive
+    `.html` on request). Raw per-step arrays `(steps, B, T)` for targets and `(steps, B, n_components)`
+    for weights persisted as `trajectories/<path_slug>.npz` so re-plots don't need to rerun the
+    optimisation.
+  * `trajectories_per_seed/seed{NN}/<path_slug>.{png,gif,html}` — **per-(path × seed)** plots
+    and animations under a seed-major layout (one folder per seed, all 8 paths inside). Each
+    title carries the seed's composition formula in monospace. Default on; opt out with
+    `--no-per-seed-trajectories`.
   * `results.json` + `SUMMARY.md` — raw arrays and a markdown table.
 * Configs, seeds, and the trained checkpoint are all saved per run, so any figure can be
   regenerated from `results.json` alone (no re-running the optimisation needed for re-plots).

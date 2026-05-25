@@ -891,6 +891,7 @@ def run(
         _emit_trajectory_outputs(
             results=results,
             reg_targets=reg_targets,
+            seeds=list(seeds),
             seed_qc=seed_qc,
             seed_reg=seed_reg,
             out_dir=out_dir,
@@ -909,6 +910,7 @@ def _emit_trajectory_outputs(
     *,
     results: list[dict[str, Any]],
     reg_targets: dict[str, float],
+    seeds: list[str],
     seed_qc: np.ndarray,
     seed_reg: dict[str, np.ndarray],
     out_dir: Path,
@@ -918,11 +920,18 @@ def _emit_trajectory_outputs(
 ) -> None:
     """Render the static "normalised-progress vs step" plot + animation per path.
 
-    Default mode draws **mean across seeds** for the line plot and animates the comp panel
-    using the seed whose final state best matches all targets (joint normalised distance).
-    ``per_seed=True`` additionally emits one plot+animation per (path × seed) under a subfolder.
-    Animation formats default to ``("gif",)``; pass extras (``html``, ``svg``) to also emit them.
-    ``"none"`` in the format list disables animations entirely (static plot still emitted).
+    Always-on: a mean across-seeds line plot per path under ``trajectories/`` with the comp panel
+    animated using the seed whose final state best matches all targets (joint normalised distance).
+    The chosen seed's composition formula is shown under the title.
+
+    ``per_seed=True`` (the new default) also emits one plot+animation per ``(path × seed)`` under
+    ``trajectories_per_seed/seed{NN}/<path>.{png,gif,html}`` — **seed-major** layout chosen so the
+    user can compare the same seed across all 8 paths by opening one folder. The seed's composition
+    string is rendered under each title so the reader doesn't have to cross-reference seed indices
+    against ``seeds.json``.
+
+    ``animation_formats`` defaults to ``("gif",)``; pass extras (``html``, ``svg``) to also emit
+    them. ``"none"`` in the format list disables animations entirely (static plot still emitted).
     """
     from foundation_model.scripts.paper_inverse_trajectory import (
         best_seed_by_target_distance,
@@ -983,6 +992,11 @@ def _emit_trajectory_outputs(
         reg_final_per_task = {t: np.asarray(r["reg_after_decode"][t], dtype=float) for t in reg_names}
         best_idx = best_seed_by_target_distance(qc_after, reg_final_per_task, reg_targets)
         per_step_weights_best = traj_weights[:, best_idx, :]  # (steps, n_components)
+        # Map the path's per-row "seeds" entry to a comp string. For comp_random the entry is
+        # ``random_start_N`` placeholder text; surface it verbatim so the title still says where
+        # the row came from. The ``r["seeds"]`` carried by every path is exactly the per-row
+        # label sequence; fall back to the shared ``seeds`` arg if a path forgot to set it.
+        per_row_seeds = list(r.get("seeds", seeds))
 
         # --- Static plot (mean across seeds) ---
         static_out = static_dir / f"trajectory__{slug}.png"
@@ -995,21 +1009,21 @@ def _emit_trajectory_outputs(
         # --- Animation (mean curves + best-seed comp panel) ---
         if formats:
             out_paths = {fmt: static_dir / f"trajectory__{slug}.{fmt}" for fmt in formats}
-            # html writer writes to a multi-file dir if extension is .html; we want a single file.
-            # matplotlib's HTMLWriter actually creates the .html file alongside; that's fine.
             plot_trajectory_animation(
                 progress_mean,
                 per_step_weights_best,
                 element_symbols=list(DEFAULT_ELEMENTS),
                 out_paths_by_format=out_paths,
                 title=f"Trajectory · {r['label'].replace(chr(10), ' ')} (best seed: {best_idx})",
+                seed_composition=per_row_seeds[best_idx],
             )
 
-        # --- Per-seed variants ---
+        # --- Per-seed variants (seed-major layout: trajectories_per_seed/seed{NN}/<path>.{ext}) ---
         if per_seed_dir is not None:
-            path_dir = per_seed_dir / slug
-            path_dir.mkdir(exist_ok=True)
             for seed_i in range(qc_after.shape[0]):
+                seed_dir = per_seed_dir / f"seed{seed_i:02d}"
+                seed_dir.mkdir(exist_ok=True)
+                seed_comp = per_row_seeds[seed_i]
                 reg_traj_one_seed = {t: traj_targets[:, seed_i : seed_i + 1, j] for j, t in enumerate(reg_names)}
                 qc_traj_one_seed = qc_traj[:, seed_i : seed_i + 1]
                 progress_seed = normalize_target_trajectories(
@@ -1020,20 +1034,22 @@ def _emit_trajectory_outputs(
                     seed_reg={t: vals[seed_i : seed_i + 1] for t, vals in seed_reg.items()},
                 )
                 progress_seed.pop("QC", None)
-                seed_static = path_dir / f"seed{seed_i:02d}.png"
+                seed_static = seed_dir / f"{slug}.png"
                 plot_trajectory_static(
                     progress_seed,
                     seed_static,
-                    title=f"Trajectory · {r['label'].replace(chr(10), ' ')} · seed {seed_i}",
+                    title=f"{r['label'].replace(chr(10), ' ')} · seed {seed_i}",
+                    seed_composition=seed_comp,
                 )
                 if formats:
-                    seed_out_paths = {fmt: path_dir / f"seed{seed_i:02d}.{fmt}" for fmt in formats}
+                    seed_out_paths = {fmt: seed_dir / f"{slug}.{fmt}" for fmt in formats}
                     plot_trajectory_animation(
                         progress_seed,
                         traj_weights[:, seed_i, :],
                         element_symbols=list(DEFAULT_ELEMENTS),
                         out_paths_by_format=seed_out_paths,
                         title=f"{r['label'].replace(chr(10), ' ')} · seed {seed_i}",
+                        seed_composition=seed_comp,
                     )
 
 
@@ -1150,11 +1166,14 @@ def _parse_args(argv: list[str] | None = None) -> tuple[ContinualRehearsalConfig
     )
     parser.add_argument(
         "--per-seed-trajectories",
-        action="store_true",
-        default=False,
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help=(
-            "Also emit one trajectory plot + animation per (path × seed) instead of only the "
-            "across-seed mean. Default: off (only the mean view is emitted)."
+            "Also emit one trajectory plot + animation per (path × seed) under "
+            "trajectories_per_seed/seed{NN}/<path>.{png,gif,html} (seed-major layout — easier "
+            "to compare paths for one seed). Default: on. Adds ~480 PNGs / scenario plus 480 GIFs "
+            "(~1GB) + 480 HTMLs (~5GB) if both anim formats are on; use --no-per-seed-trajectories "
+            "to skip when you only need the across-seed-mean view."
         ),
     )
     parser.add_argument(

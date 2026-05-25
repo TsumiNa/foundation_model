@@ -123,6 +123,16 @@ def test_plot_trajectory_static_writes_png(tmp_path):
     assert out.exists()
 
 
+def test_plot_trajectory_static_with_seed_composition(tmp_path):
+    """``seed_composition`` is rendered as a monospace annotation under the title — verify the
+    plot still writes with the kwarg present (visual correctness is by inspection)."""
+    out = tmp_path / "static_with_seed.png"
+    plot_trajectory_static(
+        _toy_progress(), out, title="toy trajectory", seed_composition="Au65 Ga20 Gd15"
+    )
+    assert out.exists()
+
+
 def test_plot_trajectory_animation_writes_gif(tmp_path):
     out = tmp_path / "anim.gif"
     plot_trajectory_animation(
