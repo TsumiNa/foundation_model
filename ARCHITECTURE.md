@@ -259,6 +259,14 @@ User-facing knobs (all on `[0, 1]` where applicable):
 - `allowed_elements` — hard whitelist over element symbols.
 - `element_step_scale` — per-element gradient scaling; `0` hard-locks an element to its seed value.
 - `class_target_weight` — weight on the classification objective vs. the regression targets.
+- `max_elements` — cardinality cap "at most K elements per recipe", enforced by a
+  differentiable Plötz–Roth iterative soft top-K mask + final hard projection.
+- `annealing_scale` ∈ `[0, 1]` (default 0.5) — single-knob softness of the K-hot annealing
+  schedule; maps to `τ_start = 25**scale`. Advanced override via the `annealing_schedule` dict.
+- `fixed_amounts` — pin specific elements at user-given absolute amounts (e.g.
+  `{"Au": 0.65}`); reuses the lock-paste path, no `initial_weights` required.
+- `min_nonzero_weight` — drop unlocked positions below this floor (per-row safe fallback
+  keeps the simplex valid).
 
 ```mermaid
 graph TD

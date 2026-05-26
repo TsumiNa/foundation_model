@@ -88,6 +88,9 @@ with
 | **`allowed_elements` whitelist** | Masks the logits of disallowed elements to $-\infty$ before every softmax step. | Restrict the search to physically realisable elements (e.g. `ALLOY_PALETTE`, 41 symbols), suppressing model biases toward Pu / F / Cs / etc. |
 | **`element_step_scale` soft-freeze / hard-lock** | Soft: multiply the element's logit gradient by the scale before each Adam step. Hard (value = 0): rewrite the softmax output to paste seed values back at locked positions and renormalise unlocked positions over the remaining mass. | Let the user pin certain elements to their seed values ("keep the Au-Ga-RE skeleton; you may only change the rare-earth ratios"). |
 | **`seed_blend` mixture** | $w_0 \leftarrow \text{seed\_blend} \cdot \text{seed} + (1 - \text{seed\_blend}) \cdot \text{uniform}_{\text{allowed}}$ | Don't start from a 100 % seed (5 % uniform mass lifts every allowed element's logit from $\log(10^{-12}) \approx -27.6$ to $\log(0.05 / \lvert\text{allowed}\rvert) \approx -7.6$, so Adam can introduce new elements within a few hundred steps — this is the **element-discovery** mechanism). |
+| **`max_elements` cardinality cap** | Plötz–Roth iterative-softmax K-hot mask $m \in [0, 1]^n$ with $\sum_i m_i = K$, multiplied with `softmax(θ)` and renormalised; temperature $\tau$ annealed from $\tau_\text{start} = 25^{\text{annealing\_scale}}$ down to $\tau_\text{end} = 0.01$ (geometric by default). A hard top-K projection at the end guarantees exactly K-hot (subject to floor below). | Restrict recipes to **at most K non-zero elements** (e.g. "I want a 3-element alloy"). The annealing doubles as a continuation method — the soft τ early on lets the optimiser explore different K-subsets before committing. |
+| **`fixed_amounts` user-pin** | Build $\text{locked\_w}_0$ with user-specified values at the named positions, zero elsewhere; reuse the existing lock-paste machinery (no `initial_weights` required since values are given directly). | Pin specific elements at user-given absolute amounts (e.g. `{"Au": 0.65, "Ga": 0.20}` — the optimiser distributes the remaining 0.15 mass across other allowed elements). |
+| **`min_nonzero_weight` floor** | After lock-paste, zero unlocked positions with $0 < w < \text{floor}$ and renormalise the unlocked portion to fit the free mass; safe-fallback when dropping would empty a row (leave that row unfloored). | Reject trace-amount appearances (e.g. `Pt = 0.5 %`) that are not synthesisable — "if you use it, use ≥ 10 %". |
 
 ### What each loss term is for
 
@@ -106,6 +109,11 @@ with
 | `seed_blend` | $[0, 1]$ | 0.95 | Fraction of seed kept at the start (the rest is uniform, so new elements can enter). |
 | `allowed_elements` | symbol list or `"all"` | `"all"` | Element whitelist (hard constraint). |
 | `element_step_scale` | float or `{symbol: float}` | 1.0 | Per-element step scaling; `0` = hard-lock to the seed value. |
+| `max_elements` | `int` ∈ $[1, n]$ or `None` | `None` | Cardinality cap — at most K non-zero elements (differentiable soft top-K + final hard projection). |
+| `annealing_scale` | $[0, 1]$ | 0.5 | Single-knob softness for the K-hot schedule; maps to $\tau_\text{start} = 25^{\text{scale}}$. |
+| `annealing_schedule` | dict or `None` | `None` | Advanced piecewise override of the annealing schedule. |
+| `fixed_amounts` | `{symbol: float}` or `None` | `None` | Pin elements at user-specified amounts (e.g. `{"Au": 0.65}`); needs $\sum < 1$. |
+| `min_nonzero_weight` | $[0, 1]$ | 0.0 | Drop unlocked positions below this floor (and re-distribute mass). |
 | `steps`, `lr` | — | 300, 0.05 | Adam optimisation budget over the logits. |
 
 ---
@@ -118,7 +126,7 @@ with
 | **Where the reported recipe comes from** | $w_{\text{report}}$ inferred from $D(h)$ (an extra AE-decode step) | $w$ itself is the report |
 | **Method-specific loss term** | $\alpha \cdot \lVert h - \tanh(E(D(h))) \rVert^2$ (keeps $h$ on the AE manifold) | $(1 - d) \cdot H(w)$ (controls per-solution peakiness) |
 | **Failure mode** | $\alpha = 0$: $h$ drifts off the manifold, decoded recipe unphysical (QC 0.97 → 0.35). | `seed_blend = 1.0`: the seed's support set is frozen — no new elements can ever appear. |
-| **Method-specific knobs** | `ae_align_scale` | `diversity_scale`, `seed_blend`, `allowed_elements`, `element_step_scale` |
+| **Method-specific knobs** | `ae_align_scale` | `diversity_scale`, `seed_blend`, `allowed_elements`, `element_step_scale`, `max_elements` + `annealing_scale` / `annealing_schedule`, `fixed_amounts`, `min_nonzero_weight` |
 
 The shared backbone — (1) regression MSE + (2) classification cross-entropy — is **identical**
 between the two methods. They differ *only* in the third loss term and in which variable is

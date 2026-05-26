@@ -329,6 +329,20 @@ entry points on the model:
 | `optimize_latent(optimize_space="latent")` | the latent $h$ | no — needs AE decode | `ae_align_scale ∈ [0, 1]` (default 0.5; pulls $h$ onto the AE manifold) |
 | `optimize_composition` | element-weight logits $\theta$, with $w = \text{softmax}(\theta)$ | yes — $w$ is the recipe | `diversity_scale ∈ [0, 1]` (default 1.0; per-output entropy penalty) |
 
+`optimize_composition` further accepts an orthogonal constraint surface (full docstrings on
+the method; design notes in
+[docs/inverse_design_extension_notes.md](docs/inverse_design_extension_notes.md)):
+
+- `max_elements: int` — cardinality cap (at most K non-zero elements per recipe), enforced
+  through a differentiable iterative-softmax K-hot mask with a single `annealing_scale ∈ [0, 1]`
+  softness knob (default 0.5 = the calibrated safe choice).
+- `fixed_amounts: {symbol: float}` — pin specific elements at user-given absolute amounts
+  (e.g. `{"Au": 0.65, "Ga": 0.20}`); the optimiser distributes the remaining mass freely.
+- `min_nonzero_weight: float` — reject trace-amount appearances (e.g. drop anything below
+  10 %), with safe-fallback so the simplex invariant is always preserved.
+
+All three compose orthogonally with each other and with `allowed_elements` / `element_step_scale`.
+
 Both methods share the same regression-MSE + classification-cross-entropy backbone; only the
 third loss term and the optimisation variable differ. **Reference:**
 [docs/inverse_design_algorithms.md](docs/inverse_design_algorithms.md).

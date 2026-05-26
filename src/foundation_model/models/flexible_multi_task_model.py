@@ -73,7 +73,14 @@ OptimizationResult = namedtuple(
 # :meth:`optimize_composition`; when present it has shape ``(steps, B, n_components)``.
 CompositionOptimizationResult = namedtuple(
     "CompositionOptimizationResult",
-    ["optimized_weights", "optimized_descriptor", "optimized_target", "initial_score", "trajectory", "weights_trajectory"],
+    [
+        "optimized_weights",
+        "optimized_descriptor",
+        "optimized_target",
+        "initial_score",
+        "trajectory",
+        "weights_trajectory",
+    ],
     defaults=[None],
 )
 
@@ -2236,7 +2243,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
         diversity_scale: float = 1.0,
         allowed_elements: str | list[str] = "all",
         element_step_scale: float | Mapping[str, float] = 1.0,
+        fixed_amounts: Mapping[str, float] | None = None,
+        min_nonzero_weight: float = 0.0,
         seed_blend: float = 0.95,
+        max_elements: int | None = None,
+        annealing_scale: float = 0.5,
+        annealing_schedule: Mapping[str, Any] | None = None,
         steps: int = 300,
         lr: float = 0.05,
         record_weights_trajectory: bool = False,
@@ -2318,6 +2330,71 @@ class FlexibleMultiTaskModel(L.LightningModule):
               it to the rest of the row, so this is a soft preference, not a hard guarantee.
 
             Symbols are resolved against ``DEFAULT_ELEMENTS`` (kernel alignment required, as above).
+        fixed_amounts : Mapping[str, float] | None, optional
+            Pin specific elements at user-specified weights for the entire optimisation; the
+            optimiser distributes the remaining mass ``1 − Σ fixed_amounts.values()`` across
+            the unfixed elements freely.
+
+            Example: ``{"Au": 0.65, "Ga": 0.20}`` produces recipes with Au exactly 65 % and
+            Ga exactly 20 %; the remaining 15 % is split among other allowed elements as the
+            objective prefers.
+
+            Implementation reuses the same lock-paste machinery as ``element_step_scale = 0``:
+            a per-row tensor ``locked_w0`` is built with the user's amounts at the named
+            positions; ``_w_from_logits`` overwrites those positions every step and
+            renormalises the unlocked positions over ``1 − Σ locked``.
+
+            Constraints:
+              * Each symbol must be in :data:`DEFAULT_ELEMENTS` (kernel alignment required).
+              * Each amount must be in ``(0, 1)``; ``Σ values < 1.0`` (need free mass).
+              * If ``allowed_elements`` is set, every fixed element must also be in the
+                whitelist (locking outside the whitelist is contradictory).
+              * If ``element_step_scale = 0`` is also used, the two sets of locked symbols
+                **must not overlap** — use one mechanism per element.
+              * If ``max_elements`` is also set, fixed elements count toward K (they're
+                always in the selection); strict inequality ``max_elements > n_locked_total``
+                is enforced.
+
+            Unlike ``element_step_scale = 0``'s hard lock, ``fixed_amounts`` does **not**
+            require ``initial_weights`` — the lock values come straight from this kwarg.
+        min_nonzero_weight : float, optional
+            Lower bound on every unlocked element's final weight: positions with
+            ``0 < w < min_nonzero_weight`` are zeroed out and their mass is redistributed across
+            the remaining unlocked positions. Default ``0.0`` (no floor).
+
+            Use case: avoid trace-amount appearances (e.g. ``Pt = 0.5%``) that are not
+            synthesisable — "if you use it, use ≥ 10%".
+
+            Implementation: applied as the *last* step in ``_w_from_logits`` (after soft top-K
+            and lock-paste) and again after the final hard top-K projection. Locked elements
+            (from ``element_step_scale = 0`` or ``fixed_amounts``) are **not** subject to the
+            floor — their values are set explicitly by the user.
+
+            Constraints:
+              * ``0 ≤ min_nonzero_weight ≤ 1``.
+              * If ``max_elements`` is set: ``min_nonzero_weight ≤ 1 / max_elements`` (otherwise
+                ``K`` elements each ≥ floor can't sum to ≤ 1).
+              * If ``fixed_amounts`` is set: every fixed value must be ≥ floor (else
+                contradiction).
+              * If ``element_step_scale = 0`` locks with ``initial_weights`` are present: every
+                locked seed value must be ≥ floor (checked at runtime once the seed is
+                normalised).
+
+            Edge case: if dropping every below-floor position would leave a row with zero
+            unlocked mass (no element survives), the floor is skipped *for that row only* —
+            preserving the simplex (rows always sum to 1). When this happens, the row will
+            contain unlocked positions below ``min_nonzero_weight``; if you see this in
+            practice your floor is too aggressive for the model's preferred subset.
+
+            Practical note: when ``max_elements`` is not set, no upper bound on the floor is
+            enforced beyond ``floor ≤ 1``. A very large floor (e.g. 0.5 with 94 components) will
+            silently trigger the per-row fallback on almost every row — the result is a valid
+            simplex but the floor is effectively ignored. Pair the floor with ``max_elements``
+            (which enforces ``floor ≤ 1 / max_elements``) when you want a hard guarantee.
+
+            "At most K" implication: when combined with ``max_elements``, the floor can drop
+            below-floor positions in the K-subset, so the final non-zero count can be **less
+            than K** (still ≤ K — the user-facing promise is unchanged).
         seed_blend : float, optional
             How much of the (per-row) seed prior to keep when ``initial_weights`` is given;
             ``w0 ← seed_blend · seed + (1 − seed_blend) · uniform_over_allowed``. Default ``0.95``
@@ -2327,6 +2404,82 @@ class FlexibleMultiTaskModel(L.LightningModule):
             when they help the objective. Set to ``1.0`` to reproduce the strict seed-only behaviour
             (no new elements can enter the support set); ``0.0`` makes the seed irrelevant and
             starts from uniform. Ignored when ``initial_weights is None``.
+        max_elements : int | None, optional
+            If set, restricts the final composition to at most this many non-zero elements.
+            Unlike a naive post-hoc top-K projection, the constraint **participates in
+            optimisation throughout** via a differentiable iterative-softmax K-hot mask
+            (Plötz–Roth, NeurIPS 2018) coupled with a temperature-annealing schedule.
+
+            How it works in one paragraph: at each step we compute a soft K-hot mask
+            ``m ∈ [0,1]^n`` with ``Σm = K`` from the same logits the softmax uses, then form
+            ``w = (softmax(lg) · m) / Σ(softmax(lg) · m)``. Temperature ``τ`` controls how
+            "K-hot" ``m`` is: large τ → uniform-ish (the constraint is soft, gradient can flow
+            between candidate subsets), small τ → near one-hot per iteration (constraint is hard).
+            τ is driven by the ``annealing_scale`` / ``annealing_schedule`` kwargs below — by
+            default a geometric schedule from ``25**annealing_scale`` down to a fixed
+            ``τ_end = 0.01``. The annealing doubles as a continuation method that helps escape
+            local optima.
+
+            After the loop, a final hard top-K projection is applied so the returned
+            ``optimized_weights`` has **at most** ``max_elements`` non-zero positions (subject
+            to any locked elements, which are always counted toward K — see below). The
+            count saturates at K when the optimiser left at least K positions with positive
+            ``w_soft`` mass; if it drove some logits all the way to zero, the row can land
+            below K — this is by design, not a bug ("at most K" is the user-facing promise).
+
+            Constraints:
+              * ``1 ≤ max_elements ≤ n_components``.
+              * If any element is hard-locked via ``element_step_scale=0``, the lock counts
+                toward K; require ``max_elements ≥ n_locked``.
+              * If ``allowed_elements`` restricts the support, require ``max_elements ≤ |allowed|``.
+
+            ``None`` (default) or ``max_elements == n_components`` disables the constraint.
+        annealing_scale : float, optional
+            Single-knob "softness" of the annealing schedule, normalised to ``[0, 1]``.
+            Default ``0.5``. Maps internally to raw temperature via ``τ_start = 25**scale``:
+
+              * ``0.0`` → ``τ_start = 1.0``    (no exploration; constraint hard from the start)
+              * ``0.5`` → ``τ_start = 5.0``    (default; safe choice — QC stable, decent targets)
+              * ``1.0`` → ``τ_start = 25.0``   (max exploration; longer soft phase)
+
+            The full schedule is geometric from ``τ_start(scale)`` down to ``τ_end = 0.01``.
+            Ignored when ``max_elements`` is None.
+
+            **Calibration**: the 0.5 default was picked from a sweep on the inverse-design
+            fine-tuned model (300 steps, K∈{3, 5}; see ``logs/sweep_tau_schedule.png``). Across
+            the 3 paper scenarios it keeps QC within ±0.02 of the unconstrained baseline while
+            hitting K=3/5 cardinality. For aggressive target chasing, raise toward 0.8-1.0
+            (and consider an advanced schedule with ``annealing_func="linear"`` to hold the
+            soft phase longer). For QC priority, leave at 0.5.
+        annealing_schedule : dict | None, optional
+            Advanced piecewise schedule. **Overrides the front of the simple schedule.**
+            When supplied, this dict takes precedence over ``annealing_scale``'s implicit
+            schedule for the steps it covers. The format is three parallel lists of length N:
+
+            .. code-block:: python
+
+                {
+                    "step":           [0.2, 0.5, 1.0],         # fractional step boundaries (0,1]
+                    "scale":          [0.8, 0.5, 0.5],         # normalised scale [0,1] at each boundary
+                    "annealing_func": ["geometric", "geometric", "geometric"],   # interpolation in each segment
+                }
+
+            **Reading the dict**: the schedule starts at step=0 from the value given by
+            ``annealing_scale``. Segment ``i`` covers ``(step[i-1], step[i]]`` (with
+            ``step[-1] := 0``); within that segment, the normalised scale interpolates from the
+            previous segment's endpoint (or ``annealing_scale`` for segment 0) to ``scale[i]``
+            using ``annealing_func[i]``. The interpolated scale is then mapped to raw τ via the
+            same ``25**scale`` formula used by ``annealing_scale``.
+
+            **If ``step[-1] < 1.0``**, the remaining ``(step[-1], 1.0]`` portion continues with
+            a default geometric tail: from the raw τ value at ``step[-1]`` (i.e.
+            ``25**scale[-1]``) down to ``τ_end = 0.01``. This guarantees the schedule always
+            reaches the hard end inside the loop (the final hard-projection cleans up K-hot
+            either way).
+
+            **Allowed annealing_func values**: ``"geometric"``, ``"linear"``, ``"cosine"``,
+            ``"constant"``. ``"constant"`` holds the segment's starting value (``scale[i]`` is
+            ignored — useful for warm-up phases).
         steps : int
             Adam optimisation steps. Default 300.
         lr : float
@@ -2456,6 +2609,155 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 f"element_symbol → float; got {type(element_step_scale).__name__}."
             )
 
+        # --- Validate fixed_amounts (per-element explicit pinning) -------------------------------
+        # Build the (n_components,) tensors lazily: ``fixed_w0_vec`` (per-element pinned value,
+        # zero elsewhere) and ``fixed_mask_vec`` (bool: True at pinned positions). The actual
+        # batch-shaped ``locked_w0`` is materialised later (alongside step_scale=0 locks) once we
+        # know the batch size.
+        fixed_w0_vec: torch.Tensor | None = None
+        fixed_mask_vec: torch.Tensor | None = None
+        if fixed_amounts is not None:
+            if not isinstance(fixed_amounts, Mapping):
+                raise TypeError(
+                    f"fixed_amounts must be a mapping of element_symbol → float or None; "
+                    f"got {type(fixed_amounts).__name__}."
+                )
+            if len(fixed_amounts) == 0:
+                raise ValueError("fixed_amounts must be non-empty when provided.")
+            sym_to_idx = {s: i for i, s in enumerate(DEFAULT_ELEMENTS)}
+            bad_syms = [s for s in fixed_amounts if s not in sym_to_idx]
+            if bad_syms:
+                raise ValueError(f"Unknown element symbol(s) in fixed_amounts: {bad_syms}.")
+            if n_components != len(DEFAULT_ELEMENTS):
+                raise ValueError(
+                    f"fixed_amounts requires the kernel to align with DEFAULT_ELEMENTS "
+                    f"(n_components={n_components}, expected {len(DEFAULT_ELEMENTS)})."
+                )
+            for sym, amt in fixed_amounts.items():
+                if not 0.0 < float(amt) < 1.0:
+                    raise ValueError(f"fixed_amounts['{sym}']={amt} must be strictly between 0 and 1.")
+            total = float(sum(fixed_amounts.values()))
+            if total >= 1.0:
+                raise ValueError(
+                    f"sum(fixed_amounts.values())={total:.4f} must be strictly less than 1.0 "
+                    "(the optimiser needs unfixed mass to allocate)."
+                )
+            # Allowed-list compatibility — pinning outside the whitelist is contradictory.
+            if elem_mask_arg is not None:
+                bad_against_allowed = [s for s in fixed_amounts if not elem_mask_arg[sym_to_idx[s]]]
+                if bad_against_allowed:
+                    raise ValueError(
+                        f"fixed_amounts symbols {bad_against_allowed} are not in allowed_elements — "
+                        "pinning a disallowed element is contradictory."
+                    )
+            # Mutual exclusion with element_step_scale = 0 (the other hard-lock path).
+            if step_scale_arg is not None:
+                overlap = [s for s in fixed_amounts if float(step_scale_arg[sym_to_idx[s]]) == 0.0]
+                if overlap:
+                    raise ValueError(
+                        f"Symbols {overlap} appear in both element_step_scale=0 and "
+                        "fixed_amounts. Use one mechanism per element."
+                    )
+            fixed_w0_vec = torch.zeros(n_components)
+            fixed_mask_vec = torch.zeros(n_components, dtype=torch.bool)
+            for sym, amt in fixed_amounts.items():
+                idx = sym_to_idx[sym]
+                fixed_w0_vec[idx] = float(amt)
+                fixed_mask_vec[idx] = True
+
+        # --- Validate min_nonzero_weight (per-element floor) -------------------------------------
+        if not 0.0 <= min_nonzero_weight <= 1.0:
+            raise ValueError(f"min_nonzero_weight must be in [0, 1]; got {min_nonzero_weight}.")
+        if min_nonzero_weight > 0.0:
+            # If max_elements is set, the floor must be feasible: K elements ≥ floor summing to 1
+            # implies K * floor ≤ 1.
+            if max_elements is not None and min_nonzero_weight > 1.0 / max_elements:
+                raise ValueError(
+                    f"min_nonzero_weight={min_nonzero_weight} exceeds 1 / max_elements="
+                    f"{1.0 / max_elements:.4f}. With at most {max_elements} non-zero positions, "
+                    "no row can have every weight ≥ floor and still sum to 1."
+                )
+            # Fixed amounts must themselves be ≥ the floor (else contradiction).
+            if fixed_amounts is not None:
+                bad = sorted((s, v) for s, v in fixed_amounts.items() if float(v) < min_nonzero_weight)
+                if bad:
+                    raise ValueError(
+                        f"fixed_amounts entries {bad} are below min_nonzero_weight="
+                        f"{min_nonzero_weight}. The floor cannot override an explicit pin."
+                    )
+
+        # --- Validate cardinality constraint (max_elements + annealing knobs) -----------------------
+        if max_elements is not None:
+            if not isinstance(max_elements, int) or isinstance(max_elements, bool):
+                raise TypeError(f"max_elements must be an int or None; got {type(max_elements).__name__}.")
+            if not 1 <= max_elements <= n_components:
+                raise ValueError(f"max_elements must be in [1, n_components={n_components}]; got {max_elements}.")
+            if elem_mask_arg is not None:
+                n_allowed = int(elem_mask_arg.sum().item())
+                if max_elements > n_allowed:
+                    raise ValueError(
+                        f"max_elements={max_elements} exceeds the number of allowed elements "
+                        f"({n_allowed}). Widen ``allowed_elements`` or lower ``max_elements``."
+                    )
+            # Lock-vs-K check: locked positions (element_step_scale=0 ∪ fixed_amounts) all count
+            # toward K. We require *strict* ``max_elements > n_locked`` for both lock paths:
+            # equality leaves the lock-paste with no unlocked slot to absorb the leftover mass
+            # (1 − Σ locked) and produces rows that sum to < 1 — silently breaking the simplex.
+            # For ``fixed_amounts`` this is definite (``Σ < 1`` enforced at kwarg time); for
+            # ``element_step_scale=0`` the seed values *could* sum to exactly 1, but K-constrained
+            # all-locked recipes have no degrees of freedom anyway, so rejecting equality is
+            # both safe and clearer.
+            n_locked_pre = 0
+            if step_scale_arg is not None:
+                n_locked_pre += int((step_scale_arg == 0).sum().item())
+            if fixed_mask_vec is not None:
+                n_locked_pre += int(fixed_mask_vec.sum().item())
+            if n_locked_pre >= max_elements:
+                raise ValueError(
+                    f"max_elements={max_elements} must be > total locked elements ({n_locked_pre}, "
+                    "counting element_step_scale=0 ∪ fixed_amounts) — the lock-paste needs at "
+                    "least one unlocked slot to absorb the leftover mass (1 − Σ locked); equality "
+                    "would silently produce row sums < 1. Raise max_elements or unlock some."
+                )
+            if not 0.0 <= annealing_scale <= 1.0:
+                raise ValueError(f"annealing_scale must be in [0, 1]; got {annealing_scale}.")
+            if annealing_schedule is not None:
+                if not isinstance(annealing_schedule, Mapping):
+                    raise TypeError(f"annealing_schedule must be a mapping; got {type(annealing_schedule).__name__}.")
+                missing = {"step", "scale", "annealing_func"} - set(annealing_schedule)
+                if missing:
+                    raise ValueError(
+                        f"annealing_schedule missing required keys {sorted(missing)}. "
+                        "Required: step, scale, annealing_func — all parallel lists."
+                    )
+                sched_steps = list(annealing_schedule["step"])
+                sched_scales = list(annealing_schedule["scale"])
+                sched_funcs = list(annealing_schedule["annealing_func"])
+                if not (len(sched_steps) == len(sched_scales) == len(sched_funcs)):
+                    raise ValueError(
+                        f"annealing_schedule lists must be the same length; got "
+                        f"step={len(sched_steps)}, scale={len(sched_scales)}, "
+                        f"annealing_func={len(sched_funcs)}."
+                    )
+                if len(sched_steps) == 0:
+                    raise ValueError("annealing_schedule lists must be non-empty.")
+                prev_s = 0.0
+                for s in sched_steps:
+                    if not 0.0 < float(s) <= 1.0:
+                        raise ValueError(f"annealing_schedule['step'] entries must be in (0, 1]; got {s}.")
+                    if float(s) <= prev_s:
+                        raise ValueError(f"annealing_schedule['step'] must be strictly increasing; got {sched_steps}.")
+                    prev_s = float(s)
+                for t in sched_scales:
+                    if not 0.0 <= float(t) <= 1.0:
+                        raise ValueError(f"annealing_schedule['scale'] entries must be in [0, 1]; got {t}.")
+                allowed_funcs = ("geometric", "linear", "cosine", "constant")
+                for f in sched_funcs:
+                    if f not in allowed_funcs:
+                        raise ValueError(
+                            f"annealing_schedule['annealing_func'] entries must be one of {allowed_funcs}; got {f!r}."
+                        )
+
         # --- Validate the seed (BEFORE touching model state, so a bad input doesn't leave the
         #     model in eval() / with params switched off). ---------------------------------------
         if initial_weights is None:
@@ -2542,18 +2844,31 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # Move the element-constraint tensors onto the right device (validated above).
             elem_mask = elem_mask_arg.to(device=device) if elem_mask_arg is not None else None
             step_scale = step_scale_arg.to(device=device, dtype=dtype) if step_scale_arg is not None else None
+            fixed_w0_dev = fixed_w0_vec.to(device=device, dtype=dtype) if fixed_w0_vec is not None else None
+            fixed_mask_dev = fixed_mask_vec.to(device=device) if fixed_mask_vec is not None else None
 
-            # --- Hard-lock setup for elements with step_scale == 0 ----------------------------------
-            # Zeroing ``logit_i.grad`` keeps that logit constant but does NOT keep ``w_i`` constant,
-            # because softmax renormalises across all logits — when other (unlocked) logits move, the
-            # softmax denominator changes and so does the locked weight. To truly honour the docstring
-            # promise "freezes those elements at their seed values", we (a) detect locked indices, (b)
-            # capture their per-row seed weights, and (c) inside ``_w_from_logits`` paste those seed
-            # values back over the softmax output and renormalise the unlocked positions to fill the
-            # remaining ``1 − Σ locked_w`` mass per row. The gradient through the locked indices is
-            # automatically zero (the lock branch uses a constant), so we no longer need the
-            # ``step_scale.mul_`` zeroing for them — but we leave that path active for the genuinely
-            # soft case ``0 < step_scale < 1``.
+            # --- Hard-lock setup ----------------------------------------------------------------------
+            # Two hard-lock sources both end up in the same ``(locked_mask, locked_w0)`` pair so the
+            # downstream ``_w_from_logits`` / ``_apply_lock_paste`` logic is unchanged:
+            #
+            #   1. ``element_step_scale = 0``: pins the listed elements at their (un-blended)
+            #      ``initial_weights`` values. Requires ``initial_weights`` because there's no other
+            #      source for per-row seed values.
+            #   2. ``fixed_amounts``: pins the listed elements at user-given absolute amounts. No
+            #      ``initial_weights`` required — the lock values come straight from the kwarg.
+            #
+            # The two paths must not overlap (validated above). When both are present, we just
+            # OR the masks and add the value tensors (disjoint by construction).
+            #
+            # Why this matters: zeroing ``logit_i.grad`` keeps that logit constant but does NOT keep
+            # ``w_i`` constant — softmax renormalises across all logits, so when other (unlocked)
+            # logits move, the softmax denominator changes and so does the locked weight. The fix
+            # is to (a) detect locked indices, (b) capture their per-row target weights, and (c)
+            # inside ``_w_from_logits`` paste those values back over the softmax output and
+            # renormalise the unlocked positions to fill the remaining ``1 − Σ locked_w`` mass per
+            # row. The gradient through the locked indices is automatically zero (the lock branch
+            # uses a constant), so we no longer need the ``step_scale.mul_`` zeroing for them —
+            # but we leave that path active for the genuinely soft case ``0 < step_scale < 1``.
             locked_mask: torch.Tensor | None = None
             locked_w0: torch.Tensor | None = None
             if step_scale is not None:
@@ -2572,23 +2887,247 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     locked_mask = locked_idx_mask  # (n_components,) bool, on device
                     # (B, n_components): seed values at locked positions, 0 elsewhere — constant.
                     locked_w0 = (w0_seed * locked_mask.to(dtype)).detach()
+            if fixed_mask_dev is not None:
+                # Broadcast the per-element fixed values to every row in the batch.
+                B = logits.shape[0]
+                fixed_w0_batch = fixed_w0_dev.unsqueeze(0).expand(B, -1).detach()
+                if locked_mask is None:
+                    locked_mask = fixed_mask_dev
+                    locked_w0 = fixed_w0_batch
+                else:
+                    locked_mask = locked_mask | fixed_mask_dev  # validated disjoint
+                    locked_w0 = locked_w0 + fixed_w0_batch
 
-            def _w_from_logits(lg: torch.Tensor) -> torch.Tensor:
-                """Softmax over logits; mask disallowed elements; hard-lock the chosen ones at seed."""
-                if elem_mask is not None:
-                    lg = lg.masked_fill(~elem_mask, float("-inf"))
-                w = torch.softmax(lg, dim=-1)
+            # Runtime sanity: combined lock sum must leave room (or fit exactly) for the simplex.
+            # ``fixed_amounts`` enforces ``Σ < 1`` at kwarg time, and ``element_step_scale=0``
+            # locks at seed values which sum to ≤ 1 per row — but the *combined* total could
+            # exceed 1 (e.g. seed-lock Mg=0.50 + fix Au=0.65). Check here, with a tiny tolerance
+            # for float noise.
+            if locked_w0 is not None:
+                lock_sums = locked_w0.sum(dim=-1)
+                if (lock_sums > 1.0 + 1e-5).any():
+                    raise ValueError(
+                        f"Combined locked mass exceeds 1.0 on at least one row "
+                        f"(max row-sum = {float(lock_sums.max()):.4f}). Likely cause: "
+                        "``element_step_scale=0`` locks plus ``fixed_amounts`` together claim more "
+                        "than 100% of the simplex. Lower one set of values or drop a lock."
+                    )
+
+            # Runtime sanity: floored elements must not contradict the lock-paste targets.
+            # ``fixed_amounts`` was checked at kwarg time; ``element_step_scale=0`` locks have
+            # per-row seed values we couldn't see earlier — verify them now.
+            if min_nonzero_weight > 0.0 and locked_mask is not None and locked_w0 is not None:
+                locked_below_floor = (locked_w0 > 0) & (locked_w0 < min_nonzero_weight)
+                if locked_below_floor.any():
+                    raise ValueError(
+                        f"At least one locked element's value falls below min_nonzero_weight="
+                        f"{min_nonzero_weight}. Likely cause: an element_step_scale=0 lock points "
+                        "at a seed value below the floor (raise the seed, lower the floor, or "
+                        "drop the lock)."
+                    )
+
+            # --- Soft top-K (cardinality constraint) helpers ----------------------------------------
+            # Schedule shape (controlled by ``annealing_scale`` and optionally ``annealing_schedule``):
+            #
+            #   * Normalised scale ∈ [0, 1] is the user-facing knob; raw τ is derived via
+            #     ``τ = 25**scale``  (so scale=0 → τ=1, scale=0.5 → τ=5, scale=1 → τ=25).
+            #   * Default schedule when no dict is given: geometric from ``τ_start=25**annealing_scale``
+            #     at fractional step 0 down to ``_TAU_END=0.01`` at fractional step 1.
+            #   * When ``annealing_schedule`` dict is provided, its segments override the front of
+            #     the schedule; the segment from ``step[-1]`` to 1.0 (if not already at 1.0) falls
+            #     back to the geometric tail from ``25**scale[-1]`` down to ``_TAU_END``.
+            #
+            # ``current_tau`` lives in a list so the optimisation loop can mutate it each step
+            # without rebuilding the ``_w_from_logits`` closure that reads it.
+            _TAU_FLOOR = 1e-3  # numerical lower bound; below this softmax(lg/τ) loses precision
+            _TAU_END = 0.01  # fixed final hardness for the default schedule's tail
+            _SCALE_TAU_BASE = 25.0  # τ = _SCALE_TAU_BASE**scale → 0→1, 0.5→5, 1→25
+
+            def _scale_to_tau(scale: float) -> float:
+                return float(_SCALE_TAU_BASE ** max(0.0, min(1.0, scale)))
+
+            def _interp_scalar(a: float, b: float, t: float, func: str) -> float:
+                """Interpolate from ``a`` to ``b`` at local-time ``t`` ∈ [0, 1]."""
+                if func == "constant":
+                    return a
+                if func == "linear":
+                    return a + (b - a) * t
+                if func == "cosine":
+                    return b + 0.5 * (a - b) * (1.0 + math.cos(math.pi * t))
+                # geometric — guard against zero/sign issues by working in log space when both >0.
+                if a > 0.0 and b > 0.0:
+                    return a * (b / a) ** t
+                # Fall back to linear for degenerate cases (shouldn't trigger in normal use).
+                return a + (b - a) * t
+
+            # Materialise schedule arrays once (validated above), so the per-step lookup is light.
+            _sched_steps: list[float] = (
+                [float(s) for s in annealing_schedule["step"]] if annealing_schedule is not None else []
+            )
+            _sched_scales: list[float] = (
+                [float(t) for t in annealing_schedule["scale"]] if annealing_schedule is not None else []
+            )
+            _sched_funcs: list[str] = (
+                list(annealing_schedule["annealing_func"]) if annealing_schedule is not None else []
+            )
+
+            def _tau_for_step(step: int) -> float:
+                """Return the raw τ for integer optimisation step ``step``."""
+                if max_elements is None or steps <= 1:
+                    return float(max(_TAU_END, _TAU_FLOOR))
+                # Fractional progress in [0, 1].
+                s = step / (steps - 1)
+                # Default schedule (used directly when no dict, or for the tail when dict ends < 1.0).
+                default_tau_start = _scale_to_tau(annealing_scale)
+                default_tau_end = _TAU_END
+
+                if _sched_steps:
+                    # Walk through dict segments to find the one containing ``s``.
+                    prev_step = 0.0
+                    prev_scale = annealing_scale  # segment 0 starts at the simple knob's value
+                    for i, seg_end in enumerate(_sched_steps):
+                        if s <= seg_end:
+                            local_t = (s - prev_step) / max(seg_end - prev_step, 1e-12)
+                            scale_now = _interp_scalar(prev_scale, _sched_scales[i], local_t, _sched_funcs[i])
+                            return float(max(_scale_to_tau(scale_now), _TAU_FLOOR))
+                        prev_step = seg_end
+                        prev_scale = _sched_scales[i]
+                    # ``s`` is past the dict's last step → use the geometric tail from
+                    # ``25**scale[-1]`` at ``step[-1]`` down to ``_TAU_END`` at 1.0.
+                    tail_start_tau = _scale_to_tau(_sched_scales[-1])
+                    tail_end_step = 1.0
+                    tail_local_t = (s - _sched_steps[-1]) / max(tail_end_step - _sched_steps[-1], 1e-12)
+                    val = tail_start_tau * (default_tau_end / tail_start_tau) ** tail_local_t
+                    return float(max(val, _TAU_FLOOR))
+
+                # No dict — default geometric schedule from τ_start(annealing_scale) to _TAU_END.
+                val = default_tau_start * (default_tau_end / default_tau_start) ** s
+                return float(max(val, _TAU_FLOOR))
+
+            current_tau = [_tau_for_step(0)]
+
+            def _soft_topk_mask(
+                lg: torch.Tensor, K: int, tau: float, *, force_select: torch.Tensor | None = None
+            ) -> torch.Tensor:
+                """Plötz–Roth iterative softmax. Returns m ∈ [0,1]^(B, n) with Σm = K.
+
+                ``force_select`` (n_components,) bool marks positions that must be in the K
+                selection (e.g. hard-locked elements). Instead of boosting those logits — which
+                would make the iterative softmax pick them K times in a row, never moving on —
+                we **pre-seed** the mask with 1.0 at those positions and run only ``K - n_locked``
+                iterations on the *unlocked* positions (their logits are masked to ``-inf``
+                inside the iteration so they never compete).
+                """
+                if force_select is None:
+                    alpha = lg
+                    m = torch.zeros_like(lg)
+                    n_iter = K
+                else:
+                    # Pre-mark locked positions as fully selected; iterate only on the rest.
+                    n_locked = int(force_select.sum().item())
+                    n_iter = K - n_locked
+                    locked_row = force_select.to(lg.dtype).unsqueeze(0).expand_as(lg)
+                    m = locked_row.clone()
+                    alpha = lg.masked_fill(force_select, float("-inf"))
+                for _ in range(n_iter):
+                    p = torch.softmax(alpha / tau, dim=-1)
+                    m = m + p
+                    # The shift in scaled-logit space at the selected position is
+                    # ``log(1−p)/τ`` — at small τ this is enormously negative, so the next
+                    # iteration cannot re-pick the same position. (We must NOT multiply by τ here.)
+                    alpha = alpha + torch.log((1.0 - p).clamp(min=1e-12))
+                return m
+
+            def _hard_topk_project(w: torch.Tensor, K: int) -> torch.Tensor:
+                """Hard top-K projection: keep K largest per row, zero rest, renormalise.
+
+                If ``locked_mask`` is set, every locked position is forced into the kept set
+                (so the lock-paste below still has a place to write its seed values); the
+                remaining ``K − n_locked`` slots are filled by the largest unlocked weights.
+                """
+                if locked_mask is None:
+                    _, idx = w.topk(K, dim=-1)
+                    keep = torch.zeros_like(w).scatter_(-1, idx, 1.0)
+                else:
+                    n_locked = int(locked_mask.sum().item())
+                    n_free = K - n_locked
+                    locked_row = locked_mask.to(w.dtype).unsqueeze(0).expand_as(w)
+                    if n_free > 0:
+                        # Exclude locked positions from the unlocked competition by sending them
+                        # to ``-inf`` before topk; locked positions are added back via ``locked_row``.
+                        w_for_free = w.masked_fill(locked_mask.unsqueeze(0), float("-inf"))
+                        _, idx = w_for_free.topk(n_free, dim=-1)
+                        free_keep = torch.zeros_like(w).scatter_(-1, idx, 1.0)
+                        keep = (locked_row + free_keep).clamp(max=1.0)
+                    else:
+                        keep = locked_row
+                w = w * keep
+                return w / w.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+
+            def _apply_lock_paste(w: torch.Tensor) -> torch.Tensor:
+                """Paste locked seed values onto ``w`` and renormalise unlocked positions."""
                 if locked_mask is None:
                     return w
-                # Locked rows hold their seed values; unlocked rows are renormalised to fill the
-                # remaining mass ``1 − Σ_locked seed``. Differentiable: the lock branch is a constant
-                # so its gradient is 0; the unlocked branch's gradient flows through the rescale.
-                free_mask_f = (~locked_mask).to(w.dtype)  # (n_components,)
-                w_unlocked = w * free_mask_f  # zero at locked positions
-                # type: ignore[union-attr] — locked_w0 is set together with locked_mask above.
+                free_mask_f = (~locked_mask).to(w.dtype)
+                w_unlocked = w * free_mask_f
                 free_mass = (1.0 - locked_w0.sum(dim=-1, keepdim=True)).clamp(min=0.0)
                 w_unlocked = w_unlocked / w_unlocked.sum(dim=-1, keepdim=True).clamp(min=1e-12) * free_mass
                 return w_unlocked + locked_w0
+
+            def _apply_min_floor(w: torch.Tensor) -> torch.Tensor:
+                """Drop unlocked positions below ``min_nonzero_weight`` and re-fill free mass.
+
+                Locked positions are exempt (their values are user-set). If dropping below-floor
+                positions would leave a row with zero unlocked mass, the floor is skipped for
+                that row — preserving the simplex invariant. The "at most K" guarantee still
+                holds; some rows may end up with fewer than K non-zero positions.
+                """
+                if min_nonzero_weight <= 0.0:
+                    return w
+                if locked_mask is not None:
+                    unlocked_f = (~locked_mask).to(w.dtype)
+                    free_mass = (1.0 - locked_w0.sum(dim=-1, keepdim=True)).clamp(min=0.0)
+                    unlocked_bool = (~locked_mask).unsqueeze(0).expand_as(w)
+                else:
+                    unlocked_f = torch.ones_like(w[0])
+                    free_mass = torch.ones(w.shape[0], 1, dtype=w.dtype, device=w.device)
+                    unlocked_bool = torch.ones_like(w, dtype=torch.bool)
+                below = (w > 0) & (w < min_nonzero_weight) & unlocked_bool
+                if not below.any():
+                    return w
+                w_drop = w.masked_fill(below, 0.0)
+                # Per-row unlocked sum after the tentative drop.
+                unlocked_after = w_drop * unlocked_f
+                unlocked_sum = unlocked_after.sum(dim=-1, keepdim=True)
+                # Rows where the drop is safe — at least one unlocked position survives.
+                can_drop = unlocked_sum > 1e-12
+                # Renormalise unlocked portion to fit the free mass; locked stays as-is.
+                safe_sum = unlocked_sum.clamp(min=1e-12)
+                if locked_mask is not None:
+                    locked_part = w_drop * locked_mask.to(w.dtype)
+                    w_renorm = locked_part + unlocked_after * (free_mass / safe_sum)
+                else:
+                    w_renorm = w_drop / safe_sum
+                return torch.where(can_drop.expand_as(w), w_renorm, w)
+
+            def _w_from_logits(lg: torch.Tensor) -> torch.Tensor:
+                """Softmax → optional soft top-K → optional hard-lock paste → optional min-floor.
+
+                Reads ``current_tau[0]`` (set by the outer loop) for the soft top-K temperature.
+                """
+                if elem_mask is not None:
+                    lg = lg.masked_fill(~elem_mask, float("-inf"))
+                w_soft = torch.softmax(lg, dim=-1)
+                if max_elements is not None and max_elements < n_components:
+                    # Force locked positions to always sit in the K-hot mask so the lock-paste
+                    # below has somewhere to write. ``w_soft`` itself is computed from the
+                    # *unboosted* logits, so the within-K ratios reflect the optimisation state.
+                    m_topk = _soft_topk_mask(lg, max_elements, current_tau[0], force_select=locked_mask)
+                    w = w_soft * m_topk
+                    w = w / w.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+                else:
+                    w = w_soft
+                return _apply_min_floor(_apply_lock_paste(w))
 
             def _heads_forward(h_task: torch.Tensor) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
                 """Run regression heads, return (per-task predictions, loss terms)."""
@@ -2616,6 +3155,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 return torch.stack(values, dim=-1) if values else torch.zeros((B, 0), device=device, dtype=dtype)
 
             # --- Record initial scores --------------------------------------------------------------
+            # Initial scoring uses τ at step 0 of the annealing schedule — i.e. the softest end
+            # of the (annealing_scale + annealing_schedule)-derived τ curve, where the optimisation
+            # actually begins.
+            current_tau[0] = _tau_for_step(0)
             with torch.no_grad():
                 w0_tensor = _w_from_logits(logits)
                 h0 = torch.tanh(self.encoder(w0_tensor @ kmd_kernel))
@@ -2627,7 +3170,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # gradient only on ``logits`` — no stale grads accumulate on encoder/heads.
             trajectory: list[torch.Tensor] = []
             weights_trajectory: list[torch.Tensor] = [] if record_weights_trajectory else []
-            for _ in range(steps):
+            for step in range(steps):
+                current_tau[0] = _tau_for_step(step)
                 optimizer.zero_grad()
                 w = _w_from_logits(logits)
                 x = w @ kmd_kernel
@@ -2647,15 +3191,29 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 optimizer.step()
                 trajectory.append(_stack([p.detach() for p in preds], logits.shape[0]))
                 if record_weights_trajectory:
-                    # Snapshot the post-step weights (after the softmax+hard-lock applied next iter
-                    # would re-clean them, but the user wants what the *current* recipe looks like).
+                    # Snapshot the post-step weights at the *current* (still-soft) τ — the
+                    # trajectory thus reflects the annealing schedule, not the hard projection.
                     # Stored on CPU to keep GPU memory flat for long trajectories on large B.
                     with torch.no_grad():
                         weights_trajectory.append(_w_from_logits(logits).detach().cpu())
 
             # --- Final state ------------------------------------------------------------------------
+            # Use the hardest τ for the final readout, then (if ``max_elements`` is active) apply
+            # a hard top-K projection so the returned ``optimized_weights`` has **at most** K
+            # non-zero positions (the floor below may reduce that further) — at τ_end ≈ 0.01 the
+            # soft mask is already near-K-hot, so the projection just cleans up residual
+            # sub-threshold weights.
+            current_tau[0] = float(max(_TAU_END, _TAU_FLOOR))
             with torch.no_grad():
                 w_final = _w_from_logits(logits)
+                if max_elements is not None and max_elements < n_components:
+                    w_final = _hard_topk_project(w_final, max_elements)
+                    # Re-apply lock-paste — the projection may have re-distributed mass across
+                    # unlocked positions, and lock-paste's "free mass" renormalisation needs to
+                    # be re-run so the row still sums to exactly 1. Then re-floor: the projection
+                    # may have promoted a previously-zeroed below-floor position back in.
+                    w_final = _apply_lock_paste(w_final)
+                    w_final = _apply_min_floor(w_final)
                 x_final = w_final @ kmd_kernel
                 h_final = torch.tanh(self.encoder(x_final))
                 final_preds, _ = _heads_forward(h_final)
