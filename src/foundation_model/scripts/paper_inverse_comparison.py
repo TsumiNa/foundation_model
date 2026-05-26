@@ -158,6 +158,47 @@ COMPOSITION_CONFIGS: list[dict[str, Any]] = [
         "diversity": 0.0,
     },
     {"label": "comp\n(random)", "init": "random", "blend": 0.95, "allowed": "all", "scale": 1.0, "diversity": 1.0},
+    # max_elements (cardinality constraint via differentiable iterative-softmax + annealing).
+    # Builds on the "element list" + seed + 5%-all configuration — the most realistic baseline —
+    # and adds K=3 / K=5 hard caps. Uses the calibrated default annealing (geometric, τ_start=5);
+    # the K=5 row also includes a linear-schedule aggressive variant to demonstrate the
+    # explore-then-commit behaviour that occasionally beats the unconstrained baseline.
+    {
+        "label": "comp\n(seed, 5% all,\nelement list, K=3)",
+        "init": "seed",
+        "blend": 0.95,
+        "allowed": DEFAULT_ALLOY_PALETTE,
+        "scale": 1.0,
+        "diversity": 1.0,
+        "max_elements": 3,
+    },
+    {
+        "label": "comp\n(seed, 5% all,\nelement list, K=5)",
+        "init": "seed",
+        "blend": 0.95,
+        "allowed": DEFAULT_ALLOY_PALETTE,
+        "scale": 1.0,
+        "diversity": 1.0,
+        "max_elements": 5,
+    },
+    {
+        # Aggressive variant: linear schedule + high annealing_scale (≈ old τ_start=10).
+        # ``25 ** 0.715 ≈ 10`` — same starting τ as the previous "linear τ=10" but expressed
+        # in the unified scale knob, and the linear interpolation now lives in the dict.
+        "label": "comp\n(seed, 5% all,\nelement list, K=5, linear scale=0.72)",
+        "init": "seed",
+        "blend": 0.95,
+        "allowed": DEFAULT_ALLOY_PALETTE,
+        "scale": 1.0,
+        "diversity": 1.0,
+        "max_elements": 5,
+        "annealing_scale": 0.715,
+        "annealing_schedule": {
+            "step": [1.0],
+            "tau": [0.0],          # decay all the way to τ ≈ 1.0 by the end
+            "annealing_func": ["linear"],
+        },
+    },
 ]
 LATENT_ALIGN_SCALES = [0.0, 0.25, 1.0]  # ae_align_scale ∈ [0, 1] — three points: failure / mid / max
 
@@ -1082,6 +1123,15 @@ def _run_composition_config(
     else:
         raise ValueError(f"Unknown init mode in config: {cfg['init']!r}")
 
+    # Optional cardinality knobs — fall through to ``optimize_composition`` defaults when absent
+    # so the original 5 comp rows behave identically to before this change.
+    topk_kwargs: dict[str, Any] = {}
+    if "max_elements" in cfg:
+        topk_kwargs["max_elements"] = cfg["max_elements"]
+    for k in ("annealing_scale", "annealing_schedule"):
+        if k in cfg:
+            topk_kwargs[k] = cfg[k]
+
     t0 = time.perf_counter()
     res = model.optimize_composition(
         kernel,
@@ -1094,6 +1144,7 @@ def _run_composition_config(
         steps=steps,
         lr=lr,
         record_weights_trajectory=record_trajectory,
+        **topk_kwargs,
         **init_kwargs,
     )
     elapsed = time.perf_counter() - t0

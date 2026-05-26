@@ -41,6 +41,18 @@ lightning_logs/
 /notebooks/logs
 /artifacts
 
+# Claude Code workspace
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+
+# Local evaluation outputs — the eval *.py scripts under logs/ are tracked
+# for reproducibility, but their generated artefacts (raw logs, JSON, PNGs)
+# are not.
+logs/*.log
+logs/*.json
+logs/*.png
+logs/__pycache__/
+
 # IDE
 .idea/
 .vscode/
