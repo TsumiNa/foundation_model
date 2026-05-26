@@ -1585,9 +1585,7 @@ def test_optimize_composition_max_elements_full_is_noop():
     model = _make_reg_clf_model()
     kernel = torch.randn(6, INPUT_DIM)
     init = torch.full((2, 6), 1.0 / 6)
-    base = model.optimize_composition(
-        kernel, task_targets={"prop": 1.0}, initial_weights=init, steps=30, lr=0.1
-    )
+    base = model.optimize_composition(kernel, task_targets={"prop": 1.0}, initial_weights=init, steps=30, lr=0.1)
     torch.manual_seed(0)
     constrained = model.optimize_composition(
         kernel,
@@ -1677,7 +1675,7 @@ def test_optimize_composition_max_elements_validation():
     init_w[0, elements.index("Mg")] = 0.3
     init_w[0, elements.index("Al")] = 0.3
     init_w[0, elements.index("Cu")] = 0.4
-    with pytest.raises(ValueError, match="smaller than the number of hard-locked"):
+    with pytest.raises(ValueError, match="must be > total locked elements"):
         model.optimize_composition(
             kernel,
             task_targets={"prop": 0.0},
@@ -1698,39 +1696,57 @@ def test_optimize_composition_max_elements_validation():
     # Bad annealing_schedule dict.
     with pytest.raises(ValueError, match="annealing_schedule missing required keys"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, max_elements=2,
-            annealing_schedule={"step": [0.5], "tau": [0.5]},  # no annealing_func
-            n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            max_elements=2,
+            annealing_schedule={"step": [0.5], "scale": [0.5]},  # no annealing_func
+            n_starts=2,
+            steps=2,
         )
     with pytest.raises(ValueError, match="annealing_schedule lists must be the same length"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, max_elements=2,
-            annealing_schedule={"step": [0.5, 1.0], "tau": [0.5], "annealing_func": ["geometric"]},
-            n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            max_elements=2,
+            annealing_schedule={"step": [0.5, 1.0], "scale": [0.5], "annealing_func": ["geometric"]},
+            n_starts=2,
+            steps=2,
         )
     with pytest.raises(ValueError, match=r"annealing_schedule\['step'\] entries must be in \(0, 1\]"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, max_elements=2,
-            annealing_schedule={"step": [0.0, 1.0], "tau": [0.5, 0.0], "annealing_func": ["geometric", "geometric"]},
-            n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            max_elements=2,
+            annealing_schedule={"step": [0.0, 1.0], "scale": [0.5, 0.0], "annealing_func": ["geometric", "geometric"]},
+            n_starts=2,
+            steps=2,
         )
     with pytest.raises(ValueError, match=r"annealing_schedule\['step'\] must be strictly increasing"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, max_elements=2,
-            annealing_schedule={"step": [0.5, 0.5], "tau": [0.5, 0.3], "annealing_func": ["geometric", "geometric"]},
-            n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            max_elements=2,
+            annealing_schedule={"step": [0.5, 0.5], "scale": [0.5, 0.3], "annealing_func": ["geometric", "geometric"]},
+            n_starts=2,
+            steps=2,
         )
-    with pytest.raises(ValueError, match=r"annealing_schedule\['tau'\] entries must be in \[0, 1\]"):
+    with pytest.raises(ValueError, match=r"annealing_schedule\['scale'\] entries must be in \[0, 1\]"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, max_elements=2,
-            annealing_schedule={"step": [1.0], "tau": [1.5], "annealing_func": ["geometric"]},
-            n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            max_elements=2,
+            annealing_schedule={"step": [1.0], "scale": [1.5], "annealing_func": ["geometric"]},
+            n_starts=2,
+            steps=2,
         )
     with pytest.raises(ValueError, match=r"annealing_schedule\['annealing_func'\] entries must be one of"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, max_elements=2,
-            annealing_schedule={"step": [1.0], "tau": [0.5], "annealing_func": ["exponential_decay"]},
-            n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            max_elements=2,
+            annealing_schedule={"step": [1.0], "scale": [0.5], "annealing_func": ["exponential_decay"]},
+            n_starts=2,
+            steps=2,
         )
 
 
@@ -1769,7 +1785,7 @@ def test_optimize_composition_max_elements_constant_schedule_no_anneal():
         n_starts=2,
         max_elements=K,
         annealing_scale=0.3,  # initial scale; segment will hold this
-        annealing_schedule={"step": [1.0], "tau": [0.3], "annealing_func": ["constant"]},
+        annealing_schedule={"step": [1.0], "scale": [0.3], "annealing_func": ["constant"]},
         steps=40,
         lr=0.2,
     )
@@ -1812,7 +1828,7 @@ def test_optimize_composition_annealing_schedule_dict_overrides_front():
         annealing_scale=0.5,
         annealing_schedule={
             "step": [0.2, 0.5],
-            "tau": [0.9, 0.7],
+            "scale": [0.9, 0.7],
             "annealing_func": ["linear", "cosine"],
         },
         steps=60,
@@ -1978,40 +1994,132 @@ def test_optimize_composition_fixed_amounts_validation():
     # Sum >= 1.0 rejected (no leftover mass).
     with pytest.raises(ValueError, match="must be strictly less than 1.0"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, fixed_amounts={"Au": 0.7, "Ga": 0.4},
-            n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            fixed_amounts={"Au": 0.7, "Ga": 0.4},
+            n_starts=2,
+            steps=2,
         )
     # Value out of (0, 1).
     with pytest.raises(ValueError, match="must be strictly between 0 and 1"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, fixed_amounts={"Au": 0.0}, n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            fixed_amounts={"Au": 0.0},
+            n_starts=2,
+            steps=2,
         )
     with pytest.raises(ValueError, match="must be strictly between 0 and 1"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, fixed_amounts={"Au": 1.0}, n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            fixed_amounts={"Au": 1.0},
+            n_starts=2,
+            steps=2,
         )
     # Unknown symbol.
     with pytest.raises(ValueError, match="Unknown element symbol"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, fixed_amounts={"NotAnElement": 0.5},
-            n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            fixed_amounts={"NotAnElement": 0.5},
+            n_starts=2,
+            steps=2,
         )
     # Empty mapping.
     with pytest.raises(ValueError, match="must be non-empty"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, fixed_amounts={}, n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            fixed_amounts={},
+            n_starts=2,
+            steps=2,
         )
     # Wrong type.
     with pytest.raises(TypeError, match="must be a mapping"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, fixed_amounts=[("Au", 0.5)],  # type: ignore[arg-type]
-            n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            fixed_amounts=[("Au", 0.5)],  # type: ignore[arg-type]
+            n_starts=2,
+            steps=2,
         )
     # max_elements <= n_locked when fixed_amounts present.
     with pytest.raises(ValueError, match="must be > total locked elements"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, fixed_amounts={"Au": 0.4, "Ga": 0.3},
-            max_elements=2, n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            fixed_amounts={"Au": 0.4, "Ga": 0.3},
+            max_elements=2,
+            n_starts=2,
+            steps=2,
+        )
+
+
+def test_optimize_composition_max_elements_K_equals_one_one_hot():
+    """K=1 produces a one-hot recipe (the smallest cardinality; exercises the n_iter=1 branch
+    of the iterative softmax).
+    """
+    torch.manual_seed(0)
+    model, kernel, _ = _build_aligned_model_and_kernel()
+    res = model.optimize_composition(
+        kernel,
+        task_targets={"prop": 1.0},
+        n_starts=3,
+        max_elements=1,
+        steps=40,
+        lr=0.2,
+    )
+    w = res.optimized_weights
+    nz = (w > 1e-6).sum(dim=-1)
+    assert torch.all(nz == 1), f"expected one-hot per row, got nz={nz.tolist()}"
+    assert torch.allclose(w.sum(dim=-1), torch.ones(3, dtype=w.dtype), atol=1e-5)
+    # The single non-zero must be exactly 1.0.
+    max_per_row = w.max(dim=-1).values
+    assert torch.allclose(max_per_row, torch.ones(3, dtype=w.dtype), atol=1e-5)
+
+
+def test_optimize_composition_combined_locks_exceeding_simplex_rejected():
+    """element_step_scale=0 (locking seed-heavy elements) + fixed_amounts together cannot
+    claim more than 100% of the simplex — the combined-lock runtime check catches this."""
+    torch.manual_seed(0)
+    model, kernel, elements = _build_aligned_model_and_kernel()
+    # Seed with Mg=0.50 (locked) + Cu=0.50 (free); fixed_amounts={"Au": 0.65}. Combined locked
+    # mass would be 0.50 (Mg) + 0.65 (Au) = 1.15 > 1.0.
+    init_w = torch.zeros(1, len(elements))
+    init_w[0, elements.index("Mg")] = 0.50
+    init_w[0, elements.index("Cu")] = 0.50
+    with pytest.raises(ValueError, match="Combined locked mass exceeds 1.0"):
+        model.optimize_composition(
+            kernel,
+            task_targets={"prop": 0.0},
+            initial_weights=init_w,
+            element_step_scale={"Mg": 0.0},
+            fixed_amounts={"Au": 0.65},
+            steps=2,
+        )
+
+
+def test_optimize_composition_max_elements_equals_n_locked_rejected():
+    """``max_elements == n_locked`` is rejected (no unlocked slot to absorb leftover mass).
+
+    Previously this combination passed validation but silently produced rows with sum < 1
+    when the locked seed values summed to less than 1 (e.g. Mg=Al=Cu=0.20, max_elements=3).
+    The validation now enforces strict ``max_elements > n_locked`` for both lock paths.
+    """
+    model, kernel, elements = _build_aligned_model_and_kernel()
+    init_w = torch.zeros(1, len(elements))
+    init_w[0, elements.index("Mg")] = 0.30
+    init_w[0, elements.index("Al")] = 0.30
+    init_w[0, elements.index("Cu")] = 0.40
+    with pytest.raises(ValueError, match="must be > total locked elements"):
+        model.optimize_composition(
+            kernel,
+            task_targets={"prop": 0.0},
+            initial_weights=init_w,
+            element_step_scale={"Mg": 0.0, "Al": 0.0, "Cu": 0.0},
+            max_elements=3,
+            steps=2,
         )
 
 
@@ -2031,9 +2139,7 @@ def test_optimize_composition_min_nonzero_weight_drops_traces():
     w = res.optimized_weights
     # Every non-zero weight is at least the floor (within float tolerance).
     nz_mask = w > 0
-    assert (w[nz_mask] >= 0.1 - 1e-5).all(), (
-        f"floor violated: smallest non-zero = {w[nz_mask].min().item():.4f}"
-    )
+    assert (w[nz_mask] >= 0.1 - 1e-5).all(), f"floor violated: smallest non-zero = {w[nz_mask].min().item():.4f}"
     # Rows still sum to 1.
     assert torch.allclose(w.sum(dim=-1), torch.ones(4, dtype=w.dtype), atol=1e-5)
 
@@ -2044,13 +2150,15 @@ def test_optimize_composition_min_nonzero_weight_zero_is_noop():
     model = _make_reg_clf_model()
     kernel = torch.randn(6, INPUT_DIM)
     init = torch.full((2, 6), 1.0 / 6)
-    base = model.optimize_composition(
-        kernel, task_targets={"prop": 1.0}, initial_weights=init, steps=20, lr=0.1
-    )
+    base = model.optimize_composition(kernel, task_targets={"prop": 1.0}, initial_weights=init, steps=20, lr=0.1)
     torch.manual_seed(0)
     floored = model.optimize_composition(
-        kernel, task_targets={"prop": 1.0}, initial_weights=init,
-        min_nonzero_weight=0.0, steps=20, lr=0.1,
+        kernel,
+        task_targets={"prop": 1.0},
+        initial_weights=init,
+        min_nonzero_weight=0.0,
+        steps=20,
+        lr=0.1,
     )
     assert torch.allclose(base.optimized_weights, floored.optimized_weights, atol=1e-6)
 
@@ -2094,7 +2202,7 @@ def test_optimize_composition_min_nonzero_weight_with_locked_seed_below_floor():
     """An element_step_scale=0 lock pinning at a seed value below the floor is rejected."""
     model, kernel, elements = _build_aligned_model_and_kernel()
     init_w = torch.zeros(1, len(elements))
-    init_w[0, elements.index("Mg")] = 0.05    # locked below floor
+    init_w[0, elements.index("Mg")] = 0.05  # locked below floor
     init_w[0, elements.index("Cu")] = 0.95
     with pytest.raises(ValueError, match="locked element.*below min_nonzero_weight"):
         model.optimize_composition(
@@ -2112,17 +2220,29 @@ def test_optimize_composition_min_nonzero_weight_validation():
     model, kernel, _ = _build_aligned_model_and_kernel()
     with pytest.raises(ValueError, match=r"min_nonzero_weight must be in \[0, 1\]"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, min_nonzero_weight=-0.1, n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            min_nonzero_weight=-0.1,
+            n_starts=2,
+            steps=2,
         )
     with pytest.raises(ValueError, match=r"min_nonzero_weight must be in \[0, 1\]"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, min_nonzero_weight=1.5, n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            min_nonzero_weight=1.5,
+            n_starts=2,
+            steps=2,
         )
     # floor > 1/K: K=3 → 1/K=0.333; floor=0.5 > 0.333 → reject.
     with pytest.raises(ValueError, match="exceeds 1 / max_elements"):
         model.optimize_composition(
-            kernel, task_targets={"prop": 0.0}, min_nonzero_weight=0.5,
-            max_elements=3, n_starts=2, steps=2,
+            kernel,
+            task_targets={"prop": 0.0},
+            min_nonzero_weight=0.5,
+            max_elements=3,
+            n_starts=2,
+            steps=2,
         )
 
 
@@ -2137,7 +2257,7 @@ def test_optimize_composition_min_nonzero_weight_fallback_preserves_simplex():
         task_targets={"prop": 1.0},
         n_starts=4,
         max_elements=3,
-        min_nonzero_weight=0.33,   # at the edge: needs all 3 ≥ 0.33 → exactly 1/3 each
+        min_nonzero_weight=0.33,  # at the edge: needs all 3 ≥ 0.33 → exactly 1/3 each
         steps=40,
         lr=0.2,
     )

@@ -9,6 +9,7 @@ constructs the right KMD kernel via ContinualRehearsalRunner, and compares:
 
 Reports: non-zero counts, achieved regression targets, QC probability, recipe row 0.
 """
+
 from __future__ import annotations
 
 import tomllib
@@ -67,8 +68,7 @@ def _report(label, res, B):
     print(f"    magnetization    = {targets[:, 1].mean():+.3f} ± {targets[:, 1].std():.3f} (target +2.0)")
     # Row 0 recipe
     w0 = w[0].detach().cpu()
-    top = sorted(((float(w0[i]), DEFAULT_ELEMENTS[i]) for i in range(len(w0)) if float(w0[i]) > 1e-4),
-                 reverse=True)
+    top = sorted(((float(w0[i]), DEFAULT_ELEMENTS[i]) for i in range(len(w0)) if float(w0[i]) > 1e-4), reverse=True)
     print(f"    row 0 recipe ({len(top)} elements): " + ", ".join(f"{s}={v:.3f}" for v, s in top))
 
 
@@ -80,6 +80,7 @@ def main() -> None:
     # Seed compositions (paper script's top-QC selection)
     def _qc_fn(x):
         return _qc_prob(model, x)
+
     seeds = runner._select_seeds(model, device, _qc_fn)[:8]  # only 8 for speed
     print(f"[seeds] {seeds}")
     n = kernel.shape[0]
@@ -121,27 +122,27 @@ def main() -> None:
         traj = res.weights_trajectory
         nz_t = (traj > 1e-3).sum(dim=-1).float().mean(dim=-1)
         chk = [0, 30, 100, 200, 290, 299]
-        print(f"    annealing nz over trajectory: " + ", ".join(f"step{s}={nz_t[s]:.1f}" for s in chk if s < len(nz_t)))
+        print("    annealing nz over trajectory: " + ", ".join(f"step{s}={nz_t[s]:.1f}" for s in chk if s < len(nz_t)))
 
     torch.manual_seed(0)
-    print(f"\n[run] max_elements=3, annealing_scale=0.0 (no exploration, τ_start=1)")
+    print("\n[run] max_elements=3, annealing_scale=0.0 (no exploration, τ_start=1)")
     res_c = model.optimize_composition(kernel, max_elements=3, annealing_scale=0.0, **common)
     _report("K=3 scale=0.0", res_c, len(seeds))
 
     torch.manual_seed(0)
-    print(f"\n[run] max_elements=3, annealing_scale=1.0 (max exploration, τ_start=25)")
+    print("\n[run] max_elements=3, annealing_scale=1.0 (max exploration, τ_start=25)")
     res_h = model.optimize_composition(kernel, max_elements=3, annealing_scale=1.0, **common)
     _report("K=3 scale=1.0", res_h, len(seeds))
 
     torch.manual_seed(0)
-    print(f"\n[run] max_elements=3, advanced dict (linear warm-up, then geometric tail)")
+    print("\n[run] max_elements=3, advanced dict (linear warm-up, then geometric tail)")
     res_d = model.optimize_composition(
         kernel,
         max_elements=3,
         annealing_scale=0.5,
         annealing_schedule={
             "step": [0.3, 0.6],
-            "tau": [0.9, 0.5],
+            "scale": [0.9, 0.5],
             "annealing_func": ["linear", "linear"],
         },
         **common,

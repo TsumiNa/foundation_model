@@ -195,7 +195,7 @@ COMPOSITION_CONFIGS: list[dict[str, Any]] = [
         "annealing_scale": 0.715,
         "annealing_schedule": {
             "step": [1.0],
-            "tau": [0.0],          # decay all the way to τ ≈ 1.0 by the end
+            "scale": [0.0],  # decay all the way to τ ≈ 1.0 by the end
             "annealing_func": ["linear"],
         },
     },
@@ -1009,9 +1009,7 @@ def _emit_trajectory_outputs(
         # the separate ``comparison.png``.
         reg_names = list(reg_targets)
         # Mean reg trajectory across seeds (per step → per task).
-        reg_traj_dict: dict[str, np.ndarray] = {
-            t: traj_targets[:, :, j] for j, t in enumerate(reg_names)
-        }
+        reg_traj_dict: dict[str, np.ndarray] = {t: traj_targets[:, :, j] for j, t in enumerate(reg_names)}
         # Mean variant: use QC after-decode (final value) as a flat baseline-vs-target progress
         # line only if it's available; otherwise drop QC. For the inverse-design case QC is in
         # results dict but not per-step; we synthesise a "flat" QC progress line from the final

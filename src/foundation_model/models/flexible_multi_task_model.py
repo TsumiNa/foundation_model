@@ -73,7 +73,14 @@ OptimizationResult = namedtuple(
 # :meth:`optimize_composition`; when present it has shape ``(steps, B, n_components)``.
 CompositionOptimizationResult = namedtuple(
     "CompositionOptimizationResult",
-    ["optimized_weights", "optimized_descriptor", "optimized_target", "initial_score", "trajectory", "weights_trajectory"],
+    [
+        "optimized_weights",
+        "optimized_descriptor",
+        "optimized_target",
+        "initial_score",
+        "trajectory",
+        "weights_trajectory",
+    ],
     defaults=[None],
 )
 
@@ -2379,6 +2386,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
             contain unlocked positions below ``min_nonzero_weight``; if you see this in
             practice your floor is too aggressive for the model's preferred subset.
 
+            Practical note: when ``max_elements`` is not set, no upper bound on the floor is
+            enforced beyond ``floor ≤ 1``. A very large floor (e.g. 0.5 with 94 components) will
+            silently trigger the per-row fallback on almost every row — the result is a valid
+            simplex but the floor is effectively ignored. Pair the floor with ``max_elements``
+            (which enforces ``floor ≤ 1 / max_elements``) when you want a hard guarantee.
+
             "At most K" implication: when combined with ``max_elements``, the floor can drop
             below-floor positions in the K-subset, so the final non-zero count can be **less
             than K** (still ≤ K — the user-facing promise is unchanged).
@@ -2402,8 +2415,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
             ``w = (softmax(lg) · m) / Σ(softmax(lg) · m)``. Temperature ``τ`` controls how
             "K-hot" ``m`` is: large τ → uniform-ish (the constraint is soft, gradient can flow
             between candidate subsets), small τ → near one-hot per iteration (constraint is hard).
-            τ is annealed from ``topk_tau_start`` to ``topk_tau_end`` over ``steps``. The
-            annealing doubles as a continuation method that helps escape local optima.
+            τ is driven by the ``annealing_scale`` / ``annealing_schedule`` kwargs below — by
+            default a geometric schedule from ``25**annealing_scale`` down to a fixed
+            ``τ_end = 0.01``. The annealing doubles as a continuation method that helps escape
+            local optima.
 
             After the loop, a final hard top-K projection is applied so the returned
             ``optimized_weights`` has **at most** ``max_elements`` non-zero positions (subject
@@ -2445,25 +2460,25 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
                 {
                     "step":           [0.2, 0.5, 1.0],         # fractional step boundaries (0,1]
-                    "tau":            [0.8, 0.5, 0.5],         # normalised scale [0,1] at each boundary
+                    "scale":          [0.8, 0.5, 0.5],         # normalised scale [0,1] at each boundary
                     "annealing_func": ["geometric", "geometric", "geometric"],   # interpolation in each segment
                 }
 
             **Reading the dict**: the schedule starts at step=0 from the value given by
-            ``annealing_scale`` (its scale, not its τ_start). Segment ``i`` covers
-            ``(step[i-1], step[i]]`` (with ``step[-1] := 0``); within that segment, the
-            *normalised scale* interpolates from the previous segment's endpoint (or
-            ``annealing_scale`` for segment 0) to ``tau[i]`` using ``annealing_func[i]``. The
-            interpolated scale is then mapped to raw τ via the same ``25**scale`` formula.
+            ``annealing_scale``. Segment ``i`` covers ``(step[i-1], step[i]]`` (with
+            ``step[-1] := 0``); within that segment, the normalised scale interpolates from the
+            previous segment's endpoint (or ``annealing_scale`` for segment 0) to ``scale[i]``
+            using ``annealing_func[i]``. The interpolated scale is then mapped to raw τ via the
+            same ``25**scale`` formula used by ``annealing_scale``.
 
             **If ``step[-1] < 1.0``**, the remaining ``(step[-1], 1.0]`` portion continues with
             a default geometric tail: from the raw τ value at ``step[-1]`` (i.e.
-            ``25**tau[-1]``) down to ``τ_end = 0.01``. This guarantees the schedule always
+            ``25**scale[-1]``) down to ``τ_end = 0.01``. This guarantees the schedule always
             reaches the hard end inside the loop (the final hard-projection cleans up K-hot
             either way).
 
             **Allowed annealing_func values**: ``"geometric"``, ``"linear"``, ``"cosine"``,
-            ``"constant"``. ``"constant"`` holds the segment's starting value (``tau[i]`` is
+            ``"constant"``. ``"constant"`` holds the segment's starting value (``scale[i]`` is
             ignored — useful for warm-up phases).
         steps : int
             Adam optimisation steps. Default 300.
@@ -2620,9 +2635,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 )
             for sym, amt in fixed_amounts.items():
                 if not 0.0 < float(amt) < 1.0:
-                    raise ValueError(
-                        f"fixed_amounts['{sym}']={amt} must be strictly between 0 and 1."
-                    )
+                    raise ValueError(f"fixed_amounts['{sym}']={amt} must be strictly between 0 and 1.")
             total = float(sum(fixed_amounts.values()))
             if total >= 1.0:
                 raise ValueError(
@@ -2639,10 +2652,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     )
             # Mutual exclusion with element_step_scale = 0 (the other hard-lock path).
             if step_scale_arg is not None:
-                overlap = [
-                    s for s in fixed_amounts
-                    if float(step_scale_arg[sym_to_idx[s]]) == 0.0
-                ]
+                overlap = [s for s in fixed_amounts if float(step_scale_arg[sym_to_idx[s]]) == 0.0]
                 if overlap:
                     raise ValueError(
                         f"Symbols {overlap} appear in both element_step_scale=0 and "
@@ -2681,9 +2691,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             if not isinstance(max_elements, int) or isinstance(max_elements, bool):
                 raise TypeError(f"max_elements must be an int or None; got {type(max_elements).__name__}.")
             if not 1 <= max_elements <= n_components:
-                raise ValueError(
-                    f"max_elements must be in [1, n_components={n_components}]; got {max_elements}."
-                )
+                raise ValueError(f"max_elements must be in [1, n_components={n_components}]; got {max_elements}.")
             if elem_mask_arg is not None:
                 n_allowed = int(elem_mask_arg.sum().item())
                 if max_elements > n_allowed:
@@ -2692,47 +2700,43 @@ class FlexibleMultiTaskModel(L.LightningModule):
                         f"({n_allowed}). Widen ``allowed_elements`` or lower ``max_elements``."
                     )
             # Lock-vs-K check: locked positions (element_step_scale=0 ∪ fixed_amounts) all count
-            # toward K. ``fixed_amounts`` additionally requires *strict* ``max_elements > n_locked``
-            # because we know ``sum(fixed) < 1`` and the lock-paste needs at least one unfixed
-            # slot to absorb the remaining mass; for step_scale=0 only, we allow ``>=`` to keep
-            # backward compat with single-row uniform-lock setups (seed may sum to 1).
+            # toward K. We require *strict* ``max_elements > n_locked`` for both lock paths:
+            # equality leaves the lock-paste with no unlocked slot to absorb the leftover mass
+            # (1 − Σ locked) and produces rows that sum to < 1 — silently breaking the simplex.
+            # For ``fixed_amounts`` this is definite (``Σ < 1`` enforced at kwarg time); for
+            # ``element_step_scale=0`` the seed values *could* sum to exactly 1, but K-constrained
+            # all-locked recipes have no degrees of freedom anyway, so rejecting equality is
+            # both safe and clearer.
             n_locked_pre = 0
             if step_scale_arg is not None:
                 n_locked_pre += int((step_scale_arg == 0).sum().item())
             if fixed_mask_vec is not None:
                 n_locked_pre += int(fixed_mask_vec.sum().item())
-            if n_locked_pre > max_elements:
+            if n_locked_pre >= max_elements:
                 raise ValueError(
-                    f"max_elements={max_elements} is smaller than the number of hard-locked "
-                    f"elements ({n_locked_pre}, counting element_step_scale=0 ∪ fixed_amounts). "
-                    "Locked elements always count toward K — raise max_elements or unlock some."
-                )
-            if fixed_mask_vec is not None and n_locked_pre >= max_elements:
-                raise ValueError(
-                    f"max_elements={max_elements} must be > total locked elements ({n_locked_pre}) "
-                    "when fixed_amounts is used — there's leftover mass (1 − Σ fixed_amounts) that "
-                    "needs at least one unlocked slot to absorb."
+                    f"max_elements={max_elements} must be > total locked elements ({n_locked_pre}, "
+                    "counting element_step_scale=0 ∪ fixed_amounts) — the lock-paste needs at "
+                    "least one unlocked slot to absorb the leftover mass (1 − Σ locked); equality "
+                    "would silently produce row sums < 1. Raise max_elements or unlock some."
                 )
             if not 0.0 <= annealing_scale <= 1.0:
                 raise ValueError(f"annealing_scale must be in [0, 1]; got {annealing_scale}.")
             if annealing_schedule is not None:
                 if not isinstance(annealing_schedule, Mapping):
-                    raise TypeError(
-                        f"annealing_schedule must be a mapping; got {type(annealing_schedule).__name__}."
-                    )
-                missing = {"step", "tau", "annealing_func"} - set(annealing_schedule)
+                    raise TypeError(f"annealing_schedule must be a mapping; got {type(annealing_schedule).__name__}.")
+                missing = {"step", "scale", "annealing_func"} - set(annealing_schedule)
                 if missing:
                     raise ValueError(
                         f"annealing_schedule missing required keys {sorted(missing)}. "
-                        "Required: step, tau, annealing_func — all parallel lists."
+                        "Required: step, scale, annealing_func — all parallel lists."
                     )
                 sched_steps = list(annealing_schedule["step"])
-                sched_taus = list(annealing_schedule["tau"])
+                sched_scales = list(annealing_schedule["scale"])
                 sched_funcs = list(annealing_schedule["annealing_func"])
-                if not (len(sched_steps) == len(sched_taus) == len(sched_funcs)):
+                if not (len(sched_steps) == len(sched_scales) == len(sched_funcs)):
                     raise ValueError(
                         f"annealing_schedule lists must be the same length; got "
-                        f"step={len(sched_steps)}, tau={len(sched_taus)}, "
+                        f"step={len(sched_steps)}, scale={len(sched_scales)}, "
                         f"annealing_func={len(sched_funcs)}."
                     )
                 if len(sched_steps) == 0:
@@ -2740,25 +2744,18 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 prev_s = 0.0
                 for s in sched_steps:
                     if not 0.0 < float(s) <= 1.0:
-                        raise ValueError(
-                            f"annealing_schedule['step'] entries must be in (0, 1]; got {s}."
-                        )
+                        raise ValueError(f"annealing_schedule['step'] entries must be in (0, 1]; got {s}.")
                     if float(s) <= prev_s:
-                        raise ValueError(
-                            f"annealing_schedule['step'] must be strictly increasing; got {sched_steps}."
-                        )
+                        raise ValueError(f"annealing_schedule['step'] must be strictly increasing; got {sched_steps}.")
                     prev_s = float(s)
-                for t in sched_taus:
+                for t in sched_scales:
                     if not 0.0 <= float(t) <= 1.0:
-                        raise ValueError(
-                            f"annealing_schedule['tau'] entries must be in [0, 1]; got {t}."
-                        )
+                        raise ValueError(f"annealing_schedule['scale'] entries must be in [0, 1]; got {t}.")
                 allowed_funcs = ("geometric", "linear", "cosine", "constant")
                 for f in sched_funcs:
                     if f not in allowed_funcs:
                         raise ValueError(
-                            f"annealing_schedule['annealing_func'] entries must be one of "
-                            f"{allowed_funcs}; got {f!r}."
+                            f"annealing_schedule['annealing_func'] entries must be one of {allowed_funcs}; got {f!r}."
                         )
 
         # --- Validate the seed (BEFORE touching model state, so a bad input doesn't leave the
@@ -2901,6 +2898,21 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     locked_mask = locked_mask | fixed_mask_dev  # validated disjoint
                     locked_w0 = locked_w0 + fixed_w0_batch
 
+            # Runtime sanity: combined lock sum must leave room (or fit exactly) for the simplex.
+            # ``fixed_amounts`` enforces ``Σ < 1`` at kwarg time, and ``element_step_scale=0``
+            # locks at seed values which sum to ≤ 1 per row — but the *combined* total could
+            # exceed 1 (e.g. seed-lock Mg=0.50 + fix Au=0.65). Check here, with a tiny tolerance
+            # for float noise.
+            if locked_w0 is not None:
+                lock_sums = locked_w0.sum(dim=-1)
+                if (lock_sums > 1.0 + 1e-5).any():
+                    raise ValueError(
+                        f"Combined locked mass exceeds 1.0 on at least one row "
+                        f"(max row-sum = {float(lock_sums.max()):.4f}). Likely cause: "
+                        "``element_step_scale=0`` locks plus ``fixed_amounts`` together claim more "
+                        "than 100% of the simplex. Lower one set of values or drop a lock."
+                    )
+
             # Runtime sanity: floored elements must not contradict the lock-paste targets.
             # ``fixed_amounts`` was checked at kwarg time; ``element_step_scale=0`` locks have
             # per-row seed values we couldn't see earlier — verify them now.
@@ -2923,12 +2935,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
             #     at fractional step 0 down to ``_TAU_END=0.01`` at fractional step 1.
             #   * When ``annealing_schedule`` dict is provided, its segments override the front of
             #     the schedule; the segment from ``step[-1]`` to 1.0 (if not already at 1.0) falls
-            #     back to the geometric tail from ``25**tau[-1]`` down to ``_TAU_END``.
+            #     back to the geometric tail from ``25**scale[-1]`` down to ``_TAU_END``.
             #
             # ``current_tau`` lives in a list so the optimisation loop can mutate it each step
             # without rebuilding the ``_w_from_logits`` closure that reads it.
             _TAU_FLOOR = 1e-3  # numerical lower bound; below this softmax(lg/τ) loses precision
-            _TAU_END = 0.01     # fixed final hardness for the default schedule's tail
+            _TAU_END = 0.01  # fixed final hardness for the default schedule's tail
             _SCALE_TAU_BASE = 25.0  # τ = _SCALE_TAU_BASE**scale → 0→1, 0.5→5, 1→25
 
             def _scale_to_tau(scale: float) -> float:
@@ -2949,9 +2961,15 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 return a + (b - a) * t
 
             # Materialise schedule arrays once (validated above), so the per-step lookup is light.
-            _sched_steps: list[float] = [float(s) for s in annealing_schedule["step"]] if annealing_schedule is not None else []
-            _sched_taus: list[float] = [float(t) for t in annealing_schedule["tau"]] if annealing_schedule is not None else []
-            _sched_funcs: list[str] = list(annealing_schedule["annealing_func"]) if annealing_schedule is not None else []
+            _sched_steps: list[float] = (
+                [float(s) for s in annealing_schedule["step"]] if annealing_schedule is not None else []
+            )
+            _sched_scales: list[float] = (
+                [float(t) for t in annealing_schedule["scale"]] if annealing_schedule is not None else []
+            )
+            _sched_funcs: list[str] = (
+                list(annealing_schedule["annealing_func"]) if annealing_schedule is not None else []
+            )
 
             def _tau_for_step(step: int) -> float:
                 """Return the raw τ for integer optimisation step ``step``."""
@@ -2970,13 +2988,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     for i, seg_end in enumerate(_sched_steps):
                         if s <= seg_end:
                             local_t = (s - prev_step) / max(seg_end - prev_step, 1e-12)
-                            scale_now = _interp_scalar(prev_scale, _sched_taus[i], local_t, _sched_funcs[i])
+                            scale_now = _interp_scalar(prev_scale, _sched_scales[i], local_t, _sched_funcs[i])
                             return float(max(_scale_to_tau(scale_now), _TAU_FLOOR))
                         prev_step = seg_end
-                        prev_scale = _sched_taus[i]
+                        prev_scale = _sched_scales[i]
                     # ``s`` is past the dict's last step → use the geometric tail from
-                    # ``25**tau[-1]`` at ``step[-1]`` down to ``_TAU_END`` at 1.0.
-                    tail_start_tau = _scale_to_tau(_sched_taus[-1])
+                    # ``25**scale[-1]`` at ``step[-1]`` down to ``_TAU_END`` at 1.0.
+                    tail_start_tau = _scale_to_tau(_sched_scales[-1])
                     tail_end_step = 1.0
                     tail_local_t = (s - _sched_steps[-1]) / max(tail_end_step - _sched_steps[-1], 1e-12)
                     val = tail_start_tau * (default_tau_end / tail_start_tau) ** tail_local_t
@@ -3104,9 +3122,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     # Force locked positions to always sit in the K-hot mask so the lock-paste
                     # below has somewhere to write. ``w_soft`` itself is computed from the
                     # *unboosted* logits, so the within-K ratios reflect the optimisation state.
-                    m_topk = _soft_topk_mask(
-                        lg, max_elements, current_tau[0], force_select=locked_mask
-                    )
+                    m_topk = _soft_topk_mask(lg, max_elements, current_tau[0], force_select=locked_mask)
                     w = w_soft * m_topk
                     w = w / w.sum(dim=-1, keepdim=True).clamp(min=1e-12)
                 else:
@@ -3139,8 +3155,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 return torch.stack(values, dim=-1) if values else torch.zeros((B, 0), device=device, dtype=dtype)
 
             # --- Record initial scores --------------------------------------------------------------
-            # Initial scoring uses ``topk_tau_start`` so the t=0 view matches the softest end of
-            # the annealing schedule (the optimisation actually starts there).
+            # Initial scoring uses τ at step 0 of the annealing schedule — i.e. the softest end
+            # of the (annealing_scale + annealing_schedule)-derived τ curve, where the optimisation
+            # actually begins.
             current_tau[0] = _tau_for_step(0)
             with torch.no_grad():
                 w0_tensor = _w_from_logits(logits)
@@ -3182,9 +3199,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
             # --- Final state ------------------------------------------------------------------------
             # Use the hardest τ for the final readout, then (if ``max_elements`` is active) apply
-            # a hard top-K projection so the returned ``optimized_weights`` has *exactly* K
-            # non-zero positions — at τ_end ≈ 0.01 the soft mask is already near-K-hot, so the
-            # projection just cleans up the residual sub-threshold weights.
+            # a hard top-K projection so the returned ``optimized_weights`` has **at most** K
+            # non-zero positions (the floor below may reduce that further) — at τ_end ≈ 0.01 the
+            # soft mask is already near-K-hot, so the projection just cleans up residual
+            # sub-threshold weights.
             current_tau[0] = float(max(_TAU_END, _TAU_FLOOR))
             with torch.no_grad():
                 w_final = _w_from_logits(logits)

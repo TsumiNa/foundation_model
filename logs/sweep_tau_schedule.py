@@ -27,6 +27,7 @@ For each config we report:
 Run from repo root:
   uv run python logs/sweep_tau_schedule.py
 """
+
 from __future__ import annotations
 
 import itertools
@@ -83,7 +84,31 @@ def _qc_prob_mean(model, x_desc: torch.Tensor) -> float:
     return float(p.mean())
 
 
+def _tau_to_scale(tau: float) -> float:
+    """Convert a raw τ to the normalised ``annealing_scale`` (inverse of ``τ = 25**scale``).
+
+    Clamped to [0, 1]: τ values outside [1, 25] saturate at the endpoints.
+    """
+    import math
+
+    if tau <= 1.0:
+        return 0.0
+    if tau >= 25.0:
+        return 1.0
+    return math.log(tau) / math.log(25.0)
+
+
 def _evaluate(model, kernel, w_seed, *, max_elements, tau_start, tau_end, schedule, targets, seed=0, steps=300):
+    """Adapter from the old (τ_start, τ_end, schedule) triple to the new annealing API.
+
+    - schedule="constant": single-segment dict that holds the start scale for the full run.
+    - schedule="geometric" with default τ_end=0.01: just set ``annealing_scale`` (default geometric
+      from ``25**scale`` down to 0.01).
+    - schedule="linear"/"cosine": single-segment dict that interpolates scale_start → 0 (i.e.
+      τ → 1.0) with the named func; the default tail from step=1.0 → ... is absent (we cover the
+      full optimisation). Note the linear/cosine sweep cannot reach τ=0.01 inside the loop
+      without the geometric tail — the final hard projection still gives K-hot output.
+    """
     torch.manual_seed(seed)
     t0 = time.perf_counter()
     kwargs = dict(
@@ -96,19 +121,39 @@ def _evaluate(model, kernel, w_seed, *, max_elements, tau_start, tau_end, schedu
         lr=0.05,
     )
     if max_elements is not None:
-        kwargs.update(
-            max_elements=max_elements,
-            topk_tau_start=tau_start,
-            topk_tau_end=tau_end,
-            topk_schedule=schedule,
-        )
+        kwargs["max_elements"] = max_elements
+        scale_start = _tau_to_scale(tau_start)
+        if schedule == "geometric":
+            # Default schedule; just supply annealing_scale (covers τ_start → 0.01 geometrically).
+            kwargs["annealing_scale"] = scale_start
+        elif schedule == "constant":
+            kwargs["annealing_scale"] = scale_start
+            kwargs["annealing_schedule"] = {
+                "step": [1.0],
+                "scale": [scale_start],
+                "annealing_func": ["constant"],
+            }
+        elif schedule in ("linear", "cosine"):
+            # Single-segment schedule interpolating in scale space from scale_start down to 0
+            # (τ from 25**scale_start down to 1.0). The hard projection at the end still
+            # cleans up to K-hot regardless of where the in-loop τ settles.
+            kwargs["annealing_scale"] = scale_start
+            kwargs["annealing_schedule"] = {
+                "step": [1.0],
+                "scale": [0.0],
+                "annealing_func": [schedule],
+            }
+        else:
+            raise ValueError(f"unknown schedule {schedule!r}")
     res = model.optimize_composition(kernel, **kwargs)
     elapsed = time.perf_counter() - t0
     w = res.optimized_weights
     nz = (w > 1e-6).sum(dim=-1).tolist()
     targets_arr = res.optimized_target.cpu().numpy()
-    achieved = {t: {"mean": float(targets_arr[:, j].mean()), "std": float(targets_arr[:, j].std())}
-                for j, t in enumerate(targets.keys())}
+    achieved = {
+        t: {"mean": float(targets_arr[:, j].mean()), "std": float(targets_arr[:, j].std())}
+        for j, t in enumerate(targets.keys())
+    }
     # QC probability after decode
     qc_after = _qc_prob_mean(model, res.optimized_descriptor)
     # Per-row top-K recipe → element frequency across batch
@@ -132,14 +177,16 @@ def main() -> None:
     print(f"[loading] {CKPT}")
     runner, model, kernel, device = _build()
 
-    def _qc_fn(x): return _qc_prob(model, x)
+    def _qc_fn(x):
+        return _qc_prob(model, x)
+
     seeds = runner._select_seeds(model, device, _qc_fn)[:8]
     print(f"[seeds] {seeds}")
     w_seed = _seed_weights_from_compositions(seeds, n_components=kernel.shape[0])
 
     target_sets = {
-        "2T": TARGETS_FULL,                              # FE + mag
-        "1T": {"magnetization": 2.0},                    # mag only (drop FE)
+        "2T": TARGETS_FULL,  # FE + mag
+        "1T": {"magnetization": 2.0},  # mag only (drop FE)
     }
     Ks = [3, 5]
     tau_starts = [1.0, 2.0, 5.0, 10.0, 20.0]
@@ -160,29 +207,43 @@ def main() -> None:
         # No-constraint baseline
         counter += 1
         print(f"\n[{counter}/{n_total}] {tset_name}  baseline (no max_elements)")
-        out = _evaluate(model, kernel, w_seed, max_elements=None, tau_start=None,
-                        tau_end=None, schedule=None, targets=tgt)
-        results.append({"target_set": tset_name, "K": None, "tau_start": None,
-                        "schedule": "baseline", **out})
+        out = _evaluate(
+            model, kernel, w_seed, max_elements=None, tau_start=None, tau_end=None, schedule=None, targets=tgt
+        )
+        results.append({"target_set": tset_name, "K": None, "tau_start": None, "schedule": "baseline", **out})
 
         for K in Ks:
             # Controls: constant τ=1.0 (≈post-hoc) and τ=0.01 (hard from start)
             for ctrl_name, ctrl_tau in [("const_t1.0", 1.0), ("const_t0.01", 0.01)]:
                 counter += 1
                 print(f"[{counter}/{n_total}] {tset_name}  K={K}  {ctrl_name}")
-                out = _evaluate(model, kernel, w_seed, max_elements=K, tau_start=ctrl_tau,
-                                tau_end=ctrl_tau, schedule="constant", targets=tgt)
-                results.append({"target_set": tset_name, "K": K, "tau_start": ctrl_tau,
-                                "schedule": ctrl_name, **out})
+                out = _evaluate(
+                    model,
+                    kernel,
+                    w_seed,
+                    max_elements=K,
+                    tau_start=ctrl_tau,
+                    tau_end=ctrl_tau,
+                    schedule="constant",
+                    targets=tgt,
+                )
+                results.append({"target_set": tset_name, "K": K, "tau_start": ctrl_tau, "schedule": ctrl_name, **out})
 
             # The sweep
             for tau_start, sched in itertools.product(tau_starts, schedules):
                 counter += 1
                 print(f"[{counter}/{n_total}] {tset_name}  K={K}  τ_start={tau_start}  sched={sched}")
-                out = _evaluate(model, kernel, w_seed, max_elements=K, tau_start=tau_start,
-                                tau_end=tau_end, schedule=sched, targets=tgt)
-                results.append({"target_set": tset_name, "K": K, "tau_start": tau_start,
-                                "schedule": sched, **out})
+                out = _evaluate(
+                    model,
+                    kernel,
+                    w_seed,
+                    max_elements=K,
+                    tau_start=tau_start,
+                    tau_end=tau_end,
+                    schedule=sched,
+                    targets=tgt,
+                )
+                results.append({"target_set": tset_name, "K": K, "tau_start": tau_start, "schedule": sched, **out})
 
     OUT_JSON.write_text(json.dumps(results, indent=2))
     print(f"\n[saved] {OUT_JSON}")
@@ -201,20 +262,19 @@ def _print_summary(results: list[dict]) -> None:
         header = f"{'config':<35} {'nz_mean':>8} {'QC':>6}  " + "  ".join(f"{t[:10]:>10}" for t in tgt_keys)
         print(header)
         print("-" * len(header))
+
         # Sort: baseline → controls → sweep (by K, then tau_start, then schedule)
         def _key(r):
-            sched_order = {"baseline": 0, "const_t1.0": 1, "const_t0.01": 2,
-                           "geometric": 3, "linear": 4, "cosine": 5}
+            sched_order = {"baseline": 0, "const_t1.0": 1, "const_t0.01": 2, "geometric": 3, "linear": 4, "cosine": 5}
             K = r["K"] if r["K"] is not None else 0
             tau = r["tau_start"] if r["tau_start"] is not None else 0.0
             return (K, tau, sched_order.get(r["schedule"], 99))
+
         for r in sorted(subset, key=_key):
-            tag = ("baseline" if r["schedule"] == "baseline"
-                   else f"K{r['K']} {r['schedule']:<10} τ0={r['tau_start']:<4}")
+            tag = "baseline" if r["schedule"] == "baseline" else f"K{r['K']} {r['schedule']:<10} τ0={r['tau_start']:<4}"
             nz_mean = sum(r["nz_per_row"]) / len(r["nz_per_row"])
             row = f"{tag:<35} {nz_mean:>8.2f} {r['qc_after']:>6.3f}  "
-            row += "  ".join(f"{r['achieved'][t]['mean']:>+5.2f}±{r['achieved'][t]['std']:.2f}"
-                             for t in tgt_keys)
+            row += "  ".join(f"{r['achieved'][t]['mean']:>+5.2f}±{r['achieved'][t]['std']:.2f}" for t in tgt_keys)
             print(row)
 
 

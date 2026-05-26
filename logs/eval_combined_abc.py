@@ -8,9 +8,9 @@ Verifies that:
 
 Reports per-config: achieved targets (FE, Mag), QC, non-zero count, row-0 recipe.
 """
+
 from __future__ import annotations
 
-import time
 import tomllib
 from pathlib import Path
 
@@ -67,7 +67,7 @@ def _summarise(label: str, res, *, expected=None, floor=None):
     # Row 0 recipe.
     w0 = w[0].cpu().numpy()
     top = sorted(((float(w0[i]), DEFAULT_ELEMENTS[i]) for i in range(len(w0)) if float(w0[i]) > 1e-4), reverse=True)
-    print(f"    row 0 recipe: " + ", ".join(f"{s}={v:.3f}" for v, s in top))
+    print("    row 0 recipe: " + ", ".join(f"{s}={v:.3f}" for v, s in top))
     # Contract checks.
     if expected is not None:
         for sym, want in expected.items():
@@ -88,7 +88,10 @@ def _summarise(label: str, res, *, expected=None, floor=None):
 def main() -> None:
     print(f"[loading] {CKPT}")
     runner, model, kernel, device = _build()
-    def _qc_fn(x): return _qc_prob(model, x)
+
+    def _qc_fn(x):
+        return _qc_prob(model, x)
+
     seeds = runner._select_seeds(model, device, _qc_fn)[:8]
     w_seed = _seed_weights_from_compositions(seeds, n_components=kernel.shape[0])
     common = dict(
@@ -126,9 +129,7 @@ def main() -> None:
     torch.manual_seed(0)
     _summarise(
         "A + B — K=4, fixed Au=0.65 Ga=0.20",
-        model.optimize_composition(
-            kernel, max_elements=4, fixed_amounts={"Au": 0.65, "Ga": 0.20}, **common
-        ),
+        model.optimize_composition(kernel, max_elements=4, fixed_amounts={"Au": 0.65, "Ga": 0.20}, **common),
         expected={"Au": 0.65, "Ga": 0.20},
     )
 
@@ -142,9 +143,7 @@ def main() -> None:
     torch.manual_seed(0)
     _summarise(
         "B + C — fixed Au=0.30 Ga=0.20, floor=0.10",
-        model.optimize_composition(
-            kernel, fixed_amounts={"Au": 0.30, "Ga": 0.20}, min_nonzero_weight=0.10, **common
-        ),
+        model.optimize_composition(kernel, fixed_amounts={"Au": 0.30, "Ga": 0.20}, min_nonzero_weight=0.10, **common),
         expected={"Au": 0.30, "Ga": 0.20},
         floor=0.10,
     )
@@ -154,7 +153,8 @@ def main() -> None:
     _summarise(
         "A + B + C — K=4, fixed Au=0.30 Ga=0.20, floor=0.10  (default annealing)",
         model.optimize_composition(
-            kernel, max_elements=4,
+            kernel,
+            max_elements=4,
             fixed_amounts={"Au": 0.30, "Ga": 0.20},
             min_nonzero_weight=0.10,
             **common,
@@ -167,7 +167,8 @@ def main() -> None:
     _summarise(
         "A + B + C — same + annealing_scale=0.8 (more exploration)",
         model.optimize_composition(
-            kernel, max_elements=4,
+            kernel,
+            max_elements=4,
             fixed_amounts={"Au": 0.30, "Ga": 0.20},
             min_nonzero_weight=0.10,
             annealing_scale=0.8,
@@ -181,13 +182,14 @@ def main() -> None:
     _summarise(
         "A + B + C — same + advanced schedule (warm-up then linear)",
         model.optimize_composition(
-            kernel, max_elements=4,
+            kernel,
+            max_elements=4,
             fixed_amounts={"Au": 0.30, "Ga": 0.20},
             min_nonzero_weight=0.10,
             annealing_scale=0.5,
             annealing_schedule={
                 "step": [0.2, 0.7, 1.0],
-                "tau": [0.9, 0.5, 0.0],
+                "scale": [0.9, 0.5, 0.0],
                 "annealing_func": ["constant", "linear", "linear"],
             },
             **common,

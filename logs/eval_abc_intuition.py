@@ -24,7 +24,6 @@ import json
 import time
 import tomllib
 from pathlib import Path
-from typing import Any
 
 import torch
 from lightning import seed_everything

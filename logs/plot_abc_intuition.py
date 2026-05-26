@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 REPO = Path(__file__).resolve().parents[1]
 JSON_PATH = REPO / "logs/eval_abc_intuition.json"
@@ -57,7 +56,7 @@ def main() -> None:
         ax.plot(aus, [r["achieved"][secondary]["mean"] for r in b_rows], "s-", label=secondary, color="#E0762A")
         ax.plot(aus, [r["qc"] for r in b_rows], "^-", label="QC", color="#55A868")
         ax.set_xlabel("fixed Au amount (Ga=0.20)")
-        ax.set_title(f"B — vary Au pin")
+        ax.set_title("B — vary Au pin")
         ax.legend(fontsize=8, loc="best")
         ax.grid(True, alpha=0.3)
 
@@ -73,7 +72,7 @@ def main() -> None:
         ax_nz.set_ylabel("mean nz", color="#888")
         ax_nz.set_yscale("symlog")
         ax.set_xlabel("min_nonzero_weight (floor)")
-        ax.set_title(f"C — vary floor")
+        ax.set_title("C — vary floor")
         ax.legend(fontsize=8, loc="best")
         ax.grid(True, alpha=0.3)
 
@@ -88,7 +87,7 @@ def main() -> None:
         ax_nz.plot(floors, [r["nz_mean"] for r in ac_rows], "d:", color="#888")
         ax_nz.set_ylabel("mean nz", color="#888")
         ax.set_xlabel("floor (K=5 fixed)")
-        ax.set_title(f"A+C — K=5, vary floor")
+        ax.set_title("A+C — K=5, vary floor")
         ax.legend(fontsize=8, loc="best")
         ax.grid(True, alpha=0.3)
 
@@ -103,7 +102,7 @@ def main() -> None:
         ax_nz.plot(floors, [r["nz_mean"] for r in bc_rows], "d:", color="#888")
         ax_nz.set_ylabel("mean nz", color="#888")
         ax.set_xlabel("floor (fix Au=0.30 Ga=0.20)")
-        ax.set_title(f"B+C — fix + vary floor")
+        ax.set_title("B+C — fix + vary floor")
         ax.legend(fontsize=8, loc="best")
         ax.grid(True, alpha=0.3)
 

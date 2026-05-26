@@ -37,7 +37,7 @@ orthogonally — any subset of A/B/C plus the existing knobs can be used togethe
 |---|---|---|---|
 | `max_elements` (A) | `int` ∈ `[1, n_components]` or `None` | "at most K non-zero elements" cardinality cap | differentiable Plötz–Roth iterative soft top-K mask multiplies `softmax(lg)` inside `_w_from_logits`; final hard top-K projection at the very end so the returned recipe is exactly K-hot (subject to floor C dropping below-floor positions further down) |
 | `annealing_scale` (A) | `[0, 1]`, default 0.5 | single-knob "softness" of the K-hot annealing schedule; maps to `τ_start = 25**scale` (0→1, 0.5→5, 1→25) | drives the τ schedule for the soft top-K mask; default schedule is geometric from `25**scale` down to `τ_end = 0.01` |
-| `annealing_schedule` (A) | `dict` or `None` | advanced piecewise override — `{"step": [...], "tau": [...], "annealing_func": [...]}` with per-segment normalised scales and interpolation funcs (`geometric`/`linear`/`cosine`/`constant`) | overrides the front of the simple schedule; if `step[-1] < 1.0`, the tail falls back to a geometric drop to `τ_end = 0.01` |
+| `annealing_schedule` (A) | `dict` or `None` | advanced piecewise override — `{"step": [...], "scale": [...], "annealing_func": [...]}` with per-segment normalised scales and interpolation funcs (`geometric`/`linear`/`cosine`/`constant`) | overrides the front of the simple schedule; if `step[-1] < 1.0`, the tail falls back to a geometric drop to `τ_end = 0.01` |
 | `fixed_amounts` (B) | `{symbol: float}` or `None` | pin elements at user-specified absolute amounts (e.g. `{"Au": 0.65, "Ga": 0.20}`); does **not** require `initial_weights` | reuses the existing `locked_mask` / `locked_w0` lock-paste machinery; merged with `element_step_scale=0` locks (validated disjoint) |
 | `min_nonzero_weight` (C) | `[0, 1]`, default 0.0 | drop unlocked positions with `0 < w < floor` and re-distribute the freed mass | applied at the very end of `_w_from_logits` (after lock-paste) and again after the final hard projection; locked positions are exempt; per-row fallback when the floor would empty unlocked mass — that row is left unfloored to keep the simplex valid |
 
@@ -93,7 +93,7 @@ maps to a raw temperature via `τ = 25**scale`:
 | 1.0 | 25.0 | max exploration — best for escaping local optima at the cost of slower QC refinement |
 
 The full default schedule is **geometric** from `τ_start(scale)` to `τ_end = 0.01`. For
-finer control, supply `annealing_schedule = {"step": [...], "tau": [...], "annealing_func": [...]}`
+finer control, supply `annealing_schedule = {"step": [...], "scale": [...], "annealing_func": [...]}`
 — see the kwarg docstring.
 
 **Calibration source**: reproducible via [`logs/sweep_tau_schedule.py`](../logs/sweep_tau_schedule.py)
