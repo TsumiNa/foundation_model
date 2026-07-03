@@ -22,6 +22,8 @@ from foundation_model.workflows.finetune import FinetuneConfig, build_finetune_c
 from foundation_model.workflows.finetune import run as finetune_run
 from foundation_model.workflows.inverse import InverseConfig, build_inverse_config
 from foundation_model.workflows.inverse import run as inverse_run
+from foundation_model.workflows.predict import PredictConfig, build_predict_config
+from foundation_model.workflows.predict import run as predict_run
 from foundation_model.workflows.pretrain import PretrainConfig, build_pretrain_config
 from foundation_model.workflows.pretrain import run as pretrain_run
 from foundation_model.workflows.recording import RunRecorder
@@ -249,6 +251,71 @@ def inverse_cmd(
     recorder = RunRecorder(cfg.output_dir)
     recorder.write_provenance(config=cfg, argv=list(sys.argv), seeds={"seed": 2025})
     inverse_run(cfg, recorder, only_scenarios=list(scenarios) or None)
+    recorder.close()
+
+
+def _predict_config(
+    config_path: str,
+    overrides: Sequence[str],
+    output_dir: str | None,
+    seed: int | None,
+    accelerator: str | None,
+    sample: int | None,
+    checkpoint: str | None,
+    tasks: str | None,
+    split: str | None,
+    compositions: str | None,
+    no_metrics: bool,
+) -> PredictConfig:
+    raw = load_raw_config(config_path, overrides, seed=seed, accelerator=accelerator, sample=sample)
+    if tasks is not None:
+        _set_dotted(raw, "predict.tasks", [t.strip() for t in tasks.split(",") if t.strip()])
+    if split is not None:
+        _set_dotted(raw, "predict.split", split)
+    if compositions is not None:
+        _set_dotted(raw, "predict.compositions", [c.strip() for c in compositions.split(",") if c.strip()])
+    if no_metrics:
+        _set_dotted(raw, "predict.with_metrics", False)
+    return build_predict_config(raw, output_dir=output_dir, checkpoint=checkpoint)
+
+
+@main.command("predict")
+@common_options
+@click.option("--checkpoint", default=None, type=click.Path(dir_okay=False), help="Checkpoint to predict with.")
+@click.option("--tasks", default=None, help="Comma-separated heads to predict (default: all checkpoint heads).")
+@click.option("--split", default=None, help="train | val | test | all.")
+@click.option("--compositions", default=None, help="Comma-separated compositions (overrides split).")
+@click.option("--no-metrics", is_flag=True, default=False, help="Skip metric computation.")
+def predict_cmd(
+    config_path: str,
+    output_dir: str | None,
+    overrides: tuple[str, ...],
+    seed: int | None,
+    accelerator: str | None,
+    sample: int | None,
+    checkpoint: str | None,
+    tasks: str | None,
+    split: str | None,
+    compositions: str | None,
+    no_metrics: bool,
+) -> None:
+    """Evaluate / predict with an arbitrary checkpoint."""
+    cfg = _predict_config(
+        config_path,
+        overrides,
+        output_dir,
+        seed,
+        accelerator,
+        sample,
+        checkpoint,
+        tasks,
+        split,
+        compositions,
+        no_metrics,
+    )
+    recorder = RunRecorder(cfg.output_dir)
+    recorder.write_provenance(config=cfg, argv=list(sys.argv), seeds={"seed": 2025})
+    predict_run(cfg, recorder)
     recorder.close()
 
 
