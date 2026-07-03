@@ -1,7 +1,9 @@
 # Smoke-test config for `fm pretrain` — a fast CPU end-to-end run.
 #
-# 3 regression tasks over 2 NEMAD datasets, KMD-1d descriptors, sample=200 rows/dataset,
-# rehearsal interval=2, a 2-run sweep, 2 epochs/step.
+# 2 regression + 1 classification task over the qc dataset (pre-normalized columns +
+# integer material-type label), KMD-1d descriptors, sample=300 rows, rehearsal interval=2,
+# a 2-run sweep, 2 epochs/step. Shares its catalog with the finetune/inverse/predict smoke
+# configs so the checkpoints chain cleanly.
 #
 #   fm pretrain --config samples/pretrain_smoke.toml
 
@@ -17,31 +19,29 @@ num_workers = 0
 kind = "kmd"
 n_grids = 8
 
-[datasets.supercon]
-path = "data/NEMAD_superconductor_20260425.parquet"
-sample = 200
-
-[datasets.magnetic]
-path = "data/NEMAD_magnetic_20260419.parquet"
-sample = 200
+[datasets.qc]
+path = "data/qc_ac_te_mp_dos_reformat_20250615_enforce_quaternary_test.pd.parquet"
+preprocessing_path = "data/preprocessing_objects_20250615.pkl.z"
+sample = 300
 
 [[tasks]]
-name = "tc"
+name = "density"
 kind = "regression"
-dataset = "supercon"
-column = "Transition temperature[K]"
+dataset = "qc"
+column = "Density (normalized)"
 
 [[tasks]]
-name = "pressure"
+name = "formation_energy"
 kind = "regression"
-dataset = "supercon"
-column = "Pressure[GPa]"
+dataset = "qc"
+column = "Formation energy per atom (normalized)"
 
 [[tasks]]
-name = "moment"
-kind = "regression"
-dataset = "magnetic"
-column = "Magnetic moment[μB/f.u.]"
+name = "material_type"
+kind = "classification"
+dataset = "qc"
+column = "Material type (label)"
+num_classes = 5
 
 [model]
 latent_dim = 32
@@ -62,7 +62,7 @@ devices = 1
 seed = 2025
 
 [pretrain]
-task_sequence = ["tc", "pressure", "moment"]
+task_sequence = ["density", "formation_energy", "material_type"]
 n_runs = 2
 task_order = "fixed"
 

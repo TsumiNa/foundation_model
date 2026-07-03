@@ -20,6 +20,8 @@ import click
 
 from foundation_model.workflows.finetune import FinetuneConfig, build_finetune_config
 from foundation_model.workflows.finetune import run as finetune_run
+from foundation_model.workflows.inverse import InverseConfig, build_inverse_config
+from foundation_model.workflows.inverse import run as inverse_run
 from foundation_model.workflows.pretrain import PretrainConfig, build_pretrain_config
 from foundation_model.workflows.pretrain import run as pretrain_run
 from foundation_model.workflows.recording import RunRecorder
@@ -52,8 +54,15 @@ def load_raw_config(
     seed: int | None = None,
     accelerator: str | None = None,
     sample: int | None = None,
+    seed_key: str = "training.seed",
+    accelerator_key: str = "training.accelerator",
 ) -> dict[str, Any]:
-    """Load a TOML file and apply ``--set`` overrides plus common first-class flags."""
+    """Load a TOML file and apply ``--set`` overrides plus common first-class flags.
+
+    ``seed_key`` / ``accelerator_key`` route ``--seed`` / ``--accelerator`` to the right section
+    per subcommand (``[training]`` for pretrain/finetune, ``[inverse]`` / ``[predict]`` for those),
+    so they never inject a section the config builder would reject.
+    """
 
     with open(config_path, "rb") as fh:
         raw: dict[str, Any] = tomllib.load(fh)
@@ -65,9 +74,9 @@ def load_raw_config(
         _set_dotted(raw, key.strip(), _parse_toml_value(value.strip()))
 
     if seed is not None:
-        _set_dotted(raw, "training.seed", seed)
+        _set_dotted(raw, seed_key, seed)
     if accelerator is not None:
-        _set_dotted(raw, "training.accelerator", accelerator)
+        _set_dotted(raw, accelerator_key, accelerator)
     if sample is not None:
         for name in raw.get("datasets", {}):
             _set_dotted(raw, f"datasets.{name}.sample", sample)
@@ -170,6 +179,76 @@ def finetune_cmd(
     recorder = RunRecorder(cfg.output_dir)
     recorder.write_provenance(config=cfg, argv=list(sys.argv), seeds={"seed": cfg.training.seed})
     finetune_run(cfg, recorder)
+    recorder.close()
+
+
+def _inverse_config(
+    config_path: str,
+    overrides: Sequence[str],
+    output_dir: str | None,
+    seed: int | None,
+    accelerator: str | None,
+    sample: int | None,
+    checkpoint: str | None,
+    steps: int | None,
+    no_trajectory: bool,
+    animation_formats: str | None,
+) -> InverseConfig:
+    raw = load_raw_config(
+        config_path,
+        overrides,
+        seed=seed,
+        accelerator=accelerator,
+        sample=sample,
+        seed_key="inverse.seed",
+        accelerator_key="inverse.accelerator",
+    )
+    if steps is not None:
+        _set_dotted(raw, "inverse.steps", steps)
+    if no_trajectory:
+        _set_dotted(raw, "inverse.record_trajectory", False)
+    if animation_formats is not None:
+        fmts = [f.strip() for f in animation_formats.split(",") if f.strip()]
+        _set_dotted(raw, "inverse.animation_formats", fmts)
+    return build_inverse_config(raw, output_dir=output_dir, checkpoint=checkpoint)
+
+
+@main.command("inverse")
+@common_options
+@click.option("--checkpoint", default=None, type=click.Path(dir_okay=False), help="Checkpoint to inverse-design from.")
+@click.option("--scenario", "scenarios", multiple=True, help="Run only the named scenario(s) (repeatable).")
+@click.option("--steps", type=int, default=None, help="Override inverse.steps.")
+@click.option("--no-trajectory", is_flag=True, default=False, help="Disable trajectory recording.")
+@click.option("--animation-formats", default=None, help="Comma list of {gif,html,svg} (overrides config).")
+def inverse_cmd(
+    config_path: str,
+    output_dir: str | None,
+    overrides: tuple[str, ...],
+    seed: int | None,
+    accelerator: str | None,
+    sample: int | None,
+    checkpoint: str | None,
+    scenarios: tuple[str, ...],
+    steps: int | None,
+    no_trajectory: bool,
+    animation_formats: str | None,
+) -> None:
+    """Inverse design (scenarios × algorithm paths)."""
+    cfg = _inverse_config(
+        config_path,
+        overrides,
+        output_dir,
+        seed,
+        accelerator,
+        sample,
+        checkpoint,
+        steps,
+        no_trajectory,
+        animation_formats,
+    )
+    recorder = RunRecorder(cfg.output_dir)
+    recorder.write_provenance(config=cfg, argv=list(sys.argv), seeds={"seed": 2025})
+    inverse_run(cfg, recorder, only_scenarios=list(scenarios) or None)
     recorder.close()
 
 

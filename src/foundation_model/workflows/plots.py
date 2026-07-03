@@ -76,8 +76,10 @@ def plot_confusion(
     for t, p in zip(true, pred):
         if 0 <= t < num_classes and 0 <= p < num_classes:
             counts[t, p] += 1
-    if special_material_type:
-        labels = list(MATERIAL_TYPE_DISPLAY_ORDER[:num_classes])
+    # The special material-type ordering only applies to the merged 3-class encoding; for any
+    # other class count fall back to plain integer labels so ticks and labels always match.
+    if special_material_type and num_classes == len(MATERIAL_TYPE_DISPLAY_ORDER):
+        labels = list(MATERIAL_TYPE_DISPLAY_ORDER)
         perm = [MATERIAL_TYPE_CLASSES.index(lbl) for lbl in labels]
     else:
         labels = [str(i) for i in range(num_classes)]
