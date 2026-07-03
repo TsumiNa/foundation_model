@@ -9,7 +9,40 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from foundation_model.cli.main import _parse_toml_value, _pretrain_config, load_raw_config, main
+from foundation_model.cli.main import (
+    _finetune_config,
+    _parse_toml_value,
+    _pretrain_config,
+    load_raw_config,
+    main,
+)
+
+_FINETUNE_CONFIG = """
+[descriptor]
+kind = "kmd"
+
+[datasets.d1]
+path = "data/x.parquet"
+
+[[tasks]]
+name = "a"
+kind = "regression"
+dataset = "d1"
+column = "a"
+
+[[tasks]]
+name = "b"
+kind = "regression"
+dataset = "d1"
+column = "b"
+
+[finetune]
+tasks = ["a"]
+checkpoint = "ck.pt"
+
+[output]
+dir = "out"
+"""
 
 _CONFIG = """
 [descriptor]
@@ -83,7 +116,17 @@ def test_missing_config_file_errors() -> None:
     assert "does not exist" in result.output.lower()
 
 
-def test_help_lists_pretrain() -> None:
+def test_help_lists_subcommands() -> None:
     result = CliRunner().invoke(main, ["--help"])
     assert result.exit_code == 0
     assert "pretrain" in result.output
+    assert "finetune" in result.output
+
+
+def test_finetune_tasks_and_checkpoint_flags(tmp_path) -> None:
+    path = tmp_path / "ft.toml"
+    path.write_text(_FINETUNE_CONFIG)
+    cfg = _finetune_config(str(path), (), None, None, None, None, "override.pt", "a,b", 7)
+    assert cfg.tasks == ["a", "b"]  # --tasks overrides finetune.tasks
+    assert str(cfg.checkpoint) == "override.pt"  # --checkpoint wins
+    assert cfg.epochs == 7

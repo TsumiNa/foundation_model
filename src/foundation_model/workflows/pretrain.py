@@ -27,33 +27,33 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd
-import torch
 from lightning import Trainer, seed_everything
 from lightning.pytorch.callbacks import Callback, EarlyStopping
 from loguru import logger
-from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, r2_score  # type: ignore[import-untyped]
-from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
-
-from foundation_model.data.datamodule import CompoundDataModule
-from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
-from foundation_model.models.model_config import MLPEncoderConfig, OptimizerConfig
 
 from . import plots
+from ._engine import (
+    DropLastTrainCompoundDataModule,
+    build_empty_model,
+    build_head_config,
+    evaluate_task,
+)
+from ._sections import (
+    ModelSectionConfig,
+    TrainingSectionConfig,
+    build_model_section,
+    build_training_section,
+    reject_unknown,
+)
 from .recording import RunRecorder
 from .task_catalog import TaskCatalog, TaskCatalogConfig, TaskKind, build_task_catalog_config
 
-# Reserved built-in autoencoder head name (see FlexibleMultiTaskModel).
-_AE_NAME = "__reconstruction__"
-# Legacy head weight decay for regression / classification heads (kernel heads use kr_weight_decay).
-_HEAD_WEIGHT_DECAY = 1e-5
 # Stable qualitative palette so each task keeps one colour across the forgetting figure.
 _TASK_PALETTE = (
     "#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B3", "#937860",
     "#DA8BC3", "#8C8C8C", "#CCB974", "#64B5CD", "#E377C2", "#17BECF",
 )  # fmt: skip
 
-# Root TOML sections a pretrain config may contain.
 _PRETRAIN_ROOT_KEYS = {"data", "descriptor", "datasets", "tasks", "model", "training", "pretrain", "output"}
 _CATALOG_KEYS = {"data", "descriptor", "datasets", "tasks"}
 
@@ -64,44 +64,6 @@ class TaskOrder(str, Enum):
 
 
 # --- config dataclasses -------------------------------------------------------------------
-
-
-@dataclass(kw_only=True)
-class ModelSectionConfig:
-    """[model] — architecture dims shared with finetune."""
-
-    latent_dim: int = 128
-    encoder_hidden: int = 256
-    head_hidden_dim: int = 64
-    n_kernel: int = 15
-
-    def __post_init__(self) -> None:
-        for name in ("latent_dim", "encoder_hidden", "head_hidden_dim", "n_kernel"):
-            if getattr(self, name) < 1:
-                raise ValueError(f"model.{name} must be >= 1, got {getattr(self, name)}.")
-
-
-@dataclass(kw_only=True)
-class TrainingSectionConfig:
-    """[training] — epochs, early-stop, learning rates, accelerator (shared with finetune)."""
-
-    max_epochs: int = 100
-    early_stop_patience: int = 8
-    early_stop_min_delta: float = 1e-4
-    encoder_lr: float = 5e-3
-    head_lr: float = 5e-3
-    kr_lr: float = 5e-4
-    kr_weight_decay: float = 5e-5
-    ae_lr: float = 5e-3
-    accelerator: str = "auto"
-    devices: int = 1
-    seed: int = 2025
-
-    def __post_init__(self) -> None:
-        if self.max_epochs < 1:
-            raise ValueError(f"training.max_epochs must be >= 1, got {self.max_epochs}.")
-        if self.early_stop_patience < 1:
-            raise ValueError(f"training.early_stop_patience must be >= 1, got {self.early_stop_patience}.")
 
 
 def _validate_replay_amount(value: float | int, *, where: str) -> None:
@@ -164,30 +126,18 @@ class PretrainConfig:
 # --- builder ------------------------------------------------------------------------------
 
 
-def _reject_unknown(section: str, raw: Mapping[str, Any], known: set[str]) -> None:
-    unknown = sorted(set(raw) - known)
-    if unknown:
-        raise ValueError(f"[{section}]: unknown key(s) {unknown}; allowed keys are {sorted(known)}.")
-
-
 def build_pretrain_config(raw: Mapping[str, Any], *, output_dir: str | Path | None = None) -> PretrainConfig:
     """Normalize a parsed-TOML tree into a :class:`PretrainConfig`."""
 
-    _reject_unknown("<root>", raw, _PRETRAIN_ROOT_KEYS)
+    reject_unknown("<root>", raw, _PRETRAIN_ROOT_KEYS)
     catalog = build_task_catalog_config({k: raw[k] for k in _CATALOG_KEYS if k in raw})
-
-    model_raw = dict(raw.get("model", {}))
-    _reject_unknown("model", model_raw, set(ModelSectionConfig.__dataclass_fields__))
-    model = ModelSectionConfig(**model_raw)
-
-    training_raw = dict(raw.get("training", {}))
-    _reject_unknown("training", training_raw, set(TrainingSectionConfig.__dataclass_fields__))
-    training = TrainingSectionConfig(**training_raw)
+    model = build_model_section(raw.get("model", {}))
+    training = build_training_section(raw.get("training", {}))
 
     pretrain_raw = dict(raw.get("pretrain", {}))
-    _reject_unknown("pretrain", pretrain_raw, {"task_sequence", "n_runs", "task_order", "rehearsal"})
+    reject_unknown("pretrain", pretrain_raw, {"task_sequence", "n_runs", "task_order", "rehearsal"})
     rehearsal_raw = dict(pretrain_raw.get("rehearsal", {}))
-    _reject_unknown("pretrain.rehearsal", rehearsal_raw, {"interval", "default_replay", "per_task"})
+    reject_unknown("pretrain.rehearsal", rehearsal_raw, {"interval", "default_replay", "per_task"})
     rehearsal = RehearsalConfig(
         interval=rehearsal_raw.get("interval", 1),
         default_replay=rehearsal_raw.get("default_replay", 0.05),
@@ -227,40 +177,6 @@ def replay_to_ratio(replay: float | int, n_valid: int) -> float:
     if n_valid <= 0:
         return 1.0
     return min(1.0, replay / n_valid)
-
-
-class _DropLastTrainCompoundDataModule(CompoundDataModule):
-    """``CompoundDataModule`` whose train loader drops the final partial batch.
-
-    Guards against BatchNorm1d crashing on a size-1 tail batch (``Expected more than 1 value per
-    channel``). Only the train loader is affected; val/test/predict keep every held-out row.
-    """
-
-    def train_dataloader(self) -> DataLoader | None:  # type: ignore[override]
-        base = super().train_dataloader()
-        if base is None:
-            return None
-        kwargs: dict[str, Any] = dict(
-            batch_size=base.batch_size,
-            num_workers=base.num_workers,
-            pin_memory=base.pin_memory,
-            collate_fn=base.collate_fn,
-            drop_last=True,
-        )
-        # Preserve a non-default sampler (e.g. a DistributedSampler) instead of forcing
-        # shuffle=True, so the loader stays correct if ever run under DDP; otherwise shuffle.
-        sampler = base.sampler
-        if isinstance(sampler, (RandomSampler, SequentialSampler)):
-            return DataLoader(base.dataset, shuffle=True, **kwargs)
-        return DataLoader(base.dataset, sampler=sampler, **kwargs)
-
-
-def _as_float_array(cell: Any) -> np.ndarray:
-    import ast
-
-    if isinstance(cell, str):
-        cell = ast.literal_eval(cell)
-    return np.asarray(cell, dtype=float).ravel()
 
 
 # --- engine -------------------------------------------------------------------------------
@@ -319,7 +235,7 @@ def _run_single(
     seed: int,
 ) -> list[dict[str, Any]]:
     seed_everything(seed, workers=True)
-    model = _build_empty_model(cfg, catalog)
+    model = build_empty_model(catalog, cfg.model, cfg.training)
 
     task_colors = {name: _TASK_PALETTE[i % len(_TASK_PALETTE)] for i, name in enumerate(task_order)}
     clf_tasks = frozenset(n for n in task_order if catalog.task_spec(n).kind is TaskKind.CLASSIFICATION)
@@ -329,18 +245,17 @@ def _run_single(
 
     for step, task_name in enumerate(task_order, start=1):
         logger.info(f"--- step {step}/{len(task_order)}: add '{task_name}' ---")
-        built[task_name] = _build_task_config(cfg, catalog, task_name, masking_ratio=1.0)
+        built[task_name] = build_head_config(catalog, cfg.model, cfg.training, task_name, masking_ratio=1.0)
         model.add_task(built[task_name])
 
         learned = list(task_order[: step - 1])
         participating = active_old_tasks(step, learned, cfg.rehearsal.interval)
         active = [task_name, *participating]
         for name in participating:
-            ratio = _replay_ratio_for(cfg, catalog, name)
-            built[name].task_masking_ratio = ratio
+            built[name].task_masking_ratio = _replay_ratio_for(cfg, catalog, name)
         built[task_name].task_masking_ratio = 1.0
 
-        datamodule = _DropLastTrainCompoundDataModule(
+        datamodule = DropLastTrainCompoundDataModule(
             task_configs=[built[name] for name in active],
             descriptor_fn=catalog.descriptor_fn(),
             task_frames={name: catalog.task_frames([name])[name] for name in active},
@@ -378,7 +293,7 @@ def _run_single(
         step_dir = recorder.paths.step_dir(step, task_name)
         step_metrics: dict[str, dict[str, float]] = {}
         for name in task_order[:step]:  # evaluate ALL learned heads, regardless of interval
-            metric = _evaluate_task(
+            metric = evaluate_task(
                 model, catalog, name, recorder, step_dir, is_new=(name == task_name), test_keys=test_keys
             )
             step_metrics[name] = metric
@@ -394,41 +309,8 @@ def _run_single(
     plots.plt.close(fig)
     recorder.write_records()
     recorder.write_metrics_table()
-    recorder.save_final_model(model, list(task_order), _task_spec_dump(cfg, catalog, task_order))
+    recorder.save_final_model(model, list(task_order), _task_spec_dump(catalog, task_order))
     return records
-
-
-def _build_empty_model(cfg: PretrainConfig, catalog: TaskCatalog) -> FlexibleMultiTaskModel:
-    encoder_config = MLPEncoderConfig(
-        hidden_dims=[catalog.descriptor_dim, cfg.model.encoder_hidden, cfg.model.latent_dim]
-    )
-    model = FlexibleMultiTaskModel(
-        task_configs=[],
-        encoder_config=encoder_config,
-        enable_autoencoder=True,
-        shared_block_optimizer=OptimizerConfig(lr=cfg.training.encoder_lr, weight_decay=1e-2),
-    )
-    # AE head always trains; only its LR is configurable (ae_lr).
-    if _AE_NAME in model.task_configs_map:
-        model.task_configs_map[_AE_NAME].optimizer = OptimizerConfig(lr=cfg.training.ae_lr)
-    return model
-
-
-def _build_task_config(cfg: PretrainConfig, catalog: TaskCatalog, name: str, *, masking_ratio: float) -> Any:
-    spec = catalog.task_spec(name)
-    if spec.kind is TaskKind.KERNEL_REGRESSION:
-        lr, weight_decay = cfg.training.kr_lr, cfg.training.kr_weight_decay
-    else:
-        lr, weight_decay = cfg.training.head_lr, _HEAD_WEIGHT_DECAY
-    return catalog.build_task_config(
-        name,
-        latent_dim=cfg.model.latent_dim,
-        head_hidden_dim=cfg.model.head_hidden_dim,
-        n_kernel=cfg.model.n_kernel,
-        lr=lr,
-        weight_decay=weight_decay,
-        masking_ratio=masking_ratio,
-    )
 
 
 def _replay_ratio_for(cfg: PretrainConfig, catalog: TaskCatalog, name: str) -> float:
@@ -447,157 +329,9 @@ def _n_valid_train_labels(catalog: TaskCatalog, name: str) -> int:
     return int(mask.sum())
 
 
-def _task_spec_dump(cfg: PretrainConfig, catalog: TaskCatalog, task_order: Sequence[str]) -> dict[str, Any]:
+def _task_spec_dump(catalog: TaskCatalog, task_order: Sequence[str]) -> dict[str, Any]:
     dump: dict[str, Any] = {}
     for name in task_order:
         spec = catalog.task_spec(name)
         dump[name] = {"kind": spec.kind.value, "column": spec.column, "source": spec.dataset}
     return dump
-
-
-def _test_rows(catalog: TaskCatalog, name: str, test_keys: set[str] | None) -> list[str]:
-    spec = catalog.task_spec(name)
-    frame = catalog.task_frames([name])[name]
-    mask = frame[spec.column].notna()
-    if test_keys is not None:
-        mask &= frame.index.isin(test_keys)
-    elif "split" in frame.columns:
-        mask &= frame["split"] == "test"
-    return list(frame.index[mask])
-
-
-def _descriptor_tensor(catalog: TaskCatalog, comps: list[str], device: torch.device) -> tuple[torch.Tensor, list[str]]:
-    desc = catalog.descriptor_fn()(comps)
-    kept = [c for c in comps if c in desc.index]
-    tensor = torch.tensor(desc.loc[kept].values, dtype=torch.float32, device=device)
-    return tensor, kept
-
-
-def _evaluate_task(
-    model: FlexibleMultiTaskModel,
-    catalog: TaskCatalog,
-    name: str,
-    recorder: RunRecorder,
-    step_dir: Path,
-    *,
-    is_new: bool,
-    test_keys: set[str] | None,
-) -> dict[str, float]:
-    """Evaluate one head on the fixed test split; dump parquet + metrics (+ plot if new)."""
-
-    spec = catalog.task_spec(name)
-    model.eval()
-    device = next(model.parameters()).device
-    comps = _test_rows(catalog, name, test_keys)
-    if not comps:
-        return {"primary": float("nan"), "samples": 0}
-    frame = catalog.task_frames([name])[name]
-    head = model.task_heads[name]
-
-    with torch.no_grad():
-        if spec.kind in (TaskKind.REGRESSION, TaskKind.CLASSIFICATION):
-            x, comps = _descriptor_tensor(catalog, comps, device)
-            if not comps:
-                return {"primary": float("nan"), "samples": 0}
-            h = torch.tanh(model.encoder(x))
-            if spec.kind is TaskKind.REGRESSION:
-                pred = catalog.inverse_transform(name, head(h).squeeze(-1).cpu().numpy())
-                true = catalog.inverse_transform(name, frame.loc[comps, spec.column].astype(float).to_numpy())
-                r2 = float(r2_score(true, pred))
-                metric = {"r2": r2, "mae": float(mean_absolute_error(true, pred)), "samples": len(comps), "primary": r2}
-                recorder.dump_predictions(
-                    step_dir, name, pd.DataFrame({"composition": comps, "true": true, "pred": pred})
-                )
-                recorder.dump_metrics(step_dir, name, metric)
-                if is_new:
-                    fig = plots.plot_parity(true, pred, r2=r2, title=name)
-                    recorder.save_figure(_fig_rel(recorder, step_dir, f"{name}_parity.png"), fig)
-                    plots.plt.close(fig)
-                return metric
-            logits = head(h)
-            pred = logits.argmax(dim=-1).cpu().numpy()
-            true = frame.loc[comps, spec.column].astype(int).to_numpy()
-            acc = float(accuracy_score(true, pred))
-            metric = {
-                "accuracy": acc,
-                "macro_f1": float(f1_score(true, pred, average="macro", zero_division=0)),
-                "samples": len(comps),
-                "primary": acc,
-            }
-            recorder.dump_predictions(step_dir, name, pd.DataFrame({"composition": comps, "true": true, "pred": pred}))
-            recorder.dump_metrics(step_dir, name, metric)
-            if is_new:
-                assert spec.num_classes is not None
-                fig = plots.plot_confusion(
-                    true,
-                    pred,
-                    num_classes=spec.num_classes,
-                    acc=acc,
-                    title=name,
-                    special_material_type=(name == "material_type"),
-                )
-                recorder.save_figure(_fig_rel(recorder, step_dir, f"{name}_confusion.png"), fig)
-                plots.plt.close(fig)
-            return metric
-
-        # kernel regression
-        assert spec.t_column is not None
-        # Compute descriptors once for the whole test set, then filter by availability
-        # (cheaper than a 1-row descriptor call per composition).
-        available = set(catalog.descriptor_fn()(comps).index)
-        keep: list[str] = []
-        t_list: list[np.ndarray] = []
-        true_parts: list[np.ndarray] = []
-        for comp in comps:
-            if comp not in available:
-                continue
-            y_arr = _as_float_array(frame.at[comp, spec.column])
-            t_arr = _as_float_array(frame.at[comp, spec.t_column])
-            if y_arr.size == 0 or y_arr.size != t_arr.size:
-                continue
-            keep.append(comp)
-            t_list.append(t_arr)
-            true_parts.append(y_arr)
-        if not keep:
-            return {"primary": float("nan"), "samples": 0}
-        xk, _ = _descriptor_tensor(catalog, keep, device)
-        h_k = torch.tanh(model.encoder(xk))
-        t_tensors = [torch.tensor(t, dtype=torch.float32, device=device) for t in t_list]
-        expanded_h, expanded_t = model._expand_for_kernel_regression(h_k, t_tensors)
-        pred = catalog.inverse_transform(name, head(expanded_h, t=expanded_t).squeeze(-1).cpu().numpy())
-        true = catalog.inverse_transform(name, np.concatenate(true_parts))
-        r2 = float(r2_score(true, pred))
-        metric = {
-            "r2": r2,
-            "mae": float(mean_absolute_error(true, pred)),
-            "samples": len(keep),
-            "points": int(true.size),
-            "primary": r2,
-        }
-        recorder.dump_predictions(step_dir, name, _kr_long_frame(keep, t_list, true_parts, pred))
-        recorder.dump_metrics(step_dir, name, metric)
-        if is_new:
-            kr_fig = plots.plot_kr_sequences(keep, t_list, true_parts, pred, title=name)
-            if kr_fig is not None:
-                recorder.save_figure(_fig_rel(recorder, step_dir, f"{name}_sequences.png"), kr_fig)
-                plots.plt.close(kr_fig)
-        return metric
-
-
-def _kr_long_frame(
-    comps: list[str], t_list: list[np.ndarray], true_parts: list[np.ndarray], pred: np.ndarray
-) -> pd.DataFrame:
-    rows: list[dict[str, Any]] = []
-    offset = 0
-    for comp, t_arr, y_true in zip(comps, t_list, true_parts):
-        n = int(y_true.size)
-        for k in range(n):
-            rows.append(
-                {"composition": comp, "t": float(t_arr[k]), "true": float(y_true[k]), "pred": float(pred[offset + k])}
-            )
-        offset += n
-    return pd.DataFrame(rows)
-
-
-def _fig_rel(recorder: RunRecorder, step_dir: Path, filename: str) -> str:
-    return str((step_dir / filename).relative_to(recorder.paths.root))

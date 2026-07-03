@@ -1,0 +1,64 @@
+# Smoke-test config for `fm finetune` — fine-tune one head on a pretrain-smoke checkpoint.
+#
+# The catalog + model dims match samples/pretrain_smoke.toml so the checkpoint loads cleanly.
+#
+#   fm finetune --config samples/finetune_smoke.toml \
+#       --checkpoint artifacts/pretrain_smoke/runs/run00/training/final_model.pt
+
+[data]
+composition_column = "composition"
+batch_size = 64
+
+[descriptor]
+kind = "kmd"
+n_grids = 8
+
+[datasets.supercon]
+path = "data/NEMAD_superconductor_20260425.parquet"
+sample = 200
+
+[datasets.magnetic]
+path = "data/NEMAD_magnetic_20260419.parquet"
+sample = 200
+
+[[tasks]]
+name = "tc"
+kind = "regression"
+dataset = "supercon"
+column = "Transition temperature[K]"
+
+[[tasks]]
+name = "pressure"
+kind = "regression"
+dataset = "supercon"
+column = "Pressure[GPa]"
+
+[[tasks]]
+name = "moment"
+kind = "regression"
+dataset = "magnetic"
+column = "Magnetic moment[μB/f.u.]"
+
+[model]
+latent_dim = 32
+encoder_hidden = 64
+head_hidden_dim = 32
+n_kernel = 8
+
+[training]
+max_epochs = 100
+early_stop_patience = 3
+accelerator = "cpu"
+devices = 1
+seed = 2025
+head_lr = 5e-3
+ae_lr = 5e-3
+
+[finetune]
+checkpoint = "artifacts/pretrain_smoke/runs/run00/training/final_model.pt"
+tasks = ["moment"]
+epochs = 2
+freeze_encoder = true
+
+[output]
+dir = "artifacts/finetune_smoke"

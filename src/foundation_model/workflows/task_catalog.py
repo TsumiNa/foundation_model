@@ -622,11 +622,14 @@ class TaskCatalog:
         *,
         masking_ratios: Mapping[str, float] | None = None,
         predict_idx: str | Sequence[str] | None = None,
+        datamodule_cls: type[CompoundDataModule] = CompoundDataModule,
     ) -> CompoundDataModule:
-        """Assemble a :class:`CompoundDataModule` over ``active_tasks``.
+        """Assemble a datamodule over ``active_tasks``.
 
         ``masking_ratios`` overrides each task's keep-ratio (default 1.0); ``predict_idx`` is set
         on every active task config (literal split name or explicit composition sequence).
+        ``datamodule_cls`` lets callers request a ``CompoundDataModule`` subclass (e.g. the
+        drop-last training variant used during fit) without this module importing it.
         """
 
         masking_ratios = masking_ratios or {}
@@ -636,7 +639,7 @@ class TaskCatalog:
             for name in active_tasks
         ]
         data = self.config.data
-        return CompoundDataModule(
+        return datamodule_cls(
             task_configs=task_configs,
             descriptor_fn=self.descriptor_fn(),
             task_frames={name: frames[name] for name in active_tasks},

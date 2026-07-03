@@ -18,6 +18,8 @@ from typing import Any
 
 import click
 
+from foundation_model.workflows.finetune import FinetuneConfig, build_finetune_config
+from foundation_model.workflows.finetune import run as finetune_run
 from foundation_model.workflows.pretrain import PretrainConfig, build_pretrain_config
 from foundation_model.workflows.pretrain import run as pretrain_run
 from foundation_model.workflows.recording import RunRecorder
@@ -125,6 +127,49 @@ def pretrain_cmd(
     recorder = RunRecorder(cfg.output_dir)
     recorder.write_provenance(config=cfg, argv=list(sys.argv), seeds={"seed": cfg.training.seed})
     pretrain_run(cfg, recorder)
+    recorder.close()
+
+
+def _finetune_config(
+    config_path: str,
+    overrides: Sequence[str],
+    output_dir: str | None,
+    seed: int | None,
+    accelerator: str | None,
+    sample: int | None,
+    checkpoint: str | None,
+    tasks: str | None,
+    epochs: int | None,
+) -> FinetuneConfig:
+    raw = load_raw_config(config_path, overrides, seed=seed, accelerator=accelerator, sample=sample)
+    if tasks is not None:
+        _set_dotted(raw, "finetune.tasks", [t.strip() for t in tasks.split(",") if t.strip()])
+    if epochs is not None:
+        _set_dotted(raw, "finetune.epochs", epochs)
+    return build_finetune_config(raw, output_dir=output_dir, checkpoint=checkpoint)
+
+
+@main.command("finetune")
+@common_options
+@click.option("--checkpoint", default=None, type=click.Path(dir_okay=False), help="Checkpoint to fine-tune from.")
+@click.option("--tasks", default=None, help="Comma-separated heads to fine-tune (overrides finetune.tasks).")
+@click.option("--epochs", type=int, default=None, help="Override finetune.epochs.")
+def finetune_cmd(
+    config_path: str,
+    output_dir: str | None,
+    overrides: tuple[str, ...],
+    seed: int | None,
+    accelerator: str | None,
+    sample: int | None,
+    checkpoint: str | None,
+    tasks: str | None,
+    epochs: int | None,
+) -> None:
+    """Frozen-encoder fine-tuning of selected task heads."""
+    cfg = _finetune_config(config_path, overrides, output_dir, seed, accelerator, sample, checkpoint, tasks, epochs)
+    recorder = RunRecorder(cfg.output_dir)
+    recorder.write_provenance(config=cfg, argv=list(sys.argv), seeds={"seed": cfg.training.seed})
+    finetune_run(cfg, recorder)
     recorder.close()
 
 
