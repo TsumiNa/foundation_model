@@ -130,3 +130,36 @@ def test_finetune_tasks_and_checkpoint_flags(tmp_path) -> None:
     assert cfg.tasks == ["a", "b"]  # --tasks overrides finetune.tasks
     assert str(cfg.checkpoint) == "override.pt"  # --checkpoint wins
     assert cfg.epochs == 7
+
+
+_PREDICT_CONFIG = """
+[descriptor]
+kind = "kmd"
+
+[datasets.d1]
+path = "data/x.parquet"
+
+[[tasks]]
+name = "a"
+kind = "regression"
+dataset = "d1"
+column = "a"
+
+[predict]
+split = "test"
+
+[output]
+dir = "out"
+"""
+
+
+def test_predict_flags(tmp_path) -> None:
+    from foundation_model.cli.main import _predict_config
+
+    path = tmp_path / "pred.toml"
+    path.write_text(_PREDICT_CONFIG)
+    cfg = _predict_config(str(path), (), None, None, None, None, "ck.pt", "a", "all", "Fe2 O3,Al2 O3", True)
+    assert cfg.tasks == ["a"]
+    assert cfg.split == "all"
+    assert cfg.compositions == ["Fe2 O3", "Al2 O3"]
+    assert cfg.with_metrics is False  # --no-metrics
