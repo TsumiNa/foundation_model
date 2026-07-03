@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+_MODES = {"min", "max"}
 
 
 def reject_unknown(section: str, raw: Mapping[str, Any], known: set[str]) -> None:
@@ -33,12 +35,55 @@ class ModelSectionConfig:
 
 
 @dataclass(kw_only=True)
+class EarlyStoppingConfig:
+    """``[training.early_stopping]`` — a subset of Lightning's ``EarlyStopping``."""
+
+    enabled: bool = True
+    monitor: str = "val_final_loss"
+    mode: str = "min"
+    patience: int = 8
+    min_delta: float = 1e-4
+
+    def __post_init__(self) -> None:
+        if self.mode not in _MODES:
+            raise ValueError(f"training.early_stopping.mode must be 'min' or 'max', got {self.mode!r}.")
+        if self.patience < 1:
+            raise ValueError(f"training.early_stopping.patience must be >= 1, got {self.patience}.")
+
+
+@dataclass(kw_only=True)
+class CheckpointConfig:
+    """``[training.checkpoint]`` — a subset of Lightning's ``ModelCheckpoint``.
+
+    Off by default: the RunRecorder already writes rehearsal-schema checkpoints that the finetune/
+    inverse/predict flows consume. Enable to also emit Lightning ``.ckpt`` files (best/last).
+    """
+
+    enabled: bool = False
+    monitor: str = "val_final_loss"
+    mode: str = "min"
+    save_top_k: int = 1
+    save_last: bool = False
+    filename: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode not in _MODES:
+            raise ValueError(f"training.checkpoint.mode must be 'min' or 'max', got {self.mode!r}.")
+
+
+@dataclass(kw_only=True)
+class LoggingConfig:
+    """``[training.logging]`` — enable Lightning's ``CSVLogger`` / ``TensorBoardLogger``."""
+
+    csv: bool = False
+    tensorboard: bool = False
+
+
+@dataclass(kw_only=True)
 class TrainingSectionConfig:
-    """``[training]`` — epochs, early-stop, learning rates, accelerator (pretrain + finetune)."""
+    """``[training]`` — epochs, learning rates, accelerator + Lightning callbacks/loggers."""
 
     max_epochs: int = 100
-    early_stop_patience: int = 8
-    early_stop_min_delta: float = 1e-4
     encoder_lr: float = 5e-3
     head_lr: float = 5e-3
     kr_lr: float = 5e-4
@@ -47,12 +92,13 @@ class TrainingSectionConfig:
     accelerator: str = "auto"
     devices: int = 1
     seed: int = 2025
+    early_stopping: EarlyStoppingConfig = field(default_factory=EarlyStoppingConfig)
+    checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
 
     def __post_init__(self) -> None:
         if self.max_epochs < 1:
             raise ValueError(f"training.max_epochs must be >= 1, got {self.max_epochs}.")
-        if self.early_stop_patience < 1:
-            raise ValueError(f"training.early_stop_patience must be >= 1, got {self.early_stop_patience}.")
 
 
 def build_model_section(raw: Mapping[str, Any]) -> ModelSectionConfig:
@@ -64,4 +110,17 @@ def build_model_section(raw: Mapping[str, Any]) -> ModelSectionConfig:
 def build_training_section(raw: Mapping[str, Any]) -> TrainingSectionConfig:
     data = dict(raw)
     reject_unknown("training", data, set(TrainingSectionConfig.__dataclass_fields__))
-    return TrainingSectionConfig(**data)
+
+    es_raw = dict(data.pop("early_stopping", {}))
+    reject_unknown("training.early_stopping", es_raw, set(EarlyStoppingConfig.__dataclass_fields__))
+    ckpt_raw = dict(data.pop("checkpoint", {}))
+    reject_unknown("training.checkpoint", ckpt_raw, set(CheckpointConfig.__dataclass_fields__))
+    log_raw = dict(data.pop("logging", {}))
+    reject_unknown("training.logging", log_raw, set(LoggingConfig.__dataclass_fields__))
+
+    return TrainingSectionConfig(
+        **data,
+        early_stopping=EarlyStoppingConfig(**es_raw),
+        checkpoint=CheckpointConfig(**ckpt_raw),
+        logging=LoggingConfig(**log_raw),
+    )

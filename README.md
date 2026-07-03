@@ -108,8 +108,14 @@ All configs are **TOML**, normalized into validated `@dataclass` config objects 
 per-subcommand `build_*_config` builders. Configs share the `[data]` / `[descriptor]` /
 `[datasets.*]` / `[[tasks]]` / `[model]` / `[training]` sections and add one subcommand section
 (`[pretrain]` / `[finetune]` / `[inverse]` / `[predict]`). Unknown keys are rejected with the
-offending key name. See [`samples/`](samples/) for templates and `AGENTS.md` → **Entry Points**
-for the full convention.
+offending key name.
+
+Training callbacks and loggers map to Lightning's built-ins via `[training]` sub-tables (a flexible
+subset of each): `[training.early_stopping]` → `EarlyStopping` (on by default),
+`[training.checkpoint]` → `ModelCheckpoint`, and `[training.logging]` (`csv` / `tensorboard`) →
+`CSVLogger` / `TensorBoardLogger`. Lightning checkpointing/logging are opt-in; the run recorder
+writes the rehearsal-schema checkpoints + `run.log` regardless. See [`samples/`](samples/) for
+templates and `AGENTS.md` → **Entry Points** for the full convention.
 
 ## Features
 

@@ -45,12 +45,14 @@ n_kernel = 8
 
 [training]
 max_epochs = 100
-early_stop_patience = 3
 accelerator = "cpu"
 devices = 1
 seed = 2025
 head_lr = 5e-3
 ae_lr = 5e-3
+
+[training.early_stopping]
+patience = 3
 
 [finetune]
 checkpoint = "artifacts/pretrain_smoke/runs/run00/training/final_model.pt"

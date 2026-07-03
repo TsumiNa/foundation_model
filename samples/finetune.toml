@@ -57,12 +57,17 @@ n_kernel = 15
 
 [training]
 max_epochs = 100
-early_stop_patience = 8
 accelerator = "auto"
 devices = 1
 seed = 2025
 head_lr = 5e-3
 ae_lr = 5e-3
+
+[training.early_stopping]
+patience = 8
+
+[training.logging]
+csv = true
 
 [finetune]
 checkpoint = "artifacts/pretrain/training/final_model.pt"

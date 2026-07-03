@@ -28,7 +28,6 @@ from typing import Any
 
 import numpy as np
 from lightning import Trainer, seed_everything
-from lightning.pytorch.callbacks import Callback, EarlyStopping
 from loguru import logger
 
 from . import plots
@@ -36,6 +35,7 @@ from ._engine import (
     DropLastTrainCompoundDataModule,
     build_empty_model,
     build_head_config,
+    build_trainer_extras,
     evaluate_task,
 )
 from ._sections import (
@@ -266,20 +266,18 @@ def _run_single(
             batch_size=cfg.catalog.data.batch_size,
             num_workers=cfg.catalog.data.num_workers,
         )
-        callbacks: list[Callback] = [
-            EarlyStopping(
-                monitor="val_final_loss",
-                mode="min",
-                patience=cfg.training.early_stop_patience,
-                min_delta=cfg.training.early_stop_min_delta,
-            )
-        ]
+        callbacks, loggers, enable_ckpt = build_trainer_extras(
+            cfg.training,
+            log_dir=recorder.paths.root / "logs",
+            ckpt_dir=recorder.paths.step_dir(step, task_name) / "lightning",
+            run_name=f"step{step:02d}_{task_name}",
+        )
         trainer = Trainer(
             max_epochs=cfg.training.max_epochs,
             accelerator=cfg.training.accelerator,
             devices=cfg.training.devices,
-            logger=False,
-            enable_checkpointing=False,
+            logger=loggers,
+            enable_checkpointing=enable_ckpt,
             enable_progress_bar=False,
             callbacks=callbacks,
         )
