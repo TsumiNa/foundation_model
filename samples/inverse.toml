@@ -1,0 +1,95 @@
+# Formal `fm inverse` config — 3 scenarios over the default 11 algorithm paths (omit
+# [[inverse.paths]] to get DEFAULT_PATHS: 3 latent + 8 composition). Catalog + model dims match
+# samples/pretrain.toml. The checkpoint must contain every reg head + the material_type head.
+#
+#   fm inverse --config samples/inverse.toml \
+#       --checkpoint artifacts/finetune/training/final_model.pt
+
+[data]
+composition_column = "composition"
+batch_size = 256
+
+[descriptor]
+kind = "kmd"
+n_grids = 8
+
+[datasets.qc]
+path = "data/qc_ac_te_mp_dos_reformat_20250615_enforce_quaternary_test.pd.parquet"
+preprocessing_path = "data/preprocessing_objects_20250615.pkl.z"
+
+[[tasks]]
+name = "density"
+kind = "regression"
+dataset = "qc"
+column = "Density (normalized)"
+
+[[tasks]]
+name = "formation_energy"
+kind = "regression"
+dataset = "qc"
+column = "Formation energy per atom (normalized)"
+
+[[tasks]]
+name = "dos_density"
+kind = "kernel_regression"
+dataset = "qc"
+column = "DOS density (normalized)"
+t_column = "DOS energy"
+
+[[tasks]]
+name = "power_factor"
+kind = "kernel_regression"
+dataset = "qc"
+column = "Power factor (normalized)"
+t_column = "Power factor (T/K)"
+
+[[tasks]]
+name = "material_type"
+kind = "classification"
+dataset = "qc"
+column = "Material type (label)"
+num_classes = 5
+
+[model]
+latent_dim = 128
+encoder_hidden = 256
+head_hidden_dim = 64
+n_kernel = 15
+
+[inverse]
+checkpoint = "artifacts/finetune/training/final_model.pt"
+steps = 300
+lr = 0.05
+class_weight = 5.0
+record_trajectory = true
+per_seed_trajectories = false
+animation_formats = ["gif"]
+
+[inverse.seeds]
+strategy = "top_qc"
+n = 20
+split = "test"
+dedup_by_element_system = true
+
+[[inverse.scenarios]]
+name = "scenario1_fe_down_density_up"
+reg_tasks = ["formation_energy", "density"]
+reg_targets = [-2.0, 2.0]
+class_task = "material_type"
+
+[[inverse.scenarios]]
+name = "scenario2_fe_down"
+reg_tasks = ["formation_energy"]
+reg_targets = [-2.0]
+class_task = "material_type"
+
+[[inverse.scenarios]]
+name = "scenario3_density_up"
+reg_tasks = ["density"]
+reg_targets = [2.0]
+class_task = "material_type"
+
+# [[inverse.paths]] omitted → DEFAULT_PATHS (3 latent + 8 composition).
+
+[output]
+dir = "artifacts/inverse"

@@ -16,29 +16,46 @@ foundation_model/
 │   │   └── model_config.py      # EncoderConfig + per-task config dataclasses
 │   ├── data/                    # CompoundDataModule + per-task data sources + splitter
 │   ├── utils/                   # KMD + plotting / training helpers
-│   └── scripts/                 # Entry points (see below)
-│       ├── train.py                       # fm-trainer (LightningCLI)
-│       ├── continual_rehearsal_demo.py    # demo runner (training + inverse design)
-│       ├── continual_rehearsal_full.py    # formal runner (11- or 24-task + 3 scenarios)
-│       ├── continual_rehearsal_common.py  # shared dump / plot helpers
-│       ├── finetune_inverse_heads.py      # head-only fine-tune of inverse heads
-│       ├── eval_inverse_methods.py        # piecewise latent-vs-composition eval
-│       ├── paper_inverse_comparison.py    # single-scenario paper-grade sweep
-│       └── paper_inverse_3scenarios.py    # 3-scenario orchestrator
+│   ├── cli/                     # `fm` CLI — thin click dispatch → workflows
+│   │   └── main.py                       # fm {pretrain,finetune,inverse,predict}
+│   └── workflows/               # Workflow engines behind the fm subcommands
+│       ├── task_catalog.py               # TOML → dataset/task/descriptor/scaler config + loaders
+│       ├── recording.py                  # RunRecorder: layout, provenance, checkpoints, metrics
+│       ├── _sections.py / _engine.py     # shared [model]/[training] configs + model build + eval
+│       ├── pretrain.py                   # continual-rehearsal engine (interval replay, n_runs)
+│       ├── finetune.py                   # freeze policy + fine-tune engine
+│       ├── inverse.py                    # scenario × path inverse-design engine
+│       ├── inverse_trajectory.py         # trajectory analytics / plots / animations
+│       ├── plots.py                      # parity / confusion / kr-sequence / forgetting plots
+│       └── predict.py                    # arbitrary-checkpoint evaluation & prediction
 │
 ├── data/                        # Persistent datasets
 ├── artifacts/                   # Run outputs (gitignored)
-├── samples/                     # TOML / YAML config templates
-├── docs/                        # Plan + algorithm reference + summary
+├── samples/                     # TOML config templates (formal + *_smoke)
+├── docs/                        # Algorithm reference + summaries
 ├── notebooks/                   # Experiments / analysis
 │
 ├── ARCHITECTURE.md              # This file
 ├── CHANGES.md                   # Changelog
 ├── CLAUDE.md / AGENTS.md        # Repo-level coding guidelines
 ├── README.md                    # Top-level overview + quickstart
-├── pyproject.toml               # Dependencies + fm-trainer entry point
+├── pyproject.toml               # Dependencies + the `fm` entry point
 └── uv.lock
 ```
+
+## Workflows & CLI
+
+The `fm` command (`cli/main.py`) is a thin [click](https://click.palletsprojects.com/) dispatch
+layer: it parses argv, loads a TOML config, applies `--set` / flag overrides, builds a validated
+`@dataclass` config via a `workflows.<mod>.build_*_config` builder, writes provenance, and calls
+exactly one `workflows.<mod>.run(cfg)`. It holds no business logic.
+
+The `workflows/` package holds the engines. `task_catalog.py` turns the shared TOML sections into
+`DatasetSpec`/`TaskSpec` config and loads composition-keyed frames + (invertible KMD or
+precomputed) descriptors. `recording.py::RunRecorder` is the **only** artifact writer for the
+training/predict flows (output layout, `run_provenance.json`, per-step checkpoints, prediction
+parquets, metrics, figures). `_sections.py` (the `[model]`/`[training]` config) and `_engine.py`
+(model construction + per-head evaluation) are shared by the pretrain and finetune engines.
 
 # Model architecture
 
@@ -159,7 +176,7 @@ An `nn.ModuleDict`. All heads consume `h_task` of shape `(B, latent_dim)`.
 | `AutoEncoderHead` | enabled by `FlexibleMultiTaskModel(enable_autoencoder=True)` | `x̂ (B, input_dim)` — reconstruction of the original descriptor; **required for `optimize_latent(optimize_space="latent")`** |
 
 `disabled_task_heads` holds heads taken offline mid-run (e.g. by `model.disable_task(...)` during
-the head-only fine-tune in `finetune_inverse_heads`), preserving their weights in the state-dict.
+`fm finetune`'s head-only fine-tune), preserving their weights in the state-dict.
 
 ### 5. Model outputs
 `forward` returns a `Dict[str, Tensor]` keyed by task name. `predict_step` further unwraps each

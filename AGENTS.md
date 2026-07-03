@@ -7,8 +7,8 @@ This is the canonical contributor/agent guide for this repository. Other agent f
 A multi-task PyTorch Lightning model (`FlexibleMultiTaskModel`) for predicting material/polymer properties from formula descriptors (and optional structure descriptors). One architecture serves both pre-training (with self-supervised auxiliary losses) and downstream fine-tuning.
 
 ## Project Structure & Module Organization
-- Core source lives under `src/foundation_model`: task heads in `models/task_head/`, shared layers in `models/components/`, config dataclasses/enums in `models/model_config.py`, data loading in `data/`, and CLI/scripts in `scripts/`.
-- Tests are **co-located** with the code they cover as `<module>_test.py` (e.g. `datamodule.py` → `datamodule_test.py`, `dynamic_task_suite.py` → `dynamic_task_suite_test.py`). There is no separate `tests/` tree.
+- Core source lives under `src/foundation_model`: task heads in `models/task_head/`, shared layers in `models/components/`, config dataclasses/enums in `models/model_config.py`, data loading in `data/`, the thin `fm` CLI in `cli/`, and the workflow engines (task catalog, run recorder, pretrain/finetune/inverse/predict) in `workflows/`.
+- Tests are **co-located** with the code they cover as `<module>_test.py` (e.g. `datamodule.py` → `datamodule_test.py`, `workflows/pretrain.py` → `workflows/pretrain_test.py`). There is no separate `tests/` tree.
 - Reference notebooks reside in `notebooks/` for experimentation; mirror finalized logic into `src/` modules and keep notebooks informative but non-critical.
 - Sample Lightning/suite configs and data fixtures are in `samples/` and `data/`; avoid committing large datasets beyond lightweight fixtures.
 - Detailed model/component design lives in `ARCHITECTURE.md`; user-facing usage lives in `README.md`.
@@ -42,13 +42,26 @@ Run `pytest` (or `uv run pytest`) before submitting; for long-running suites, at
 
 ## Entry Points
 
-Three console scripts (declared in `pyproject.toml [project.scripts]`):
+A single console script `fm` (declared in `pyproject.toml [project.scripts]` →
+`cli/main.py:main`), a [click](https://click.palletsprojects.com/) group with four subcommands:
 
-- `fm-trainer` → `scripts/train.py` — the primary CLI, a thin wrapper over PyTorch Lightning's `LightningCLI` (`parser_mode="omegaconf"`). Drives `fit`/`validate`/`test`/`predict` from a YAML config of `FlexibleMultiTaskModel` + `CompoundDataModule` + trainer. Override any field on the CLI, e.g. `--trainer.max_epochs=50` or `--model.init_args.<...>`. Loads checkpoints with `strict=False`.
-- `fm-pretrain-suite` → `scripts/dynamic_task_suite.py` — orchestrates a full pre-train→fine-tune experiment sweep driven by a TOML `SuiteConfig` (multiple pre-train runs, frozen-encoder fine-tuning, scaler handling, prediction writing).
-- `fm-progressive-clf` → `scripts/multi_task_progressive_clf.py` — progressive multi-task classification fine-tuning workflow.
+- `fm pretrain --config <toml>` — continual-rehearsal pre-training (rehearsal-interval replay +
+  optional `n_runs` sweep). Engine: `workflows/pretrain.py`.
+- `fm finetune --config <toml> --checkpoint <ckpt>` — frozen-encoder fine-tuning of selected task
+  heads (AE head stays trainable). Engine: `workflows/finetune.py`.
+- `fm inverse  --config <toml> --checkpoint <ckpt>` — inverse design (scenarios × latent/composition
+  algorithm paths). Engine: `workflows/inverse.py` (+ `workflows/inverse_trajectory.py`).
+- `fm predict  --config <toml> --checkpoint <ckpt>` — evaluate / predict with an arbitrary
+  checkpoint (`strict=False` load). Engine: `workflows/predict.py`.
 
-Convenience shell wrappers at the repo root (`run_dynamic_task_suite*.sh`, `run_progressive_clf.sh`) supply a default config from `samples/` and auto-derive a date-stamped `--output-dir`. Sample configs live in `samples/*.toml`.
+Config conventions (no YAML / LightningCLI): every config is **TOML**, normalized into `@dataclass`
+config objects by per-subcommand `build_*_config` builders (shared `[data]`/`[descriptor]`/
+`[datasets.*]`/`[[tasks]]`/`[model]`/`[training]` sections + a per-subcommand section). Common CLI
+flags on every subcommand: `--config` (required), `--output-dir`, `--set section.key=value`
+(repeatable, value parsed with TOML semantics), `--seed`, `--accelerator`, `--sample`. Each run
+writes `run_provenance.json` (resolved config + package versions + git + argv + seeds) and
+`run.log` into its output dir via `workflows/recording.py::RunRecorder`. Sample configs live in
+`samples/*.toml` (formal + `*_smoke.toml` variants).
 
 ## Architecture
 

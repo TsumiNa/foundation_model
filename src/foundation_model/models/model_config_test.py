@@ -44,7 +44,6 @@ def test_data_files_sequence_is_normalized_to_tuple_of_str():
     assert isinstance(cfg.data_files, tuple)
 
 
-
 @pytest.mark.parametrize("ratio", [0.0, 0.5, 1.0])
 def test_task_masking_ratio_accepts_unit_interval(ratio):
     cfg = RegressionTaskConfig(name="t", task_masking_ratio=ratio)

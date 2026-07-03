@@ -137,7 +137,6 @@ def test_kernel_torch_mutation_does_not_affect_numpy_kmd(component_features, wei
     hand out torch views of the kernel — including the worst case where downstream code
     accidentally mutates the returned tensor in place.
     """
-    import torch
 
     kmd = KMD(component_features, method="1d", n_grids=10)
     before = kmd.transform(weight)

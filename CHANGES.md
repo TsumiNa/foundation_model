@@ -1,5 +1,36 @@
 # Recent Updates
 
+## 2026-07-04 (Unified `fm` CLI refactor)
+
+- **Single `fm` command** replaces the three legacy console scripts. A thin
+  [click](https://click.palletsprojects.com/) group (`cli/main.py`) with four subcommands, each a
+  `build_*_config(toml) → run(cfg, recorder)` dispatch — no business logic in the CLI:
+  - `fm pretrain` — continual-rehearsal pre-training with a rehearsal-**interval** replay schedule
+    (old tasks join only every Nth step), fraction/count replay amounts, and an `n_runs` sweep.
+  - `fm finetune` — frozen-encoder fine-tuning of selected heads; the AE head **stays trainable**
+    (at `ae_lr`) and `task_log_sigmas` are frozen; non-target heads are disabled for the fit and
+    restored before saving so the checkpoint keeps every head.
+  - `fm inverse` — scenario × path inverse design (11 default paths: 3 latent α + 8 composition),
+    seed selection (top_qc / random / explicit + element-system dedup), per-scenario figures +
+    trajectory `.npz`/plots/animations.
+  - `fm predict` — arbitrary-checkpoint evaluation/prediction (`strict=False` load, split overlay
+    via `CompoundDataModule`, masked metrics, per-task scaler inverse-transform).
+- **Config is TOML + dataclasses** (no YAML / LightningCLI / omegaconf): `[data]`/`[descriptor]`/
+  `[datasets.*]`/`[[tasks]]`/`[model]`/`[training]` shared sections normalized into validated
+  `@dataclass` configs (`workflows/`), unknown keys rejected by name. `--set section.key=value`
+  overrides + first-class flags (`--seed`/`--accelerator`/`--sample`/…).
+- **Provenance on every run**: `run_provenance.json` (resolved config + package versions + git +
+  argv + seeds) and `run.log`, written by `workflows/recording.py::RunRecorder` — the single
+  artifact writer for the training/predict flows.
+- **New package layout**: `workflows/` (task_catalog, recording, `_sections`/`_engine`, pretrain,
+  finetune, inverse, inverse_trajectory, plots, predict) + `cli/`; colocated `<module>_test.py`.
+- **Removed**: `src/foundation_model/scripts/` in full (`train.py`/LightningCLI, the
+  continual-rehearsal runners, `dynamic_task_suite`, `multi_task_progressive_clf`,
+  `finetune_inverse_heads`, `paper_inverse_*`, `eval_inverse_methods`, `prediction_writer`), the
+  root `run_*.sh` wrappers, legacy `samples/` configs, stale docs, the `fm-trainer`/`fm-pretrain-suite`/
+  `fm-progressive-clf` entry points, and the `omegaconf` dependency. Stale workflow-demo notebooks
+  were pruned and replaced by `notebooks/fm_cli_workflows.ipynb`.
+
 ## 2025-11-27 (Multi-GPU reliability)
 
 - **Distributed training fixes**:

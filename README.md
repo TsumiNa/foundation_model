@@ -76,55 +76,40 @@ To add a new dependency: `uv add <pkg>` (runtime) or `uv add --dev <pkg>` (dev).
 
 ## Usage
 
-There are two parallel entry points:
-
-1. **`fm-trainer`** (PyTorch Lightning CLI, defined in [pyproject.toml](pyproject.toml) and backed
-   by [`scripts/train.py`](src/foundation_model/scripts/train.py)) — YAML-driven supervised
-   training of `FlexibleMultiTaskModel` on `CompoundDataModule`.
-2. **`continual_rehearsal_demo` / `continual_rehearsal_full`** — TOML-driven multi-task continual
-   rehearsal runners that train a sequence of tasks with small replay, then run gradient-based
-   inverse design on the trained checkpoint.
-
-### Training (YAML / LightningCLI)
+Everything runs through a single console command, **`fm`**, with four subcommands. Each reads a
+TOML config and writes `run_provenance.json` + `run.log` into its output directory.
 
 ```bash
-fm-trainer fit --config path/to/config.yaml [--trainer.max_epochs=50]
+# 1. Continual-rehearsal pre-training (rehearsal-interval replay, optional n_runs sweep).
+fm pretrain --config samples/pretrain.toml
+
+# 2. Frozen-encoder fine-tuning of selected heads on a checkpoint.
+fm finetune --config samples/finetune.toml \
+    --checkpoint artifacts/pretrain/training/final_model.pt
+
+# 3. Inverse design (scenarios × latent/composition algorithm paths).
+fm inverse  --config samples/inverse.toml \
+    --checkpoint artifacts/finetune/training/final_model.pt
+
+# 4. Evaluate / predict with an arbitrary checkpoint.
+fm predict  --config samples/predict.toml \
+    --checkpoint artifacts/finetune/training/final_model.pt
 ```
 
-or equivalently:
-
-```bash
-python -m foundation_model.scripts.train fit --config path/to/config.yaml
-```
-
-`fit` / `validate` / `test` / `predict` are the standard LightningCLI subcommands. Any field
-under `model.init_args.*`, `data.init_args.*`, `trainer.*` can be overridden from the command
-line. See [`samples/`](samples/) for templates.
-
-### Continual rehearsal + inverse design (TOML)
-
-```bash
-# Demo runner — small multi-task rehearsal, saves final_model.pt, optionally runs inverse design.
-python -m foundation_model.scripts.continual_rehearsal_demo \
-    --config-file samples/continual_rehearsal_demo_config_inverse_baseline.toml
-
-# Skip training, re-run only the inverse-design stage on an existing checkpoint.
-python -m foundation_model.scripts.continual_rehearsal_demo \
-    --config-file samples/continual_rehearsal_demo_config_inverse_baseline.toml \
-    --inverse-only artifacts/inverse_design_run/training/final_model.pt
-```
-
-See the [Inverse design](#inverse-design) section below for the full pipeline.
+Every subcommand accepts the common flags `--config` (required), `--output-dir`,
+`--set section.key=value` (repeatable; the value is parsed with TOML semantics, so quote strings:
+`--set 'data.composition_column="composition"'`), `--seed`, `--accelerator`, and `--sample` (cap
+rows for a fast smoke run). `*_smoke.toml` companions under [`samples/`](samples/) run the whole
+chain end-to-end on CPU in minutes.
 
 ### Configuration
 
-Both entry points read configuration as structured objects:
-
-- The **YAML / LightningCLI** path uses `init_args` blocks that map 1:1 onto each class's
-  `__init__` parameters (model, datamodule, trainer, callbacks).
-- The **TOML** path uses a single `ContinualRehearsalConfig` dataclass; unknown keys are silently
-  ignored so the same TOML can drive both `continual_rehearsal_demo` and the downstream
-  `paper_inverse_comparison` script.
+All configs are **TOML**, normalized into validated `@dataclass` config objects by the
+per-subcommand `build_*_config` builders. Configs share the `[data]` / `[descriptor]` /
+`[datasets.*]` / `[[tasks]]` / `[model]` / `[training]` sections and add one subcommand section
+(`[pretrain]` / `[finetune]` / `[inverse]` / `[predict]`). Unknown keys are rejected with the
+offending key name. See [`samples/`](samples/) for templates and `AGENTS.md` → **Entry Points**
+for the full convention.
 
 ## Features
 
@@ -144,9 +129,10 @@ Both entry points read configuration as structured objects:
     directly, with optional element whitelist (`allowed_elements`), per-element step scaling
     (`element_step_scale`), seed-vs-uniform mix (`seed_blend`), and per-output entropy penalty
     (`diversity_scale ∈ [0, 1]`).
-- **Continual rehearsal** training scripts (`continual_rehearsal_demo` / `..._full`) with small
-  replay, per-step checkpoints + parquet predictions, and a fully-automated paper-grade output
-  folder (figures + JSON + SUMMARY.md per inverse-design scenario).
+- **Continual-rehearsal pre-training** (`fm pretrain`) with rehearsal-interval replay, per-step
+  checkpoints + parquet predictions, forgetting-trajectory plots, and an optional `n_runs` sweep;
+  inverse design (`fm inverse`) produces a paper-grade output folder (figures + JSON + SUMMARY.md
+  per scenario).
 
 ### Loss Weighting Strategy
 
@@ -237,51 +223,51 @@ per-task; compositions without a valid descriptor are dropped with a warning.
 
 ## Quick Examples
 
-### Example 1 — Supervised training
+### Example 1 — Pre-training
 
 ```bash
-fm-trainer fit --config path/to/config.yaml --trainer.max_epochs=60
+fm pretrain --config samples/pretrain_smoke.toml --max-epochs 60
 ```
 
-```yaml
-seed_everything: 42
-model:
-  class_path: foundation_model.models.FlexibleMultiTaskModel
-  init_args:
-    encoder_config:
-      type: mlp
-      hidden_dims: [128, 256, 128]   # first = input_dim, last = latent_dim
-      norm: true
-    task_configs:
-      - name: example_task
-        type: REGRESSION
-        dims: [128, 64, 1]
-        data_column: my_property
-        loss_weight: 0.8
-data:
-  class_path: foundation_model.data.datamodule.CompoundDataModule
-  init_args:
-    descriptor_fn:
-      class_path: foundation_model.data.composition_sources.PrecomputedDescriptorSource
-      init_args: { path: "data/descriptors.parquet", composition_column: null }
-    composition_column: "composition"
-    batch_size: 64
-trainer:
-  max_epochs: 60
+```toml
+# minimal single-task config (see samples/pretrain.toml for the full template)
+[descriptor]
+kind = "kmd"           # on-the-fly, invertible KMD-1d descriptors
+n_grids = 8
+
+[datasets.qc]
+path = "data/my_dataset.parquet"
+
+[[tasks]]
+name = "example_task"
+kind = "regression"
+dataset = "qc"
+column = "my_property"
+
+[model]
+latent_dim = 128
+encoder_hidden = 256
+
+[training]
+max_epochs = 60
+
+[pretrain]
+task_sequence = ["example_task"]
+
+[output]
+dir = "artifacts/example"
 ```
 
 ### Example 2 — Freeze the encoder, fine-tune only task heads
 
 ```bash
-fm-trainer fit --config path/to/config.yaml \
-    --model.init_args.shared_block_optimizer.freeze_parameters=True
+fm finetune --config samples/finetune_smoke.toml \
+    --checkpoint artifacts/pretrain/training/final_model.pt --tasks formation_energy
 ```
 
-`shared_block_optimizer.freeze_parameters` is the model-level knob that locks all encoder
-parameters. Use this for head-only fine-tuning on a pre-trained checkpoint.
-
-For a more surgical freeze (encoder + every head NOT in a chosen list + the per-task loss
-balancer scalars) see [`scripts/finetune_inverse_heads.py`](src/foundation_model/scripts/finetune_inverse_heads.py).
+`fm finetune` freezes the encoder (`freeze_encoder = true`, the default) and every head not in
+`finetune.tasks`, keeping the built-in autoencoder head trainable; the loss-balancer scalars
+(`task_log_sigmas`) are frozen so the objective weighting can't drift.
 
 ### Example 3 — Transformer encoder
 
@@ -330,8 +316,8 @@ entry points on the model:
 | `optimize_composition` | element-weight logits $\theta$, with $w = \text{softmax}(\theta)$ | yes — $w$ is the recipe | `diversity_scale ∈ [0, 1]` (default 1.0; per-output entropy penalty) |
 
 `optimize_composition` further accepts an orthogonal constraint surface (full docstrings on
-the method; design notes in
-[docs/inverse_design_extension_notes.md](docs/inverse_design_extension_notes.md)):
+the method; algorithm reference in
+[docs/inverse_design_algorithms.md](docs/inverse_design_algorithms.md)):
 
 - `max_elements: int` — cardinality cap (at most K non-zero elements per recipe), enforced
   through a differentiable iterative-softmax K-hot mask with a single `annealing_scale ∈ [0, 1]`
@@ -347,33 +333,29 @@ Both methods share the same regression-MSE + classification-cross-entropy backbo
 third loss term and the optimisation variable differ. **Reference:**
 [docs/inverse_design_algorithms.md](docs/inverse_design_algorithms.md).
 
-### End-to-end pipeline (PR #18)
+### End-to-end pipeline
 
-`continual_rehearsal_demo` / `continual_rehearsal_full` train an 11-task or 24-task multi-task
-model with small replay, then run inverse design on the trained checkpoint:
+Pre-train a multi-task model, optionally sharpen the inverse-design heads, then run inverse
+design on the checkpoint:
 
 ```bash
-# 1. Baseline continual rehearsal — saves training/final_model.pt under the output dir.
-python -m foundation_model.scripts.continual_rehearsal_demo \
-    --config-file samples/continual_rehearsal_demo_config_inverse_baseline.toml
+# 1. Continual-rehearsal pre-training — saves training/final_model.pt under the output dir.
+fm pretrain --config samples/pretrain.toml
 
-# 2. Targeted retrain of the three inverse-design heads on top of the checkpoint.
-python -m foundation_model.scripts.finetune_inverse_heads \
-    --config-file samples/continual_rehearsal_demo_config_inverse_baseline.toml \
-    --checkpoint artifacts/inverse_design_run/training/final_model.pt \
-    --output-dir artifacts/inverse_design_run/finetune
+# 2. (Optional) targeted frozen-encoder fine-tune of the inverse-design heads.
+fm finetune --config samples/finetune.toml \
+    --checkpoint artifacts/pretrain/training/final_model.pt
 
-# 3. Per-scenario sweep — 3 scenarios × 8 paths (latent α-sweep + 5 composition configs).
-python -m foundation_model.scripts.paper_inverse_3scenarios \
-    --config-file samples/continual_rehearsal_demo_config_inverse_baseline.toml \
-    --checkpoint artifacts/inverse_design_run/finetune/final_model.pt \
-    --output-dir artifacts/inverse_design_run/inverse_design
+# 3. Per-scenario sweep — 3 scenarios × the 11 default paths (3 latent α + 8 composition configs).
+fm inverse  --config samples/inverse.toml \
+    --checkpoint artifacts/finetune/training/final_model.pt
 ```
 
 Each scenario folder ends up with `comparison.png` (bar chart), `element_frequency_heatmap.png`
-(per-method × top-K elements with newly-discovered elements highlighted),
-`qc_vs_secondary_scatter.png` (per-seed cloud with the seed-baseline layer), and 7×
-`seed_to_optimized__*.png` (per-path 1:1 mapping), plus `results.json` + `SUMMARY.md`.
+(per-path × top-K elements with newly-discovered elements highlighted),
+`qc_vs_secondary_scatter.png` (per-seed cloud with the seed-baseline layer), and
+`seed_to_optimized__<path>.png` (per-path 1:1 mapping), plus `scenario.json` / `results.json` /
+`summary.json` + `SUMMARY.md` and per-path trajectory `.npz` (+ static/animated plots).
 
 For the headline messages from the 3-scenario sweep (multi-objective optimisation, element
 discovery, comparison of the two paths, conflicting-objective trade-offs), see

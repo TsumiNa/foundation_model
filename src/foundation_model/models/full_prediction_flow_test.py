@@ -9,7 +9,12 @@ import torch
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
-from foundation_model.models.model_config import KernelRegressionTaskConfig, MLPEncoderConfig, RegressionTaskConfig, TaskType
+from foundation_model.models.model_config import (
+    KernelRegressionTaskConfig,
+    MLPEncoderConfig,
+    RegressionTaskConfig,
+    TaskType,
+)
 
 _PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
 _DATA_PATHS: Final[list[Path]] = [

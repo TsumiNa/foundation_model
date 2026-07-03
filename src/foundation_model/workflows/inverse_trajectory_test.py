@@ -127,9 +127,7 @@ def test_plot_trajectory_static_with_seed_composition(tmp_path):
     """``seed_composition`` is rendered as a monospace annotation under the title — verify the
     plot still writes with the kwarg present (visual correctness is by inspection)."""
     out = tmp_path / "static_with_seed.png"
-    plot_trajectory_static(
-        _toy_progress(), out, title="toy trajectory", seed_composition="Au65 Ga20 Gd15"
-    )
+    plot_trajectory_static(_toy_progress(), out, title="toy trajectory", seed_composition="Au65 Ga20 Gd15")
     assert out.exists()
 
 
@@ -175,6 +173,22 @@ def test_plot_trajectory_animation_writes_smil_svg(tmp_path):
     assert "<animate" in body
     # The step counter labels every step exactly once.
     assert "step 1/" in body
+
+
+def test_svg_title_is_xml_escaped(tmp_path):
+    """A title with &/</> must be XML-escaped in the SMIL SVG (no invalid markup / injection)."""
+    out = tmp_path / "escaped.svg"
+    plot_trajectory_animation(
+        _toy_progress(),
+        per_step_weights=_toy_weights(),
+        element_symbols=[f"E{i}" for i in range(12)],
+        out_paths_by_format={"svg": out},
+        title="path <a> & <b>",
+        max_frames=8,
+    )
+    body = out.read_text(encoding="utf-8")
+    assert "&lt;a&gt; &amp; &lt;b&gt;" in body
+    assert "<title>path <a>" not in body  # the raw, unescaped title must not appear
 
 
 def test_plot_trajectory_animation_skips_when_steps_dont_match(tmp_path):
