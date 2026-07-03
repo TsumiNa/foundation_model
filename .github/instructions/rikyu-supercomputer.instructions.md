@@ -49,6 +49,23 @@ ssh rikyu-login 'cat > /home/ea0094/jobs/smoke/job.sbatch' < ./job.sbatch
 Note: on `1n1gpu`, `nvidia-smi` may show another user's process on the same physical GB200 —
 GPU memory is large but do not assume the card is exclusively idle; check before large allocations.
 
+## Long pre-training past the walltime (`fm pretrain --resume`)
+
+Partitions cap at **4 days**. A `fm pretrain` run whose `task_sequence` won't finish in one job can
+be re-submitted with **`--resume`**: it warm-starts from the output dir's latest step checkpoint and
+continues at the next task in place (finished runs are skipped). Use the **same** `--output-dir` and
+put it on persistent storage (not per-job `/scratch`, which is deleted at job end). A resubmit-until-
+done pattern: make the sbatch script re-queue itself while `final_model.pt` is absent, e.g.
+
+```bash
+OUT=/home/ea0094/projects/foundation_model/artifacts/pretrain_big
+.venv/bin/fm pretrain --config pretrain.toml --output-dir "$OUT" --resume
+test -f "$OUT/training/final_model.pt" || sbatch "$0"   # (n_runs=1; adjust the path for sweeps)
+```
+
+Resume is per completed task-step (a step killed mid-fit restarts from the previous step's
+checkpoint); optimizer state is not restored, which is fine since each step trains a fresh optimizer.
+
 ## Modules
 
 ```bash
@@ -140,14 +157,34 @@ cd "$PROJ"
 
 # ... optionally stage data into "$USER_SCRATCH_DIR" ...
 
-"$VENV_PY" -m foundation_model.cli.main pretrain --config <toml>   # or: fm pretrain ... (symlink on PATH)
+"$VENV_PY" -m foundation_model.cli.main pretrain --config <toml> --output-dir <persistent-dir>
+# or, with the symlink on PATH:  fm pretrain --config <toml> --output-dir <persistent-dir>
 
 # ... copy results from "$USER_SCRATCH_DIR" back to "$SLURM_SUBMIT_DIR" ...
 ```
 
-## Multi-GPU / multi-node MPI (per docs)
+## GPU selection (`[training].accelerator` / `devices`)
 
-For MPI/NCCL jobs on the multi-GPU partitions, set:
+The `fm` CLI drives a Lightning `Trainer`, so the GPU is chosen by the `[training]` config, not by
+env vars. Both default to **`"auto"`**, so on any GPU job (`--gpus-per-node>=1` + `module load nvhpc`)
+`fm pretrain` / `fm finetune` use the allocated GPU(s) automatically — no config change needed on
+`1n1gpu`. To pin devices on a multi-GPU partition (`1n2gpu` / `1n4gpu`), set `[training].devices`:
+
+```toml
+[training]
+accelerator = "auto"   # or "gpu"
+devices = -1            # all allocated GPUs (single-node DDP); or an int count, or e.g. [0, 1]
+```
+
+Lightning spawns single-node DDP itself (NCCL) — you do **not** launch it under `srun`/`mpirun` or
+set the MPI env below for single-node multi-GPU. `fm predict` / `fm inverse` are single-device
+(`accelerator = "auto" | "cpu"`, no `devices`).
+
+## Multi-node MPI env (generic; the `fm` CLI is single-node)
+
+The `fm` CLI does not expose `num_nodes`, so it targets a **single node**. These env vars are for
+hand-rolled MPI/NCCL jobs on the multi-node partitions (`2n4gpu` / `4n4gpu`), per the rikyu docs —
+not needed for the single-node DDP above:
 
 ```bash
 export OMPI_MCA_pml=ucx
@@ -164,4 +201,3 @@ export CUDA_VISIBLE_DEVICES=${OMPI_COMM_WORLD_LOCAL_RANK:-0}
 
 `pyproject.toml` / `uv.lock` are shared via git (`origin` = `TsumiNa/foundation_model`).
 Commit on one clone, `git pull` on the other, then `uv sync` on each. `.venv` is git-ignored.
-```

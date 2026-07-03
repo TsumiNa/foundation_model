@@ -11,6 +11,7 @@ import tomllib
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
@@ -194,6 +195,181 @@ interval = 1
 default_replay = 0.5
 """
     return build_pretrain_config(tomllib.loads(toml), output_dir=str(output_dir))
+
+
+# --- warm-start from a checkpoint --------------------------------------------------------
+
+
+def test_checkpoint_task_order_includes_all_heads_in_state() -> None:
+    from foundation_model.workflows._engine import checkpoint_task_order
+
+    # A step checkpoint stores task_sequence as the active subset, but the weights carry every
+    # learned head; checkpoint_task_order must return all of them (AE excluded), ordered by the
+    # sequence first, then any heads the sequence omitted.
+    state = {
+        "model": {
+            "task_heads.a.w": 0,
+            "task_heads.b.w": 0,
+            "task_heads.c.w": 0,
+            "task_heads.__reconstruction__.w": 0,
+        },
+        "task_sequence": ["c"],
+    }
+    assert checkpoint_task_order(state) == ["c", "a", "b"]
+    # no task_sequence → fall back to state order
+    assert checkpoint_task_order({"model": state["model"], "task_sequence": None}) == ["a", "b", "c"]
+
+
+def _ws_toml(smoke_dir, sequence: list[str]) -> str:
+    return f"""
+[data]
+batch_size = 4
+
+[descriptor]
+kind = "kmd"
+n_grids = 4
+
+[datasets.d1]
+path = "{smoke_dir / "x.parquet"}"
+
+[[tasks]]
+name = "a"
+kind = "regression"
+dataset = "d1"
+column = "a"
+
+[[tasks]]
+name = "b"
+kind = "regression"
+dataset = "d1"
+column = "b"
+
+[model]
+latent_dim = 8
+encoder_hidden_dims = [16]
+head_hidden_dims = [8]
+
+[training]
+max_epochs = 1
+accelerator = "cpu"
+seed = 1
+
+[pretrain]
+task_sequence = {sequence!r}
+[pretrain.rehearsal]
+interval = 1
+default_replay = 0.5
+"""
+
+
+def _run_pretrain(cfg, out) -> None:
+    rec = RunRecorder(out)
+    rec.write_provenance(config=cfg, argv=["fm", "pretrain"], seeds={"seed": 1})
+    pretrain_run(cfg, rec)
+    rec.close()
+
+
+def test_warm_start_continues_sequence(smoke_dir, tmp_path) -> None:
+    # 1. pre-train task 'a' only → checkpoint.
+    out1 = tmp_path / "run1"
+    _run_pretrain(build_pretrain_config(tomllib.loads(_ws_toml(smoke_dir, ["a"])), output_dir=str(out1)), out1)
+    ckpt = out1 / "training" / "final_model.pt"
+
+    # 2. warm-start with sequence [a, b] → only 'b' is a new step; the model keeps both heads.
+    out2 = tmp_path / "run2"
+    cfg2 = build_pretrain_config(
+        tomllib.loads(_ws_toml(smoke_dir, ["a", "b"])), output_dir=str(out2), checkpoint=str(ckpt)
+    )
+    assert cfg2.checkpoint is not None
+    _run_pretrain(cfg2, out2)
+
+    final = torch.load(out2 / "training" / "final_model.pt", weights_only=True)
+    assert final["task_sequence"] == ["a", "b"]
+    heads = {k.split(".", 2)[1] for k in final["model"] if k.startswith("task_heads.")}
+    assert {"a", "b"} <= heads
+    # 'a' was not re-introduced as a training step; global step numbering continues past it, so the
+    # new task 'b' is step 2 (not step 1) and no step for 'a' is written this run.
+    assert (out2 / "training" / "step02_b").exists()
+    assert not (out2 / "training" / "step01_b").exists()
+    assert not list((out2 / "training").glob("step*_a"))
+    # 'a' head is still evaluated at the new step (already learned)
+    assert (out2 / "training" / "step02_b" / "a_metrics.json").exists()
+
+
+def test_warm_start_checkpoint_task_not_in_catalog_raises(smoke_dir, tmp_path) -> None:
+    ckpt = tmp_path / "bad.pt"
+    torch.save({"model": {"task_heads.zzz.net.weight": torch.zeros(2)}, "task_sequence": ["zzz"]}, ckpt)
+    cfg = build_pretrain_config(
+        tomllib.loads(_ws_toml(smoke_dir, ["a", "b"])), output_dir=str(tmp_path / "o"), checkpoint=str(ckpt)
+    )
+    with pytest.raises(ValueError, match="not in the catalog"):
+        _run_pretrain(cfg, tmp_path / "o")
+
+
+def test_warm_start_nothing_to_train_raises(smoke_dir, tmp_path) -> None:
+    out1 = tmp_path / "run1"
+    _run_pretrain(build_pretrain_config(tomllib.loads(_ws_toml(smoke_dir, ["a", "b"])), output_dir=str(out1)), out1)
+    ckpt = out1 / "training" / "final_model.pt"
+    cfg = build_pretrain_config(
+        tomllib.loads(_ws_toml(smoke_dir, ["a", "b"])), output_dir=str(tmp_path / "o"), checkpoint=str(ckpt)
+    )
+    with pytest.raises(ValueError, match="nothing to train"):
+        _run_pretrain(cfg, tmp_path / "o")
+
+
+def test_checkpoint_from_toml_and_cli_precedence(smoke_dir) -> None:
+    toml = f"""
+[descriptor]
+kind = "kmd"
+n_grids = 4
+[datasets.d1]
+path = "{smoke_dir / "x.parquet"}"
+[[tasks]]
+name = "a"
+kind = "regression"
+dataset = "d1"
+column = "a"
+[pretrain]
+task_sequence = ["a"]
+checkpoint = "from_toml.pt"
+[output]
+dir = "o"
+"""
+    raw = tomllib.loads(toml)
+    assert str(build_pretrain_config(raw).checkpoint) == "from_toml.pt"
+    assert str(build_pretrain_config(raw, checkpoint="from_cli.pt").checkpoint) == "from_cli.pt"  # CLI wins
+
+
+def test_resume_config_from_flag_and_toml(smoke_dir) -> None:
+    base = tomllib.loads(_ws_toml(smoke_dir, ["a"]))
+    assert build_pretrain_config(base, output_dir="o").resume is False
+    assert build_pretrain_config(base, output_dir="o", resume=True).resume is True  # --resume flag
+    base["pretrain"]["resume"] = True
+    assert build_pretrain_config(base, output_dir="o").resume is True  # [pretrain].resume
+
+
+def test_resume_continues_after_simulated_kill(smoke_dir, tmp_path) -> None:
+    out = tmp_path / "run"
+    # 1. train [a] fully, then delete final_model.pt to simulate a kill right after step 1.
+    _run_pretrain(build_pretrain_config(tomllib.loads(_ws_toml(smoke_dir, ["a"])), output_dir=str(out)), out)
+    assert (out / "training" / "step01_a" / "checkpoint.pt").exists()
+    (out / "training" / "final_model.pt").unlink()
+
+    # 2. re-run the full sequence [a, b] with --resume → picks up from the step-1 checkpoint.
+    cfg = build_pretrain_config(tomllib.loads(_ws_toml(smoke_dir, ["a", "b"])), output_dir=str(out), resume=True)
+    _run_pretrain(cfg, out)
+    final = torch.load(out / "training" / "final_model.pt", weights_only=True)
+    assert final["task_sequence"] == ["a", "b"]
+    assert (out / "training" / "step02_b").exists()  # continued at the next step, in place
+
+
+def test_resume_skips_completed_run(smoke_dir, tmp_path) -> None:
+    out = tmp_path / "run"
+    _run_pretrain(build_pretrain_config(tomllib.loads(_ws_toml(smoke_dir, ["a", "b"])), output_dir=str(out)), out)
+    steps_before = sorted(p.name for p in (out / "training").glob("step*"))
+    cfg = build_pretrain_config(tomllib.loads(_ws_toml(smoke_dir, ["a", "b"])), output_dir=str(out), resume=True)
+    _run_pretrain(cfg, out)  # final_model.pt present → run skipped, nothing re-trained
+    assert sorted(p.name for p in (out / "training").glob("step*")) == steps_before
 
 
 # --- Lightning callbacks / loggers config ------------------------------------------------

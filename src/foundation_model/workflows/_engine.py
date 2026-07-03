@@ -11,6 +11,7 @@ use one implementation. Only :class:`RunRecorder` writes files.
 from __future__ import annotations
 
 import ast
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,32 @@ from .task_catalog import TaskCatalog, TaskConfig, TaskKind
 AE_NAME = "__reconstruction__"
 # Legacy weight decay for regression / classification heads (kernel heads use kr_weight_decay).
 _HEAD_WEIGHT_DECAY = 1e-5
+
+
+def task_names_from_state(state_dict: Mapping[str, Any]) -> list[str]:
+    """Task-head names in a state dict (``task_heads.<name>.*``), in first-seen order, minus the AE.
+
+    Used when a checkpoint carries no ``task_sequence`` list (e.g. a bare/Lightning state dict).
+    """
+    names: list[str] = []
+    for key in state_dict:
+        if key.startswith("task_heads."):
+            name = key.split(".", 2)[1]
+            if name != AE_NAME and name not in names:
+                names.append(name)
+    return names
+
+
+def checkpoint_task_order(state: Mapping[str, Any]) -> list[str]:
+    """Every task head present in a loaded checkpoint, ordered by its ``task_sequence`` when given.
+
+    The state dict is the ground truth for which heads *exist*; ``task_sequence`` only records order
+    — and a pretrain **step** checkpoint stores just that step's active subset — so heads that are in
+    the weights but missing from ``task_sequence`` are appended rather than silently dropped.
+    """
+    in_state = task_names_from_state(state["model"])
+    ordered = [t for t in (state.get("task_sequence") or []) if t in in_state]
+    return ordered + [h for h in in_state if h not in ordered]
 
 
 def build_encoder_config(model: ModelSectionConfig, descriptor_dim: int) -> MLPEncoderConfig:
