@@ -7,6 +7,10 @@
   `build_*_config(toml) → run(cfg, recorder)` dispatch — no business logic in the CLI:
   - `fm pretrain` — continual-rehearsal pre-training with a rehearsal-**interval** replay schedule
     (old tasks join only every Nth step), fraction/count replay amounts, and an `n_runs` sweep.
+    Supports **warm-start** from a checkpoint (`--checkpoint` / `[pretrain].checkpoint`): loads the
+    checkpoint's encoder + heads, treats its tasks as already-learned, and continues the sequence
+    with the remaining tasks — i.e. extend a trained model with new tasks. (`fm finetune` already
+    warm-starts, since it loads a checkpoint to fine-tune.)
   - `fm finetune` — frozen-encoder fine-tuning of selected heads; the AE head **stays trainable**
     (at `ae_lr`) and `task_log_sigmas` are frozen; non-target heads are disabled for the fit and
     restored before saving so the checkpoint keeps every head.

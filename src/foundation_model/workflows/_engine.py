@@ -11,6 +11,7 @@ use one implementation. Only :class:`RunRecorder` writes files.
 from __future__ import annotations
 
 import ast
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,20 @@ from .task_catalog import TaskCatalog, TaskConfig, TaskKind
 AE_NAME = "__reconstruction__"
 # Legacy weight decay for regression / classification heads (kernel heads use kr_weight_decay).
 _HEAD_WEIGHT_DECAY = 1e-5
+
+
+def task_names_from_state(state_dict: Mapping[str, Any]) -> list[str]:
+    """Task-head names in a state dict (``task_heads.<name>.*``), in first-seen order, minus the AE.
+
+    Used when a checkpoint carries no ``task_sequence`` list (e.g. a bare/Lightning state dict).
+    """
+    names: list[str] = []
+    for key in state_dict:
+        if key.startswith("task_heads."):
+            name = key.split(".", 2)[1]
+            if name != AE_NAME and name not in names:
+                names.append(name)
+    return names
 
 
 def build_encoder_config(model: ModelSectionConfig, descriptor_dim: int) -> MLPEncoderConfig:

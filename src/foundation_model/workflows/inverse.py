@@ -36,14 +36,12 @@ from loguru import logger  # noqa: E402
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, formula_to_composition  # noqa: E402
 
 from . import inverse_trajectory  # noqa: E402
-from ._engine import build_model_for_checkpoint  # noqa: E402
+from ._engine import build_model_for_checkpoint, task_names_from_state  # noqa: E402
 from ._sections import ModelSectionConfig, build_model_section, reject_unknown  # noqa: E402
 from .plots import DISCOVERED_ELEMENT_COLOR, SCATTER_COLOR  # noqa: E402
 from .recording import RunRecorder, load_checkpoint_state  # noqa: E402
 from .task_catalog import TaskCatalog, TaskCatalogConfig, build_task_catalog_config  # noqa: E402
 
-# Reserved AE head name.
-_AE_NAME = "__reconstruction__"
 # Default QC class indices for the classification objective when class_target is unset.
 _DEFAULT_QC_CLASSES = [1]
 _ANIMATION_FORMATS = {"gif", "html", "svg"}
@@ -392,7 +390,7 @@ def _element_system(composition: str) -> frozenset[str]:
 
 def _rebuild_model(cfg: InverseConfig, catalog: TaskCatalog) -> tuple[Any, list[str]]:
     state = load_checkpoint_state(cfg.checkpoint)
-    ckpt_tasks = list(state.get("task_sequence") or _task_names_from_state(state["model"]))
+    ckpt_tasks = list(state.get("task_sequence") or task_names_from_state(state["model"]))
     catalog_tasks = {t.name for t in cfg.catalog.tasks}
     missing = [t for t in ckpt_tasks if t not in catalog_tasks]
     if missing:
@@ -402,16 +400,6 @@ def _rebuild_model(cfg: InverseConfig, catalog: TaskCatalog) -> tuple[Any, list[
     model.load_state_dict(state["model"], strict=False)
     model.eval()
     return model, ckpt_tasks
-
-
-def _task_names_from_state(state_dict: Mapping[str, Any]) -> list[str]:
-    names: list[str] = []
-    for key in state_dict:
-        if key.startswith("task_heads."):
-            name = key.split(".", 2)[1]
-            if name != _AE_NAME and name not in names:
-                names.append(name)
-    return names
 
 
 def _dedup_by_system(candidates: Sequence[str], n: int, *, enabled: bool) -> list[str]:

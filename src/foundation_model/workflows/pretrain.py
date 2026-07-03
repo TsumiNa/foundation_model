@@ -37,6 +37,7 @@ from ._engine import (
     build_head_config,
     build_trainer_extras,
     evaluate_task,
+    task_names_from_state,
 )
 from ._sections import (
     ModelSectionConfig,
@@ -45,7 +46,7 @@ from ._sections import (
     build_training_section,
     reject_unknown,
 )
-from .recording import RunRecorder
+from .recording import RunRecorder, load_checkpoint_state
 from .task_catalog import TaskCatalog, TaskCatalogConfig, TaskKind, build_task_catalog_config
 
 # Stable qualitative palette so each task keeps one colour across the forgetting figure.
@@ -109,9 +110,14 @@ class PretrainConfig:
     task_sequence: list[str] = field(default_factory=list)  # order tasks are introduced; [] = [[tasks]] order
     n_runs: int = 1  # independent repeats (different seeds) written to runs/runNN/
     task_order: TaskOrder = TaskOrder.FIXED  # "fixed" (task_sequence order) or "random" (per-run shuffle)
+    # Warm-start: load encoder + heads from this checkpoint, treat its tasks as already learned, and
+    # continue the sequence with the task_sequence tasks it doesn't already contain. None = from scratch.
+    checkpoint: Path | None = None
 
     def __post_init__(self) -> None:
         self.output_dir = Path(self.output_dir)
+        if self.checkpoint is not None:
+            self.checkpoint = Path(self.checkpoint)
         if not isinstance(self.task_order, TaskOrder):
             self.task_order = TaskOrder(str(self.task_order))
         if self.n_runs < 1:
@@ -130,7 +136,9 @@ class PretrainConfig:
 # --- builder ------------------------------------------------------------------------------
 
 
-def build_pretrain_config(raw: Mapping[str, Any], *, output_dir: str | Path | None = None) -> PretrainConfig:
+def build_pretrain_config(
+    raw: Mapping[str, Any], *, output_dir: str | Path | None = None, checkpoint: str | Path | None = None
+) -> PretrainConfig:
     """Normalize a parsed-TOML tree into a :class:`PretrainConfig`."""
 
     reject_unknown("<root>", raw, _PRETRAIN_ROOT_KEYS)
@@ -139,7 +147,7 @@ def build_pretrain_config(raw: Mapping[str, Any], *, output_dir: str | Path | No
     training = build_training_section(raw.get("training", {}))
 
     pretrain_raw = dict(raw.get("pretrain", {}))
-    reject_unknown("pretrain", pretrain_raw, {"task_sequence", "n_runs", "task_order", "rehearsal"})
+    reject_unknown("pretrain", pretrain_raw, {"task_sequence", "n_runs", "task_order", "rehearsal", "checkpoint"})
     rehearsal_raw = dict(pretrain_raw.get("rehearsal", {}))
     reject_unknown("pretrain.rehearsal", rehearsal_raw, {"interval", "default_replay", "per_task"})
     rehearsal = RehearsalConfig(
@@ -151,6 +159,7 @@ def build_pretrain_config(raw: Mapping[str, Any], *, output_dir: str | Path | No
     resolved_output = output_dir if output_dir is not None else raw.get("output", {}).get("dir")
     if resolved_output is None:
         raise ValueError("output directory must be given via --output-dir or [output].dir.")
+    resolved_checkpoint = checkpoint if checkpoint is not None else pretrain_raw.get("checkpoint")
 
     return PretrainConfig(
         catalog=catalog,
@@ -161,6 +170,7 @@ def build_pretrain_config(raw: Mapping[str, Any], *, output_dir: str | Path | No
         task_sequence=list(pretrain_raw.get("task_sequence", [])),
         n_runs=int(pretrain_raw.get("n_runs", 1)),
         task_order=TaskOrder(str(pretrain_raw.get("task_order", "fixed"))),
+        checkpoint=Path(resolved_checkpoint) if resolved_checkpoint is not None else None,
     )
 
 
@@ -230,6 +240,29 @@ def _run_task_order(cfg: PretrainConfig, seed: int) -> list[str]:
     return list(cfg.task_sequence)
 
 
+def _warm_start(cfg: PretrainConfig, catalog: TaskCatalog) -> tuple[Any, list[str], dict[str, Any]]:
+    """Build the run's start model. With ``cfg.checkpoint`` set, load its encoder + heads (warm-start)
+    and return those tasks as already-learned; otherwise an empty (AE-only) model."""
+    model = build_empty_model(catalog, cfg.model, cfg.training)
+    if cfg.checkpoint is None:
+        return model, [], {}
+    state = load_checkpoint_state(cfg.checkpoint)
+    preloaded = list(state.get("task_sequence") or task_names_from_state(state["model"]))
+    catalog_tasks = {t.name for t in cfg.catalog.tasks}
+    missing = [t for t in preloaded if t not in catalog_tasks]
+    if missing:
+        raise ValueError(f"pretrain.checkpoint tasks {missing} are not in the catalog (have {sorted(catalog_tasks)}).")
+    built: dict[str, Any] = {}
+    for name in preloaded:
+        built[name] = build_head_config(catalog, cfg.model, cfg.training, name, init_from_data=False)
+        model.add_task(built[name])
+    incompatible = model.load_state_dict(state["model"], strict=False)
+    if incompatible.missing_keys:
+        logger.info(f"warm-start: {len(incompatible.missing_keys)} missing key(s) e.g. {incompatible.missing_keys[:6]}")
+    logger.info(f"warm-started from {cfg.checkpoint} with heads {preloaded}")
+    return model, preloaded, built
+
+
 def _run_single(
     cfg: PretrainConfig,
     catalog: TaskCatalog,
@@ -239,20 +272,26 @@ def _run_single(
     seed: int,
 ) -> list[dict[str, Any]]:
     seed_everything(seed, workers=True)
-    model = build_empty_model(catalog, cfg.model, cfg.training)
+    model, preloaded, built = _warm_start(cfg, catalog)
 
-    task_colors = {name: _TASK_PALETTE[i % len(_TASK_PALETTE)] for i, name in enumerate(task_order)}
-    clf_tasks = frozenset(n for n in task_order if catalog.task_spec(n).kind is TaskKind.CLASSIFICATION)
-    metric_history: dict[str, list[tuple[int, float]]] = {name: [] for name in task_order}
+    # New tasks = task_order entries not already loaded from the checkpoint; preloaded tasks are
+    # already trained and only participate as rehearsal/eval targets.
+    new_tasks = [t for t in task_order if t not in preloaded]
+    if not new_tasks:
+        raise ValueError("nothing to train: every task in task_sequence is already in pretrain.checkpoint.")
+    full_order = [*preloaded, *new_tasks]
+
+    task_colors = {name: _TASK_PALETTE[i % len(_TASK_PALETTE)] for i, name in enumerate(full_order)}
+    clf_tasks = frozenset(n for n in full_order if catalog.task_spec(n).kind is TaskKind.CLASSIFICATION)
+    metric_history: dict[str, list[tuple[int, float]]] = {name: [] for name in full_order}
     records: list[dict[str, Any]] = []
-    built: dict[str, Any] = {}
 
-    for step, task_name in enumerate(task_order, start=1):
-        logger.info(f"--- step {step}/{len(task_order)}: add '{task_name}' ---")
+    for step, task_name in enumerate(new_tasks, start=1):
+        logger.info(f"--- step {step}/{len(new_tasks)}: add '{task_name}' ---")
         built[task_name] = build_head_config(catalog, cfg.model, cfg.training, task_name, masking_ratio=1.0)
         model.add_task(built[task_name])
 
-        learned = list(task_order[: step - 1])
+        learned = [*preloaded, *new_tasks[: step - 1]]
         participating = active_old_tasks(step, learned, cfg.rehearsal.interval)
         active = [task_name, *participating]
         for name in participating:
@@ -294,7 +333,7 @@ def _run_single(
 
         step_dir = recorder.paths.step_dir(step, task_name)
         step_metrics: dict[str, dict[str, float]] = {}
-        for name in task_order[:step]:  # evaluate ALL learned heads, regardless of interval
+        for name in [*preloaded, *new_tasks[:step]]:  # ALL learned heads (preloaded + new-so-far)
             metric = evaluate_task(
                 model, catalog, name, recorder, step_dir, is_new=(name == task_name), test_keys=test_keys
             )
@@ -311,7 +350,7 @@ def _run_single(
     plots.plt.close(fig)
     recorder.write_records()
     recorder.write_metrics_table()
-    recorder.save_final_model(model, list(task_order), _task_spec_dump(catalog, task_order))
+    recorder.save_final_model(model, list(full_order), _task_spec_dump(catalog, full_order))
     return records
 
 

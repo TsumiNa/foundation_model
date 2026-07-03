@@ -72,12 +72,12 @@ def _write_config(tmp_path):
 
 
 def test_set_override_applies_to_built_config(tmp_path) -> None:
-    cfg = _pretrain_config(_write_config(tmp_path), ("training.max_epochs=3",), None, None, None, None, None)
+    cfg = _pretrain_config(_write_config(tmp_path), ("training.max_epochs=3",), None, None, None, None, None, None)
     assert cfg.training.max_epochs == 3
 
 
 def test_max_epochs_flag_overrides(tmp_path) -> None:
-    cfg = _pretrain_config(_write_config(tmp_path), (), None, None, None, None, 5)
+    cfg = _pretrain_config(_write_config(tmp_path), (), None, None, None, None, 5, None)
     assert cfg.training.max_epochs == 5
 
 
@@ -88,7 +88,7 @@ def test_seed_and_sample_flags_map_into_tree(tmp_path) -> None:
 
 
 def test_output_dir_flag_overrides(tmp_path) -> None:
-    cfg = _pretrain_config(_write_config(tmp_path), (), "/tmp/custom", None, None, None, None)
+    cfg = _pretrain_config(_write_config(tmp_path), (), "/tmp/custom", None, None, None, None, None)
     assert str(cfg.output_dir) == "/tmp/custom"
 
 

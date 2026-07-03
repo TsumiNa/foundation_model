@@ -11,6 +11,7 @@ import tomllib
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
@@ -194,6 +195,127 @@ interval = 1
 default_replay = 0.5
 """
     return build_pretrain_config(tomllib.loads(toml), output_dir=str(output_dir))
+
+
+# --- warm-start from a checkpoint --------------------------------------------------------
+
+
+def _ws_toml(smoke_dir, sequence: list[str]) -> str:
+    return f"""
+[data]
+batch_size = 4
+
+[descriptor]
+kind = "kmd"
+n_grids = 4
+
+[datasets.d1]
+path = "{smoke_dir / "x.parquet"}"
+
+[[tasks]]
+name = "a"
+kind = "regression"
+dataset = "d1"
+column = "a"
+
+[[tasks]]
+name = "b"
+kind = "regression"
+dataset = "d1"
+column = "b"
+
+[model]
+latent_dim = 8
+encoder_hidden_dims = [16]
+head_hidden_dims = [8]
+
+[training]
+max_epochs = 1
+accelerator = "cpu"
+seed = 1
+
+[pretrain]
+task_sequence = {sequence!r}
+[pretrain.rehearsal]
+interval = 1
+default_replay = 0.5
+"""
+
+
+def _run_pretrain(cfg, out) -> None:
+    rec = RunRecorder(out)
+    rec.write_provenance(config=cfg, argv=["fm", "pretrain"], seeds={"seed": 1})
+    pretrain_run(cfg, rec)
+    rec.close()
+
+
+def test_warm_start_continues_sequence(smoke_dir, tmp_path) -> None:
+    # 1. pre-train task 'a' only → checkpoint.
+    out1 = tmp_path / "run1"
+    _run_pretrain(build_pretrain_config(tomllib.loads(_ws_toml(smoke_dir, ["a"])), output_dir=str(out1)), out1)
+    ckpt = out1 / "training" / "final_model.pt"
+
+    # 2. warm-start with sequence [a, b] → only 'b' is a new step; the model keeps both heads.
+    out2 = tmp_path / "run2"
+    cfg2 = build_pretrain_config(
+        tomllib.loads(_ws_toml(smoke_dir, ["a", "b"])), output_dir=str(out2), checkpoint=str(ckpt)
+    )
+    assert cfg2.checkpoint is not None
+    _run_pretrain(cfg2, out2)
+
+    final = torch.load(out2 / "training" / "final_model.pt", weights_only=True)
+    assert final["task_sequence"] == ["a", "b"]
+    heads = {k.split(".", 2)[1] for k in final["model"] if k.startswith("task_heads.")}
+    assert {"a", "b"} <= heads
+    # 'a' was not re-introduced as a training step; only step01_b exists.
+    assert (out2 / "training" / "step01_b").exists()
+    assert not (out2 / "training" / "step01_a").exists()
+    # 'a' head is evaluated in step 1 (already learned)
+    assert (out2 / "training" / "step01_b" / "a_metrics.json").exists()
+
+
+def test_warm_start_checkpoint_task_not_in_catalog_raises(smoke_dir, tmp_path) -> None:
+    ckpt = tmp_path / "bad.pt"
+    torch.save({"model": {"task_heads.zzz.net.weight": torch.zeros(2)}, "task_sequence": ["zzz"]}, ckpt)
+    cfg = build_pretrain_config(
+        tomllib.loads(_ws_toml(smoke_dir, ["a", "b"])), output_dir=str(tmp_path / "o"), checkpoint=str(ckpt)
+    )
+    with pytest.raises(ValueError, match="not in the catalog"):
+        _run_pretrain(cfg, tmp_path / "o")
+
+
+def test_warm_start_nothing_to_train_raises(smoke_dir, tmp_path) -> None:
+    out1 = tmp_path / "run1"
+    _run_pretrain(build_pretrain_config(tomllib.loads(_ws_toml(smoke_dir, ["a", "b"])), output_dir=str(out1)), out1)
+    ckpt = out1 / "training" / "final_model.pt"
+    cfg = build_pretrain_config(
+        tomllib.loads(_ws_toml(smoke_dir, ["a", "b"])), output_dir=str(tmp_path / "o"), checkpoint=str(ckpt)
+    )
+    with pytest.raises(ValueError, match="nothing to train"):
+        _run_pretrain(cfg, tmp_path / "o")
+
+
+def test_checkpoint_from_toml_and_cli_precedence(smoke_dir) -> None:
+    toml = f"""
+[descriptor]
+kind = "kmd"
+n_grids = 4
+[datasets.d1]
+path = "{smoke_dir / "x.parquet"}"
+[[tasks]]
+name = "a"
+kind = "regression"
+dataset = "d1"
+column = "a"
+[pretrain]
+task_sequence = ["a"]
+checkpoint = "from_toml.pt"
+[output]
+dir = "o"
+"""
+    raw = tomllib.loads(toml)
+    assert str(build_pretrain_config(raw).checkpoint) == "from_toml.pt"
+    assert str(build_pretrain_config(raw, checkpoint="from_cli.pt").checkpoint) == "from_cli.pt"  # CLI wins
 
 
 # --- Lightning callbacks / loggers config ------------------------------------------------

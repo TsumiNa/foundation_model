@@ -132,16 +132,23 @@ def _pretrain_config(
     accelerator: str | None,
     sample: int | None,
     max_epochs: int | None,
+    checkpoint: str | None,
 ) -> PretrainConfig:
     raw = load_raw_config(config_path, overrides, seed=seed, accelerator=accelerator, sample=sample)
     if max_epochs is not None:
         _set_dotted(raw, "training.max_epochs", max_epochs)
-    return build_pretrain_config(raw, output_dir=output_dir)
+    return build_pretrain_config(raw, output_dir=output_dir, checkpoint=checkpoint)
 
 
 @main.command("pretrain")
 @common_options
 @click.option("--max-epochs", type=int, default=None, help="Override training.max_epochs.")
+@click.option(
+    "--checkpoint",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="Warm-start from this checkpoint (continue the sequence).",
+)
 def pretrain_cmd(
     config_path: str,
     output_dir: str | None,
@@ -150,9 +157,10 @@ def pretrain_cmd(
     accelerator: str | None,
     sample: int | None,
     max_epochs: int | None,
+    checkpoint: str | None,
 ) -> None:
     """Continual-rehearsal pre-training (multi-run sweep)."""
-    cfg = _pretrain_config(config_path, overrides, output_dir, seed, accelerator, sample, max_epochs)
+    cfg = _pretrain_config(config_path, overrides, output_dir, seed, accelerator, sample, max_epochs, checkpoint)
     recorder = RunRecorder(cfg.output_dir)
     recorder.write_provenance(config=cfg, argv=list(sys.argv), seeds={"seed": cfg.training.seed})
     pretrain_run(cfg, recorder)
