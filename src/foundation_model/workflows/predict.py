@@ -35,6 +35,7 @@ from .task_catalog import TaskCatalog, TaskCatalogConfig, TaskKind, build_task_c
 _PREDICT_ROOT_KEYS = {"data", "descriptor", "datasets", "tasks", "model", "predict", "output"}
 _CATALOG_KEYS = {"data", "descriptor", "datasets", "tasks"}
 _SPLITS = {"train", "val", "test", "all"}
+_ACCELERATORS = {"auto", "cpu"}
 
 
 @dataclass(kw_only=True)
@@ -55,6 +56,8 @@ class PredictConfig:
         self.output_dir = Path(self.output_dir)
         if self.split not in _SPLITS:
             raise ValueError(f"predict.split must be one of {sorted(_SPLITS)}, got {self.split!r}.")
+        if self.accelerator not in _ACCELERATORS:
+            raise ValueError(f"predict.accelerator must be one of {sorted(_ACCELERATORS)}, got {self.accelerator!r}.")
         catalog_tasks = {t.name for t in self.catalog.tasks}
         unknown = [t for t in self.tasks if t not in catalog_tasks]
         if unknown:

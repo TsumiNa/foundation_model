@@ -275,6 +275,20 @@ def test_seed_and_accelerator_config(data_dir, tmp_path) -> None:
     assert cfg.seed == 7 and cfg.accelerator == "cpu"
 
 
+def test_invalid_accelerator_raises(data_dir, tmp_path) -> None:
+    with pytest.raises(ValueError, match="accelerator must be one of"):
+        build_inverse_config(
+            tomllib.loads(
+                _catalog_toml(data_dir) + '\n[inverse]\naccelerator = "cpuu"\n'
+                "[inverse.seeds]\nn = 2\n"
+                '[[inverse.scenarios]]\nname = "sc1"\nreg_tasks = ["a"]\nreg_targets = [1.0]\nclass_task = "mat"\n'
+                '[[inverse.paths]]\nname = "latent1"\nmethod = "latent"\n'
+                '[output]\ndir = "o"\n'
+            ),
+            checkpoint="ck.pt",
+        )
+
+
 def test_trajectory_static_and_svg_animation_emitted(data_dir, tmp_path) -> None:
     ckpt = tmp_path / "ck.pt"
     _checkpoint(data_dir, ckpt)

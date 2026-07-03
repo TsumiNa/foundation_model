@@ -128,6 +128,12 @@ def test_seed_and_accelerator_parsed(data_dir) -> None:
     assert cfg.seed == 7 and cfg.accelerator == "cpu"
 
 
+def test_invalid_accelerator_raises(data_dir) -> None:
+    # a typo must fail, not silently fall back to CUDA-if-available.
+    with pytest.raises(ValueError, match="accelerator must be one of"):
+        _predict_cfg(data_dir, "o", "ck.pt", predict_block='accelerator = "cpuu"')
+
+
 def test_predict_unknown_key_rejected(data_dir) -> None:
     with pytest.raises(ValueError, match="unknown key"):
         _predict_cfg(data_dir, "o", "ck.pt", predict_block="bogus = 1")
