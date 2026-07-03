@@ -133,7 +133,7 @@ above).
 | `kr_weight_decay` | float | `5e-05` | | Weight decay for KR heads (reg/clf heads use a fixed `1e-5`). |
 | `ae_lr` | float | `0.005` | | AutoEncoder head learning rate (the AE head always trains). |
 | `accelerator` | str | `"auto"` | | Lightning accelerator (`auto` / `cpu` / `gpu` / …). |
-| `devices` | int | `1` | | Number of devices. |
+| `devices` | int \| list[int] \| str | `1` | | Passed to Lightning `Trainer(devices=...)`: an int count (`-1` = all), a list of device indices (`[1, 3]`), or a string (`"auto"` / `"1,3"` / `"0-3"`). |
 | `seed` | int | `2025` | | Global seed (`--seed` overrides). |
 
 ### `[training.early_stopping]` → Lightning `EarlyStopping` (on by default)
