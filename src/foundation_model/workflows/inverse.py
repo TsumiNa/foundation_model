@@ -47,6 +47,7 @@ _AE_NAME = "__reconstruction__"
 # Default QC class indices for the classification objective when class_target is unset.
 _DEFAULT_QC_CLASSES = [1]
 _ANIMATION_FORMATS = {"gif", "html", "svg"}
+_ACCELERATORS = {"auto", "cpu"}
 _ELEMENT_TOKEN = re.compile(r"[A-Z][a-z]?")
 
 # 48-element feasible alloy palette (copied verbatim from paper_inverse_comparison.py).
@@ -261,6 +262,8 @@ class InverseConfig:
         bad_fmt = [f for f in self.animation_formats if f not in _ANIMATION_FORMATS]
         if bad_fmt:
             raise ValueError(f"animation_formats must be a subset of {sorted(_ANIMATION_FORMATS)}, got {bad_fmt}.")
+        if self.accelerator not in _ACCELERATORS:
+            raise ValueError(f"inverse.accelerator must be one of {sorted(_ACCELERATORS)}, got {self.accelerator!r}.")
         # composition paths require an invertible KMD descriptor
         if self.catalog.descriptor.kind != "kmd" and any(p.method is InverseMethod.COMPOSITION for p in self.paths):
             raise ValueError("composition paths require descriptor.kind == 'kmd' (an invertible KMD descriptor).")

@@ -35,6 +35,7 @@ from .task_catalog import TaskCatalog, TaskCatalogConfig, TaskKind, build_task_c
 _PREDICT_ROOT_KEYS = {"data", "descriptor", "datasets", "tasks", "model", "predict", "output"}
 _CATALOG_KEYS = {"data", "descriptor", "datasets", "tasks"}
 _SPLITS = {"train", "val", "test", "all"}
+_ACCELERATORS = {"auto", "cpu"}
 
 
 @dataclass(kw_only=True)
@@ -47,12 +48,16 @@ class PredictConfig:
     split: str = "test"
     compositions: list[str] = field(default_factory=list)  # overrides split when given
     with_metrics: bool = True
+    seed: int = 2025  # seeds torch/numpy for reproducible split resolution
+    accelerator: str = "auto"  # "auto" (cuda if available, else cpu) | "cpu"
 
     def __post_init__(self) -> None:
         self.checkpoint = Path(self.checkpoint)
         self.output_dir = Path(self.output_dir)
         if self.split not in _SPLITS:
             raise ValueError(f"predict.split must be one of {sorted(_SPLITS)}, got {self.split!r}.")
+        if self.accelerator not in _ACCELERATORS:
+            raise ValueError(f"predict.accelerator must be one of {sorted(_ACCELERATORS)}, got {self.accelerator!r}.")
         catalog_tasks = {t.name for t in self.catalog.tasks}
         unknown = [t for t in self.tasks if t not in catalog_tasks]
         if unknown:
@@ -69,7 +74,9 @@ def build_predict_config(
     model = build_model_section(raw.get("model", {}))
 
     pred_raw = dict(raw.get("predict", {}))
-    reject_unknown("predict", pred_raw, {"checkpoint", "tasks", "split", "compositions", "with_metrics"})
+    reject_unknown(
+        "predict", pred_raw, {"checkpoint", "tasks", "split", "compositions", "with_metrics", "seed", "accelerator"}
+    )
     resolved_checkpoint = checkpoint if checkpoint is not None else pred_raw.get("checkpoint")
     if resolved_checkpoint is None:
         raise ValueError("checkpoint must be given via --checkpoint or [predict].checkpoint.")
@@ -86,6 +93,8 @@ def build_predict_config(
         split=str(pred_raw.get("split", "test")),
         compositions=list(pred_raw.get("compositions", [])),
         with_metrics=bool(pred_raw.get("with_metrics", True)),
+        seed=int(pred_raw.get("seed", 2025)),
+        accelerator=str(pred_raw.get("accelerator", "auto")),
     )
 
 
@@ -99,16 +108,24 @@ def _task_names_from_state(state_dict: Mapping[str, Any]) -> list[str]:
     return names
 
 
+def _resolve_device(accelerator: str) -> torch.device:
+    """``"cpu"`` forces CPU; ``"auto"`` uses CUDA when available, else CPU."""
+    if accelerator != "cpu" and torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
 def run(cfg: PredictConfig, recorder: RunRecorder | None = None) -> dict[str, Any]:
     """Predict ``cfg.tasks`` (or every checkpoint head) on the resolved set. Returns metrics dict."""
 
     catalog = TaskCatalog(cfg.catalog)
     owns_recorder = recorder is None
     rec = recorder or RunRecorder(cfg.output_dir)
-    seed_everything(2025, workers=True)
+    seed_everything(cfg.seed, workers=True)
 
     try:
         model, ckpt_tasks = _rebuild_model(cfg, catalog)
+        model = model.to(_resolve_device(cfg.accelerator))
         heads = set(model.task_heads)
         requested = cfg.tasks or [t for t in ckpt_tasks if t in heads]
         missing = [t for t in requested if t not in heads]

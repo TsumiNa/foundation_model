@@ -32,6 +32,11 @@
 - **Provenance on every run**: `run_provenance.json` (resolved config + package versions + git +
   argv + seeds) and `run.log`, written by `workflows/recording.py::RunRecorder` — the single
   artifact writer for the training/predict flows.
+- **Config reference + fixes**: added [`docs/configuration.md`](docs/configuration.md), an
+  authoritative per-key schema for all four subcommands. `fm predict` now accepts `--seed` /
+  `--accelerator` (routed to `[predict]`, previously crashed with `unknown key 'training'`) and
+  runs on the chosen device; `--config` help text added; pretrain/finetune command-section fields
+  documented inline.
 - **New package layout**: `workflows/` (task_catalog, recording, `_sections`/`_engine`, pretrain,
   finetune, inverse, inverse_trajectory, plots, predict) + `cli/`; colocated `<module>_test.py`.
 - **Removed**: `src/foundation_model/scripts/` in full (`train.py`/LightningCLI, the

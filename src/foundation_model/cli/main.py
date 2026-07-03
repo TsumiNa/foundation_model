@@ -88,12 +88,30 @@ def load_raw_config(
 def common_options(func: Callable[..., Any]) -> Callable[..., Any]:
     """Attach the options shared by every subcommand."""
     options = [
-        click.option("--config", "config_path", required=True, type=click.Path(exists=True, dir_okay=False)),
-        click.option("--output-dir", "output_dir", default=None, help="Override the run output directory."),
-        click.option("--set", "overrides", multiple=True, metavar="SECTION.KEY=VALUE", help="Override a TOML value."),
-        click.option("--seed", type=int, default=None, help="Override training.seed."),
-        click.option("--accelerator", default=None, help="Override training.accelerator."),
-        click.option("--sample", type=int, default=None, help="Cap rows for every dataset (smoke runs)."),
+        click.option(
+            "--config",
+            "config_path",
+            required=True,
+            type=click.Path(exists=True, dir_okay=False),
+            help="Path to the run's TOML config file (required).",
+        ),
+        click.option(
+            "--output-dir", "output_dir", default=None, help="Override [output].dir (the run output directory)."
+        ),
+        click.option(
+            "--set",
+            "overrides",
+            multiple=True,
+            metavar="SECTION.KEY=VALUE",
+            help="Override one TOML value (repeatable); VALUE uses TOML syntax, so quote strings: --set data.batch_size=64.",
+        ),
+        click.option(
+            "--seed", type=int, default=None, help="Override the run seed (routed to the subcommand's section)."
+        ),
+        click.option(
+            "--accelerator", default=None, help='Override the accelerator ("auto" | "cpu"), routed per subcommand.'
+        ),
+        click.option("--sample", type=int, default=None, help="Cap rows for every [datasets.*] (fast smoke runs)."),
     ]
     for option in reversed(options):
         func = option(func)
@@ -267,7 +285,15 @@ def _predict_config(
     compositions: str | None,
     no_metrics: bool,
 ) -> PredictConfig:
-    raw = load_raw_config(config_path, overrides, seed=seed, accelerator=accelerator, sample=sample)
+    raw = load_raw_config(
+        config_path,
+        overrides,
+        seed=seed,
+        accelerator=accelerator,
+        sample=sample,
+        seed_key="predict.seed",
+        accelerator_key="predict.accelerator",
+    )
     if tasks is not None:
         _set_dotted(raw, "predict.tasks", [t.strip() for t in tasks.split(",") if t.strip()])
     if split is not None:
@@ -314,7 +340,7 @@ def predict_cmd(
         no_metrics,
     )
     recorder = RunRecorder(cfg.output_dir)
-    recorder.write_provenance(config=cfg, argv=list(sys.argv), seeds={"seed": 2025})
+    recorder.write_provenance(config=cfg, argv=list(sys.argv), seeds={"seed": cfg.seed})
     predict_run(cfg, recorder)
     recorder.close()
 

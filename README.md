@@ -122,8 +122,11 @@ Training callbacks and loggers map to Lightning's built-ins via `[training]` sub
 subset of each): `[training.early_stopping]` → `EarlyStopping` (on by default),
 `[training.checkpoint]` → `ModelCheckpoint`, and `[training.logging]` (`csv` / `tensorboard`) →
 `CSVLogger` / `TensorBoardLogger`. Lightning checkpointing/logging are opt-in; the run recorder
-writes the rehearsal-schema checkpoints + `run.log` regardless. See [`samples/`](samples/) for
-templates and `AGENTS.md` → **Entry Points** for the full convention.
+writes the rehearsal-schema checkpoints + `run.log` regardless.
+
+**[`docs/configuration.md`](docs/configuration.md) is the authoritative schema** — every section,
+key, type, default, constraint, and which subcommands read it. See [`samples/`](samples/) for
+ready-to-copy templates.
 
 ## Features
 

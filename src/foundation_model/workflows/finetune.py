@@ -48,15 +48,17 @@ _CATALOG_KEYS = {"data", "descriptor", "datasets", "tasks"}
 
 @dataclass(kw_only=True)
 class FinetuneConfig:
+    """``[finetune]`` + shared sections — frozen-encoder head fine-tuning config."""
+
     catalog: TaskCatalogConfig
     model: ModelSectionConfig
     training: TrainingSectionConfig
-    checkpoint: Path
-    tasks: list[str]
+    checkpoint: Path  # checkpoint to fine-tune from (--checkpoint or [finetune].checkpoint)
+    tasks: list[str]  # heads to fine-tune; other heads stay frozen (the AE head always trains)
     output_dir: Path
-    epochs: int = 20
-    freeze_encoder: bool = True
-    add_new_tasks: bool = True
+    epochs: int = 20  # fine-tune epochs (distinct from [training].max_epochs)
+    freeze_encoder: bool = True  # freeze the shared encoder + non-target heads (BatchNorm buffers too)
+    add_new_tasks: bool = True  # if a target task isn't in the checkpoint, add a fresh head for it
 
     def __post_init__(self) -> None:
         self.checkpoint = Path(self.checkpoint)
