@@ -37,6 +37,7 @@ from loguru import logger
 
 from foundation_model.data.composition_sources import (
     PrecomputedDescriptorSource,
+    canonical_key,
     normalize_composition,
     read_data_file,
 )
@@ -404,12 +405,13 @@ class TaskCatalog:
             dropped = joblib.load(spec.preprocessing_path).get("dropped_idx", [])
             df = df.loc[~df.index.isin(dropped)]
 
-        # Composition key (canonical) → index; drop unparseable, keep first duplicate.
+        # Composition key → index, keeping first duplicate. Use canonical_key (the same rule the
+        # DataModule / descriptor sources use): real formulas are canonicalized while non-formula
+        # IDs (e.g. precomputed-descriptor material IDs) pass through unchanged instead of being
+        # dropped. Only genuinely-missing (NaN/None) compositions are dropped.
         comp_col = self.config.data.composition_column
-        if comp_col in df.columns:
-            keys = [normalize_composition(v) for v in df[comp_col]]
-        else:
-            keys = [normalize_composition(v) for v in df.index]
+        raw = df[comp_col] if comp_col in df.columns else df.index.to_series()
+        keys = [canonical_key(v, normalize_composition) if pd.notna(v) else None for v in raw]
         df["__key__"] = np.asarray(keys, dtype=object)
         df = df.dropna(subset=["__key__"]).drop_duplicates(subset="__key__", keep="first").set_index("__key__")
 

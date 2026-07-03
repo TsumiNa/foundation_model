@@ -91,6 +91,16 @@ def test_load_checkpoint_state_normalizes_bare_state_dict(tmp_path) -> None:
     assert "linear.weight" in state["model"]
 
 
+def test_load_checkpoint_state_unwraps_lightning_checkpoint(tmp_path) -> None:
+    model = _TinyModel()
+    ckpt = tmp_path / "epoch=2.ckpt"
+    # Mimic a Lightning ModelCheckpoint payload: params nested under "state_dict".
+    torch.save({"state_dict": model.state_dict(), "epoch": 2, "global_step": 10}, ckpt)
+    state = load_checkpoint_state(ckpt)
+    assert "linear.weight" in state["model"]  # unwrapped, not the whole checkpoint dict
+    assert state["task_sequence"] is None
+
+
 def test_dump_predictions_and_metrics_roundtrip(tmp_path) -> None:
     rec = RunRecorder(tmp_path)
     step_dir = rec.paths.step_dir(1, "density")

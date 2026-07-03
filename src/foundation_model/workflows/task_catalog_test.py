@@ -414,6 +414,36 @@ def test_kmd_descriptor_deterministic_and_cached(catalog_dir) -> None:
     assert cat.descriptor_dim == first.shape[1]
 
 
+def test_precomputed_non_formula_keys_preserved(tmp_path) -> None:
+    # Non-formula IDs (e.g. Materials Project IDs) that normalize_composition can't parse must be
+    # preserved via canonical_key, not dropped — otherwise a precomputed catalog is emptied.
+    ids = ["mp-149", "mp-2534", "mp-66"]
+    qc = pd.DataFrame({"composition": ids, "density": [1.0, 2.0, 3.0]})
+    qc.to_parquet(tmp_path / "qc.parquet")
+    desc = pd.DataFrame(np.arange(6, dtype=float).reshape(3, 2), columns=["f0", "f1"])
+    desc["composition"] = ids
+    desc.to_parquet(tmp_path / "desc.parquet")
+    toml = f"""
+[descriptor]
+kind = "precomputed"
+path = "{tmp_path / "desc.parquet"}"
+
+[datasets.qc]
+path = "{tmp_path / "qc.parquet"}"
+
+[[tasks]]
+name = "density"
+kind = "regression"
+dataset = "qc"
+column = "density"
+"""
+    cat = TaskCatalog(_build(toml))
+    frame = cat.task_frames(["density"])["density"]
+    assert list(frame.index) == ids  # rows kept, not dropped
+    out = cat.descriptor_fn()(ids)
+    assert list(out.index) == ids
+
+
 def test_precomputed_descriptor_source(tmp_path) -> None:
     qc = pd.DataFrame({"composition": _COMPS, "density": [1.0, 2, 3, 4, 5, 6]})
     qc.to_parquet(tmp_path / "qc.parquet")

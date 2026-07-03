@@ -211,17 +211,21 @@ class RunRecorder:
 def load_checkpoint_state(path: Path) -> dict[str, Any]:
     """Load a checkpoint and normalize to ``{"model": state_dict, "task_sequence": list|None, ...}``.
 
-    Accepts both the rehearsal schema (``{"model": ..., "task_sequence": ...}``) and a bare
-    ``state_dict`` (fm-trainer era).
+    Accepts three shapes, in priority order:
+    1. the rehearsal schema — ``{"model": state_dict, "task_sequence": ...}``;
+    2. a Lightning checkpoint — ``{"state_dict": ..., "epoch": ..., ...}`` (fm-trainer era,
+       ``ModelCheckpoint`` output): the parameters live under ``state_dict``, so unwrap it;
+    3. a bare ``state_dict`` (an ``OrderedDict`` of parameter tensors).
     """
 
-    # weights_only=True hardens against arbitrary-code execution from untrusted checkpoints;
-    # both accepted formats (rehearsal dict of state_dict + primitives, and a bare state_dict)
-    # contain only safe types.
+    # weights_only=True hardens against arbitrary-code execution from untrusted checkpoints.
     obj = torch.load(Path(path), map_location="cpu", weights_only=True)
     if isinstance(obj, Mapping) and "model" in obj and isinstance(obj["model"], Mapping):
         normalized = dict(obj)
         normalized.setdefault("task_sequence", None)
         return normalized
+    if isinstance(obj, Mapping) and "state_dict" in obj and isinstance(obj["state_dict"], Mapping):
+        # Lightning checkpoint: parameters are nested under "state_dict".
+        return {"model": obj["state_dict"], "task_sequence": obj.get("task_sequence")}
     # Bare state_dict (OrderedDict of param tensors).
     return {"model": obj, "task_sequence": None}
