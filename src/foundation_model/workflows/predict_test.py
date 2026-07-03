@@ -215,6 +215,18 @@ def test_masked_nan_target_in_parquet_excluded_from_metrics(data_dir, tmp_path) 
         assert result["metrics"]["a"]["samples"] == int(reg["true"].notna().sum())
 
 
+def test_no_metrics_skips_metric_artifacts(data_dir, tmp_path) -> None:
+    ckpt = tmp_path / "ck.pt"
+    _checkpoint(data_dir, ckpt)
+    out = tmp_path / "pred"
+    cfg = _predict_cfg(data_dir, out, ckpt, predict_block='tasks = ["a"]\nsplit = "all"\nwith_metrics = false')
+    result = _run(cfg, out)
+    assert (out / "predict" / "a_pred.parquet").exists()  # predictions still written
+    assert not (out / "predict" / "metrics.json").exists()  # ...but no metrics artifacts
+    assert not (out / "predict" / "metrics_table.csv").exists()
+    assert result["metrics"] == {}
+
+
 def test_scaler_inverse_transform_applied(data_dir, tmp_path) -> None:
     ckpt = tmp_path / "ck.pt"
     _checkpoint(data_dir, ckpt)

@@ -126,7 +126,7 @@ def run(cfg: PredictConfig, recorder: RunRecorder | None = None) -> dict[str, An
         pred_dir.mkdir(parents=True, exist_ok=True)
         metrics: dict[str, dict[str, float]] = {}
         for task in requested:
-            metric = _predict_task(model, catalog, task, comps, device, rec, pred_dir)
+            metric = _predict_task(model, catalog, task, comps, device, pred_dir, with_metrics=cfg.with_metrics)
             if metric:
                 metrics[task] = metric
 
@@ -182,7 +182,7 @@ def _rebuild_model(cfg: PredictConfig, catalog: TaskCatalog) -> tuple[Any, list[
 
 
 def _resolve_compositions(cfg: PredictConfig, catalog: TaskCatalog, tasks: Sequence[str]) -> list[str]:
-    """Explicit compositions win; otherwise the union of the requested tasks' rows on the split."""
+    """Explicit compositions win (request order); otherwise resolve the split via the datamodule."""
 
     if cfg.compositions:
         # Normalize to canonical keys (matching the catalog frames), preserving order + dropping dups.
@@ -191,17 +191,12 @@ def _resolve_compositions(cfg: PredictConfig, catalog: TaskCatalog, tasks: Seque
             seen.setdefault(canonical_key(comp, normalize_composition), None)
         return list(seen)
 
-    frames = catalog.task_frames(tasks)
-    universe: dict[str, None] = {}
-    for name in tasks:
-        frame = frames[name]
-        if cfg.split == "all" or "split" not in frame.columns:
-            index = frame.index
-        else:
-            index = frame.index[frame["split"] == cfg.split]
-        for key in index:
-            universe.setdefault(str(key), None)
-    return list(universe)
+    # Split-based: go through CompoundDataModule so the composition-level split overlay applies —
+    # including the [data].val_split/test_split random fallback when a task frame has no explicit
+    # 'split' column (otherwise every row would leak into the requested split).
+    datamodule = catalog.build_datamodule(tasks, predict_idx=cfg.split)
+    datamodule.setup("predict")
+    return list(datamodule.predict_compositions)
 
 
 def _predict_task(
@@ -210,20 +205,20 @@ def _predict_task(
     name: str,
     comps: list[str],
     device: torch.device,
-    rec: RunRecorder,
     pred_dir: Path,
+    *,
+    with_metrics: bool,
 ) -> dict[str, float]:
-    """Predict one head on ``comps``; write parquet (+ metrics when true targets exist)."""
+    """Predict one head on ``comps``; write parquet (+ metrics when enabled and targets exist)."""
 
     spec = catalog.task_spec(name)
     frame = catalog.task_frames([name])[name]
     head = model.task_heads[name]
-    descriptor_fn = catalog.descriptor_fn()
 
     if spec.kind is TaskKind.KERNEL_REGRESSION:
-        return _predict_kr(model, catalog, name, comps, device, rec, pred_dir)
+        return _predict_kr(model, catalog, name, comps, device, pred_dir, with_metrics=with_metrics)
 
-    desc = descriptor_fn(comps)
+    desc = catalog.descriptor_fn()(comps)
     kept = [c for c in comps if c in desc.index]
     if not kept:
         logger.warning(f"task '{name}': no descriptors available for the prediction set.")
@@ -237,9 +232,8 @@ def _predict_task(
             pred = head(h).argmax(dim=-1).cpu().numpy()
 
     true = _true_values(frame, spec.column, kept, kind=spec.kind, catalog=catalog, name=name)
-    out = pd.DataFrame({"composition": kept, "pred": pred, "true": true})
-    out.to_parquet(pred_dir / f"{name}_pred.parquet")
-    return _metrics(spec.kind, true, pred)
+    pd.DataFrame({"composition": kept, "pred": pred, "true": true}).to_parquet(pred_dir / f"{name}_pred.parquet")
+    return _metrics(spec.kind, true, pred) if with_metrics else {}
 
 
 def _predict_kr(
@@ -248,14 +242,16 @@ def _predict_kr(
     name: str,
     comps: list[str],
     device: torch.device,
-    rec: RunRecorder,
     pred_dir: Path,
+    *,
+    with_metrics: bool,
 ) -> dict[str, float]:
     spec = catalog.task_spec(name)
     assert spec.t_column is not None
     frame = catalog.task_frames([name])[name]
     head = model.task_heads[name]
-    available = set(catalog.descriptor_fn()(comps).index)
+    desc = catalog.descriptor_fn()(comps)  # compute descriptors once and reuse for filtering + tensor
+    available = set(desc.index)
     keep: list[str] = []
     t_list: list[np.ndarray] = []
     true_parts: list[np.ndarray] = []
@@ -268,11 +264,11 @@ def _predict_kr(
             continue
         keep.append(comp)
         t_list.append(t)
-        true_parts.append(y if y.size == t.size else np.full(t.size, np.nan))
+        # Inverse-transform the true sequence too, so it matches the (inverse-transformed) preds.
+        true_parts.append(catalog.inverse_transform(name, y) if y.size == t.size else np.full(t.size, np.nan))
     if not keep:
         logger.warning(f"task '{name}': no compositions with a t-grid to predict.")
         return {}
-    desc = catalog.descriptor_fn()(keep)
     x = torch.tensor(desc.loc[keep].values, dtype=torch.float32, device=device)
     with torch.no_grad():
         h = torch.tanh(model.encoder(x))
@@ -291,7 +287,7 @@ def _predict_kr(
     long = pd.DataFrame(rows)
     long.to_parquet(pred_dir / f"{name}_pred.parquet")
     mask = ~long["true"].isna()
-    if mask.sum() >= 2:
+    if with_metrics and mask.sum() >= 2:
         return {
             "r2": float(r2_score(long.loc[mask, "true"], long.loc[mask, "pred"])),
             "mae": float(mean_absolute_error(long.loc[mask, "true"], long.loc[mask, "pred"])),
