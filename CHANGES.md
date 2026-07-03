@@ -19,6 +19,10 @@
   `[datasets.*]`/`[[tasks]]`/`[model]`/`[training]` shared sections normalized into validated
   `@dataclass` configs (`workflows/`), unknown keys rejected by name. `--set section.key=value`
   overrides + first-class flags (`--seed`/`--accelerator`/`--sample`/…).
+- **Configurable Lightning callbacks/loggers**: `[training.early_stopping]` / `[training.checkpoint]`
+  (Lightning `EarlyStopping` / `ModelCheckpoint`) and `[training.logging]` (`CSVLogger` /
+  `TensorBoardLogger`) — a flexible subset of each. EarlyStopping is on by default; the Lightning
+  checkpoint + loggers are opt-in so the `RunRecorder` stays the default checkpoint/log writer.
 - **Provenance on every run**: `run_provenance.json` (resolved config + package versions + git +
   argv + seeds) and `run.log`, written by `workflows/recording.py::RunRecorder` — the single
   artifact writer for the training/predict flows.

@@ -13,7 +13,7 @@ import pytest
 import torch
 
 from foundation_model.workflows._engine import AE_NAME, build_empty_model, build_head_config
-from foundation_model.workflows._sections import ModelSectionConfig, TrainingSectionConfig
+from foundation_model.workflows._sections import EarlyStoppingConfig, ModelSectionConfig, TrainingSectionConfig
 from foundation_model.workflows.finetune import apply_freeze_policy, build_finetune_config
 from foundation_model.workflows.finetune import run as finetune_run
 from foundation_model.workflows.recording import RunRecorder
@@ -23,7 +23,7 @@ _ELEMENTS = ["Fe", "Al", "Cu", "Ni", "Ti", "Zn", "Mg", "Ca", "Na", "Cl", "O", "S
 _FORMULAS = [f"{a}2 {b}3" for i, a in enumerate(_ELEMENTS) for b in _ELEMENTS[i + 1 :]][:24]
 
 _MODEL = ModelSectionConfig(latent_dim=8, encoder_hidden=16, head_hidden_dim=8, n_kernel=4)
-_TRAIN = TrainingSectionConfig(max_epochs=1, early_stop_patience=2, accelerator="cpu", seed=1)
+_TRAIN = TrainingSectionConfig(max_epochs=1, early_stopping=EarlyStoppingConfig(patience=2), accelerator="cpu", seed=1)
 
 
 @pytest.fixture

@@ -12,6 +12,17 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
+
+from foundation_model.workflows._engine import build_trainer_extras
+from foundation_model.workflows._sections import (
+    CheckpointConfig,
+    EarlyStoppingConfig,
+    LoggingConfig,
+    TrainingSectionConfig,
+    build_training_section,
+)
 from foundation_model.workflows.pretrain import (
     active_old_tasks,
     build_pretrain_config,
@@ -182,6 +193,106 @@ interval = 1
 default_replay = 0.5
 """
     return build_pretrain_config(tomllib.loads(toml), output_dir=str(output_dir))
+
+
+# --- Lightning callbacks / loggers config ------------------------------------------------
+
+
+def test_training_subtables_parse() -> None:
+    cfg = build_training_section(
+        tomllib.loads(
+            "max_epochs = 5\n"
+            '[early_stopping]\npatience = 4\nmode = "max"\n'
+            "[checkpoint]\nenabled = true\nsave_top_k = 2\n"
+            "[logging]\ncsv = true\ntensorboard = true\n"
+        )
+    )
+    assert cfg.early_stopping.patience == 4 and cfg.early_stopping.mode == "max"
+    assert cfg.checkpoint.enabled and cfg.checkpoint.save_top_k == 2
+    assert cfg.logging.csv and cfg.logging.tensorboard
+
+
+def test_early_stopping_bad_mode_raises() -> None:
+    with pytest.raises(ValueError, match="mode must be"):
+        build_training_section(tomllib.loads('[early_stopping]\nmode = "up"'))
+
+
+def test_training_subtable_unknown_key_raises() -> None:
+    with pytest.raises(ValueError, match="save_topk"):
+        build_training_section(tomllib.loads("[checkpoint]\nsave_topk = 2"))
+
+
+def test_build_trainer_extras_default(tmp_path) -> None:
+    callbacks, loggers, enable = build_trainer_extras(
+        TrainingSectionConfig(), log_dir=tmp_path, ckpt_dir=tmp_path, run_name="r"
+    )
+    assert any(isinstance(c, EarlyStopping) for c in callbacks)  # on by default
+    assert not any(isinstance(c, ModelCheckpoint) for c in callbacks)  # opt-in
+    assert loggers is False and enable is False
+
+
+def test_build_trainer_extras_all_enabled(tmp_path) -> None:
+    training = TrainingSectionConfig(
+        early_stopping=EarlyStoppingConfig(enabled=False),
+        checkpoint=CheckpointConfig(enabled=True),
+        logging=LoggingConfig(csv=True, tensorboard=True),
+    )
+    callbacks, loggers, enable = build_trainer_extras(
+        training, log_dir=tmp_path, ckpt_dir=tmp_path / "ck", run_name="r"
+    )
+    assert not any(isinstance(c, EarlyStopping) for c in callbacks)
+    assert any(isinstance(c, ModelCheckpoint) for c in callbacks)
+    assert enable is True
+    assert isinstance(loggers, list) and len(loggers) == 2
+    assert any(isinstance(lg, CSVLogger) for lg in loggers)
+    assert any(isinstance(lg, TensorBoardLogger) for lg in loggers)
+
+
+def test_pretrain_lightning_checkpoint_and_csv_logger(smoke_dir, tmp_path) -> None:
+    out = tmp_path / "run"
+    toml = f"""
+[data]
+batch_size = 4
+
+[descriptor]
+kind = "kmd"
+n_grids = 4
+
+[datasets.d1]
+path = "{smoke_dir / "x.parquet"}"
+
+[[tasks]]
+name = "a"
+kind = "regression"
+dataset = "d1"
+column = "a"
+
+[model]
+latent_dim = 8
+encoder_hidden = 16
+head_hidden_dim = 8
+
+[training]
+max_epochs = 1
+accelerator = "cpu"
+seed = 1
+
+[training.checkpoint]
+enabled = true
+
+[training.logging]
+csv = true
+
+[pretrain]
+task_sequence = ["a"]
+"""
+    cfg = build_pretrain_config(tomllib.loads(toml), output_dir=str(out))
+    rec = RunRecorder(out)
+    rec.write_provenance(config=cfg, argv=["fm", "pretrain"], seeds={"seed": 1})
+    pretrain_run(cfg, rec)
+    rec.close()
+    assert (out / "logs").exists()  # CSVLogger wrote metric curves
+    assert list(out.glob("training/step*/lightning/*.ckpt"))  # ModelCheckpoint wrote a .ckpt
 
 
 def test_pretrain_smoke_end_to_end(smoke_dir, tmp_path) -> None:

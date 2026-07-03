@@ -63,8 +63,6 @@ n_kernel = 15
 
 [training]
 max_epochs = 100
-early_stop_patience = 8
-early_stop_min_delta = 1e-4
 encoder_lr = 5e-3
 head_lr = 5e-3
 kr_lr = 5e-4
@@ -73,6 +71,28 @@ ae_lr = 5e-3
 accelerator = "auto"
 devices = 1
 seed = 2025
+
+# Lightning EarlyStopping (a subset of its args; enabled by default).
+[training.early_stopping]
+enabled = true
+monitor = "val_final_loss"
+mode = "min"
+patience = 8
+min_delta = 1e-4
+
+# Lightning ModelCheckpoint (off by default — the run recorder already writes checkpoints).
+# Enable to also emit Lightning .ckpt files (per training step, under stepNN_*/lightning/).
+[training.checkpoint]
+enabled = false
+monitor = "val_final_loss"
+mode = "min"
+save_top_k = 1
+save_last = false
+
+# Lightning loggers — write metric curves under <output.dir>/logs/.
+[training.logging]
+csv = true
+tensorboard = false
 
 [pretrain]
 task_sequence = ["density", "dos_density", "power_factor", "formation_energy", "material_type"]

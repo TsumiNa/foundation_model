@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from lightning import Trainer, seed_everything
-from lightning.pytorch.callbacks import Callback, EarlyStopping
+from lightning.pytorch.callbacks import Callback
 from loguru import logger
 
 from ._engine import (
@@ -29,6 +29,7 @@ from ._engine import (
     DropLastTrainCompoundDataModule,
     build_empty_model,
     build_head_config,
+    build_trainer_extras,
     evaluate_task,
 )
 from ._sections import (
@@ -213,22 +214,20 @@ def run(cfg: FinetuneConfig, recorder: RunRecorder | None = None) -> dict[str, A
             for name in cfg.tasks
         }
 
-        callbacks: list[Callback] = [
-            EarlyStopping(
-                monitor="val_final_loss",
-                mode="min",
-                patience=cfg.training.early_stop_patience,
-                min_delta=cfg.training.early_stop_min_delta,
-            )
-        ]
+        callbacks, loggers, enable_ckpt = build_trainer_extras(
+            cfg.training,
+            log_dir=rec.paths.root / "logs",
+            ckpt_dir=rec.paths.training / "finetune" / "lightning",
+            run_name="finetune",
+        )
         if cfg.freeze_encoder:
             callbacks.append(_FrozenEncoderEval())  # keep frozen encoder's BatchNorm buffers fixed
         trainer = Trainer(
             max_epochs=cfg.epochs,
             accelerator=cfg.training.accelerator,
             devices=cfg.training.devices,
-            logger=False,
-            enable_checkpointing=False,
+            logger=loggers,
+            enable_checkpointing=enable_ckpt,
             enable_progress_bar=False,
             callbacks=callbacks,
         )

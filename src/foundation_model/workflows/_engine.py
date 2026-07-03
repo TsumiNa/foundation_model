@@ -17,6 +17,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import torch
+from lightning.pytorch.callbacks import Callback, EarlyStopping, ModelCheckpoint
+from lightning.pytorch.loggers import CSVLogger, Logger, TensorBoardLogger
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, r2_score  # type: ignore[import-untyped]
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 
@@ -49,6 +51,39 @@ def build_empty_model(
     if AE_NAME in built.task_configs_map:
         built.task_configs_map[AE_NAME].optimizer = OptimizerConfig(lr=training.ae_lr)
     return built
+
+
+def build_trainer_extras(
+    training: TrainingSectionConfig, *, log_dir: Path, ckpt_dir: Path, run_name: str
+) -> tuple[list[Callback], list[Logger] | bool, bool]:
+    """Build Lightning callbacks + loggers from ``[training]`` config.
+
+    Returns ``(callbacks, logger_arg, enable_checkpointing)`` for ``Trainer(...)``. EarlyStopping is
+    on by default; ModelCheckpoint and the CSV/TensorBoard loggers are opt-in (config-driven) so the
+    default flow keeps the RunRecorder as the sole checkpoint/log writer.
+    """
+    callbacks: list[Callback] = []
+    es = training.early_stopping
+    if es.enabled:
+        callbacks.append(EarlyStopping(monitor=es.monitor, mode=es.mode, patience=es.patience, min_delta=es.min_delta))
+    ckpt = training.checkpoint
+    if ckpt.enabled:
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=str(ckpt_dir),
+                monitor=ckpt.monitor,
+                mode=ckpt.mode,
+                save_top_k=ckpt.save_top_k,
+                save_last=ckpt.save_last,
+                filename=ckpt.filename,
+            )
+        )
+    loggers: list[Logger] = []
+    if training.logging.csv:
+        loggers.append(CSVLogger(save_dir=str(log_dir), name=run_name))
+    if training.logging.tensorboard:
+        loggers.append(TensorBoardLogger(save_dir=str(log_dir), name=run_name))
+    return callbacks, (loggers or False), ckpt.enabled
 
 
 def build_head_config(
