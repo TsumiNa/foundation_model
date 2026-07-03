@@ -6,6 +6,7 @@ readme = "README.md"
 authors = [{ name = "TsumiNa", email = "liu.chang.1865@gmail.com" }]
 requires-python = ">=3.11, <3.14"
 dependencies = [
+    "click>=8.1",
     "joblib>=1.5.0",
     "lightning[pytorch-extra]>=2.5.5",
     "loguru>=0.7.3",
@@ -38,6 +39,7 @@ classifiers = [
 
 
 [project.scripts]
+fm = "foundation_model.cli.main:main"
 fm-trainer = "foundation_model.scripts.train:cli_main"
 fm-pretrain-suite = "foundation_model.scripts.dynamic_task_suite:main"
 fm-progressive-clf = "foundation_model.scripts.multi_task_progressive_clf:main"

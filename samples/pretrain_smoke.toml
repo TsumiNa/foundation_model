@@ -1,0 +1,74 @@
+# Smoke-test config for `fm pretrain` — a fast CPU end-to-end run.
+#
+# 3 regression tasks over 2 NEMAD datasets, KMD-1d descriptors, sample=200 rows/dataset,
+# rehearsal interval=2, a 2-run sweep, 2 epochs/step.
+#
+#   fm pretrain --config samples/pretrain_smoke.toml
+
+[data]
+composition_column = "composition"
+val_split = 0.1
+test_split = 0.1
+split_random_seed = 42
+batch_size = 64
+num_workers = 0
+
+[descriptor]
+kind = "kmd"
+n_grids = 8
+
+[datasets.supercon]
+path = "data/NEMAD_superconductor_20260425.parquet"
+sample = 200
+
+[datasets.magnetic]
+path = "data/NEMAD_magnetic_20260419.parquet"
+sample = 200
+
+[[tasks]]
+name = "tc"
+kind = "regression"
+dataset = "supercon"
+column = "Transition temperature[K]"
+
+[[tasks]]
+name = "pressure"
+kind = "regression"
+dataset = "supercon"
+column = "Pressure[GPa]"
+
+[[tasks]]
+name = "moment"
+kind = "regression"
+dataset = "magnetic"
+column = "Magnetic moment[μB/f.u.]"
+
+[model]
+latent_dim = 32
+encoder_hidden = 64
+head_hidden_dim = 32
+n_kernel = 8
+
+[training]
+max_epochs = 2
+early_stop_patience = 3
+early_stop_min_delta = 1e-4
+encoder_lr = 5e-3
+head_lr = 5e-3
+kr_lr = 5e-4
+ae_lr = 5e-3
+accelerator = "cpu"
+devices = 1
+seed = 2025
+
+[pretrain]
+task_sequence = ["tc", "pressure", "moment"]
+n_runs = 2
+task_order = "fixed"
+
+[pretrain.rehearsal]
+interval = 2
+default_replay = 0.1
+
+[output]
+dir = "artifacts/pretrain_smoke"
