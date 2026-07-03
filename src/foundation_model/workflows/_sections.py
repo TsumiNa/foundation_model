@@ -30,18 +30,19 @@ def validate_positive_int(where: str, value: Any) -> None:
 
 
 def validate_devices(value: Any) -> None:
-    """Lightning-compatible ``Trainer(devices=...)``: an int count (``-1`` = all), a non-empty list
-    of device indices (``[1, 3]``), or a non-empty string (``"auto"`` / ``"1,3"`` / ``"0-3"``).
-
-    Only the shape is checked here; Lightning validates that the indices/string are usable at fit.
+    """Lightning-compatible ``Trainer(devices=...)``: an int count (``-1`` = all, else ``>= 1``), a
+    non-empty list of non-negative device indices (``[1, 3]``), or a non-empty string (``"auto"`` /
+    ``"1,3"`` / ``"0-3"``). Lightning validates that the indices/string map to real devices at fit.
     """
     if isinstance(value, bool):  # bool is an int subclass — reject it explicitly
         raise ValueError(f"training.devices must be an int, list of ints, or str, got bool {value!r}.")
     if isinstance(value, int):
-        return
+        if value == -1 or value >= 1:
+            return
+        raise ValueError(f"training.devices int must be -1 (all) or >= 1, got {value}.")
     if isinstance(value, list):
-        if not value or any(isinstance(d, bool) or not isinstance(d, int) for d in value):
-            raise ValueError(f"training.devices list must be a non-empty list of int indices, got {value!r}.")
+        if not value or any(isinstance(d, bool) or not isinstance(d, int) or d < 0 for d in value):
+            raise ValueError(f"training.devices list must be non-empty non-negative int indices, got {value!r}.")
         return
     if isinstance(value, str):
         if not value.strip():

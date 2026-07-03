@@ -226,14 +226,17 @@ def test_training_subtables_parse() -> None:
 
 @pytest.mark.parametrize(
     ("toml_value", "expected"),
-    [("2", 2), ("-1", -1), ("[1, 3]", [1, 3]), ('"1,3"', "1,3"), ('"auto"', "auto")],
+    [("2", 2), ("-1", -1), ("[1, 3]", [1, 3]), ("[0]", [0]), ('"1,3"', "1,3"), ('"auto"', "auto")],
 )
 def test_devices_accepts_lightning_forms(toml_value: str, expected) -> None:
     cfg = build_training_section(tomllib.loads(f"devices = {toml_value}"))
     assert cfg.devices == expected
 
 
-@pytest.mark.parametrize("toml_value", ["[]", '[1, "x"]', '""', "true"])
+@pytest.mark.parametrize(
+    "toml_value",
+    ["[]", '[1, "x"]', '""', "true", "0", "-2", "[-1]", "[0, -2]"],  # incl. bad ints + negative indices
+)
 def test_devices_rejects_bad_values(toml_value: str) -> None:
     with pytest.raises(ValueError, match="training.devices"):
         build_training_section(tomllib.loads(f"devices = {toml_value}"))
