@@ -36,6 +36,7 @@ from loguru import logger  # noqa: E402
 from foundation_model.models.model_config import MLPEncoderConfig, OptimizerConfig  # noqa: E402
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, formula_to_composition  # noqa: E402
 
+from . import inverse_trajectory  # noqa: E402
 from ._sections import ModelSectionConfig, build_model_section, reject_unknown  # noqa: E402
 from .plots import DISCOVERED_ELEMENT_COLOR, SCATTER_COLOR  # noqa: E402
 from .recording import RunRecorder, load_checkpoint_state  # noqa: E402
@@ -243,6 +244,8 @@ class InverseConfig:
     record_trajectory: bool = True
     per_seed_trajectories: bool = False
     animation_formats: list[str] = field(default_factory=lambda: ["gif"])
+    seed: int = 2025
+    accelerator: str = "auto"
 
     def __post_init__(self) -> None:
         self.checkpoint = Path(self.checkpoint)
@@ -305,6 +308,8 @@ def build_inverse_config(
             "record_trajectory",
             "per_seed_trajectories",
             "animation_formats",
+            "seed",
+            "accelerator",
             "seeds",
             "scenarios",
             "paths",
@@ -335,6 +340,8 @@ def build_inverse_config(
         record_trajectory=bool(inv_raw.get("record_trajectory", True)),
         per_seed_trajectories=bool(inv_raw.get("per_seed_trajectories", False)),
         animation_formats=list(inv_raw.get("animation_formats", ["gif"])),
+        seed=int(inv_raw.get("seed", 2025)),
+        accelerator=str(inv_raw.get("accelerator", "auto")),
     )
 
 
@@ -572,8 +579,10 @@ def _run_composition_path(
 
     if path.init == "seed":
         init_kwargs: dict[str, Any] = {"initial_weights": _seed_weights(seeds), "seed_blend": path.seed_blend}
+        n_rows = len(seeds)
     else:
-        init_kwargs = {"initial_weights": None, "n_starts": path.n_starts or len(seeds)}
+        n_rows = path.n_starts or len(seeds)  # random init yields n_starts rows, not len(seeds)
+        init_kwargs = {"initial_weights": None, "n_starts": n_rows}
 
     t0 = time.perf_counter()
     res = model.optimize_composition(
@@ -599,7 +608,7 @@ def _run_composition_path(
     achieved = res.optimized_target.cpu().numpy()
     after_qc = _qc_prob(model, optimized_desc, scenario.class_task, scenario.class_indices)
     after_reg = _reg_preds(model, optimized_desc, reg_names)
-    seed_labels = list(seeds) if path.init == "seed" else [f"random_start_{i}" for i in range(len(seeds))]
+    seed_labels = list(seeds) if path.init == "seed" else [f"random_start_{i}" for i in range(n_rows)]
     out = _result_dict(
         path,
         "composition",
@@ -649,6 +658,71 @@ def _result_dict(
 # --- engine -------------------------------------------------------------------------------
 
 
+def _resolve_device(accelerator: str) -> torch.device:
+    if accelerator == "cpu":
+        return torch.device("cpu")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
+def _reg_progress(
+    targets: np.ndarray, reg_names: Sequence[str], reg_targets: Mapping[str, float], seed_reg: Mapping[str, np.ndarray]
+) -> dict[str, np.ndarray]:
+    """Per-step mean progress (0 = seed baseline, 1 = target) for each regression task."""
+    progress: dict[str, np.ndarray] = {}
+    for j, task in enumerate(reg_names):
+        baseline = np.asarray(seed_reg[task], dtype=float)  # (B,)
+        denom = float(reg_targets[task]) - baseline
+        denom = np.where(np.abs(denom) < 1e-9, 1.0, denom)
+        traj = targets[:, :, j]  # (steps, B)
+        progress[task] = ((traj - baseline[None, :]) / denom[None, :]).mean(axis=1)
+    return progress
+
+
+def _emit_trajectory(
+    result: dict[str, Any],
+    targets: np.ndarray,
+    weights: np.ndarray,
+    reg_targets: Mapping[str, float],
+    seed_reg: Mapping[str, np.ndarray],
+    cfg: InverseConfig,
+    traj_dir: Path,
+) -> None:
+    """Write the static trajectory plot (+ requested animations) for one path."""
+    reg_names = list(reg_targets)
+    if targets.size == 0:
+        return
+    progress = _reg_progress(targets, reg_names, reg_targets, seed_reg)
+    inverse_trajectory.plot_trajectory_static(
+        progress, traj_dir / f"{result['path']}_trajectory.png", title=result["path"]
+    )
+
+    if cfg.animation_formats and weights.size:
+        qc_final = np.asarray(result["qc_after_decode"])
+        reg_final = {t: np.asarray(result["reg_after_decode"][t]) for t in reg_names}
+        best = min(
+            inverse_trajectory.best_seed_by_target_distance(qc_final, reg_final, reg_targets), weights.shape[1] - 1
+        )
+        out_paths = {fmt: traj_dir / f"{result['path']}_trajectory.{fmt}" for fmt in cfg.animation_formats}
+        inverse_trajectory.plot_trajectory_animation(
+            progress, weights[:, best, :], list(DEFAULT_ELEMENTS), out_paths, title=result["path"]
+        )
+
+    if cfg.per_seed_trajectories:
+        per_dir = traj_dir / f"{result['path']}_per_seed"
+        per_dir.mkdir(exist_ok=True)
+        for i in range(min(targets.shape[1], 20)):  # cap the per-seed fan-out
+            ps: dict[str, np.ndarray] = {}
+            for j, task in enumerate(reg_names):
+                baseline = float(np.asarray(seed_reg[task])[i])
+                denom = float(reg_targets[task]) - baseline
+                ps[task] = (targets[:, i, j] - baseline) / (denom if abs(denom) >= 1e-9 else 1.0)
+            inverse_trajectory.plot_trajectory_static(
+                ps, per_dir / f"seed{i:02d}.png", title=f"{result['path']} · seed {i}"
+            )
+
+
 def run(
     cfg: InverseConfig, recorder: RunRecorder | None = None, *, only_scenarios: Sequence[str] | None = None
 ) -> dict[str, Any]:
@@ -657,15 +731,21 @@ def run(
     catalog = TaskCatalog(cfg.catalog)
     owns_recorder = recorder is None
     rec = recorder or RunRecorder(cfg.output_dir)
-    seed_everything(2025, workers=True)
+    seed_everything(cfg.seed, workers=True)
 
     try:
         model, ckpt_tasks = _rebuild_model(cfg, catalog)
         _validate_heads(model, cfg)
-        device = next(model.parameters()).device
+        device = _resolve_device(cfg.accelerator)
+        model.to(device)
 
-        # Seeds are selected once per run using the first scenario's classification objective.
-        seed_scn = cfg.scenarios[0]
+        # Apply the --scenario filter FIRST, then select seeds using the first *selected* scenario's
+        # classification objective (so a filtered run doesn't depend on unrelated config order).
+        scenarios = [s for s in cfg.scenarios if only_scenarios is None or s.name in set(only_scenarios)]
+        if not scenarios:
+            raise ValueError(f"no scenarios match the filter {list(only_scenarios or [])}.")
+
+        seed_scn = scenarios[0]
         seeds = select_seeds(
             catalog,
             model,
@@ -680,7 +760,6 @@ def run(
         (rec.paths.root / "seeds.json").write_text(json.dumps({"seeds": list(seeds)}, indent=2), encoding="utf-8")
         logger.info(f"Selected {len(seeds)} seeds.")
 
-        scenarios = [s for s in cfg.scenarios if only_scenarios is None or s.name in set(only_scenarios)]
         all_summary: dict[str, Any] = {}
         for scenario in scenarios:
             logger.info(f"=== scenario '{scenario.name}' ({len(cfg.paths)} paths) ===")
@@ -752,20 +831,21 @@ def _run_scenario(
 
     summary = _summarise(results, reg_targets)
 
-    # Externalize trajectories to .npz, drop the big arrays from results.json.
+    # Trajectory outputs: static plot + requested animations, then externalize arrays to .npz.
     if cfg.record_trajectory:
         traj_dir = sc_dir / "trajectories"
         traj_dir.mkdir(exist_ok=True)
         for r in results:
             if "trajectory_targets" not in r:
                 continue
+            targets = np.asarray(r["trajectory_targets"], dtype=np.float32)
+            weights = np.asarray(r["trajectory_weights"], dtype=np.float32)
+            _emit_trajectory(r, targets, weights, reg_targets, seed_reg, cfg, traj_dir)
             npz = traj_dir / f"{r['path']}.npz"
-            np.savez_compressed(
-                npz,
-                targets=np.asarray(r.pop("trajectory_targets"), dtype=np.float32),
-                weights=np.asarray(r.pop("trajectory_weights"), dtype=np.float32),
-            )
+            np.savez_compressed(npz, targets=targets, weights=weights)
             r["trajectory_file"] = str(npz.relative_to(sc_dir))
+            del r["trajectory_targets"]
+            del r["trajectory_weights"]
 
     (sc_dir / "scenario.json").write_text(
         json.dumps(

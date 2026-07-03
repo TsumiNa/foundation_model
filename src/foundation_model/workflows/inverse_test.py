@@ -260,6 +260,35 @@ def test_seed_selection_explicit_append_reduces_budget(data_dir) -> None:
 # --- end-to-end smoke --------------------------------------------------------------------
 
 
+def test_seed_and_accelerator_config(data_dir, tmp_path) -> None:
+    # --seed/--accelerator route into [inverse] and must not be rejected as unknown root keys.
+    cfg = build_inverse_config(
+        tomllib.loads(
+            _catalog_toml(data_dir) + '\n[inverse]\nseed = 7\naccelerator = "cpu"\n'
+            "[inverse.seeds]\nn = 2\n"
+            '[[inverse.scenarios]]\nname = "sc1"\nreg_tasks = ["a"]\nreg_targets = [1.0]\nclass_task = "mat"\n'
+            '[[inverse.paths]]\nname = "latent1"\nmethod = "latent"\n'
+            '[output]\ndir = "o"\n'
+        ),
+        checkpoint="ck.pt",
+    )
+    assert cfg.seed == 7 and cfg.accelerator == "cpu"
+
+
+def test_trajectory_static_and_svg_animation_emitted(data_dir, tmp_path) -> None:
+    ckpt = tmp_path / "ck.pt"
+    _checkpoint(data_dir, ckpt)
+    out = tmp_path / "inv"
+    cfg = _inverse_cfg(data_dir, out, ckpt, animation='["svg"]')  # svg avoids slow FuncAnimation writers
+    rec = RunRecorder(out)
+    rec.write_provenance(config=cfg, argv=["fm", "inverse"], seeds={"seed": 2025})
+    inverse_run(cfg, rec)
+    rec.close()
+    traj = out / "sc1" / "trajectories"
+    assert (traj / "latent_align1_trajectory.png").exists()  # static plot always
+    assert (traj / "latent_align1_trajectory.svg").exists()  # requested animation format
+
+
 def test_inverse_smoke_end_to_end(data_dir, tmp_path) -> None:
     ckpt = tmp_path / "ck.pt"
     _checkpoint(data_dir, ckpt)

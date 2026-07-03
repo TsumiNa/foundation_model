@@ -54,8 +54,15 @@ def load_raw_config(
     seed: int | None = None,
     accelerator: str | None = None,
     sample: int | None = None,
+    seed_key: str = "training.seed",
+    accelerator_key: str = "training.accelerator",
 ) -> dict[str, Any]:
-    """Load a TOML file and apply ``--set`` overrides plus common first-class flags."""
+    """Load a TOML file and apply ``--set`` overrides plus common first-class flags.
+
+    ``seed_key`` / ``accelerator_key`` route ``--seed`` / ``--accelerator`` to the right section
+    per subcommand (``[training]`` for pretrain/finetune, ``[inverse]`` / ``[predict]`` for those),
+    so they never inject a section the config builder would reject.
+    """
 
     with open(config_path, "rb") as fh:
         raw: dict[str, Any] = tomllib.load(fh)
@@ -67,9 +74,9 @@ def load_raw_config(
         _set_dotted(raw, key.strip(), _parse_toml_value(value.strip()))
 
     if seed is not None:
-        _set_dotted(raw, "training.seed", seed)
+        _set_dotted(raw, seed_key, seed)
     if accelerator is not None:
-        _set_dotted(raw, "training.accelerator", accelerator)
+        _set_dotted(raw, accelerator_key, accelerator)
     if sample is not None:
         for name in raw.get("datasets", {}):
             _set_dotted(raw, f"datasets.{name}.sample", sample)
@@ -187,7 +194,15 @@ def _inverse_config(
     no_trajectory: bool,
     animation_formats: str | None,
 ) -> InverseConfig:
-    raw = load_raw_config(config_path, overrides, seed=seed, accelerator=accelerator, sample=sample)
+    raw = load_raw_config(
+        config_path,
+        overrides,
+        seed=seed,
+        accelerator=accelerator,
+        sample=sample,
+        seed_key="inverse.seed",
+        accelerator_key="inverse.accelerator",
+    )
     if steps is not None:
         _set_dotted(raw, "inverse.steps", steps)
     if no_trajectory:

@@ -20,7 +20,8 @@ the QC head), these are enough to visualise:
 2. How the recipe evolves across the optimisation (animated bar chart of the per-step composition
    on the side, frame per step).
 
-This module hosts the pure helpers; ``paper_inverse_comparison.run()`` is the only caller.
+This module hosts the pure helpers; :func:`foundation_model.workflows.inverse.run` drives them
+(via ``_emit_trajectory``), and they are unit-tested directly.
 """
 
 from __future__ import annotations
