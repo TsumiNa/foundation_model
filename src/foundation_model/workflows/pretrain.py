@@ -33,7 +33,7 @@ from lightning import Trainer, seed_everything
 from lightning.pytorch.callbacks import Callback, EarlyStopping
 from loguru import logger
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, r2_score  # type: ignore[import-untyped]
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
@@ -240,15 +240,19 @@ class _DropLastTrainCompoundDataModule(CompoundDataModule):
         base = super().train_dataloader()
         if base is None:
             return None
-        return DataLoader(
-            base.dataset,
+        kwargs: dict[str, Any] = dict(
             batch_size=base.batch_size,
-            shuffle=True,
             num_workers=base.num_workers,
             pin_memory=base.pin_memory,
             collate_fn=base.collate_fn,
             drop_last=True,
         )
+        # Preserve a non-default sampler (e.g. a DistributedSampler) instead of forcing
+        # shuffle=True, so the loader stays correct if ever run under DDP; otherwise shuffle.
+        sampler = base.sampler
+        if isinstance(sampler, (RandomSampler, SequentialSampler)):
+            return DataLoader(base.dataset, shuffle=True, **kwargs)
+        return DataLoader(base.dataset, sampler=sampler, **kwargs)
 
 
 def _as_float_array(cell: Any) -> np.ndarray:
@@ -270,26 +274,31 @@ def run(cfg: PretrainConfig, recorder: RunRecorder | None = None) -> dict[str, A
     """
 
     catalog = TaskCatalog(cfg.catalog)
+    owns_recorder = recorder is None  # close only the recorder we create (leave callers' alone)
     root_recorder = recorder or RunRecorder(cfg.output_dir)
     aggregate: list[dict[str, Any]] = []
 
-    for run_idx in range(cfg.n_runs):
-        run_seed = cfg.training.seed + run_idx
-        order = _run_task_order(cfg, run_seed)
-        if cfg.n_runs == 1:
-            run_recorder = root_recorder
-        else:
-            run_recorder = RunRecorder(cfg.output_dir / "runs" / f"run{run_idx:02d}")
-        logger.info(f"=== pretrain run {run_idx + 1}/{cfg.n_runs} (seed={run_seed}) order={order} ===")
-        records = _run_single(cfg, catalog, run_recorder, task_order=order, seed=run_seed)
-        for rec in records:
-            aggregate.append({"run": run_idx, **rec})
-        if run_recorder is not root_recorder:
-            run_recorder.close()
+    try:
+        for run_idx in range(cfg.n_runs):
+            run_seed = cfg.training.seed + run_idx
+            order = _run_task_order(cfg, run_seed)
+            if cfg.n_runs == 1:
+                run_recorder = root_recorder
+            else:
+                run_recorder = RunRecorder(cfg.output_dir / "runs" / f"run{run_idx:02d}")
+            logger.info(f"=== pretrain run {run_idx + 1}/{cfg.n_runs} (seed={run_seed}) order={order} ===")
+            records = _run_single(cfg, catalog, run_recorder, task_order=order, seed=run_seed)
+            for rec in records:
+                aggregate.append({"run": run_idx, **rec})
+            if run_recorder is not root_recorder:
+                run_recorder.close()
 
-    cfg.output_dir.mkdir(parents=True, exist_ok=True)
-    (cfg.output_dir / "experiment_records.json").write_text(json.dumps(aggregate, indent=2), encoding="utf-8")
-    return {"records": aggregate}
+        cfg.output_dir.mkdir(parents=True, exist_ok=True)
+        (cfg.output_dir / "experiment_records.json").write_text(json.dumps(aggregate, indent=2), encoding="utf-8")
+        return {"records": aggregate}
+    finally:
+        if owns_recorder:
+            root_recorder.close()
 
 
 def _run_task_order(cfg: PretrainConfig, seed: int) -> list[str]:
@@ -533,11 +542,14 @@ def _evaluate_task(
 
         # kernel regression
         assert spec.t_column is not None
+        # Compute descriptors once for the whole test set, then filter by availability
+        # (cheaper than a 1-row descriptor call per composition).
+        available = set(catalog.descriptor_fn()(comps).index)
         keep: list[str] = []
         t_list: list[np.ndarray] = []
         true_parts: list[np.ndarray] = []
         for comp in comps:
-            if catalog.descriptor_fn()([comp]).empty:
+            if comp not in available:
                 continue
             y_arr = _as_float_array(frame.at[comp, spec.column])
             t_arr = _as_float_array(frame.at[comp, spec.t_column])
