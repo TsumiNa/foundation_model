@@ -31,6 +31,15 @@ def test_plot_confusion_special_material_type() -> None:
     plots.plt.close(fig)
 
 
+def test_plot_confusion_special_flag_ignored_for_non_three_classes() -> None:
+    # special_material_type must not break when num_classes != 3 (falls back to integer labels).
+    fig = plots.plot_confusion(
+        np.array([0, 1, 4]), np.array([0, 2, 4]), num_classes=5, acc=0.6, title="t", special_material_type=True
+    )
+    assert isinstance(fig, Figure)
+    plots.plt.close(fig)
+
+
 def test_plot_kr_sequences_returns_figure() -> None:
     comps = ["Fe2 O3", "Al2 O3"]
     t_list = [np.array([1.0, 2.0, 3.0]), np.array([1.0, 2.0])]
