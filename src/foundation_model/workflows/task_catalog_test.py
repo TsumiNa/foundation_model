@@ -286,7 +286,7 @@ def catalog_dir(tmp_path):
     return tmp_path
 
 
-def _catalog(catalog_dir, *, extra_tasks: str = "", data_extra: str = "") -> TaskCatalog:
+def _catalog(catalog_dir, *, extra_tasks: str = "", data_extra: str = "", density_extra: str = "") -> TaskCatalog:
     toml = f"""
 [data]
 composition_column = "composition"
@@ -308,6 +308,7 @@ name = "density"
 kind = "regression"
 dataset = "qc"
 column = "density"
+{density_extra}
 
 [[tasks]]
 name = "mat"
@@ -353,26 +354,62 @@ def test_sample_caps_rows(catalog_dir) -> None:
     assert len(frame) == 3
 
 
+def _build_task(cat: TaskCatalog, name: str):
+    """build_task_config with fixed small [model]-style architecture defaults (interior widths)."""
+    return cat.build_task_config(
+        name, latent_dim=8, head_hidden_dims=[4], kr_x_hidden_dims=[16, 8], kr_t_hidden_dims=[8, 4], n_kernel=5, lr=1e-3
+    )
+
+
 def test_build_task_config_per_kind(catalog_dir) -> None:
     cat = _catalog(catalog_dir)
-    reg = cat.build_task_config("density", latent_dim=8, head_hidden_dim=4, n_kernel=5, lr=1e-3)
-    clf = cat.build_task_config("mat", latent_dim=8, head_hidden_dim=4, n_kernel=5, lr=1e-3)
-    kr = cat.build_task_config("dos", latent_dim=8, head_hidden_dim=4, n_kernel=5, lr=1e-3)
+    reg = _build_task(cat, "density")
+    clf = _build_task(cat, "mat")
+    kr = _build_task(cat, "dos")
+    # latent_dim prepended, output appended: reg → [8, 4, 1]; clf hidden stack [8, 4] (+ num_classes)
     assert isinstance(reg, RegressionTaskConfig) and reg.dims == [8, 4, 1]
-    assert isinstance(clf, ClassificationTaskConfig) and clf.num_classes == 3
+    assert isinstance(clf, ClassificationTaskConfig) and clf.num_classes == 3 and clf.dims == [8, 4]
     assert clf.class_weights is not None and len(clf.class_weights) == 3
+    # KR: x branch [latent, *kr_x_hidden_dims]; t branch = kr_t_hidden_dims verbatim
     assert isinstance(kr, KernelRegressionTaskConfig) and kr.kernel_num_centers == 5
+    assert kr.x_dim == [8, 16, 8] and kr.t_dim == [8, 4]
     assert reg.optimizer is not None and reg.optimizer.lr == 1e-3
 
 
 def test_build_task_config_per_task_lr_override(catalog_dir) -> None:
     cat = _catalog(catalog_dir, extra_tasks="lr = 0.02")  # per-task override on the dos task
-    kr = cat.build_task_config("dos", latent_dim=8, head_hidden_dim=4, n_kernel=5, lr=1e-3)
+    kr = _build_task(cat, "dos")
     assert kr.optimizer is not None and kr.optimizer.lr == 0.02
 
 
+def test_build_task_config_per_task_arch_override(catalog_dir) -> None:
+    # dos (KR) overrides its branches + kernel count; density (reg) overrides its hidden stack.
+    cat = _catalog(
+        catalog_dir,
+        extra_tasks="x_hidden_dims = [32, 16]\nt_hidden_dims = [12]\nn_kernel = 9",
+        density_extra="hidden_dims = [6, 3]",
+    )
+    kr = _build_task(cat, "dos")
+    assert isinstance(kr, KernelRegressionTaskConfig)
+    assert kr.x_dim == [8, 32, 16] and kr.t_dim == [12] and kr.kernel_num_centers == 9
+    reg = _build_task(cat, "density")
+    assert isinstance(reg, RegressionTaskConfig) and reg.dims == [8, 6, 3, 1]
+    # mat (clf) untouched → falls back to the [model] default head_hidden_dims
+    clf = _build_task(cat, "mat")
+    assert isinstance(clf, ClassificationTaskConfig) and clf.dims == [8, 4]
+
+
+def test_arch_override_wrong_kind_raises(catalog_dir) -> None:
+    with pytest.raises(ValueError, match="only valid for kernel_regression"):
+        _catalog(catalog_dir, density_extra="x_hidden_dims = [4]")
+    with pytest.raises(ValueError, match="for reg/clf"):
+        _catalog(catalog_dir, extra_tasks="hidden_dims = [4]")  # hidden_dims on the KR dos task
+    with pytest.raises(ValueError, match="positive ints"):
+        _catalog(catalog_dir, density_extra="hidden_dims = [0]")
+
+
 def test_kernel_init_finite(catalog_dir) -> None:
-    kr = _catalog(catalog_dir).build_task_config("dos", latent_dim=8, head_hidden_dim=4, n_kernel=5, lr=1e-3)
+    kr = _build_task(_catalog(catalog_dir), "dos")
     assert isinstance(kr, KernelRegressionTaskConfig)
     assert kr.kernel_centers_init is not None and len(kr.kernel_centers_init) == 5
     assert kr.kernel_sigmas_init is not None

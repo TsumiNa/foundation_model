@@ -26,9 +26,8 @@ from loguru import logger
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, r2_score  # type: ignore[import-untyped]
 
 from foundation_model.data.composition_sources import canonical_key, normalize_composition
-from foundation_model.models.model_config import MLPEncoderConfig, OptimizerConfig
 
-from ._engine import AE_NAME, as_float_array
+from ._engine import AE_NAME, as_float_array, build_model_for_checkpoint
 from ._sections import ModelSectionConfig, build_model_section, reject_unknown
 from .recording import RunRecorder, load_checkpoint_state
 from .task_catalog import TaskCatalog, TaskCatalogConfig, TaskKind, build_task_catalog_config
@@ -142,8 +141,6 @@ def run(cfg: PredictConfig, recorder: RunRecorder | None = None) -> dict[str, An
 
 
 def _rebuild_model(cfg: PredictConfig, catalog: TaskCatalog) -> tuple[Any, list[str]]:
-    from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
-
     state = load_checkpoint_state(cfg.checkpoint)
     ckpt_tasks = list(state.get("task_sequence") or _task_names_from_state(state["model"]))
     catalog_tasks = {t.name for t in cfg.catalog.tasks}
@@ -151,25 +148,7 @@ def _rebuild_model(cfg: PredictConfig, catalog: TaskCatalog) -> tuple[Any, list[
     if missing:
         raise ValueError(f"checkpoint tasks {missing} are not in the catalog (have {sorted(catalog_tasks)}).")
 
-    encoder_config = MLPEncoderConfig(
-        hidden_dims=[catalog.descriptor_dim, cfg.model.encoder_hidden, cfg.model.latent_dim]
-    )
-    model = FlexibleMultiTaskModel(
-        task_configs=[],
-        encoder_config=encoder_config,
-        enable_autoencoder=True,
-        shared_block_optimizer=OptimizerConfig(lr=5e-3, weight_decay=1e-2),
-    )
-    for name in ckpt_tasks:
-        model.add_task(
-            catalog.build_task_config(
-                name,
-                latent_dim=cfg.model.latent_dim,
-                head_hidden_dim=cfg.model.head_hidden_dim,
-                n_kernel=cfg.model.n_kernel,
-                lr=5e-3,
-            )
-        )
+    model = build_model_for_checkpoint(catalog, cfg.model, ckpt_tasks)
     incompatible = model.load_state_dict(state["model"], strict=False)
     if incompatible.missing_keys:
         logger.info(f"load_state_dict missing keys ({len(incompatible.missing_keys)}): {incompatible.missing_keys[:8]}")

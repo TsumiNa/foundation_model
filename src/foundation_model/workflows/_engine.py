@@ -37,19 +37,52 @@ AE_NAME = "__reconstruction__"
 _HEAD_WEIGHT_DECAY = 1e-5
 
 
+def build_encoder_config(model: ModelSectionConfig, descriptor_dim: int) -> MLPEncoderConfig:
+    """MLP encoder ``descriptor_dim → *encoder_hidden_dims → latent_dim`` from ``[model]``."""
+    return MLPEncoderConfig(hidden_dims=[descriptor_dim, *model.encoder_hidden_dims, model.latent_dim])
+
+
 def build_empty_model(
     catalog: TaskCatalog, model: ModelSectionConfig, training: TrainingSectionConfig
 ) -> FlexibleMultiTaskModel:
     """Bare model (AE head only). The AE always trains; only ``ae_lr`` is configurable."""
-    encoder_config = MLPEncoderConfig(hidden_dims=[catalog.descriptor_dim, model.encoder_hidden, model.latent_dim])
     built = FlexibleMultiTaskModel(
         task_configs=[],
-        encoder_config=encoder_config,
+        encoder_config=build_encoder_config(model, catalog.descriptor_dim),
         enable_autoencoder=True,
         shared_block_optimizer=OptimizerConfig(lr=training.encoder_lr, weight_decay=1e-2),
     )
     if AE_NAME in built.task_configs_map:
         built.task_configs_map[AE_NAME].optimizer = OptimizerConfig(lr=training.ae_lr)
+    return built
+
+
+def build_model_for_checkpoint(
+    catalog: TaskCatalog, model: ModelSectionConfig, task_names: list[str], *, lr: float = 5e-3
+) -> FlexibleMultiTaskModel:
+    """AE-enabled model with one head per checkpoint task, ready for ``load_state_dict``.
+
+    Shared by ``fm predict`` / ``fm inverse``, which only need the architecture to match the
+    checkpoint (weights are then loaded); ``lr`` is a placeholder as no optimization runs.
+    """
+    built = FlexibleMultiTaskModel(
+        task_configs=[],
+        encoder_config=build_encoder_config(model, catalog.descriptor_dim),
+        enable_autoencoder=True,
+        shared_block_optimizer=OptimizerConfig(lr=lr, weight_decay=1e-2),
+    )
+    for name in task_names:
+        built.add_task(
+            catalog.build_task_config(
+                name,
+                latent_dim=model.latent_dim,
+                head_hidden_dims=model.head_hidden_dims,
+                kr_x_hidden_dims=model.kr_x_hidden_dims,
+                kr_t_hidden_dims=model.kr_t_hidden_dims,
+                n_kernel=model.n_kernel,
+                lr=lr,
+            )
+        )
     return built
 
 
@@ -104,7 +137,9 @@ def build_head_config(
     return catalog.build_task_config(
         name,
         latent_dim=model.latent_dim,
-        head_hidden_dim=model.head_hidden_dim,
+        head_hidden_dims=model.head_hidden_dims,
+        kr_x_hidden_dims=model.kr_x_hidden_dims,
+        kr_t_hidden_dims=model.kr_t_hidden_dims,
         n_kernel=model.n_kernel,
         lr=lr,
         weight_decay=weight_decay,

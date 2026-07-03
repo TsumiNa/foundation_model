@@ -176,8 +176,8 @@ column = "b"
 
 [model]
 latent_dim = 8
-encoder_hidden = 16
-head_hidden_dim = 8
+encoder_hidden_dims = [16]
+head_hidden_dims = [8]
 n_kernel = 4
 
 [training]
@@ -269,8 +269,8 @@ column = "a"
 
 [model]
 latent_dim = 8
-encoder_hidden = 16
-head_hidden_dim = 8
+encoder_hidden_dims = [16]
+head_hidden_dims = [8]
 
 [training]
 max_epochs = 1
@@ -346,8 +346,8 @@ column = "b"
 
 [model]
 latent_dim = 8
-encoder_hidden = 16
-head_hidden_dim = 8
+encoder_hidden_dims = [16]
+head_hidden_dims = [8]
 
 [training]
 max_epochs = 1

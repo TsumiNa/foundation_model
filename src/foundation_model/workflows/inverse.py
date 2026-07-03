@@ -33,10 +33,10 @@ import torch  # noqa: E402
 from lightning import seed_everything  # noqa: E402
 from loguru import logger  # noqa: E402
 
-from foundation_model.models.model_config import MLPEncoderConfig, OptimizerConfig  # noqa: E402
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, formula_to_composition  # noqa: E402
 
 from . import inverse_trajectory  # noqa: E402
+from ._engine import build_model_for_checkpoint  # noqa: E402
 from ._sections import ModelSectionConfig, build_model_section, reject_unknown  # noqa: E402
 from .plots import DISCOVERED_ELEMENT_COLOR, SCATTER_COLOR  # noqa: E402
 from .recording import RunRecorder, load_checkpoint_state  # noqa: E402
@@ -388,8 +388,6 @@ def _element_system(composition: str) -> frozenset[str]:
 
 
 def _rebuild_model(cfg: InverseConfig, catalog: TaskCatalog) -> tuple[Any, list[str]]:
-    from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
-
     state = load_checkpoint_state(cfg.checkpoint)
     ckpt_tasks = list(state.get("task_sequence") or _task_names_from_state(state["model"]))
     catalog_tasks = {t.name for t in cfg.catalog.tasks}
@@ -397,25 +395,7 @@ def _rebuild_model(cfg: InverseConfig, catalog: TaskCatalog) -> tuple[Any, list[
     if missing:
         raise ValueError(f"checkpoint tasks {missing} are not in the catalog (have {sorted(catalog_tasks)}).")
 
-    encoder_config = MLPEncoderConfig(
-        hidden_dims=[catalog.descriptor_dim, cfg.model.encoder_hidden, cfg.model.latent_dim]
-    )
-    model = FlexibleMultiTaskModel(
-        task_configs=[],
-        encoder_config=encoder_config,
-        enable_autoencoder=True,
-        shared_block_optimizer=OptimizerConfig(lr=5e-3, weight_decay=1e-2),
-    )
-    for name in ckpt_tasks:
-        model.add_task(
-            catalog.build_task_config(
-                name,
-                latent_dim=cfg.model.latent_dim,
-                head_hidden_dim=cfg.model.head_hidden_dim,
-                n_kernel=cfg.model.n_kernel,
-                lr=5e-3,
-            )
-        )
+    model = build_model_for_checkpoint(catalog, cfg.model, ckpt_tasks)
     model.load_state_dict(state["model"], strict=False)
     model.eval()
     return model, ckpt_tasks

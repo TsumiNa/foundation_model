@@ -19,6 +19,12 @@
   `[datasets.*]`/`[[tasks]]`/`[model]`/`[training]` shared sections normalized into validated
   `@dataclass` configs (`workflows/`), unknown keys rejected by name. `--set section.key=value`
   overrides + first-class flags (`--seed`/`--accelerator`/`--sample`/…).
+- **Configurable model architecture**: `[model]` sets depth + per-layer widths via `*_hidden_dims`
+  lists (`encoder_hidden_dims`, `head_hidden_dims`, `kr_x_hidden_dims`, `kr_t_hidden_dims`,
+  `n_kernel`) — the input (descriptor width / `latent_dim`) is prepended and the output appended.
+  Each `[[tasks]]` may override its own head (`hidden_dims` for reg/clf; `x_hidden_dims` /
+  `t_hidden_dims` / `n_kernel` for KR), falling back to the `[model]` defaults. Replaces the fixed
+  single-hidden-layer `encoder_hidden` / `head_hidden_dim` scalars.
 - **Configurable Lightning callbacks/loggers**: `[training.early_stopping]` / `[training.checkpoint]`
   (Lightning `EarlyStopping` / `ModelCheckpoint`) and `[training.logging]` (`CSVLogger` /
   `TensorBoardLogger`) — a flexible subset of each. EarlyStopping is on by default; the Lightning

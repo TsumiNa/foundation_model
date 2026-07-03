@@ -40,8 +40,8 @@ num_classes = 5
 
 [model]
 latent_dim = 32
-encoder_hidden = 64
-head_hidden_dim = 32
+encoder_hidden_dims = [64]
+head_hidden_dims = [32]
 n_kernel = 8
 
 [inverse]
