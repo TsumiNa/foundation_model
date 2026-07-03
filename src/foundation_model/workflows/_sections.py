@@ -151,9 +151,9 @@ class TrainingSectionConfig:
     kr_weight_decay: float = 5e-5
     ae_lr: float = 5e-3
     accelerator: str = "auto"
-    # Passed straight to Lightning's Trainer(devices=...): an int count (-1 = all), a list of
-    # device indices ([1, 3]), or a string ("auto" / "1,3" / "0-3").
-    devices: int | list[int] | str = 1
+    # Passed straight to Lightning's Trainer(devices=...): "auto" (all devices for the accelerator),
+    # an int count (-1 = all), a list of device indices ([1, 3]), or a string ("1,3" / "0-3").
+    devices: int | list[int] | str = "auto"
     seed: int = 2025
     early_stopping: EarlyStoppingConfig = field(default_factory=EarlyStoppingConfig)
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
