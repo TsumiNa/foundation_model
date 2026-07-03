@@ -73,7 +73,8 @@ class RunRecorder:
     def __init__(self, root: Path) -> None:
         self.paths = RunPaths(root=Path(root), training=Path(root) / "training")
         self.paths.root.mkdir(parents=True, exist_ok=True)
-        self.paths.training.mkdir(parents=True, exist_ok=True)
+        # ``training/`` is created lazily by the methods that write into it, so a root recorder
+        # used only for provenance (e.g. the n_runs>1 sweep root) leaves no empty ``training/``.
         self._records: list[dict[str, Any]] = []
         self._log_sink_id: int | None = logger.add(self.paths.root / "run.log", level="INFO", enqueue=False)
 
@@ -129,6 +130,7 @@ class RunRecorder:
     def save_final_model(self, model: Any, task_sequence: list[str], task_spec_dump: dict[str, Any]) -> Path:
         """``training/final_model.pt`` + ``training/final_model_taskconfigs.json`` (legacy schema)."""
 
+        self.paths.training.mkdir(parents=True, exist_ok=True)
         path = self.paths.training / "final_model.pt"
         torch.save({"model": model.state_dict(), "task_sequence": list(task_sequence)}, path)
         (self.paths.training / "final_model_taskconfigs.json").write_text(
@@ -172,6 +174,7 @@ class RunRecorder:
     def write_records(self) -> Path:
         """``training/experiment_records.json``."""
 
+        self.paths.training.mkdir(parents=True, exist_ok=True)
         path = self.paths.training / "experiment_records.json"
         path.write_text(json.dumps(self._records, indent=2, default=_json_default), encoding="utf-8")
         return path
@@ -194,6 +197,7 @@ class RunRecorder:
                     rows.append(row)
             else:
                 rows.append(dict(context))
+        self.paths.training.mkdir(parents=True, exist_ok=True)
         path = self.paths.training / "metrics_table.csv"
         pd.DataFrame(rows).to_csv(path, index=False)
         return path
