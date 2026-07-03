@@ -29,6 +29,28 @@ def validate_positive_int(where: str, value: Any) -> None:
         raise ValueError(f"{where} must be a positive int, got {value!r}.")
 
 
+def validate_devices(value: Any) -> None:
+    """Lightning-compatible ``Trainer(devices=...)``: an int count (``-1`` = all, else ``>= 1``), a
+    non-empty list of non-negative device indices (``[1, 3]``), or a non-empty string (``"auto"`` /
+    ``"1,3"`` / ``"0-3"``). Lightning validates that the indices/string map to real devices at fit.
+    """
+    if isinstance(value, bool):  # bool is an int subclass — reject it explicitly
+        raise ValueError(f"training.devices must be an int, list of ints, or str, got bool {value!r}.")
+    if isinstance(value, int):
+        if value == -1 or value >= 1:
+            return
+        raise ValueError(f"training.devices int must be -1 (all) or >= 1, got {value}.")
+    if isinstance(value, list):
+        if not value or any(isinstance(d, bool) or not isinstance(d, int) or d < 0 for d in value):
+            raise ValueError(f"training.devices list must be non-empty non-negative int indices, got {value!r}.")
+        return
+    if isinstance(value, str):
+        if not value.strip():
+            raise ValueError('training.devices string must be non-empty (e.g. "auto", "1,3", "0-3").')
+        return
+    raise ValueError(f"training.devices must be an int, list of ints, or str, got {value!r}.")
+
+
 def validate_hidden_dims(where: str, dims: Any, *, allow_empty: bool = False) -> None:
     """Validate a hidden-layer width list: a (possibly empty) list of positive ints.
 
@@ -130,7 +152,9 @@ class TrainingSectionConfig:
     kr_weight_decay: float = 5e-5
     ae_lr: float = 5e-3
     accelerator: str = "auto"
-    devices: int = 1
+    # Passed straight to Lightning's Trainer(devices=...): "auto" (all devices for the accelerator),
+    # an int count (-1 = all), a list of device indices ([1, 3]), or a string ("1,3" / "0-3").
+    devices: int | list[int] | str = "auto"
     seed: int = 2025
     early_stopping: EarlyStoppingConfig = field(default_factory=EarlyStoppingConfig)
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
@@ -139,6 +163,7 @@ class TrainingSectionConfig:
     def __post_init__(self) -> None:
         if self.max_epochs < 1:
             raise ValueError(f"training.max_epochs must be >= 1, got {self.max_epochs}.")
+        validate_devices(self.devices)
 
 
 def build_model_section(raw: Mapping[str, Any]) -> ModelSectionConfig:

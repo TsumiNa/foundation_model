@@ -36,7 +36,8 @@
   authoritative per-key schema for all four subcommands. `fm predict` now accepts `--seed` /
   `--accelerator` (routed to `[predict]`, previously crashed with `unknown key 'training'`) and
   runs on the chosen device; `--config` help text added; pretrain/finetune command-section fields
-  documented inline.
+  documented inline. `[training].devices` now accepts Lightning's full form — an int count,
+  a list of device indices (`[1, 3]`), or a string (`"auto"` / `"1,3"` / `"0-3"`) — with validation.
 - **New package layout**: `workflows/` (task_catalog, recording, `_sections`/`_engine`, pretrain,
   finetune, inverse, inverse_trajectory, plots, predict) + `cli/`; colocated `<module>_test.py`.
 - **Removed**: `src/foundation_model/scripts/` in full (`train.py`/LightningCLI, the

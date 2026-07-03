@@ -58,7 +58,7 @@ n_kernel = 15
 [training]
 max_epochs = 100
 accelerator = "auto"
-devices = 1
+devices = "auto"
 seed = 2025
 head_lr = 5e-3
 ae_lr = 5e-3
