@@ -24,7 +24,7 @@ from foundation_model.workflows.task_catalog import TaskCatalog, build_task_cata
 _ELEMENTS = ["Fe", "Al", "Cu", "Ni", "Ti", "Zn", "Mg", "Ca", "Na", "Cl", "O", "Si"]
 _FORMULAS = [f"{a}2 {b}3" for i, a in enumerate(_ELEMENTS) for b in _ELEMENTS[i + 1 :]][:24]
 
-_MODEL = ModelSectionConfig(latent_dim=8, encoder_hidden=16, head_hidden_dim=8, n_kernel=4)
+_MODEL = ModelSectionConfig(latent_dim=8, encoder_hidden_dims=[16], head_hidden_dims=[8], n_kernel=4)
 _TRAIN = TrainingSectionConfig(max_epochs=1, accelerator="cpu", seed=1)
 
 
@@ -88,8 +88,8 @@ def _predict_cfg(data_dir, out, checkpoint, *, predict_block: str, scaler: str =
         + f"""
 [model]
 latent_dim = 8
-encoder_hidden = 16
-head_hidden_dim = 8
+encoder_hidden_dims = [16]
+head_hidden_dims = [8]
 n_kernel = 4
 
 [predict]
@@ -189,8 +189,8 @@ column = "mat"
 num_classes = 3
 [model]
 latent_dim = 8
-encoder_hidden = 16
-head_hidden_dim = 8
+encoder_hidden_dims = [16]
+head_hidden_dims = [8]
 n_kernel = 4
 [predict]
 tasks = ["b"]

@@ -50,6 +50,8 @@ from foundation_model.models.model_config import (
 )
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, KMD, element_features, formula_to_composition
 
+from ._sections import validate_hidden_dims, validate_positive_int
+
 TaskConfig = RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
 
 # A composition key element token, e.g. "Fe" / "Cu" in "Fe0.5 Cu0.5".
@@ -155,6 +157,11 @@ class TaskSpec:
     lr: float | None = None  # per-task LR override
     replay: float | int | None = None  # per-task rehearsal override (fraction or count)
     scaler: ScalerSpec | None = None
+    # Per-head architecture overrides (fall back to [model] defaults when None).
+    hidden_dims: list[int] | None = None  # reg/clf hidden widths
+    x_hidden_dims: list[int] | None = None  # kernel_regression value-branch hidden widths
+    t_hidden_dims: list[int] | None = None  # kernel_regression coordinate-branch hidden widths
+    n_kernel: int | None = None  # kernel_regression kernel-center count
 
     def __post_init__(self) -> None:
         self.kind = _coerce_task_kind(self.kind)
@@ -170,6 +177,24 @@ class TaskSpec:
         elif self.num_classes is not None:
             raise ValueError(f"Task '{self.name}': 'num_classes' is only valid for classification.")
         _validate_replay(self.replay, where=f"Task '{self.name}'")
+        self._validate_arch_overrides()
+
+    def _validate_arch_overrides(self) -> None:
+        is_kr = self.kind is TaskKind.KERNEL_REGRESSION
+        if self.hidden_dims is not None:
+            if is_kr:
+                raise ValueError(f"Task '{self.name}': 'hidden_dims' is for reg/clf; use x_hidden_dims/t_hidden_dims.")
+            validate_hidden_dims(f"Task '{self.name}'.hidden_dims", self.hidden_dims)
+        for field_name in ("x_hidden_dims", "t_hidden_dims", "n_kernel"):
+            value = getattr(self, field_name)
+            if value is not None and not is_kr:
+                raise ValueError(f"Task '{self.name}': '{field_name}' is only valid for kernel_regression.")
+        if self.x_hidden_dims is not None:
+            validate_hidden_dims(f"Task '{self.name}'.x_hidden_dims", self.x_hidden_dims)
+        if self.t_hidden_dims is not None:
+            validate_hidden_dims(f"Task '{self.name}'.t_hidden_dims", self.t_hidden_dims)
+        if self.n_kernel is not None:
+            validate_positive_int(f"Task '{self.name}'.n_kernel", self.n_kernel)
 
 
 @dataclass(kw_only=True)
@@ -516,33 +541,43 @@ class TaskCatalog:
         name: str,
         *,
         latent_dim: int,
-        head_hidden_dim: int,
+        head_hidden_dims: list[int],
+        kr_x_hidden_dims: list[int],
+        kr_t_hidden_dims: list[int],
         n_kernel: int,
         lr: float,
         weight_decay: float = 0.0,
         masking_ratio: float = 1.0,
         init_from_data: bool = True,
     ) -> TaskConfig:
-        """Build the model-side task config for ``name`` (see module docstring for field mapping)."""
+        """Build the model-side task config for ``name``.
+
+        ``head_hidden_dims`` / ``kr_x_hidden_dims`` / ``kr_t_hidden_dims`` / ``n_kernel`` are the
+        ``[model]`` defaults; a task's own ``[[tasks]]`` overrides (``spec.hidden_dims`` etc.) win.
+        Hidden lists are the interior widths — ``latent_dim`` is prepended and the output appended.
+        """
 
         spec = self.task_spec(name)
         head_lr = spec.lr if spec.lr is not None else lr
         optimizer = OptimizerConfig(lr=head_lr, weight_decay=weight_decay)
 
         if spec.kind is TaskKind.REGRESSION:
+            head_hidden = spec.hidden_dims if spec.hidden_dims is not None else head_hidden_dims
             return RegressionTaskConfig(
                 name=name,
                 data_column=spec.column,
-                dims=[latent_dim, head_hidden_dim, 1],
+                dims=[latent_dim, *head_hidden, 1],
                 optimizer=optimizer,
                 task_masking_ratio=masking_ratio,
             )
         if spec.kind is TaskKind.CLASSIFICATION:
             assert spec.num_classes is not None
+            head_hidden = spec.hidden_dims if spec.hidden_dims is not None else head_hidden_dims
             return ClassificationTaskConfig(
                 name=name,
                 data_column=spec.column,
-                dims=[latent_dim, head_hidden_dim, 32],
+                # ClassificationHead appends the num_classes projection after these hidden layers.
+                dims=[latent_dim, *head_hidden],
                 num_classes=spec.num_classes,
                 class_weights=self._class_weights(name),
                 optimizer=optimizer,
@@ -550,17 +585,20 @@ class TaskCatalog:
             )
 
         assert spec.t_column is not None
+        x_hidden = spec.x_hidden_dims if spec.x_hidden_dims is not None else kr_x_hidden_dims
+        t_hidden = spec.t_hidden_dims if spec.t_hidden_dims is not None else kr_t_hidden_dims
+        kernels = spec.n_kernel if spec.n_kernel is not None else n_kernel
         centers: list[float] = []
         sigmas: list[float] = []
         if init_from_data:
-            centers, sigmas = init_kernel_centers_sigmas(self._train_t_values(name), n_kernel)
+            centers, sigmas = init_kernel_centers_sigmas(self._train_t_values(name), kernels)
         return KernelRegressionTaskConfig(
             name=name,
             data_column=spec.column,
             t_column=spec.t_column,
-            x_dim=[latent_dim, 128, 64],
-            t_dim=[16, 8],
-            kernel_num_centers=n_kernel,
+            x_dim=[latent_dim, *x_hidden],
+            t_dim=list(t_hidden),
+            kernel_num_centers=kernels,
             kernel_centers_init=centers or None,
             kernel_sigmas_init=sigmas or None,
             kernel_learnable_centers=True,

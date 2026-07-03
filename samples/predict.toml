@@ -51,8 +51,8 @@ num_classes = 5
 
 [model]
 latent_dim = 128
-encoder_hidden = 256
-head_hidden_dim = 64
+encoder_hidden_dims = [256]
+head_hidden_dims = [64]
 n_kernel = 15
 
 [predict]

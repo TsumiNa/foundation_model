@@ -110,6 +110,14 @@ per-subcommand `build_*_config` builders. Configs share the `[data]` / `[descrip
 (`[pretrain]` / `[finetune]` / `[inverse]` / `[predict]`). Unknown keys are rejected with the
 offending key name.
 
+`[model]` sets the network depth + per-layer widths as `*_hidden_dims` lists — the interior hidden
+widths, with the input (descriptor width for the encoder, `latent_dim` for the heads) prepended and
+the output (1 / `num_classes` / kernel projection) appended. So `encoder_hidden_dims = [512, 256]`
+builds `descriptor_dim → 512 → 256 → latent_dim`. Defaults: `encoder_hidden_dims`, `head_hidden_dims`
+(reg/clf), `kr_x_hidden_dims` / `kr_t_hidden_dims` / `n_kernel` (KR). Any `[[tasks]]` entry may
+override its own head — `hidden_dims` for reg/clf, `x_hidden_dims` / `t_hidden_dims` / `n_kernel` for
+KR — falling back to the `[model]` defaults when unset.
+
 Training callbacks and loggers map to Lightning's built-ins via `[training]` sub-tables (a flexible
 subset of each): `[training.early_stopping]` → `EarlyStopping` (on by default),
 `[training.checkpoint]` → `ModelCheckpoint`, and `[training.logging]` (`csv` / `tensorboard`) →

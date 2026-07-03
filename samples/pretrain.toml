@@ -40,6 +40,10 @@ kind = "kernel_regression"
 dataset = "qc"
 column = "DOS density (normalized)"
 t_column = "DOS energy"
+# Per-task architecture overrides win over the [model] defaults below (unset → default):
+x_hidden_dims = [256, 128]   # value branch: latent_dim -> 256 -> 128
+t_hidden_dims = [32, 16]     # coordinate branch: t -> 32 -> 16
+n_kernel = 20
 
 [[tasks]]
 name = "power_factor"
@@ -55,11 +59,17 @@ dataset = "qc"
 column = "Material type (label)"
 num_classes = 5
 
+# Model architecture. The *_hidden_dims lists are the HIDDEN layer widths; the input
+# (descriptor width for the encoder, latent_dim for the heads) is prepended automatically and
+# the output (1 / num_classes / kernel projection) is appended. Each [[tasks]] may override its
+# own head via hidden_dims (reg/clf) or x_hidden_dims / t_hidden_dims / n_kernel (KR).
 [model]
 latent_dim = 128
-encoder_hidden = 256
-head_hidden_dim = 64
-n_kernel = 15
+encoder_hidden_dims = [256]      # encoder: descriptor_dim -> 256 -> latent_dim
+head_hidden_dims = [64]          # reg/clf heads: latent_dim -> 64 -> out
+kr_x_hidden_dims = [128, 64]     # KR value branch default: latent_dim -> 128 -> 64
+kr_t_hidden_dims = [16, 8]       # KR coordinate branch default: t -> 16 -> 8
+n_kernel = 15                    # KR kernel centers default
 
 [training]
 max_epochs = 100

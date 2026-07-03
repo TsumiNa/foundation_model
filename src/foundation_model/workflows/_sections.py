@@ -19,19 +19,59 @@ def reject_unknown(section: str, raw: Mapping[str, Any], known: set[str]) -> Non
         raise ValueError(f"[{section}]: unknown key(s) {unknown}; allowed keys are {sorted(known)}.")
 
 
+def validate_positive_int(where: str, value: Any) -> None:
+    """Require a positive ``int`` (``bool`` rejected — it is an ``int`` subclass).
+
+    Guards config fields fed to int-only APIs (e.g. ``np.linspace`` kernel counts, layer dims) so a
+    TOML float like ``128.5`` / ``10.0`` fails at config time instead of being silently coerced.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{where} must be a positive int, got {value!r}.")
+
+
+def validate_hidden_dims(where: str, dims: Any, *, allow_empty: bool = False) -> None:
+    """Validate a hidden-layer width list: a (possibly empty) list of positive ints.
+
+    Shared by ``[model]`` (``ModelSectionConfig``) and the per-task ``[[tasks]]`` overrides so both
+    reject e.g. ``[0]``, ``[1.5]``, ``[true]`` or a bare int with the same message.
+    """
+    if not isinstance(dims, list):
+        raise ValueError(f"{where} must be a list of positive ints, got {dims!r}.")
+    if not dims and not allow_empty:
+        raise ValueError(f"{where} must have at least one hidden layer.")
+    for d in dims:
+        if isinstance(d, bool) or not isinstance(d, int) or d < 1:
+            raise ValueError(f"{where} must be a list of positive ints, got {dims!r}.")
+
+
 @dataclass(kw_only=True)
 class ModelSectionConfig:
-    """``[model]`` — architecture dims shared by pretrain and finetune."""
+    """``[model]`` — architecture defaults shared by every subcommand.
+
+    The ``*_hidden_dims`` lists are the *hidden* layer widths; the input dim (descriptor width for
+    the encoder, ``latent_dim`` for the heads) is prepended automatically, and the output dim (1 for
+    regression, ``num_classes`` for classification, the kernel projection for KR) is appended. So
+    ``encoder_hidden_dims = [256]`` builds ``descriptor_dim → 256 → latent_dim``. Each ``[[tasks]]``
+    entry may override its own head's dims (``hidden_dims`` for reg/clf; ``x_hidden_dims`` /
+    ``t_hidden_dims`` / ``n_kernel`` for KR); unset tasks fall back to these defaults.
+    """
 
     latent_dim: int = 128
-    encoder_hidden: int = 256
-    head_hidden_dim: int = 64
+    encoder_hidden_dims: list[int] = field(default_factory=lambda: [256])
+    head_hidden_dims: list[int] = field(default_factory=lambda: [64])
+    kr_x_hidden_dims: list[int] = field(default_factory=lambda: [128, 64])
+    kr_t_hidden_dims: list[int] = field(default_factory=lambda: [16, 8])
     n_kernel: int = 15
 
     def __post_init__(self) -> None:
-        for name in ("latent_dim", "encoder_hidden", "head_hidden_dim", "n_kernel"):
-            if getattr(self, name) < 1:
-                raise ValueError(f"model.{name} must be >= 1, got {getattr(self, name)}.")
+        validate_positive_int("model.latent_dim", self.latent_dim)
+        validate_positive_int("model.n_kernel", self.n_kernel)
+        # encoder_hidden_dims may be empty (a shallow descriptor_dim → latent_dim encoder); the head
+        # branches need at least one hidden layer.
+        validate_hidden_dims("model.encoder_hidden_dims", self.encoder_hidden_dims, allow_empty=True)
+        validate_hidden_dims("model.head_hidden_dims", self.head_hidden_dims)
+        validate_hidden_dims("model.kr_x_hidden_dims", self.kr_x_hidden_dims)
+        validate_hidden_dims("model.kr_t_hidden_dims", self.kr_t_hidden_dims)
 
 
 @dataclass(kw_only=True)
