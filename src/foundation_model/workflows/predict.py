@@ -27,7 +27,7 @@ from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, r2_sc
 
 from foundation_model.data.composition_sources import canonical_key, normalize_composition
 
-from ._engine import as_float_array, build_model_for_checkpoint, task_names_from_state
+from ._engine import as_float_array, build_model_for_checkpoint, checkpoint_task_order
 from ._sections import ModelSectionConfig, build_model_section, reject_unknown
 from .recording import RunRecorder, load_checkpoint_state
 from .task_catalog import TaskCatalog, TaskCatalogConfig, TaskKind, build_task_catalog_config
@@ -149,7 +149,7 @@ def run(cfg: PredictConfig, recorder: RunRecorder | None = None) -> dict[str, An
 
 def _rebuild_model(cfg: PredictConfig, catalog: TaskCatalog) -> tuple[Any, list[str]]:
     state = load_checkpoint_state(cfg.checkpoint)
-    ckpt_tasks = list(state.get("task_sequence") or task_names_from_state(state["model"]))
+    ckpt_tasks = checkpoint_task_order(state)
     catalog_tasks = {t.name for t in cfg.catalog.tasks}
     missing = [t for t in ckpt_tasks if t not in catalog_tasks]
     if missing:

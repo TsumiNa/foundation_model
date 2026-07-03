@@ -185,6 +185,7 @@ finetune/inverse/predict consume. Enable to *also* emit Lightning `.ckpt` files.
 | `n_runs` | int | `1` | `>= 1` | Independent repeats (different seeds), written to `runs/runNN/`. |
 | `task_order` | str | `"fixed"` | `fixed` \| `random` | `fixed` = `task_sequence` order; `random` = per-run shuffle. |
 | `checkpoint` | str (path) | `None` | | **Warm-start**: load this checkpoint's encoder + heads as the starting point (`--checkpoint` overrides). Its tasks count as already-learned and are skipped as new steps (they still take part in rehearsal + evaluation); training continues with the `task_sequence` tasks the checkpoint doesn't already contain. Errors if a checkpoint task isn't in the catalog, or if every `task_sequence` task is already in the checkpoint. |
+| `resume` | bool | `false` | | **Kill-restart** (`--resume` sets it): on start, if a run's output dir already holds step checkpoints, warm-start from the latest and continue **in place** at the next task; a run whose `final_model.pt` exists is skipped. For long pre-training that can exceed a scheduler's job time — re-submit the same command and it picks up where it stopped. Resume granularity is one completed task-step; optimizer state is not restored (each step trains a fresh optimizer regardless). |
 
 ### `[pretrain.rehearsal]`
 
@@ -301,7 +302,7 @@ Per-subcommand flags:
 
 | Subcommand | Flags |
 |---|---|
-| `pretrain` | `--max-epochs N` (→ `training.max_epochs`), `--checkpoint PATH` (warm-start / continue a sequence) |
+| `pretrain` | `--max-epochs N` (→ `training.max_epochs`), `--checkpoint PATH` (warm-start / continue a sequence), `--resume` (continue after a kill from the output dir's latest step checkpoint) |
 | `finetune` | `--checkpoint PATH`, `--tasks a,b` (→ `finetune.tasks`), `--epochs N` |
 | `inverse` | `--checkpoint PATH`, `--scenario NAME` (repeatable; run only these), `--steps N`, `--no-trajectory`, `--animation-formats gif,html,svg` |
 | `predict` | `--checkpoint PATH`, `--tasks a,b`, `--split train\|val\|test\|all`, `--compositions "Fe2 O3,Al2 O3"` (overrides split), `--no-metrics` |

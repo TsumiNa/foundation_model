@@ -52,6 +52,18 @@ def task_names_from_state(state_dict: Mapping[str, Any]) -> list[str]:
     return names
 
 
+def checkpoint_task_order(state: Mapping[str, Any]) -> list[str]:
+    """Every task head present in a loaded checkpoint, ordered by its ``task_sequence`` when given.
+
+    The state dict is the ground truth for which heads *exist*; ``task_sequence`` only records order
+    — and a pretrain **step** checkpoint stores just that step's active subset — so heads that are in
+    the weights but missing from ``task_sequence`` are appended rather than silently dropped.
+    """
+    in_state = task_names_from_state(state["model"])
+    ordered = [t for t in (state.get("task_sequence") or []) if t in in_state]
+    return ordered + [h for h in in_state if h not in ordered]
+
+
 def build_encoder_config(model: ModelSectionConfig, descriptor_dim: int) -> MLPEncoderConfig:
     """MLP encoder ``descriptor_dim → *encoder_hidden_dims → latent_dim`` from ``[model]``."""
     return MLPEncoderConfig(hidden_dims=[descriptor_dim, *model.encoder_hidden_dims, model.latent_dim])

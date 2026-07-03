@@ -36,7 +36,7 @@ from loguru import logger  # noqa: E402
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, formula_to_composition  # noqa: E402
 
 from . import inverse_trajectory  # noqa: E402
-from ._engine import build_model_for_checkpoint, task_names_from_state  # noqa: E402
+from ._engine import build_model_for_checkpoint, checkpoint_task_order  # noqa: E402
 from ._sections import ModelSectionConfig, build_model_section, reject_unknown  # noqa: E402
 from .plots import DISCOVERED_ELEMENT_COLOR, SCATTER_COLOR  # noqa: E402
 from .recording import RunRecorder, load_checkpoint_state  # noqa: E402
@@ -390,7 +390,7 @@ def _element_system(composition: str) -> frozenset[str]:
 
 def _rebuild_model(cfg: InverseConfig, catalog: TaskCatalog) -> tuple[Any, list[str]]:
     state = load_checkpoint_state(cfg.checkpoint)
-    ckpt_tasks = list(state.get("task_sequence") or task_names_from_state(state["model"]))
+    ckpt_tasks = checkpoint_task_order(state)
     catalog_tasks = {t.name for t in cfg.catalog.tasks}
     missing = [t for t in ckpt_tasks if t not in catalog_tasks]
     if missing:

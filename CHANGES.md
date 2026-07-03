@@ -10,7 +10,10 @@
     Supports **warm-start** from a checkpoint (`--checkpoint` / `[pretrain].checkpoint`): loads the
     checkpoint's encoder + heads, treats its tasks as already-learned, and continues the sequence
     with the remaining tasks — i.e. extend a trained model with new tasks. (`fm finetune` already
-    warm-starts, since it loads a checkpoint to fine-tune.)
+    warm-starts, since it loads a checkpoint to fine-tune.) With `--resume` (`[pretrain].resume`),
+    a run killed mid-sequence (e.g. a scheduler job timeout) picks up in place from its output dir's
+    latest step checkpoint on re-submit; finished runs are skipped. Resume granularity is one
+    completed task-step (each step already trains a fresh optimizer, so no optimizer state is kept).
   - `fm finetune` — frozen-encoder fine-tuning of selected heads; the AE head **stays trainable**
     (at `ae_lr`) and `task_log_sigmas` are frozen; non-target heads are disabled for the fit and
     restored before saving so the checkpoint keeps every head.

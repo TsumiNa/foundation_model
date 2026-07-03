@@ -36,8 +36,8 @@ from ._engine import (
     build_empty_model,
     build_head_config,
     build_trainer_extras,
+    checkpoint_task_order,
     evaluate_task,
-    task_names_from_state,
 )
 from ._sections import (
     ModelSectionConfig,
@@ -113,6 +113,11 @@ class PretrainConfig:
     # Warm-start: load encoder + heads from this checkpoint, treat its tasks as already learned, and
     # continue the sequence with the task_sequence tasks it doesn't already contain. None = from scratch.
     checkpoint: Path | None = None
+    # Resume: on (re)start, if a run's output dir already holds step checkpoints, warm-start from the
+    # latest and continue in place — so a job killed mid-sequence picks up at the next task. Completed
+    # runs (final_model.pt present) are skipped. Optimizer state is NOT restored (each step trains a
+    # fresh optimizer anyway); the resume granularity is one completed task-step.
+    resume: bool = False
 
     def __post_init__(self) -> None:
         self.output_dir = Path(self.output_dir)
@@ -137,7 +142,11 @@ class PretrainConfig:
 
 
 def build_pretrain_config(
-    raw: Mapping[str, Any], *, output_dir: str | Path | None = None, checkpoint: str | Path | None = None
+    raw: Mapping[str, Any],
+    *,
+    output_dir: str | Path | None = None,
+    checkpoint: str | Path | None = None,
+    resume: bool = False,
 ) -> PretrainConfig:
     """Normalize a parsed-TOML tree into a :class:`PretrainConfig`."""
 
@@ -147,7 +156,9 @@ def build_pretrain_config(
     training = build_training_section(raw.get("training", {}))
 
     pretrain_raw = dict(raw.get("pretrain", {}))
-    reject_unknown("pretrain", pretrain_raw, {"task_sequence", "n_runs", "task_order", "rehearsal", "checkpoint"})
+    reject_unknown(
+        "pretrain", pretrain_raw, {"task_sequence", "n_runs", "task_order", "rehearsal", "checkpoint", "resume"}
+    )
     rehearsal_raw = dict(pretrain_raw.get("rehearsal", {}))
     reject_unknown("pretrain.rehearsal", rehearsal_raw, {"interval", "default_replay", "per_task"})
     rehearsal = RehearsalConfig(
@@ -171,6 +182,7 @@ def build_pretrain_config(
         n_runs=int(pretrain_raw.get("n_runs", 1)),
         task_order=TaskOrder(str(pretrain_raw.get("task_order", "fixed"))),
         checkpoint=Path(resolved_checkpoint) if resolved_checkpoint is not None else None,
+        resume=resume or bool(pretrain_raw.get("resume", False)),
     )
 
 
@@ -216,8 +228,29 @@ def run(cfg: PretrainConfig, recorder: RunRecorder | None = None) -> dict[str, A
                 run_recorder = root_recorder
             else:
                 run_recorder = RunRecorder(cfg.output_dir / "runs" / f"run{run_idx:02d}")
+
+            # Resume: prefer a run's own latest step checkpoint (continue in place after a kill);
+            # fall back to the explicit warm-start checkpoint. A finished run is skipped.
+            source = cfg.checkpoint
+            if cfg.resume:
+                training_dir = run_recorder.paths.training
+                if (training_dir / "final_model.pt").exists():
+                    logger.info(f"=== pretrain run {run_idx + 1}/{cfg.n_runs}: already complete, skipping (resume) ===")
+                    continue
+                source = _latest_step_checkpoint(training_dir) or cfg.checkpoint
+                if source is not None:
+                    logger.info(f"resuming run {run_idx + 1}/{cfg.n_runs} from {source}")
+
             logger.info(f"=== pretrain run {run_idx + 1}/{cfg.n_runs} (seed={run_seed}) order={order} ===")
-            records = _run_single(cfg, catalog, run_recorder, task_order=order, seed=run_seed)
+            records = _run_single(
+                cfg,
+                catalog,
+                run_recorder,
+                task_order=order,
+                seed=run_seed,
+                warm_start_source=source,
+                is_resume=cfg.resume,
+            )
             for rec in records:
                 aggregate.append({"run": run_idx, **rec})
             if run_recorder is not root_recorder:
@@ -240,14 +273,24 @@ def _run_task_order(cfg: PretrainConfig, seed: int) -> list[str]:
     return list(cfg.task_sequence)
 
 
-def _warm_start(cfg: PretrainConfig, catalog: TaskCatalog) -> tuple[Any, list[str], dict[str, Any]]:
-    """Build the run's start model. With ``cfg.checkpoint`` set, load its encoder + heads (warm-start)
-    and return those tasks as already-learned; otherwise an empty (AE-only) model."""
+def _latest_step_checkpoint(training_dir: Path) -> Path | None:
+    """The highest-numbered ``stepNN_*/checkpoint.pt`` under a run's training dir (for --resume)."""
+    if not training_dir.exists():
+        return None
+    candidates = sorted(training_dir.glob("step*/checkpoint.pt"), key=lambda p: p.parent.name)
+    return candidates[-1] if candidates else None
+
+
+def _warm_start(
+    cfg: PretrainConfig, catalog: TaskCatalog, source: Path | None
+) -> tuple[Any, list[str], dict[str, Any]]:
+    """Build the run's start model. With ``source`` set, load its encoder + heads (warm-start) and
+    return those tasks as already-learned; otherwise an empty (AE-only) model."""
     model = build_empty_model(catalog, cfg.model, cfg.training)
-    if cfg.checkpoint is None:
+    if source is None:
         return model, [], {}
-    state = load_checkpoint_state(cfg.checkpoint)
-    preloaded = list(state.get("task_sequence") or task_names_from_state(state["model"]))
+    state = load_checkpoint_state(source)
+    preloaded = checkpoint_task_order(state)
     catalog_tasks = {t.name for t in cfg.catalog.tasks}
     missing = [t for t in preloaded if t not in catalog_tasks]
     if missing:
@@ -259,7 +302,7 @@ def _warm_start(cfg: PretrainConfig, catalog: TaskCatalog) -> tuple[Any, list[st
     incompatible = model.load_state_dict(state["model"], strict=False)
     if incompatible.missing_keys:
         logger.info(f"warm-start: {len(incompatible.missing_keys)} missing key(s) e.g. {incompatible.missing_keys[:6]}")
-    logger.info(f"warm-started from {cfg.checkpoint} with heads {preloaded}")
+    logger.info(f"warm-started from {source} with heads {preloaded}")
     return model, preloaded, built
 
 
@@ -270,14 +313,20 @@ def _run_single(
     *,
     task_order: Sequence[str],
     seed: int,
+    warm_start_source: Path | None = None,
+    is_resume: bool = False,
 ) -> list[dict[str, Any]]:
     seed_everything(seed, workers=True)
-    model, preloaded, built = _warm_start(cfg, catalog)
+    model, preloaded, built = _warm_start(cfg, catalog, warm_start_source)
 
     # New tasks = task_order entries not already loaded from the checkpoint; preloaded tasks are
     # already trained and only participate as rehearsal/eval targets.
     new_tasks = [t for t in task_order if t not in preloaded]
     if not new_tasks:
+        if is_resume:  # killed after the last step but before final_model was written — just finalize
+            recorder.save_final_model(model, list(preloaded), _task_spec_dump(catalog, preloaded))
+            logger.info("resume: every task already trained; wrote final_model.")
+            return []
         raise ValueError("nothing to train: every task in task_sequence is already in pretrain.checkpoint.")
     full_order = [*preloaded, *new_tasks]
 
@@ -286,12 +335,16 @@ def _run_single(
     metric_history: dict[str, list[tuple[int, float]]] = {name: [] for name in full_order}
     records: list[dict[str, Any]] = []
 
-    for step, task_name in enumerate(new_tasks, start=1):
-        logger.info(f"--- step {step}/{len(new_tasks)}: add '{task_name}' ---")
+    # Global step numbering continues past the preloaded tasks so the rehearsal-interval schedule
+    # picks up where the checkpoint left off (step == 1 for a from-scratch run, offset == 0).
+    offset = len(preloaded)
+    for i, task_name in enumerate(new_tasks):
+        step = offset + i + 1
+        logger.info(f"--- step {step}: add '{task_name}' (new {i + 1}/{len(new_tasks)}) ---")
         built[task_name] = build_head_config(catalog, cfg.model, cfg.training, task_name, masking_ratio=1.0)
         model.add_task(built[task_name])
 
-        learned = [*preloaded, *new_tasks[: step - 1]]
+        learned = [*preloaded, *new_tasks[:i]]
         participating = active_old_tasks(step, learned, cfg.rehearsal.interval)
         active = [task_name, *participating]
         for name in participating:
@@ -333,7 +386,7 @@ def _run_single(
 
         step_dir = recorder.paths.step_dir(step, task_name)
         step_metrics: dict[str, dict[str, float]] = {}
-        for name in [*preloaded, *new_tasks[:step]]:  # ALL learned heads (preloaded + new-so-far)
+        for name in [*preloaded, *new_tasks[: i + 1]]:  # ALL learned heads (preloaded + new-so-far)
             metric = evaluate_task(
                 model, catalog, name, recorder, step_dir, is_new=(name == task_name), test_keys=test_keys
             )

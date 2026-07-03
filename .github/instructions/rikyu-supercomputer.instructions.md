@@ -49,6 +49,23 @@ ssh rikyu-login 'cat > /home/ea0094/jobs/smoke/job.sbatch' < ./job.sbatch
 Note: on `1n1gpu`, `nvidia-smi` may show another user's process on the same physical GB200 —
 GPU memory is large but do not assume the card is exclusively idle; check before large allocations.
 
+## Long pre-training past the walltime (`fm pretrain --resume`)
+
+Partitions cap at **4 days**. A `fm pretrain` run whose `task_sequence` won't finish in one job can
+be re-submitted with **`--resume`**: it warm-starts from the output dir's latest step checkpoint and
+continues at the next task in place (finished runs are skipped). Use the **same** `--output-dir` and
+put it on persistent storage (not per-job `/scratch`, which is deleted at job end). A resubmit-until-
+done pattern: make the sbatch script re-queue itself while `final_model.pt` is absent, e.g.
+
+```bash
+OUT=/home/ea0094/projects/foundation_model/artifacts/pretrain_big
+.venv/bin/fm pretrain --config pretrain.toml --output-dir "$OUT" --resume
+test -f "$OUT/training/final_model.pt" || sbatch "$0"   # (n_runs=1; adjust the path for sweeps)
+```
+
+Resume is per completed task-step (a step killed mid-fit restarts from the previous step's
+checkpoint); optimizer state is not restored, which is fine since each step trains a fresh optimizer.
+
 ## Modules
 
 ```bash
