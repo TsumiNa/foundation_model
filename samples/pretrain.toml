@@ -1,0 +1,87 @@
+# Formal `fm pretrain` config — continual-rehearsal pre-training over the qc dataset.
+#
+# 2 regression + 2 kernel-regression + 1 classification head, KMD-1d descriptors, a single full
+# run with interval=1 rehearsal. Extend `[datasets]` / `[[tasks]]` to add NEMAD / phonix property
+# heads (raw columns should be pre-normalized before use).
+#
+#   fm pretrain --config samples/pretrain.toml
+
+[data]
+composition_column = "composition"
+val_split = 0.1
+test_split = 0.1
+split_random_seed = 42
+batch_size = 256
+num_workers = 0
+
+[descriptor]
+kind = "kmd"
+n_grids = 8
+
+[datasets.qc]
+path = "data/qc_ac_te_mp_dos_reformat_20250615_enforce_quaternary_test.pd.parquet"
+preprocessing_path = "data/preprocessing_objects_20250615.pkl.z"
+
+[[tasks]]
+name = "density"
+kind = "regression"
+dataset = "qc"
+column = "Density (normalized)"
+
+[[tasks]]
+name = "formation_energy"
+kind = "regression"
+dataset = "qc"
+column = "Formation energy per atom (normalized)"
+
+[[tasks]]
+name = "dos_density"
+kind = "kernel_regression"
+dataset = "qc"
+column = "DOS density (normalized)"
+t_column = "DOS energy"
+
+[[tasks]]
+name = "power_factor"
+kind = "kernel_regression"
+dataset = "qc"
+column = "Power factor (normalized)"
+t_column = "Power factor (T/K)"
+
+[[tasks]]
+name = "material_type"
+kind = "classification"
+dataset = "qc"
+column = "Material type (label)"
+num_classes = 5
+
+[model]
+latent_dim = 128
+encoder_hidden = 256
+head_hidden_dim = 64
+n_kernel = 15
+
+[training]
+max_epochs = 100
+early_stop_patience = 8
+early_stop_min_delta = 1e-4
+encoder_lr = 5e-3
+head_lr = 5e-3
+kr_lr = 5e-4
+kr_weight_decay = 5e-5
+ae_lr = 5e-3
+accelerator = "auto"
+devices = 1
+seed = 2025
+
+[pretrain]
+task_sequence = ["density", "dos_density", "power_factor", "formation_energy", "material_type"]
+n_runs = 1
+task_order = "fixed"
+
+[pretrain.rehearsal]
+interval = 1
+default_replay = 0.05
+
+[output]
+dir = "artifacts/pretrain"

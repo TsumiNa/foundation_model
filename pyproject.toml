@@ -12,7 +12,6 @@ dependencies = [
     "loguru>=0.7.3",
     "matplotlib>=3.10.1",
     "numpy>=1.26.4",
-    "omegaconf>=2.3.0",
     "pandas>=2.2.3",
     "pyarrow>=20.0.0",
     "qpsolvers>=4.7.0",
@@ -40,9 +39,6 @@ classifiers = [
 
 [project.scripts]
 fm = "foundation_model.cli.main:main"
-fm-trainer = "foundation_model.scripts.train:cli_main"
-fm-pretrain-suite = "foundation_model.scripts.dynamic_task_suite:main"
-fm-progressive-clf = "foundation_model.scripts.multi_task_progressive_clf:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -65,6 +61,9 @@ explicit = true
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "--maxfail=2 --benchmark-skip --benchmark-autosave"
+# Tests are co-located under src/ (no separate tests/ tree); keep collection out of scratch
+# dirs like logs/ and notebooks/.
+testpaths = ["src"]
 
 [tool.ruff]
 exclude = [".venv", "venv", "__pycache__", ".git"]

@@ -166,9 +166,15 @@ def plot_trajectory_static(
         # second matching text() at a clearly-distinct y position.
         ax.set_title(title, fontsize=12, fontweight="bold", pad=22)
         ax.text(
-            0.5, 1.005, f"seed:  {seed_composition}",
-            transform=ax.transAxes, ha="center", va="bottom",
-            fontsize=10, family="monospace", color="#444",
+            0.5,
+            1.005,
+            f"seed:  {seed_composition}",
+            transform=ax.transAxes,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            family="monospace",
+            color="#444",
         )
     else:
         ax.set_title(title, fontsize=12, fontweight="bold")
@@ -183,7 +189,9 @@ def plot_trajectory_static(
 # --- animation ---------------------------------------------------------------------------------
 
 
-def _topk_composition_frame(weights: np.ndarray, element_symbols: list[str], top_k: int = 10) -> list[tuple[str, float]]:
+def _topk_composition_frame(
+    weights: np.ndarray, element_symbols: list[str], top_k: int = 10
+) -> list[tuple[str, float]]:
     """Top-K elements by weight, sorted descending. Used as one frame of the animation's comp panel."""
     idx = np.argsort(weights)[::-1][:top_k]
     return [(element_symbols[int(i)], float(weights[int(i)])) for i in idx if weights[int(i)] > 1e-4]
@@ -257,9 +265,15 @@ def plot_trajectory_animation(
         # because matplotlib's default title baseline sits where the text annotation lands.
         ax_line.set_title(title, fontsize=11, fontweight="bold", pad=22)
         ax_line.text(
-            0.5, 1.005, f"seed:  {seed_composition}",
-            transform=ax_line.transAxes, ha="center", va="bottom",
-            fontsize=10, family="monospace", color="#444",
+            0.5,
+            1.005,
+            f"seed:  {seed_composition}",
+            transform=ax_line.transAxes,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            family="monospace",
+            color="#444",
         )
     else:
         ax_line.set_title(title, fontsize=11, fontweight="bold")
@@ -376,7 +390,7 @@ def _save_smil_svg(
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 420" '
         'width="800" height="420" font-family="system-ui, sans-serif" font-size="11">'
     )
-    parts.append(f'<title>{title}</title>')
+    parts.append(f"<title>{title}</title>")
     parts.append(f'<text x="400" y="18" text-anchor="middle" font-size="13" font-weight="bold">{title}</text>')
 
     # ---- line plot (static) ----
@@ -433,7 +447,9 @@ def _save_smil_svg(
 
     # ---- bar chart (top-K, animated per element) ----
     parts.append('<rect x="520" y="40" width="260" height="320" fill="white" stroke="#888" />')
-    parts.append('<text x="650" y="32" text-anchor="middle" font-weight="bold">Composition (top-K, step animated)</text>')
+    parts.append(
+        '<text x="650" y="32" text-anchor="middle" font-weight="bold">Composition (top-K, step animated)</text>'
+    )
 
     # Use the union of top-K-per-frame elements across all frames so each bar is one stable row.
     seen_idx: list[int] = []
@@ -455,7 +471,9 @@ def _save_smil_svg(
         y_row = bar_y_top + row_i * bar_height
         widths = [per_step_weights[int(s), elem_idx] for s in frame_steps]
         w_str = ";".join(f"{max(0.0, float(w)) * bar_max_w:.1f}" for w in widths)
-        parts.append(f'<text x="{bar_x_left - 4}" y="{y_row + bar_height - 4:.1f}" text-anchor="end">{element_symbols[elem_idx]}</text>')
+        parts.append(
+            f'<text x="{bar_x_left - 4}" y="{y_row + bar_height - 4:.1f}" text-anchor="end">{element_symbols[elem_idx]}</text>'
+        )
         parts.append(
             f'<rect x="{bar_x_left}" y="{y_row:.1f}" height="{bar_height - 2:.1f}" fill="#2563EB" opacity="0.75">'
             f'  <animate attributeName="width" values="{w_str}" dur="{duration_s:.2f}s" repeatCount="indefinite" />'
@@ -466,7 +484,7 @@ def _save_smil_svg(
     step_label_values = ";".join(f"step {int(s) + 1}/{n_steps}" for s in frame_steps)
     parts.append(
         f'<text x="650" y="395" text-anchor="middle" fill="#444">'
-        f'  step 1/{n_steps}'
+        f"  step 1/{n_steps}"
         f'  <animate attributeName="textContent" values="{step_label_values}" dur="{duration_s:.2f}s" repeatCount="indefinite" />'
         f"</text>"
     )

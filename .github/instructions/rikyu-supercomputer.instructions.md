@@ -68,13 +68,11 @@ own CUDA runtime), and it also provides the toolchain for MPI/NCCL and compiled 
 - `uv` is at `~/.local/bin/uv` (on PATH); the project venv Python is 3.13 (`.venv/bin/python`).
 - **Programs under `.venv/bin` are not on PATH inside a batch job.** Use one of:
   1. **Absolute path** (preferred in job scripts): `/home/ea0094/projects/foundation_model/.venv/bin/python`
-     (console scripts like `fm-trainer` carry an absolute-path shebang, so they also work standalone).
-  2. **Symlink into a PATH dir**: `~/.local/bin` is on PATH; symlinks already exist there for
-     `fm-trainer`, `fm-pretrain-suite`, `fm-progressive-clf`. Recreate with:
+     (the `fm` console script carries an absolute-path shebang, so it also works standalone).
+  2. **Symlink into a PATH dir**: `~/.local/bin` is on PATH; symlink the `fm` command there.
+     Recreate with:
      ```bash
-     for s in fm-trainer fm-pretrain-suite fm-progressive-clf; do
-       ln -sfn /home/ea0094/projects/foundation_model/.venv/bin/$s ~/.local/bin/$s
-     done
+     ln -sfn /home/ea0094/projects/foundation_model/.venv/bin/fm ~/.local/bin/fm
      ```
 - Sync deps: `cd /home/ea0094/projects/foundation_model && uv sync` (set `UV_HTTP_TIMEOUT=300`
   for the large CUDA wheels).
@@ -142,7 +140,7 @@ cd "$PROJ"
 
 # ... optionally stage data into "$USER_SCRATCH_DIR" ...
 
-"$VENV_PY" -m foundation_model.scripts.train   # or: fm-trainer <args>  (symlink on PATH)
+"$VENV_PY" -m foundation_model.cli.main pretrain --config <toml>   # or: fm pretrain ... (symlink on PATH)
 
 # ... copy results from "$USER_SCRATCH_DIR" back to "$SLURM_SUBMIT_DIR" ...
 ```

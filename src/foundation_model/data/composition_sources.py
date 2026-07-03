@@ -35,6 +35,7 @@ DescriptorFn = Callable[[list[str]], pd.DataFrame]
 _SPLIT_PRECEDENCE: dict[str, int] = {"train": 1, "val": 2, "test": 3}
 VALID_SPLIT_LABELS = frozenset(_SPLIT_PRECEDENCE)
 
+
 def normalize_composition(value: object) -> str | None:
     """Canonical composition key shared across every data source.
 

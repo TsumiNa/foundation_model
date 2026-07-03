@@ -1,8 +1,8 @@
 # QC inverse-design study — summary
 
-One-page summary of the messages the
-[continual-rehearsal + inverse-design pipeline](continual_rehearsal_full_PLAN.md) carries.
-Written so each bullet maps to either a slide or a paragraph of the paper.
+One-page summary of the messages the continual-rehearsal + inverse-design pipeline
+(`fm pretrain` → `fm finetune` → `fm inverse`) carries. Written so each bullet maps to either a
+slide or a paragraph of the paper.
 
 ## Headline messages
 
@@ -118,8 +118,7 @@ Written so each bullet maps to either a slide or a paragraph of the paper.
   * `results.json` + `SUMMARY.md` — raw arrays and a markdown table.
 * Configs, seeds, and the trained checkpoint are all saved per run, so any figure can be
   regenerated from `results.json` alone (no re-running the optimisation needed for re-plots).
-* The orchestrator (`paper_inverse_3scenarios`) writes the three scenarios into sibling
-  subfolders so the full study is one directory.
+* `fm inverse` writes each scenario into a sibling subfolder so the full study is one directory.
 
 ### 8. Per-step optimisation trajectories explain why the same seed → different scenarios → different recipes.
 
@@ -154,7 +153,7 @@ Three consequences for interpreting the per-scenario heatmaps:
   for the application.
 
 The "best-per-target representative seed" used in the GIF / HTML's composition
-panel is picked by `paper_inverse_trajectory.best_seed_by_target_distance`
+panel is picked by `workflows.inverse_trajectory.best_seed_by_target_distance`
 (minimises the joint normalised distance to QC = 1 and every reg target). To
 see all 20 seeds individually instead of the mean, rerun with
 `--per-seed-trajectories`.
@@ -176,7 +175,7 @@ see all 20 seeds individually instead of the mean, rerun with
 ## Where to go for detail
 
 * **Method math + per-term design intent**: [docs/inverse_design_algorithms.md](inverse_design_algorithms.md)
-* **Plan and rationale for the 3 scenarios + alloy palette**: [docs/continual_rehearsal_full_PLAN.md](continual_rehearsal_full_PLAN.md)
-* **Per-scenario outputs**: `artifacts/inverse_design_run/inverse_design/scenario{1,2,3}_*/`
-  (gitignored — regenerate with `paper_inverse_3scenarios`).
-* **Implementation**: [`paper_inverse_comparison.py`](../src/foundation_model/scripts/paper_inverse_comparison.py) (single-scenario runner) → [`paper_inverse_3scenarios.py`](../src/foundation_model/scripts/paper_inverse_3scenarios.py) (orchestrator).
+* **Per-scenario outputs**: `artifacts/inverse/<scenario>/` (gitignored — regenerate with
+  `fm inverse --config samples/inverse.toml --checkpoint <ckpt>`).
+* **Implementation**: [`workflows/inverse.py`](../src/foundation_model/workflows/inverse.py)
+  (scenario × path engine) + [`workflows/inverse_trajectory.py`](../src/foundation_model/workflows/inverse_trajectory.py).
