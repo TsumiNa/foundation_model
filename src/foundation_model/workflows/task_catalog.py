@@ -50,7 +50,7 @@ from foundation_model.models.model_config import (
 )
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, KMD, element_features, formula_to_composition
 
-from ._sections import validate_hidden_dims
+from ._sections import validate_hidden_dims, validate_positive_int
 
 TaskConfig = RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
 
@@ -193,8 +193,8 @@ class TaskSpec:
             validate_hidden_dims(f"Task '{self.name}'.x_hidden_dims", self.x_hidden_dims)
         if self.t_hidden_dims is not None:
             validate_hidden_dims(f"Task '{self.name}'.t_hidden_dims", self.t_hidden_dims)
-        if self.n_kernel is not None and self.n_kernel < 1:
-            raise ValueError(f"Task '{self.name}': n_kernel must be >= 1, got {self.n_kernel}.")
+        if self.n_kernel is not None:
+            validate_positive_int(f"Task '{self.name}'.n_kernel", self.n_kernel)
 
 
 @dataclass(kw_only=True)

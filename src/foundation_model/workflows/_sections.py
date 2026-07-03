@@ -19,6 +19,16 @@ def reject_unknown(section: str, raw: Mapping[str, Any], known: set[str]) -> Non
         raise ValueError(f"[{section}]: unknown key(s) {unknown}; allowed keys are {sorted(known)}.")
 
 
+def validate_positive_int(where: str, value: Any) -> None:
+    """Require a positive ``int`` (``bool`` rejected — it is an ``int`` subclass).
+
+    Guards config fields fed to int-only APIs (e.g. ``np.linspace`` kernel counts, layer dims) so a
+    TOML float like ``128.5`` / ``10.0`` fails at config time instead of being silently coerced.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{where} must be a positive int, got {value!r}.")
+
+
 def validate_hidden_dims(where: str, dims: Any, *, allow_empty: bool = False) -> None:
     """Validate a hidden-layer width list: a (possibly empty) list of positive ints.
 
@@ -54,10 +64,8 @@ class ModelSectionConfig:
     n_kernel: int = 15
 
     def __post_init__(self) -> None:
-        if self.latent_dim < 1:
-            raise ValueError(f"model.latent_dim must be >= 1, got {self.latent_dim}.")
-        if self.n_kernel < 1:
-            raise ValueError(f"model.n_kernel must be >= 1, got {self.n_kernel}.")
+        validate_positive_int("model.latent_dim", self.latent_dim)
+        validate_positive_int("model.n_kernel", self.n_kernel)
         # encoder_hidden_dims may be empty (a shallow descriptor_dim → latent_dim encoder); the head
         # branches need at least one hidden layer.
         validate_hidden_dims("model.encoder_hidden_dims", self.encoder_hidden_dims, allow_empty=True)

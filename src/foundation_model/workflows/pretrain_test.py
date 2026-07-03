@@ -21,6 +21,7 @@ from foundation_model.workflows._sections import (
     EarlyStoppingConfig,
     LoggingConfig,
     TrainingSectionConfig,
+    build_model_section,
     build_training_section,
 )
 from foundation_model.workflows.pretrain import (
@@ -196,6 +197,17 @@ default_replay = 0.5
 
 
 # --- Lightning callbacks / loggers config ------------------------------------------------
+
+
+def test_model_section_rejects_non_int_dims() -> None:
+    # TOML floats (128.5 / 10.0) must fail at config time, not silently coerce downstream.
+    with pytest.raises(ValueError, match="positive int"):
+        build_model_section({"latent_dim": 128.5})
+    with pytest.raises(ValueError, match="positive int"):
+        build_model_section({"n_kernel": 10.0})
+    # hidden-dims lists reject non-positive / non-int entries too.
+    with pytest.raises(ValueError, match="positive ints"):
+        build_model_section({"encoder_hidden_dims": [16, 0]})
 
 
 def test_training_subtables_parse() -> None:

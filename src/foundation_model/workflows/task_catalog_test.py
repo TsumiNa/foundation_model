@@ -144,6 +144,23 @@ column = "dos"
         _build(toml)
 
 
+def test_task_n_kernel_non_int_raises() -> None:
+    toml = """
+[datasets.qc]
+path = "data/qc.parquet"
+
+[[tasks]]
+name = "dos"
+kind = "kernel_regression"
+dataset = "qc"
+column = "dos"
+t_column = "energy"
+n_kernel = 5.0
+"""
+    with pytest.raises(ValueError, match="positive int"):
+        _build(toml)
+
+
 def test_clf_without_num_classes_raises() -> None:
     toml = """
 [datasets.qc]
