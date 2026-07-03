@@ -73,7 +73,10 @@ _KIND_ALIASES = {
     "classification": TaskKind.CLASSIFICATION,
 }
 
-_SUPPORTED_SUFFIXES = (".csv", ".parquet", ".pkl", ".pickle", ".z", ".xz")
+# Full-name suffix patterns accepted by ``data.composition_sources.read_data_file`` (kept in
+# sync with it). ``.parquet`` also covers ``.pd.parquet``; multi-suffix pickle forms need the
+# full ending, so we match on ``path.name`` rather than ``Path.suffix`` (which sees only ".z").
+_SUPPORTED_DATA_PATTERNS = (".csv", ".parquet", ".pd", ".pd.z", ".pd.xz", ".pkl")
 
 
 def _coerce_task_kind(value: Any) -> TaskKind:
@@ -125,10 +128,10 @@ class DatasetSpec:
 
     def __post_init__(self) -> None:
         self.path = Path(self.path)
-        if self.path.suffix.lower() not in _SUPPORTED_SUFFIXES:
+        if not self.path.name.lower().endswith(_SUPPORTED_DATA_PATTERNS):
             raise ValueError(
-                f"Dataset '{self.name}': unsupported file extension '{self.path.suffix}'; "
-                f"expected one of {_SUPPORTED_SUFFIXES}."
+                f"Dataset '{self.name}': unsupported data file '{self.path.name}'; "
+                f"expected a name ending in one of {_SUPPORTED_DATA_PATTERNS} (see read_data_file)."
             )
         if self.preprocessing_path is not None:
             self.preprocessing_path = Path(self.preprocessing_path)
@@ -179,8 +182,9 @@ class DescriptorConfig:
     def __post_init__(self) -> None:
         if self.kind not in {"kmd", "precomputed"}:
             raise ValueError(f"descriptor.kind must be 'kmd' or 'precomputed', got {self.kind!r}.")
-        if self.kind == "kmd" and self.n_grids < 1:
-            raise ValueError(f"descriptor.n_grids must be >= 1, got {self.n_grids}.")
+        if self.kind == "kmd" and self.n_grids < 2:
+            # KMD(method="1d") requires n_grids >= 2; surface it at config time, not at load.
+            raise ValueError(f'descriptor.n_grids must be >= 2 when kind="kmd", got {self.n_grids}.')
         if self.kind == "precomputed":
             if self.path is None:
                 raise ValueError("descriptor.kind == 'precomputed' requires 'path'.")

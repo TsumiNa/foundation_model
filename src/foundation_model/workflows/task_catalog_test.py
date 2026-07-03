@@ -212,6 +212,54 @@ replay = {replay!r}
             _build(toml)
 
 
+def test_unsupported_extension_raises() -> None:
+    toml = """
+[datasets.qc]
+path = "data/qc.pickle"
+
+[[tasks]]
+name = "density"
+kind = "regression"
+dataset = "qc"
+column = "density"
+"""
+    with pytest.raises(ValueError, match="unsupported data file"):
+        _build(toml)
+
+
+def test_multi_suffix_extension_accepted() -> None:
+    toml = """
+[datasets.qc]
+path = "data/qc.pd.parquet"
+
+[[tasks]]
+name = "density"
+kind = "regression"
+dataset = "qc"
+column = "density"
+"""
+    assert "qc" in _build(toml).datasets
+
+
+def test_kmd_n_grids_below_two_raises() -> None:
+    toml = """
+[descriptor]
+kind = "kmd"
+n_grids = 1
+
+[datasets.qc]
+path = "data/qc.parquet"
+
+[[tasks]]
+name = "density"
+kind = "regression"
+dataset = "qc"
+column = "density"
+"""
+    with pytest.raises(ValueError, match="n_grids must be >= 2"):
+        _build(toml)
+
+
 # --- TaskCatalog with synthetic fixtures -------------------------------------------------
 
 

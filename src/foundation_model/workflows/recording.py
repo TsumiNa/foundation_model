@@ -215,7 +215,10 @@ def load_checkpoint_state(path: Path) -> dict[str, Any]:
     ``state_dict`` (fm-trainer era).
     """
 
-    obj = torch.load(Path(path), map_location="cpu", weights_only=False)
+    # weights_only=True hardens against arbitrary-code execution from untrusted checkpoints;
+    # both accepted formats (rehearsal dict of state_dict + primitives, and a bare state_dict)
+    # contain only safe types.
+    obj = torch.load(Path(path), map_location="cpu", weights_only=True)
     if isinstance(obj, Mapping) and "model" in obj and isinstance(obj["model"], Mapping):
         normalized = dict(obj)
         normalized.setdefault("task_sequence", None)
