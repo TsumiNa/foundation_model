@@ -29,6 +29,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Iterable
+from xml.sax.saxutils import escape as _xml_escape
 
 import matplotlib
 
@@ -385,13 +386,16 @@ def _save_smil_svg(
     # [520, 780] × [40, 360]. Bars are horizontal, top-K elements, redrawn via <animate>.
 
     # ---- header ----
+    # Escape any user-controlled text (the run's path name) before embedding it in XML so a
+    # title containing &/</> can't produce invalid SVG or an injection vector.
+    safe_title = _xml_escape(title)
     parts: list[str] = []
     parts.append(
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 420" '
         'width="800" height="420" font-family="system-ui, sans-serif" font-size="11">'
     )
-    parts.append(f"<title>{title}</title>")
-    parts.append(f'<text x="400" y="18" text-anchor="middle" font-size="13" font-weight="bold">{title}</text>')
+    parts.append(f"<title>{safe_title}</title>")
+    parts.append(f'<text x="400" y="18" text-anchor="middle" font-size="13" font-weight="bold">{safe_title}</text>')
 
     # ---- line plot (static) ----
     parts.append('<rect x="40" y="40" width="440" height="320" fill="white" stroke="#888" />')
@@ -472,7 +476,8 @@ def _save_smil_svg(
         widths = [per_step_weights[int(s), elem_idx] for s in frame_steps]
         w_str = ";".join(f"{max(0.0, float(w)) * bar_max_w:.1f}" for w in widths)
         parts.append(
-            f'<text x="{bar_x_left - 4}" y="{y_row + bar_height - 4:.1f}" text-anchor="end">{element_symbols[elem_idx]}</text>'
+            f'<text x="{bar_x_left - 4}" y="{y_row + bar_height - 4:.1f}" text-anchor="end">'
+            f"{_xml_escape(element_symbols[elem_idx])}</text>"
         )
         parts.append(
             f'<rect x="{bar_x_left}" y="{y_row:.1f}" height="{bar_height - 2:.1f}" fill="#2563EB" opacity="0.75">'
