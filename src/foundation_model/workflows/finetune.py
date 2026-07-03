@@ -24,7 +24,13 @@ from lightning import Trainer, seed_everything
 from lightning.pytorch.callbacks import Callback, EarlyStopping
 from loguru import logger
 
-from ._engine import AE_NAME, build_empty_model, build_head_config, evaluate_task
+from ._engine import (
+    AE_NAME,
+    DropLastTrainCompoundDataModule,
+    build_empty_model,
+    build_head_config,
+    evaluate_task,
+)
 from ._sections import (
     ModelSectionConfig,
     TrainingSectionConfig,
@@ -100,11 +106,10 @@ def build_finetune_config(
 def apply_freeze_policy(model: Any, target_tasks: Sequence[str], *, freeze_encoder: bool) -> dict[str, bool]:
     """Freeze the encoder (optional) + non-target heads (except the AE) + task_log_sigmas.
 
-    Returns a ``{param_name: requires_grad}`` snapshot for provenance. The autoencoder head
-    (``"__reconstruction__"``) always stays trainable — the intentional behaviour change vs. the
-    legacy ``freeze_except`` (which froze it).
+    Returns the resulting ``{param_name: requires_grad}`` snapshot (taken AFTER applying the
+    policy) for provenance. The autoencoder head (``"__reconstruction__"``) always stays
+    trainable — the intentional behaviour change vs. the legacy ``freeze_except`` (which froze it).
     """
-    snapshot = {name: p.requires_grad for name, p in model.named_parameters()}
     if freeze_encoder:
         for p in model.encoder.parameters():
             p.requires_grad_(False)
@@ -115,7 +120,19 @@ def apply_freeze_policy(model: Any, target_tasks: Sequence[str], *, freeze_encod
             p.requires_grad_(trainable)
     for p in model.task_log_sigmas.parameters():
         p.requires_grad_(False)
-    return snapshot
+    return {name: p.requires_grad for name, p in model.named_parameters()}
+
+
+class _FrozenEncoderEval(Callback):
+    """Keep a frozen encoder in eval mode during fit.
+
+    Freezing ``requires_grad`` stops gradients but Lightning still puts the module in train mode,
+    so the encoder's ``BatchNorm1d`` ``running_mean``/``running_var`` would keep updating and the
+    saved encoder would differ. Forcing eval mode each train epoch freezes those buffers too.
+    """
+
+    def on_train_epoch_start(self, trainer: Any, pl_module: Any) -> None:
+        pl_module.encoder.eval()
 
 
 def _task_names_from_state(state_dict: Mapping[str, Any]) -> list[str]:
@@ -181,7 +198,11 @@ def run(cfg: FinetuneConfig, recorder: RunRecorder | None = None) -> dict[str, A
         if disabled:
             model.disable_task(*disabled)
 
-        datamodule = catalog.build_datamodule(cfg.tasks, masking_ratios={t: 1.0 for t in cfg.tasks})
+        datamodule = catalog.build_datamodule(
+            cfg.tasks,
+            masking_ratios={t: 1.0 for t in cfg.tasks},
+            datamodule_cls=DropLastTrainCompoundDataModule,  # drop size-1 tail batch (BatchNorm)
+        )
         datamodule.setup("fit")
         test_keys = _test_keys(datamodule)
 
@@ -200,6 +221,8 @@ def run(cfg: FinetuneConfig, recorder: RunRecorder | None = None) -> dict[str, A
                 min_delta=cfg.training.early_stop_min_delta,
             )
         ]
+        if cfg.freeze_encoder:
+            callbacks.append(_FrozenEncoderEval())  # keep frozen encoder's BatchNorm buffers fixed
         trainer = Trainer(
             max_epochs=cfg.epochs,
             accelerator=cfg.training.accelerator,

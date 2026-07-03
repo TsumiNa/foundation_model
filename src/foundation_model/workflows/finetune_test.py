@@ -190,6 +190,21 @@ def test_add_new_task_head_added_and_trained(data_dir, tmp_path) -> None:
     assert any(k.startswith("task_heads.c.") for k in saved)
 
 
+def test_frozen_encoder_unchanged_after_finetune(data_dir, tmp_path) -> None:
+    # freeze_encoder=True must keep encoder params AND BatchNorm buffers fixed across the fit.
+    _, model = _model_with_heads(data_dir, ["a", "b"])
+    ckpt = tmp_path / "ck.pt"
+    _save_checkpoint(model, ["a", "b"], ckpt)
+    before = {k: v.clone() for k, v in torch.load(ckpt, weights_only=True)["model"].items() if k.startswith("encoder.")}
+
+    cfg = _finetune_cfg(data_dir, tmp_path / "frz", checkpoint=ckpt, tasks=["a"], epochs=2)
+    finetune_run(cfg)
+
+    after = torch.load(tmp_path / "frz" / "training" / "final_model.pt", weights_only=True)["model"]
+    for key, value in before.items():
+        assert torch.equal(value, after[key]), f"encoder tensor changed: {key}"
+
+
 def test_add_new_task_disabled_raises(data_dir, tmp_path) -> None:
     _, model = _model_with_heads(data_dir, ["a", "b"])
     ckpt = tmp_path / "ck.pt"
