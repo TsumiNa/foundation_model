@@ -212,6 +212,21 @@ class RunRecorder:
             self._log_sink_id = None
 
 
+def _fold_disabled_heads(state_dict: Mapping[str, Any]) -> dict[str, Any]:
+    """Fold ``disabled_task_heads.<name>.*`` → ``task_heads.<name>.*`` so a checkpoint saved while
+    some heads were disabled (e.g. a mid-fit finetune ``ModelCheckpoint``) still loads every head.
+
+    A head is either active or disabled, never both, so an existing active head is never clobbered
+    (``setdefault``). No-op for checkpoints without disabled heads (pretrain / final RunRecorder).
+    """
+    _PREFIX = "disabled_task_heads."
+    folded: dict[str, Any] = {k: v for k, v in state_dict.items() if not k.startswith(_PREFIX)}
+    for key, value in state_dict.items():
+        if key.startswith(_PREFIX):
+            folded.setdefault("task_heads." + key[len(_PREFIX) :], value)
+    return folded
+
+
 def load_checkpoint_state(path: Path) -> dict[str, Any]:
     """Load a checkpoint and normalize to ``{"model": state_dict, "task_sequence": list|None, ...}``.
 
@@ -220,16 +235,20 @@ def load_checkpoint_state(path: Path) -> dict[str, Any]:
     2. a Lightning checkpoint — ``{"state_dict": ..., "epoch": ..., ...}`` (fm-trainer era,
        ``ModelCheckpoint`` output): the parameters live under ``state_dict``, so unwrap it;
     3. a bare ``state_dict`` (an ``OrderedDict`` of parameter tensors).
+
+    In all cases ``disabled_task_heads.*`` params are folded back onto ``task_heads.*`` so a
+    checkpoint saved with some heads disabled remains fully loadable downstream.
     """
 
     # weights_only=True hardens against arbitrary-code execution from untrusted checkpoints.
     obj = torch.load(Path(path), map_location="cpu", weights_only=True)
     if isinstance(obj, Mapping) and "model" in obj and isinstance(obj["model"], Mapping):
         normalized = dict(obj)
+        normalized["model"] = _fold_disabled_heads(obj["model"])
         normalized.setdefault("task_sequence", None)
         return normalized
     if isinstance(obj, Mapping) and "state_dict" in obj and isinstance(obj["state_dict"], Mapping):
         # Lightning checkpoint: parameters are nested under "state_dict".
-        return {"model": obj["state_dict"], "task_sequence": obj.get("task_sequence")}
+        return {"model": _fold_disabled_heads(obj["state_dict"]), "task_sequence": obj.get("task_sequence")}
     # Bare state_dict (OrderedDict of param tensors).
-    return {"model": obj, "task_sequence": None}
+    return {"model": _fold_disabled_heads(obj), "task_sequence": None}

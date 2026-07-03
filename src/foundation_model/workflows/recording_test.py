@@ -91,6 +91,22 @@ def test_load_checkpoint_state_normalizes_bare_state_dict(tmp_path) -> None:
     assert "linear.weight" in state["model"]
 
 
+def test_load_checkpoint_state_folds_disabled_heads(tmp_path) -> None:
+    # A checkpoint saved while head 'b' was disabled stores it under disabled_task_heads.*;
+    # load_checkpoint_state must fold it back onto task_heads.* so downstream loads every head.
+    sd = {
+        "encoder.shared.0.weight": torch.zeros(2),
+        "task_heads.a.net.weight": torch.zeros(2),
+        "disabled_task_heads.b.net.weight": torch.ones(2),
+    }
+    ckpt = tmp_path / "disabled.pt"
+    torch.save({"model": sd, "task_sequence": None}, ckpt)
+    keys = set(load_checkpoint_state(ckpt)["model"])
+    assert "task_heads.b.net.weight" in keys  # folded onto task_heads
+    assert "disabled_task_heads.b.net.weight" not in keys
+    assert {"task_heads.a.net.weight", "encoder.shared.0.weight"} <= keys  # others untouched
+
+
 def test_load_checkpoint_state_unwraps_lightning_checkpoint(tmp_path) -> None:
     model = _TinyModel()
     ckpt = tmp_path / "epoch=2.ckpt"
