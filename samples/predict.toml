@@ -29,6 +29,20 @@ dataset = "qc"
 column = "Formation energy per atom (normalized)"
 
 [[tasks]]
+name = "dos_density"
+kind = "kernel_regression"
+dataset = "qc"
+column = "DOS density (normalized)"
+t_column = "DOS energy"
+
+[[tasks]]
+name = "power_factor"
+kind = "kernel_regression"
+dataset = "qc"
+column = "Power factor (normalized)"
+t_column = "Power factor (T/K)"
+
+[[tasks]]
 name = "material_type"
 kind = "classification"
 dataset = "qc"
