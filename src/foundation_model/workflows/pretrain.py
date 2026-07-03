@@ -83,9 +83,11 @@ def _validate_replay_amount(value: float | int, *, where: str) -> None:
 class RehearsalConfig:
     """[pretrain.rehearsal] — interval schedule + replay amounts."""
 
-    interval: int = 1
-    default_replay: float | int = 0.05
-    per_task: dict[str, float | int] = field(default_factory=dict)
+    interval: int = 1  # old tasks rejoin training every Nth step (1 = always replay)
+    default_replay: float | int = (
+        0.05  # replay amount per old task: float in (0,1) = fraction of its labels, int >= 1 = count
+    )
+    per_task: dict[str, float | int] = field(default_factory=dict)  # override default_replay for named tasks
 
     def __post_init__(self) -> None:
         if self.interval < 1:
@@ -97,14 +99,16 @@ class RehearsalConfig:
 
 @dataclass(kw_only=True)
 class PretrainConfig:
+    """``[pretrain]`` + shared sections — continual-rehearsal pre-training config."""
+
     catalog: TaskCatalogConfig
     model: ModelSectionConfig
     training: TrainingSectionConfig
     rehearsal: RehearsalConfig
     output_dir: Path
-    task_sequence: list[str] = field(default_factory=list)
-    n_runs: int = 1
-    task_order: TaskOrder = TaskOrder.FIXED
+    task_sequence: list[str] = field(default_factory=list)  # order tasks are introduced; [] = [[tasks]] order
+    n_runs: int = 1  # independent repeats (different seeds) written to runs/runNN/
+    task_order: TaskOrder = TaskOrder.FIXED  # "fixed" (task_sequence order) or "random" (per-run shuffle)
 
     def __post_init__(self) -> None:
         self.output_dir = Path(self.output_dir)

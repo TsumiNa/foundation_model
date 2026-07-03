@@ -163,3 +163,13 @@ def test_predict_flags(tmp_path) -> None:
     assert cfg.split == "all"
     assert cfg.compositions == ["Fe2 O3", "Al2 O3"]
     assert cfg.with_metrics is False  # --no-metrics
+
+
+def test_predict_seed_and_accelerator_route_to_predict_section(tmp_path) -> None:
+    # regression: --seed / --accelerator used to inject [training] and crash predict's builder.
+    from foundation_model.cli.main import _predict_config
+
+    path = tmp_path / "pred.toml"
+    path.write_text(_PREDICT_CONFIG)
+    cfg = _predict_config(str(path), (), None, 7, "cpu", None, "ck.pt", None, None, None, False)
+    assert cfg.seed == 7 and cfg.accelerator == "cpu"

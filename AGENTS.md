@@ -61,7 +61,9 @@ flags on every subcommand: `--config` (required), `--output-dir`, `--set section
 (repeatable, value parsed with TOML semantics), `--seed`, `--accelerator`, `--sample`. Each run
 writes `run_provenance.json` (resolved config + package versions + git + argv + seeds) and
 `run.log` into its output dir via `workflows/recording.py::RunRecorder`. Sample configs live in
-`samples/*.toml` (formal + `*_smoke.toml` variants).
+`samples/*.toml` (formal + `*_smoke.toml` variants); the full per-key schema (every section, type,
+default, constraint) is [`docs/configuration.md`](docs/configuration.md) — keep it in sync when you
+add or change a config field.
 
 ## Architecture
 
