@@ -17,9 +17,10 @@ import torch.nn as nn
 from lightning.pytorch.loggers import CSVLogger
 
 from foundation_model.data.datamodule import CompoundDataModule
-from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
+from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel, OptimizationTarget
 from foundation_model.models.model_config import (
     ClassificationTaskConfig,
+    KernelRegressionTaskConfig,
     MLPEncoderConfig,
     OptimizerConfig,
     RegressionTaskConfig,
@@ -948,12 +949,12 @@ def test_optimize_latent_combined_reg_and_class_targets():
         steps=20,
     )
     assert res.optimized_input.shape == (5, 1, INPUT_DIM)  # reconstructed via AE
-    assert res.optimized_target.shape == (5, 1, 1)  # one regression task tracked
+    assert res.optimized_target.shape == (5, 1, 2)  # one regression + one class channel
 
 
 def test_optimize_latent_class_targets_rejects_regression_task():
     model = _make_reg_clf_model()
-    with pytest.raises(ValueError, match="must be a classification task"):
+    with pytest.raises(ValueError, match="accepts value/direction"):
         model.optimize_latent(
             initial_input=torch.randn(2, INPUT_DIM),
             class_targets={"prop": [0]},
@@ -978,7 +979,7 @@ def test_optimize_latent_class_targets_only_no_regression():
     x = torch.randn(4, INPUT_DIM)
     res = model.optimize_latent(initial_input=x, class_targets={"cls": [1]}, optimize_space="input", steps=10)
     assert res.optimized_input.shape == (4, 1, INPUT_DIM)
-    assert res.optimized_target.shape == (4, 1, 0)  # no regression tasks tracked
+    assert res.optimized_target.shape == (4, 1, 1)  # the class channel (P(classes)) is tracked
 
 
 def test_optimize_latent_ae_align_validates_range():
@@ -1006,42 +1007,43 @@ def test_optimize_latent_ae_align_runs_in_latent_space():
     x = torch.randn(4, INPUT_DIM)
     res = model.optimize_latent(
         initial_input=x,
-        task_targets={"prop": 1.0},
-        class_targets={"cls": [1]},
-        class_target_weight=3.0,
+        targets=[
+            OptimizationTarget(task="prop", value=1.0),
+            OptimizationTarget(task="cls", classes=[1], weight=3.0),
+        ],
         ae_align_scale=0.5,  # default empirical sweet spot
         optimize_space="latent",
         steps=10,
     )
     assert res.optimized_input.shape == (4, 1, INPUT_DIM)
-    assert res.optimized_target.shape == (4, 1, 1)
+    assert res.optimized_target.shape == (4, 1, 2)
 
 
-def test_optimize_latent_class_target_weight_rejects_nonpositive():
+def test_optimize_latent_target_weight_rejects_nonpositive():
     model = _make_reg_clf_model()
-    with pytest.raises(ValueError, match="class_target_weight must be > 0"):
+    with pytest.raises(ValueError, match="weight must be > 0"):
         model.optimize_latent(
             initial_input=torch.randn(2, INPUT_DIM),
-            class_targets={"cls": [1]},
-            class_target_weight=0.0,
+            targets=[OptimizationTarget(task="cls", classes=[1], weight=0.0)],
             optimize_space="input",
         )
 
 
-def test_optimize_latent_class_target_weight_runs_with_combined_objectives():
+def test_optimize_latent_target_weight_runs_with_combined_objectives():
     torch.manual_seed(0)
     model = _make_reg_clf_model()
     x = torch.randn(4, INPUT_DIM)
     res = model.optimize_latent(
         initial_input=x,
-        task_targets={"prop": 1.0},
-        class_targets={"cls": [1]},
-        class_target_weight=5.0,  # class probability is the primary objective
+        targets=[
+            OptimizationTarget(task="prop", value=1.0),
+            OptimizationTarget(task="cls", classes=[1], weight=5.0),  # class prob is primary
+        ],
         optimize_space="input",
         steps=10,
     )
     assert res.optimized_input.shape == (4, 1, INPUT_DIM)
-    assert res.optimized_target.shape == (4, 1, 1)  # one regression task tracked
+    assert res.optimized_target.shape == (4, 1, 2)  # regression channel + class channel
 
 
 def test_optimize_latent_restores_requires_grad_after_call():
@@ -1066,6 +1068,156 @@ def test_optimize_latent_restores_requires_grad_after_call():
     assert actual == expected
 
 
+# --- OptimizationTarget kinds (direction / curve / class-low) -----------------
+
+
+def _make_full_model():
+    """Regression + classification + kernel-regression heads (AE on) for target-kind tests."""
+    enc = MLPEncoderConfig(hidden_dims=[INPUT_DIM, 16, LATENT_DIM])
+    tasks = [
+        RegressionTaskConfig(name="prop", data_column="prop", dims=[LATENT_DIM, 8, 1]),
+        ClassificationTaskConfig(name="cls", data_column="cls", num_classes=3, dims=[LATENT_DIM, 8, 3]),
+        KernelRegressionTaskConfig(
+            name="curve",
+            data_column="curve",
+            t_column="curve_t",
+            x_dim=[LATENT_DIM, 8, 4],
+            t_dim=[4, 4],
+            t_encoding_method="fc",
+        ),
+    ]
+    return FlexibleMultiTaskModel(task_configs=tasks, encoder_config=enc, enable_autoencoder=True)
+
+
+def test_direction_target_moves_prediction_both_ways():
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    model.eval()
+    x = torch.randn(6, INPUT_DIM)
+    up = model.optimize_latent(
+        initial_input=x, targets=[OptimizationTarget(task="prop", direction="high")], steps=50, lr=0.1
+    )
+    down = model.optimize_latent(
+        initial_input=x, targets=[OptimizationTarget(task="prop", direction="low")], steps=50, lr=0.1
+    )
+    assert up.optimized_target[:, 0, 0].mean() > up.initial_score[:, 0, 0].mean()
+    assert down.optimized_target[:, 0, 0].mean() < down.initial_score[:, 0, 0].mean()
+
+
+def test_class_low_direction_decreases_probability():
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    model.eval()
+    x = torch.randn(8, INPUT_DIM)
+    res = model.optimize_latent(
+        initial_input=x, targets=[OptimizationTarget(task="cls", classes=[1], direction="low")], steps=80, lr=0.1
+    )
+    # Channel is P(classes) for both directions; "low" must push it down.
+    assert res.optimized_target[:, 0, 0].mean() < res.initial_score[:, 0, 0].mean()
+
+
+def test_class_target_covering_all_classes_rejected():
+    model = _make_reg_clf_model()
+    for direction in ("high", "low"):
+        with pytest.raises(ValueError, match="strict subset"):
+            model.optimize_latent(
+                initial_input=torch.randn(2, INPUT_DIM),
+                targets=[OptimizationTarget(task="cls", classes=[0, 1, 2], direction=direction)],
+            )
+
+
+def test_curve_target_reduces_rmse_channel():
+    torch.manual_seed(0)
+    model = _make_full_model()
+    model.eval()
+    x = torch.randn(5, INPUT_DIM)
+    points = [[0.1, 0.5], [0.5, 1.0], [0.9, 0.2]]
+    res = model.optimize_latent(
+        initial_input=x, targets=[OptimizationTarget(task="curve", points=points)], steps=60, lr=0.1
+    )
+    assert res.optimized_target.shape == (5, 1, 1)
+    assert res.trajectory.shape == (5, 1, 60, 1)
+    # Channel is RMSE-to-curve — must decrease.
+    assert res.optimized_target[:, 0, 0].mean() < res.initial_score[:, 0, 0].mean()
+
+
+def test_regression_target_field_matrix_validation():
+    model = _make_full_model()
+    x = torch.randn(2, INPUT_DIM)
+    # both value and direction
+    with pytest.raises(ValueError, match="exactly one of value or direction"):
+        model.optimize_latent(initial_input=x, targets=[OptimizationTarget(task="prop", value=1.0, direction="high")])
+    # neither
+    with pytest.raises(ValueError, match="exactly one of value or direction"):
+        model.optimize_latent(initial_input=x, targets=[OptimizationTarget(task="prop")])
+    # curve task without points
+    with pytest.raises(ValueError, match="non-empty points"):
+        model.optimize_latent(initial_input=x, targets=[OptimizationTarget(task="curve")])
+    # malformed points
+    with pytest.raises(ValueError, match=r"\[t, y\] pairs"):
+        model.optimize_latent(initial_input=x, targets=[OptimizationTarget(task="curve", points=[[1.0, 2.0, 3.0]])])
+    # classification without classes
+    with pytest.raises(ValueError, match="non-empty classes"):
+        model.optimize_latent(initial_input=x, targets=[OptimizationTarget(task="cls")])
+    # duplicate task
+    with pytest.raises(ValueError, match="Duplicate"):
+        model.optimize_latent(
+            initial_input=x,
+            targets=[OptimizationTarget(task="prop", value=1.0), OptimizationTarget(task="prop", direction="high")],
+        )
+    # targets is exclusive with the sugar kwargs
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        model.optimize_latent(
+            initial_input=x, targets=[OptimizationTarget(task="prop", value=1.0)], task_targets={"prop": 1.0}
+        )
+
+
+def test_evaluate_targets_matches_initial_score_and_hand_computation():
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    model.eval()
+    x = torch.randn(4, INPUT_DIM)
+    targets = [
+        OptimizationTarget(task="prop", value=2.0, weight=3.0),
+        OptimizationTarget(task="cls", classes=[1], weight=5.0),
+    ]
+    channels, objective = model.evaluate_targets(x, targets)
+    assert channels.shape == (4, 2)
+    assert objective.shape == (4,)
+    # Channels equal a plain forward; objective equals the weighted per-sample loss sum.
+    with torch.no_grad():
+        h = torch.tanh(model.encoder(x))
+        pred = model.task_heads["prop"](h).squeeze(-1)
+        probs = torch.softmax(model.task_heads["cls"](h), dim=-1)
+        p_sel = probs[:, 1]
+        expected_obj = 3.0 * (pred - 2.0) ** 2 + 5.0 * (-torch.log(p_sel))
+    assert torch.allclose(channels[:, 0], pred, atol=1e-5)
+    assert torch.allclose(channels[:, 1], p_sel, atol=1e-5)
+    assert torch.allclose(objective, expected_obj, atol=1e-4)
+    # And the same channels come back as optimize_latent's initial_score.
+    res = model.optimize_latent(initial_input=x, targets=targets, steps=1)
+    assert torch.allclose(res.initial_score[:, 0, :], channels, atol=1e-5)
+
+
+def test_optimize_composition_mixed_target_kinds_smoke():
+    torch.manual_seed(0)
+    model = _make_full_model()
+    kernel = torch.randn(6, INPUT_DIM)
+    res = model.optimize_composition(
+        kernel,
+        targets=[
+            OptimizationTarget(task="prop", direction="low"),
+            OptimizationTarget(task="cls", classes=[2]),
+            OptimizationTarget(task="curve", points=[[0.2, 0.5], [0.8, 1.5]]),
+        ],
+        n_starts=3,
+        steps=8,
+    )
+    assert res.optimized_target.shape == (3, 3)
+    assert res.trajectory.shape == (8, 3, 3)
+    assert res.initial_score.shape == (3, 3)
+
+
 # --- optimize_composition (differentiable KMD) --------------------------------
 
 
@@ -1076,9 +1228,10 @@ def test_optimize_composition_runs_and_returns_simplex_weights():
     kmd_kernel = torch.randn(n_components, INPUT_DIM)
     res = model.optimize_composition(
         kmd_kernel,
-        task_targets={"prop": 1.0},
-        class_targets={"cls": [1]},
-        class_target_weight=3.0,
+        targets=[
+            OptimizationTarget(task="prop", value=1.0),
+            OptimizationTarget(task="cls", classes=[1], weight=3.0),
+        ],
         n_starts=4,
         steps=10,
     )
@@ -1089,8 +1242,8 @@ def test_optimize_composition_runs_and_returns_simplex_weights():
     assert res.optimized_descriptor.shape == (4, INPUT_DIM)
     # Descriptor matches the matmul exactly (no round-trip).
     assert torch.allclose(res.optimized_descriptor, res.optimized_weights @ kmd_kernel, atol=1e-5)
-    assert res.optimized_target.shape == (4, 1)
-    assert res.trajectory.shape == (10, 4, 1)
+    assert res.optimized_target.shape == (4, 2)
+    assert res.trajectory.shape == (10, 4, 2)
 
 
 def test_optimize_composition_validates_kernel_and_objectives():
@@ -1102,7 +1255,7 @@ def test_optimize_composition_validates_kernel_and_objectives():
     with pytest.raises(ValueError, match="encoder.input_dim"):
         model.optimize_composition(torch.randn(6, INPUT_DIM + 1), task_targets={"prop": 1.0}, n_starts=2, steps=2)
     # at least one objective required
-    with pytest.raises(ValueError, match="at least one of task_targets"):
+    with pytest.raises(ValueError, match="at least one of"):
         model.optimize_composition(torch.randn(6, INPUT_DIM), n_starts=2, steps=2)
 
 
@@ -1123,8 +1276,7 @@ def test_optimize_composition_increases_target_class_probability():
     res = model.optimize_composition(
         kmd_kernel,
         initial_weights=init_w,
-        class_targets={"cls": target},
-        class_target_weight=5.0,
+        targets=[OptimizationTarget(task="cls", classes=target, weight=5.0)],
         steps=200,
         lr=0.2,
     )
@@ -1155,14 +1307,14 @@ def test_optimize_composition_does_not_reset_global_rng():
 
 
 def test_optimize_composition_trajectory_shape_when_zero_steps():
-    """Empty trajectory still carries the regression-task width T (not 0)."""
+    """Empty trajectory still carries the target-channel width T (not 0)."""
     model = _make_reg_clf_model()
     kernel = torch.randn(6, INPUT_DIM)
     res = model.optimize_composition(
         kernel, task_targets={"prop": 0.0}, class_targets={"cls": [1]}, n_starts=3, steps=0
     )
-    # tasks_for_optimization = ["prop"] → T == 1
-    assert res.trajectory.shape == (0, 3, 1)
+    # targets = [prop (value), cls (class)] → T == 2
+    assert res.trajectory.shape == (0, 3, 2)
 
 
 def test_optimize_composition_does_not_populate_module_grads():
@@ -1222,9 +1374,10 @@ def test_optimize_composition_allowed_elements_symbol_whitelist():
     whitelist = ["Mg", "Al", "Cu", "Ni"]
     res = model.optimize_composition(
         kernel,
-        task_targets={"prop": 1.0},
-        class_targets={"cls": [1]},
-        class_target_weight=3.0,
+        targets=[
+            OptimizationTarget(task="prop", value=1.0),
+            OptimizationTarget(task="cls", classes=[1], weight=3.0),
+        ],
         n_starts=3,
         allowed_elements=whitelist,
         steps=15,
@@ -1560,9 +1713,10 @@ def test_optimize_composition_max_elements_enforces_K_cardinality():
     K = 3
     res = model.optimize_composition(
         kernel,
-        task_targets={"prop": 1.0},
-        class_targets={"cls": [1]},
-        class_target_weight=2.0,
+        targets=[
+            OptimizationTarget(task="prop", value=1.0),
+            OptimizationTarget(task="cls", classes=[1], weight=2.0),
+        ],
         n_starts=4,
         max_elements=K,
         steps=120,
