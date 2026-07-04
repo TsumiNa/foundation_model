@@ -2207,7 +2207,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     # Forward through encoder and apply Tanh
                     h_task = torch.tanh(self.encoder(optim_input))
                     channels, per_sample_losses = self._optimization_objective(h_task, prepared)
-                    loss = per_sample_losses.mean(dim=0).mean()
+                    # Σ over targets per sample, then batch mean — the same objective
+                    # evaluate_targets() reports (and the documented Σ wᵢ·termᵢ form).
+                    loss = per_sample_losses.sum(dim=1).mean()
 
                     # Backward and optimize
                     loss.backward()
@@ -2266,14 +2268,15 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     # This ensures architectural consistency on every optimization step
                     h_task = torch.tanh(optim_latent)
                     channels, per_sample_losses = self._optimization_objective(h_task, prepared)
-                    loss_terms = list(per_sample_losses.mean(dim=0))
+                    # Σ over targets per sample, then batch mean (matches evaluate_targets); the
+                    # AE term is added on top so its scale is independent of the target count.
+                    loss = per_sample_losses.sum(dim=1).mean()
                     if ae_align_scale > 0:
                         # Pull the optimised latent toward what the AE faithfully reconstructs:
                         # decode it to a descriptor, re-encode, and penalise the drift in h_task.
                         # The user-facing knob is [0, 1] with 0 = no penalty / 1 = strong penalty.
                         re_h_task = torch.tanh(self.encoder(self.task_heads[_AE_TASK](h_task)))
-                        loss_terms.append(ae_align_scale * F.mse_loss(re_h_task, h_task))
-                    loss = torch.stack(loss_terms).mean()
+                        loss = loss + ae_align_scale * F.mse_loss(re_h_task, h_task)
 
                     # Backward and optimize
                     loss.backward()
@@ -3203,10 +3206,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     w = w_soft
                 return _apply_min_floor(_apply_lock_paste(w))
 
-            def _heads_forward(h_task: torch.Tensor) -> tuple[torch.Tensor, list[torch.Tensor]]:
-                """Evaluate the target terms; return (per-target channels (B, T), scalar loss terms)."""
+            def _heads_forward(h_task: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+                """Evaluate the target terms; return (per-target channels (B, T), scalar objective).
+
+                The objective is Σ over targets per sample, then batch mean — the same quantity
+                :meth:`evaluate_targets` reports (and the documented Σ wᵢ·termᵢ form).
+                """
                 channels, per_sample_losses = self._optimization_objective(h_task, prepared)
-                return channels, list(per_sample_losses.mean(dim=0))
+                return channels, per_sample_losses.sum(dim=1).mean()
 
             n_channels = len(prepared)
 
@@ -3232,14 +3239,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 w = _w_from_logits(logits)
                 x = w @ kmd_kernel
                 h_task = torch.tanh(self.encoder(x))
-                channels, terms = _heads_forward(h_task)
+                channels, loss = _heads_forward(h_task)
                 if diversity_scale < 1.0:
                     # The penalty strength is (1 − diversity_scale): user sees a [0, 1] knob
                     # where 1 means "no penalty / most diverse" and 0 means "max penalty / most
-                    # peaky". The internal term is `(1 − diversity_scale) · H(w)` added to loss.
+                    # peaky". The internal term is `(1 − diversity_scale) · H(w)` added to loss —
+                    # additively, so its scale is independent of the target count.
                     entropy = -(w * w.clamp(min=1e-12).log()).sum(dim=-1).mean()
-                    terms.append((1.0 - diversity_scale) * entropy)
-                loss = torch.stack(terms).mean()
+                    loss = loss + (1.0 - diversity_scale) * entropy
                 loss.backward()
                 if step_scale is not None and logits.grad is not None:
                     # Soft per-element constraint: scale each element's logit gradient (0 = frozen).
