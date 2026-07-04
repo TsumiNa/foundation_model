@@ -1,0 +1,70 @@
+# Realized pretraining task orders (seed=2025+ORD, task_order_seed=7501+ORD)
+
+ord0:
+  01 formation_energy
+  02 total_magnetization
+  03 tc
+  04 magnetization
+  05 curie
+  06 neel
+  07 density
+  08 magnetic_moment
+  09 kp
+  10 final_energy
+  11 material_type
+  12 efermi
+  13 volume
+  14 klat
+  15 zt
+  16 dos_density
+  17 magnetic_susceptibility
+  18 seebeck
+  19 power_factor
+  20 thermal_conductivity
+  21 electrical_resistivity
+
+ord1:
+  01 formation_energy
+  02 magnetic_moment
+  03 efermi
+  04 klat
+  05 volume
+  06 magnetization
+  07 curie
+  08 material_type
+  09 kp
+  10 density
+  11 neel
+  12 tc
+  13 final_energy
+  14 total_magnetization
+  15 seebeck
+  16 thermal_conductivity
+  17 magnetic_susceptibility
+  18 power_factor
+  19 electrical_resistivity
+  20 dos_density
+  21 zt
+
+ord2:
+  01 formation_energy
+  02 efermi
+  03 klat
+  04 density
+  05 curie
+  06 kp
+  07 material_type
+  08 total_magnetization
+  09 tc
+  10 magnetization
+  11 magnetic_moment
+  12 volume
+  13 neel
+  14 final_energy
+  15 power_factor
+  16 magnetic_susceptibility
+  17 seebeck
+  18 zt
+  19 thermal_conductivity
+  20 dos_density
+  21 electrical_resistivity
