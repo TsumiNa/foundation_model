@@ -58,8 +58,11 @@ Run `ORD ∈ {0,1,2}` uses `--seed 2025+ORD --set pretrain.task_order_seed=7501+
 
 Submit: `sbatch jobs/smoke.sbatch` → check `SMOKE_PASS` in the log → `bash jobs/submit_all.sh`.
 Every worker is idempotent (skip-if-done per k + `--resume`), so any failed/timed-out job is
-fixed by resubmitting the same command. If a pretrain job fails, its two dependents go
-`DependencyNeverSatisfied` — resubmit the pretrain, then the two eval jobs.
+fixed by resubmitting the same command. If a pretrain job fails, its two dependents stay
+**PENDING with reason `DependencyNeverSatisfied` forever** (verified live on rikyu 2026-07-05:
+`afterok` releases correctly on success, but the scheduler does *not* auto-cancel on failure —
+no `kill_invalid_depend`). Recovery: `scancel` the two stuck eval jobs, resubmit the pretrain,
+then resubmit the eval jobs with a fresh `--dependency=afterok:<new pre id>`.
 
 ## Analysis (after the runs; scripts land in `analysis/`)
 
