@@ -346,8 +346,10 @@ the method; algorithm reference in
 
 All three compose orthogonally with each other and with `allowed_elements` / `element_step_scale`.
 
-Both methods share the same regression-MSE + classification-cross-entropy backbone; only the
-third loss term and the optimisation variable differ. **Reference:**
+Both methods share the same user-specified objective backbone — a list of targets (regression
+value or direction high/low, kernel-regression target curves, classification label(s)
+probability high/low), each with its own weight; only the method-specific loss term and the
+optimisation variable differ. **Reference:**
 [docs/inverse_design_algorithms.md](docs/inverse_design_algorithms.md).
 
 ### End-to-end pipeline
@@ -368,9 +370,10 @@ fm inverse  --config samples/inverse.toml \
     --checkpoint artifacts/finetune/training/final_model.pt
 ```
 
-Each scenario folder ends up with `comparison.png` (bar chart), `element_frequency_heatmap.png`
-(per-path × top-K elements with newly-discovered elements highlighted),
-`qc_vs_secondary_scatter.png` (per-seed cloud with the seed-baseline layer), and
+Each scenario folder ends up with `comparison.png` (bar chart: objective score + one panel per
+target), `element_frequency_heatmap.png` (per-path × top-K elements with newly-discovered
+elements highlighted), `objective_vs_targets_scatter.png` (per-seed cloud with the seed-baseline
+layer), and
 `seed_to_optimized__<path>.png` (per-path 1:1 mapping), plus `scenario.json` / `results.json` /
 `summary.json` + `SUMMARY.md` and per-path trajectory `.npz` (+ static/animated plots).
 

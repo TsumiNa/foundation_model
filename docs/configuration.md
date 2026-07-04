@@ -226,7 +226,6 @@ finetune/inverse/predict consume. Enable to *also* emit Lightning `.ckpt` files.
 | `checkpoint` | str (path) | — | required (or `--checkpoint`) | Trained checkpoint to inverse-design from. |
 | `steps` | int | `300` | | Gradient-optimization steps (`--steps` overrides). |
 | `lr` | float | `0.05` | | Optimizer learning rate. |
-| `class_weight` | float | `5.0` | | Weight of the classification objective vs. the regression targets. |
 | `record_trajectory` | bool | `true` | | Record + emit optimization trajectories (`--no-trajectory` disables). |
 | `per_seed_trajectories` | bool | `false` | | Also emit per-seed trajectory plots (capped at 20). |
 | `animation_formats` | list[str] | `["gif"]` | ⊆ `{gif, html, svg}` | Trajectory animation formats (`--animation-formats` overrides). |
@@ -241,7 +240,7 @@ paths** (3 latent + 8 composition) is used.
 
 | Key | Type | Default | Constraint | Description |
 |---|---|---|---|---|
-| `strategy` | str | `"top_qc"` | `top_qc` \| `random` \| `explicit` | Seed-selection algorithm. |
+| `strategy` | str | `"top_objective"` | `top_objective` \| `random` \| `explicit` | Seed-selection algorithm. `top_objective` ranks the candidate pool (the target tasks' rows in the chosen split) by the scenario's objective score — the exact weighted loss the optimizers minimise — and takes the best (lowest) `n`. |
 | `n` | int | `20` | `>= 1` | Total seed compositions to return. |
 | `split` | str | `"test"` | `train`/`val`/`test`/`all` | Split to draw candidates from. |
 | `explicit` | list[str] | `[]` | required (non-empty) when `strategy = explicit` | Explicit candidate pool. |
@@ -250,15 +249,50 @@ paths** (3 latent + 8 composition) is used.
 
 ### `[[inverse.scenarios]]` — design objectives (array of tables)
 
-At least one required; names unique.
+At least one required; names unique. Each scenario is `name` + a non-empty
+`[[inverse.scenarios.targets]]` array; every task named in a target must have a head in the
+checkpoint.
 
 | Key | Type | Default | Constraint | Description |
 |---|---|---|---|---|
 | `name` | str | — | required, unique | Scenario identifier (→ output subdir). |
-| `reg_tasks` | list[str] | — | required, non-empty, `len == len(reg_targets)` | Regression heads to steer. |
-| `reg_targets` | list[float] | — | required, paired with `reg_tasks` | Desired value per regression task. |
-| `class_task` | str | `"material_type"` | | Classification head defining the objective. |
-| `class_target` | int | `None` | | Target class index; `None` = the default class `[1]`. |
+| `targets` | array of tables | — | required, non-empty; one entry per task, no duplicates | The objective terms (below). |
+
+### `[[inverse.scenarios.targets]]` — one objective term (array of tables)
+
+The target kind derives from the task's `[[tasks]].kind`; the allowed keys are kind-conditional:
+
+| Key | Type | Applies to | Description |
+|---|---|---|---|
+| `task` | str | all | Task name (must exist in the catalog + checkpoint). |
+| `value` | float | regression | Steer the prediction toward this value (MSE). Exactly one of `value`/`direction` per regression target. |
+| `direction` | str (`"high"` \| `"low"`) | regression, classification | Regression: push the prediction up/down with **no fixed goal** — the objective is unbounded, so the achieved magnitude scales with `steps × lr`; use `weight` to balance it against the bounded terms. Classification: push `P(classes)` up (default) or down. |
+| `points` | list of `[t, y]` pairs | kernel_regression | Target curve: the head is evaluated at the given `t` values and pulled toward the given `y` values (MSE over the points). `t` outside the head's trained range extrapolates. |
+| `classes` | list[int] | classification | Label indices whose combined probability is steered. Must be a **strict subset** of the head's classes (the full set makes the objective constant/undefined). |
+| `weight` | float | all | `> 0`, default `1.0`. Scales this term against the scenario's other targets. |
+
+```toml
+[[inverse.scenarios]]
+name = "fe_down_diel_up"
+
+[[inverse.scenarios.targets]]
+task = "formation_energy"   # regression, value mode
+value = -1.0
+
+[[inverse.scenarios.targets]]
+task = "dielectric_total"   # regression, direction-only mode
+direction = "high"
+weight = 2.0
+
+[[inverse.scenarios.targets]]
+task = "dos_density"        # kernel_regression: target curve
+points = [[-2.0, 0.5], [0.0, 1.2], [2.0, 0.8]]
+
+[[inverse.scenarios.targets]]
+task = "material_type"      # classification (optional — no default class objective)
+classes = [1, 3]
+direction = "low"
+```
 
 ### `[[inverse.paths]]` — algorithm variants (array of tables)
 

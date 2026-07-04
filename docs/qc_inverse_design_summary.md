@@ -1,5 +1,13 @@
 # QC inverse-design study — summary
 
+> **Historical note.** This documents the original quasicrystal (QC) study, which ran with a
+> then-hardcoded "QC-classification primary" objective. The engine has since been generalized:
+> scenario targets are now fully user-specified (`[[inverse.scenarios.targets]]` — regression
+> value/direction, kernel-regression curves, classification label(s) high/low, per-target
+> weights) with no built-in QC objective. See [configuration.md](configuration.md) and
+> [inverse_design_algorithms.md](inverse_design_algorithms.md) for the current schema; the QC
+> setup below is reproducible as an ordinary scenario (`classes = [1]`, `weight = 5.0`).
+
 One-page summary of the messages the continual-rehearsal + inverse-design pipeline
 (`fm pretrain` → `fm finetune` → `fm inverse`) carries. Written so each bullet maps to either a
 slide or a paragraph of the paper.

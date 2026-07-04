@@ -3,13 +3,14 @@
 
 """``fm inverse`` — scenario × path inverse-design engine.
 
-For each scenario (a set of regression targets + a classification objective) the engine selects
-seed compositions once per run, then optimises them along each configured *path* — either
-latent-space optimisation with AE alignment (``optimize_latent``) or differentiable
-composition-space optimisation over element weights (``optimize_composition``). Migrated from
-``scripts/paper_inverse_comparison.py`` (per-path engine + figures), ``paper_inverse_3scenarios.py``
-(per-scenario loop) and the seed selection in ``continual_rehearsal_demo._select_seeds``.
-Trajectory analytics live in :mod:`foundation_model.workflows.inverse_trajectory`.
+Each scenario is a fully user-specified set of objective targets — regression tasks toward a
+value or a direction (higher/lower), kernel-regression tasks toward a target curve
+``{(t_i, y_i)}``, classification tasks pushing the probability of chosen label(s) high or low —
+each with its own weight. The engine selects seed compositions once per run, then optimises them
+along each configured *path* — either latent-space optimisation with AE alignment
+(``optimize_latent``) or differentiable composition-space optimisation over element weights
+(``optimize_composition``). Trajectory analytics live in
+:mod:`foundation_model.workflows.inverse_trajectory`.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ import torch  # noqa: E402
 from lightning import seed_everything  # noqa: E402
 from loguru import logger  # noqa: E402
 
+from foundation_model.models.flexible_multi_task_model import OptimizationTarget  # noqa: E402
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, formula_to_composition  # noqa: E402
 
 from . import inverse_trajectory  # noqa: E402
@@ -40,10 +42,8 @@ from ._engine import build_model_for_checkpoint, checkpoint_task_order  # noqa: 
 from ._sections import ModelSectionConfig, build_model_section, reject_unknown  # noqa: E402
 from .plots import DISCOVERED_ELEMENT_COLOR, SCATTER_COLOR  # noqa: E402
 from .recording import RunRecorder, load_checkpoint_state  # noqa: E402
-from .task_catalog import TaskCatalog, TaskCatalogConfig, build_task_catalog_config  # noqa: E402
+from .task_catalog import TaskCatalog, TaskCatalogConfig, TaskKind, TaskSpec, build_task_catalog_config  # noqa: E402
 
-# Default QC class indices for the classification objective when class_target is unset.
-_DEFAULT_QC_CLASSES = [1]
 _ANIMATION_FORMATS = {"gif", "html", "svg"}
 _ACCELERATORS = {"auto", "cpu"}
 _ELEMENT_TOKEN = re.compile(r"[A-Z][a-z]?")
@@ -66,7 +66,7 @@ class InverseMethod(str, Enum):
 
 
 class SeedStrategy(str, Enum):
-    TOP_QC = "top_qc"
+    TOP_OBJECTIVE = "top_objective"  # rank candidates by the scenario's objective score
     RANDOM = "random"
     EXPLICIT = "explicit"
 
@@ -76,7 +76,7 @@ class SeedStrategy(str, Enum):
 
 @dataclass(kw_only=True)
 class SeedConfig:
-    strategy: SeedStrategy = SeedStrategy.TOP_QC
+    strategy: SeedStrategy = SeedStrategy.TOP_OBJECTIVE
     n: int = 20
     split: str = "test"
     explicit: list[str] = field(default_factory=list)
@@ -94,30 +94,153 @@ class SeedConfig:
             raise ValueError("seeds.strategy='explicit' requires a non-empty seeds.explicit list.")
 
 
+class TargetKind(str, Enum):
+    VALUE = "value"  # regression toward a value
+    DIRECTION = "direction"  # regression pushed higher/lower (no fixed value)
+    CURVE = "curve"  # kernel-regression toward a {(t, y)} curve
+    CLASS = "class"  # classification label(s) probability pushed high/low
+
+
+@dataclass(kw_only=True)
+class TargetSpec:
+    """One ``[[inverse.scenarios.targets]]`` entry. The kind derives from the task's catalog kind:
+
+    - regression → exactly one of ``value`` / ``direction`` (``"high"`` | ``"low"``);
+    - kernel_regression → ``points`` = target curve ``[[t, y], ...]``;
+    - classification → ``classes`` (strict subset of the label indices) + optional ``direction``
+      (default ``"high"``).
+
+    ``weight`` (> 0, default 1.0) scales this term against the scenario's other targets.
+    Direction targets have no stationary point — the achieved magnitude scales with
+    ``steps × lr``; use ``weight`` to balance them against the bounded terms.
+    """
+
+    task: str
+    value: float | None = None
+    direction: str | None = None
+    points: list[list[float]] | None = None
+    classes: list[int] | None = None
+    weight: float = 1.0
+    kind: TargetKind = field(init=False, default=TargetKind.VALUE)
+
+    def __post_init__(self) -> None:
+        if float(self.weight) <= 0:
+            raise ValueError(f"target '{self.task}': weight must be > 0, got {self.weight}.")
+        if self.direction is not None and self.direction not in {"high", "low"}:
+            raise ValueError(f"target '{self.task}': direction must be 'high' or 'low', got {self.direction!r}.")
+        if self.points is not None:
+            pairs = [list(p) for p in self.points]
+            if not pairs or any(len(p) != 2 for p in pairs):
+                raise ValueError(f"target '{self.task}': points must be a non-empty list of [t, y] pairs.")
+            self.points = [[float(t), float(y)] for t, y in pairs]
+        if self.classes is not None:
+            if not self.classes:
+                raise ValueError(f"target '{self.task}': classes must be non-empty when given.")
+            self.classes = [int(c) for c in self.classes]
+
+    def resolve_kind(self, spec: TaskSpec) -> None:
+        """Cross-validate the fields against the task's catalog kind and set :attr:`kind`."""
+        name = self.task
+        if spec.kind is TaskKind.REGRESSION:
+            if self.points is not None or self.classes is not None:
+                raise ValueError(
+                    f"target '{name}' is a regression task: it accepts value/direction, not points/classes."
+                )
+            if (self.value is None) == (self.direction is None):
+                raise ValueError(f"target '{name}' (regression) needs exactly one of value or direction.")
+            self.kind = TargetKind.VALUE if self.value is not None else TargetKind.DIRECTION
+        elif spec.kind is TaskKind.KERNEL_REGRESSION:
+            if self.value is not None or self.direction is not None or self.classes is not None:
+                raise ValueError(f"target '{name}' is a kernel-regression task: it accepts points only.")
+            if not self.points:
+                raise ValueError(f"target '{name}' (kernel_regression) needs a non-empty points list of [t, y] pairs.")
+            self.kind = TargetKind.CURVE
+        else:  # classification
+            if self.value is not None or self.points is not None:
+                raise ValueError(f"target '{name}' is a classification task: it accepts classes (+ direction) only.")
+            if not self.classes:
+                raise ValueError(f"target '{name}' (classification) needs a non-empty classes list.")
+            if self.direction is None:
+                self.direction = "high"
+            n_cls = spec.num_classes
+            if n_cls is not None:
+                if any(not 0 <= c < n_cls for c in self.classes):
+                    raise ValueError(
+                        f"target '{name}': classes {self.classes} out of range for a {n_cls}-class task; "
+                        f"valid indices are [0, {n_cls})."
+                    )
+                if len(set(self.classes)) >= n_cls:
+                    raise ValueError(
+                        f"target '{name}': classes {self.classes} covers every class of a {n_cls}-class task; "
+                        "use a strict subset (the objective is otherwise constant/undefined)."
+                    )
+            self.kind = TargetKind.CLASS
+
+    def to_model_target(self) -> OptimizationTarget:
+        return OptimizationTarget(
+            task=self.task,
+            value=self.value,
+            direction=self.direction,
+            points=self.points,
+            classes=self.classes,
+            weight=self.weight,
+        )
+
+    def dump(self) -> dict[str, Any]:
+        """JSON-ready provenance record (omits unset fields)."""
+        out: dict[str, Any] = {"task": self.task, "kind": self.kind.value, "weight": self.weight}
+        for key in ("value", "direction", "points", "classes"):
+            if getattr(self, key) is not None:
+                out[key] = getattr(self, key)
+        out["label"] = target_label(self)
+        return out
+
+
+def target_label(spec: TargetSpec) -> str:
+    """Human-readable one-liner for a target — used as plot legend / progress-dict key."""
+    if spec.kind is TargetKind.VALUE:
+        return f"{spec.task}→{spec.value:g}"
+    if spec.kind is TargetKind.DIRECTION:
+        return f"{spec.task}{'↑' if spec.direction == 'high' else '↓'}"
+    if spec.kind is TargetKind.CURVE:
+        return f"{spec.task}~curve({len(spec.points or [])}pts)"
+    classes = ",".join(str(c) for c in (spec.classes or []))
+    return f"P({spec.task}∈{{{classes}}}){'↑' if spec.direction == 'high' else '↓'}"
+
+
 @dataclass(kw_only=True)
 class ScenarioConfig:
     name: str
-    reg_tasks: list[str]
-    reg_targets: list[float]
-    class_task: str = "material_type"
-    class_target: int | None = None  # None → legacy QC default class index
+    targets: list[TargetSpec]
 
     def __post_init__(self) -> None:
-        if not self.reg_tasks:
-            raise ValueError(f"scenario '{self.name}': reg_tasks must be non-empty.")
-        if len(self.reg_tasks) != len(self.reg_targets):
-            raise ValueError(
-                f"scenario '{self.name}': reg_tasks ({len(self.reg_tasks)}) and reg_targets "
-                f"({len(self.reg_targets)}) must have equal length."
+        if not self.targets:
+            raise ValueError(f"scenario '{self.name}': needs at least one [[inverse.scenarios.targets]] entry.")
+        names = [t.task for t in self.targets]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            raise ValueError(f"scenario '{self.name}': duplicate target task(s): {dupes}.")
+
+    @property
+    def task_names(self) -> list[str]:
+        return [t.task for t in self.targets]
+
+    @property
+    def model_targets(self) -> list[OptimizationTarget]:
+        return [t.to_model_target() for t in self.targets]
+
+    @property
+    def target_metas(self) -> list[inverse_trajectory.TargetMeta]:
+        return [
+            inverse_trajectory.TargetMeta(
+                task=t.task,
+                kind=t.kind.value,
+                label=target_label(t),
+                value=t.value,
+                class_high=t.direction != "low",
             )
-
-    @property
-    def reg_target_map(self) -> dict[str, float]:
-        return {t: float(v) for t, v in zip(self.reg_tasks, self.reg_targets)}
-
-    @property
-    def class_indices(self) -> list[int]:
-        return _DEFAULT_QC_CLASSES if self.class_target is None else [int(self.class_target)]
+            for t in self.targets
+        ]
 
 
 # Composition-path field defaults (used to reject latent-only / composition-only key misuse).
@@ -239,7 +362,6 @@ class InverseConfig:
     output_dir: Path
     steps: int = 300
     lr: float = 0.05
-    class_weight: float = 5.0
     record_trajectory: bool = True
     per_seed_trajectories: bool = False
     animation_formats: list[str] = field(default_factory=lambda: ["gif"])
@@ -276,10 +398,27 @@ def _build_seed_config(raw: Mapping[str, Any]) -> SeedConfig:
     return SeedConfig(**data)
 
 
-def _build_scenario(raw: Mapping[str, Any]) -> ScenarioConfig:
+def _build_target(raw: Mapping[str, Any], scenario_name: str, idx: int, specs: Mapping[str, TaskSpec]) -> TargetSpec:
     data = dict(raw)
-    reject_unknown(f"inverse.scenarios.{data.get('name', '?')}", data, set(ScenarioConfig.__dataclass_fields__))
-    return ScenarioConfig(**data)
+    where = f"inverse.scenarios.{scenario_name}.targets[{idx}]"
+    reject_unknown(where, data, {"task", "value", "direction", "points", "classes", "weight"})
+    if "task" not in data:
+        raise ValueError(f"{where}: 'task' is required.")
+    target = TargetSpec(**data)
+    if target.task not in specs:
+        raise ValueError(f"{where}: unknown task '{target.task}' (known tasks: {sorted(specs)}).")
+    target.resolve_kind(specs[target.task])
+    return target
+
+
+def _build_scenario(raw: Mapping[str, Any], specs: Mapping[str, TaskSpec]) -> ScenarioConfig:
+    data = dict(raw)
+    name = str(data.get("name", "?"))
+    reject_unknown(f"inverse.scenarios.{name}", data, {"name", "targets"})
+    if "name" not in data:
+        raise ValueError("every [[inverse.scenarios]] entry needs a 'name'.")
+    targets = [_build_target(t, name, i, specs) for i, t in enumerate(data.get("targets", []))]
+    return ScenarioConfig(name=name, targets=targets)
 
 
 def _build_path(raw: Mapping[str, Any]) -> PathConfig:
@@ -305,7 +444,6 @@ def build_inverse_config(
             "checkpoint",
             "steps",
             "lr",
-            "class_weight",
             "record_trajectory",
             "per_seed_trajectories",
             "animation_formats",
@@ -324,7 +462,8 @@ def build_inverse_config(
         raise ValueError("output directory must be given via --output-dir or [output].dir.")
 
     seeds = _build_seed_config(inv_raw.get("seeds", {}))
-    scenarios = [_build_scenario(s) for s in inv_raw.get("scenarios", [])]
+    task_specs = {t.name: t for t in catalog.tasks}
+    scenarios = [_build_scenario(s, task_specs) for s in inv_raw.get("scenarios", [])]
     paths = [_build_path(p) for p in inv_raw.get("paths", [])]
 
     return InverseConfig(
@@ -337,7 +476,6 @@ def build_inverse_config(
         output_dir=Path(resolved_output),
         steps=int(inv_raw.get("steps", 300)),
         lr=float(inv_raw.get("lr", 0.05)),
-        class_weight=float(inv_raw.get("class_weight", 5.0)),
         record_trajectory=bool(inv_raw.get("record_trajectory", True)),
         per_seed_trajectories=bool(inv_raw.get("per_seed_trajectories", False)),
         animation_formats=list(inv_raw.get("animation_formats", ["gif"])),
@@ -349,17 +487,16 @@ def build_inverse_config(
 # --- prediction helpers -------------------------------------------------------------------
 
 
-def _qc_prob(model: Any, x: torch.Tensor, class_task: str, class_indices: Sequence[int]) -> np.ndarray:
-    with torch.no_grad():
-        h = torch.tanh(model.encoder(x))
-        probs = torch.softmax(model.task_heads[class_task](h), dim=-1)
-        return probs[:, list(class_indices)].sum(dim=-1).cpu().numpy()
+def _evaluate(model: Any, x: torch.Tensor, specs: Sequence[TargetSpec]) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """Per-target channels (keyed by task name) + per-sample objective score for descriptors ``x``.
 
-
-def _reg_preds(model: Any, x: torch.Tensor, tasks: Sequence[str]) -> dict[str, np.ndarray]:
-    with torch.no_grad():
-        h = torch.tanh(model.encoder(x))
-        return {t: model.task_heads[t](h).squeeze(-1).cpu().numpy() for t in tasks}
+    Thin wrapper over :meth:`FlexibleMultiTaskModel.evaluate_targets` — the same terms the
+    optimisers minimise, so baselines, after-decode stats and seed ranking cannot drift from the
+    optimisation objective.
+    """
+    channels, objective = model.evaluate_targets(x, [s.to_model_target() for s in specs])
+    ch = channels.cpu().numpy()
+    return {s.task: ch[:, j] for j, s in enumerate(specs)}, objective.cpu().numpy()
 
 
 def _seed_weights(seeds: Sequence[str]) -> torch.Tensor:
@@ -423,11 +560,16 @@ def select_seeds(
     model: Any,
     seed_cfg: SeedConfig,
     *,
-    class_task: str,
-    class_indices: Sequence[int],
+    targets: Sequence[TargetSpec],
     device: torch.device,
 ) -> list[str]:
-    """Select seed compositions per :class:`SeedConfig` (mirrors the legacy ``_select_seeds``)."""
+    """Select seed compositions per :class:`SeedConfig`.
+
+    The candidate pool is the ordered union of the scenario's target tasks' data frames (filtered
+    to ``seed_cfg.split``). ``top_objective`` ranks the pool by the scenario's objective score
+    (lower = closer to the targets) via :meth:`FlexibleMultiTaskModel.evaluate_targets` — the
+    exact quantity the optimisers minimise.
+    """
 
     descriptor_fn = catalog.descriptor_fn()
 
@@ -451,11 +593,17 @@ def select_seeds(
         pool = [c for c in seed_cfg.explicit if _has_descriptor(c)]
         return _merge(_dedup_by_system(pool, n_strategy, enabled=seed_cfg.dedup_by_element_system))
 
-    frame = catalog.task_frames([class_task])[class_task]
-    if seed_cfg.split == "all" or "split" not in frame.columns:
-        index = list(frame.index)
-    else:
-        index = list(frame.index[frame["split"] == seed_cfg.split])
+    # Candidate pool: ordered union across the scenario's target tasks (target order, then frame
+    # row order) — no dependence on any particular head kind.
+    frames = catalog.task_frames([t.task for t in targets])
+    index: list[str] = []
+    for t in targets:
+        frame = frames[t.task]
+        if seed_cfg.split == "all" or "split" not in frame.columns:
+            index.extend(frame.index)
+        else:
+            index.extend(frame.index[frame["split"] == seed_cfg.split])
+    index = list(dict.fromkeys(str(c) for c in index))
     pool = [c for c in index if _has_descriptor(c)]
     if not pool:
         return appended
@@ -465,10 +613,14 @@ def select_seeds(
         shuffled = [pool[i] for i in rng.permutation(len(pool))]
         return _merge(_dedup_by_system(shuffled, n_strategy, enabled=seed_cfg.dedup_by_element_system))
 
-    # top_qc
+    # top_objective — chunked no-grad scoring, stable ascending sort (lower score = better seed).
     x, pool = _descriptor_tensor(catalog, pool, device)
-    probs = _qc_prob(model, x, class_task, class_indices)
-    ranked = [pool[i] for i in np.argsort(probs)[::-1]]
+    model_targets = [t.to_model_target() for t in targets]
+    scores = [
+        model.evaluate_targets(x[i : i + 4096], model_targets)[1].cpu().numpy() for i in range(0, len(pool), 4096)
+    ]
+    objective = np.concatenate(scores) if scores else np.zeros(0)
+    ranked = [pool[i] for i in np.argsort(objective, kind="stable")]
     return _merge(_dedup_by_system(ranked, n_strategy, enabled=seed_cfg.dedup_by_element_system))
 
 
@@ -491,19 +643,14 @@ def _run_latent_path(
     path: PathConfig,
     scenario: ScenarioConfig,
     *,
-    class_weight: float,
     steps: int,
     lr: float,
     record_trajectory: bool,
 ) -> dict[str, Any]:
-    reg_targets = scenario.reg_target_map
-    reg_names = list(reg_targets)
     t0 = time.perf_counter()
     res = model.optimize_latent(
         initial_input=x_seed,
-        task_targets=reg_targets,
-        class_targets={scenario.class_task: scenario.class_indices},
-        class_target_weight=class_weight,
+        targets=scenario.model_targets,
         ae_align_scale=path.ae_align_scale,
         optimize_space="latent",
         steps=steps,
@@ -512,13 +659,14 @@ def _run_latent_path(
     )
     elapsed = time.perf_counter() - t0
     kmd = catalog.kmd()
-    achieved = res.optimized_target[:, 0, :].cpu().numpy()
+    achieved = res.optimized_target[:, 0, :].cpu().numpy()  # channels at the final LATENT h
     optimized_desc = res.optimized_input[:, 0, :]
-    after_qc = _qc_prob(model, optimized_desc, scenario.class_task, scenario.class_indices)
-    after_reg = _reg_preds(model, optimized_desc, reg_names)
+    channels_after, objective_after = _evaluate(model, optimized_desc, scenario.targets)
     desc_np = optimized_desc.detach().cpu().numpy()
     weights = kmd.inverse(desc_np) if kmd is not None else np.zeros((desc_np.shape[0], len(DEFAULT_ELEMENTS)))
-    out = _result_dict(path, "latent", seeds, after_qc, achieved, after_reg, reg_names, weights, desc_np, elapsed)
+    out = _result_dict(
+        path, "latent", seeds, channels_after, objective_after, achieved, scenario.targets, weights, elapsed
+    )
     if record_trajectory:
         out["trajectory_targets"] = res.trajectory[:, 0, :, :].cpu().numpy().transpose(1, 0, 2)
         if kmd is not None and res.input_trajectory is not None:
@@ -536,13 +684,10 @@ def _run_composition_path(
     path: PathConfig,
     scenario: ScenarioConfig,
     *,
-    class_weight: float,
     steps: int,
     lr: float,
     record_trajectory: bool,
 ) -> dict[str, Any]:
-    reg_targets = scenario.reg_target_map
-    reg_names = list(reg_targets)
     kmd = catalog.kmd()
     assert kmd is not None  # guaranteed by config validation
     device, dtype = next(model.parameters()).device, next(model.parameters()).dtype
@@ -558,9 +703,7 @@ def _run_composition_path(
     t0 = time.perf_counter()
     res = model.optimize_composition(
         kernel,
-        task_targets=reg_targets,
-        class_targets={scenario.class_task: scenario.class_indices},
-        class_target_weight=class_weight,
+        targets=scenario.model_targets,
         diversity_scale=path.diversity_scale,
         allowed_elements=path.allowed_elements,
         element_step_scale=path.element_step_scale,
@@ -577,20 +720,10 @@ def _run_composition_path(
     optimized_desc = res.optimized_descriptor
     weights = res.optimized_weights.cpu().numpy()
     achieved = res.optimized_target.cpu().numpy()
-    after_qc = _qc_prob(model, optimized_desc, scenario.class_task, scenario.class_indices)
-    after_reg = _reg_preds(model, optimized_desc, reg_names)
+    channels_after, objective_after = _evaluate(model, optimized_desc, scenario.targets)
     seed_labels = list(seeds) if path.init == "seed" else [f"random_start_{i}" for i in range(n_rows)]
     out = _result_dict(
-        path,
-        "composition",
-        seed_labels,
-        after_qc,
-        achieved,
-        after_reg,
-        reg_names,
-        weights,
-        optimized_desc.detach().cpu().numpy(),
-        elapsed,
+        path, "composition", seed_labels, channels_after, objective_after, achieved, scenario.targets, weights, elapsed
     )
     if record_trajectory:
         out["trajectory_targets"] = res.trajectory.cpu().numpy()
@@ -604,12 +737,11 @@ def _result_dict(
     path: PathConfig,
     method: str,
     seeds: list[str],
-    after_qc: np.ndarray,
+    channels_after: dict[str, np.ndarray],
+    objective_after: np.ndarray,
     achieved: np.ndarray,
-    after_reg: dict[str, np.ndarray],
-    reg_names: list[str],
+    specs: Sequence[TargetSpec],
     weights: np.ndarray,
-    descriptor: np.ndarray,
     elapsed: float,
 ) -> dict[str, Any]:
     return {
@@ -618,9 +750,13 @@ def _result_dict(
         "ae_align_scale": path.ae_align_scale if method == "latent" else None,
         "elapsed_s": elapsed,
         "seeds": seeds,
-        "qc_after_decode": after_qc.tolist(),
-        "reg_achieved_latent": {t: achieved[:, j].tolist() for j, t in enumerate(reg_names)},
-        "reg_after_decode": {t: after_reg[t].tolist() for t in reg_names},
+        # Per-seed objective score (lower = better) + per-target channels, both computed on the
+        # final decoded descriptor (for the latent path this is AFTER the AE round-trip).
+        "objective_after_decode": objective_after.tolist(),
+        "channels_after_decode": {s.task: channels_after[s.task].tolist() for s in specs},
+        # Channels at the optimiser's own final state (latent path: pre-decode latent h;
+        # composition path: same descriptor, so this matches channels_after_decode).
+        "channels_optimized": {s.task: achieved[:, j].tolist() for j, s in enumerate(specs)},
         "decoded_composition": _format_weights(weights),
         "optimized_weights": np.asarray(weights).tolist(),
     }
@@ -637,44 +773,27 @@ def _resolve_device(accelerator: str) -> torch.device:
     return torch.device("cpu")
 
 
-def _reg_progress(
-    targets: np.ndarray, reg_names: Sequence[str], reg_targets: Mapping[str, float], seed_reg: Mapping[str, np.ndarray]
-) -> dict[str, np.ndarray]:
-    """Per-step mean progress (0 = seed baseline, 1 = target) for each regression task."""
-    progress: dict[str, np.ndarray] = {}
-    for j, task in enumerate(reg_names):
-        baseline = np.asarray(seed_reg[task], dtype=float)  # (B,)
-        denom = float(reg_targets[task]) - baseline
-        denom = np.where(np.abs(denom) < 1e-9, 1.0, denom)
-        traj = targets[:, :, j]  # (steps, B)
-        progress[task] = ((traj - baseline[None, :]) / denom[None, :]).mean(axis=1)
-    return progress
-
-
 def _emit_trajectory(
     result: dict[str, Any],
     targets: np.ndarray,
     weights: np.ndarray,
-    reg_targets: Mapping[str, float],
-    seed_reg: Mapping[str, np.ndarray],
+    scenario: ScenarioConfig,
+    seed_channels: Mapping[str, np.ndarray],
     cfg: InverseConfig,
     traj_dir: Path,
 ) -> None:
     """Write the static trajectory plot (+ requested animations) for one path."""
-    reg_names = list(reg_targets)
     if targets.size == 0:
         return
-    progress = _reg_progress(targets, reg_names, reg_targets, seed_reg)
+    metas = scenario.target_metas
+    progress = inverse_trajectory.normalize_target_trajectories(targets, metas, seed_channels)
     inverse_trajectory.plot_trajectory_static(
         progress, traj_dir / f"{result['path']}_trajectory.png", title=result["path"]
     )
 
     if cfg.animation_formats and weights.size:
-        qc_final = np.asarray(result["qc_after_decode"])
-        reg_final = {t: np.asarray(result["reg_after_decode"][t]) for t in reg_names}
-        best = min(
-            inverse_trajectory.best_seed_by_target_distance(qc_final, reg_final, reg_targets), weights.shape[1] - 1
-        )
+        # Representative seed for the composition animation = the best final objective score.
+        best = min(int(np.argmin(result["objective_after_decode"])), weights.shape[1] - 1)
         out_paths = {fmt: traj_dir / f"{result['path']}_trajectory.{fmt}" for fmt in cfg.animation_formats}
         inverse_trajectory.plot_trajectory_animation(
             progress, weights[:, best, :], list(DEFAULT_ELEMENTS), out_paths, title=result["path"]
@@ -683,12 +802,9 @@ def _emit_trajectory(
     if cfg.per_seed_trajectories:
         per_dir = traj_dir / f"{result['path']}_per_seed"
         per_dir.mkdir(exist_ok=True)
+        matrix = inverse_trajectory.target_progress_matrix(targets, metas, seed_channels)
         for i in range(min(targets.shape[1], 20)):  # cap the per-seed fan-out
-            ps: dict[str, np.ndarray] = {}
-            for j, task in enumerate(reg_names):
-                baseline = float(np.asarray(seed_reg[task])[i])
-                denom = float(reg_targets[task]) - baseline
-                ps[task] = (targets[:, i, j] - baseline) / (denom if abs(denom) >= 1e-9 else 1.0)
+            ps = {label: mat[:, i] for label, mat in matrix.items()}
             inverse_trajectory.plot_trajectory_static(
                 ps, per_dir / f"seed{i:02d}.png", title=f"{result['path']} · seed {i}"
             )
@@ -717,14 +833,7 @@ def run(
             raise ValueError(f"no scenarios match the filter {list(only_scenarios or [])}.")
 
         seed_scn = scenarios[0]
-        seeds = select_seeds(
-            catalog,
-            model,
-            cfg.seeds,
-            class_task=seed_scn.class_task,
-            class_indices=seed_scn.class_indices,
-            device=device,
-        )
+        seeds = select_seeds(catalog, model, cfg.seeds, targets=seed_scn.targets, device=device)
         if not seeds:
             raise RuntimeError("no seed compositions selected.")
         x_seed, seeds = _descriptor_tensor(catalog, seeds, device)
@@ -748,8 +857,7 @@ def run(
 def _validate_heads(model: Any, cfg: InverseConfig) -> None:
     heads = set(model.task_heads)
     for scenario in cfg.scenarios:
-        needed = set(scenario.reg_tasks) | {scenario.class_task}
-        missing = sorted(needed - heads)
+        missing = sorted(set(scenario.task_names) - heads)
         if missing:
             raise ValueError(
                 f"scenario '{scenario.name}': checkpoint is missing head(s) {missing} (have {sorted(heads)})."
@@ -767,9 +875,7 @@ def _run_scenario(
 ) -> list[dict[str, Any]]:
     sc_dir = rec.paths.root / scenario.name
     sc_dir.mkdir(parents=True, exist_ok=True)
-    reg_targets = scenario.reg_target_map
-    seed_qc = _qc_prob(model, x_seed, scenario.class_task, scenario.class_indices)
-    seed_reg = _reg_preds(model, x_seed, list(reg_targets))
+    seed_channels, seed_objective = _evaluate(model, x_seed, scenario.targets)
 
     results: list[dict[str, Any]] = []
     for path in cfg.paths:
@@ -781,7 +887,6 @@ def _run_scenario(
                 x_seed,
                 path,
                 scenario,
-                class_weight=cfg.class_weight,
                 steps=cfg.steps,
                 lr=cfg.lr,
                 record_trajectory=cfg.record_trajectory,
@@ -793,27 +898,28 @@ def _run_scenario(
                 seeds,
                 path,
                 scenario,
-                class_weight=cfg.class_weight,
                 steps=cfg.steps,
                 lr=cfg.lr,
                 record_trajectory=cfg.record_trajectory,
             )
         results.append(r)
 
-    summary = _summarise(results, reg_targets)
+    summary = _summarise(results, scenario.targets)
+    target_dump = [t.dump() for t in scenario.targets]
 
     # Trajectory outputs: static plot + requested animations, then externalize arrays to .npz.
     if cfg.record_trajectory:
         traj_dir = sc_dir / "trajectories"
         traj_dir.mkdir(exist_ok=True)
+        labels = np.array([target_label(t) for t in scenario.targets])
         for r in results:
             if "trajectory_targets" not in r:
                 continue
             targets = np.asarray(r["trajectory_targets"], dtype=np.float32)
             weights = np.asarray(r["trajectory_weights"], dtype=np.float32)
-            _emit_trajectory(r, targets, weights, reg_targets, seed_reg, cfg, traj_dir)
+            _emit_trajectory(r, targets, weights, scenario, seed_channels, cfg, traj_dir)
             npz = traj_dir / f"{r['path']}.npz"
-            np.savez_compressed(npz, targets=targets, weights=weights)
+            np.savez_compressed(npz, targets=targets, weights=weights, labels=labels)
             r["trajectory_file"] = str(npz.relative_to(sc_dir))
             del r["trajectory_targets"]
             del r["trajectory_weights"]
@@ -822,11 +928,7 @@ def _run_scenario(
         json.dumps(
             {
                 "name": scenario.name,
-                "reg_tasks": scenario.reg_tasks,
-                "reg_targets": scenario.reg_targets,
-                "class_task": scenario.class_task,
-                "class_indices": scenario.class_indices,
-                "primary_objective": f"P({scenario.class_task} in {scenario.class_indices}) ↑",
+                "targets": target_dump,
                 "checkpoint": str(cfg.checkpoint),
             },
             indent=2,
@@ -836,8 +938,11 @@ def _run_scenario(
     (sc_dir / "results.json").write_text(
         json.dumps(
             {
-                "reg_targets": reg_targets,
-                "seed_predictions": {"qc": seed_qc.tolist(), "reg": {t: v.tolist() for t, v in seed_reg.items()}},
+                "targets": target_dump,
+                "seed_predictions": {
+                    "channels": {t: v.tolist() for t, v in seed_channels.items()},
+                    "objective": seed_objective.tolist(),
+                },
                 "results": results,
                 "summary": summary,
             },
@@ -845,23 +950,25 @@ def _run_scenario(
         ),
         encoding="utf-8",
     )
-    (sc_dir / "targets.json").write_text(json.dumps(reg_targets, indent=2), encoding="utf-8")
+    (sc_dir / "targets.json").write_text(json.dumps(target_dump, indent=2), encoding="utf-8")
     (sc_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     _write_scenario_md(sc_dir, scenario, summary)
 
     # figures
     rel = scenario.name
-    _plot_comparison(results, reg_targets, rec, f"{rel}/comparison.png")
-    _plot_qc_vs_secondary(results, reg_targets, seed_qc, seed_reg, rec, f"{rel}/qc_vs_secondary_scatter.png")
+    _plot_comparison(results, scenario, rec, f"{rel}/comparison.png")
+    _plot_objective_vs_targets(
+        results, scenario, seed_channels, seed_objective, rec, f"{rel}/objective_vs_targets_scatter.png"
+    )
     _plot_element_frequency(results, list(seeds), rec, f"{rel}/element_frequency_heatmap.png")
     for r in results:
         if r["method"] == "composition" and r["path"].endswith("random"):
             continue  # random init: no per-seed correspondence
-        _plot_seed_to_optimized(list(seeds), r, seed_qc, rec, f"{rel}/seed_to_optimized__{r['path']}.png")
+        _plot_seed_to_optimized(list(seeds), r, seed_objective, rec, f"{rel}/seed_to_optimized__{r['path']}.png")
     return summary
 
 
-def _summarise(results: list[dict[str, Any]], reg_targets: Mapping[str, float]) -> list[dict[str, Any]]:
+def _summarise(results: list[dict[str, Any]], specs: Sequence[TargetSpec]) -> list[dict[str, Any]]:
     rows = []
     for r in results:
         row: dict[str, Any] = {
@@ -869,13 +976,13 @@ def _summarise(results: list[dict[str, Any]], reg_targets: Mapping[str, float]) 
             "method": r["method"],
             "ae_align_scale": r["ae_align_scale"],
             "elapsed_s": round(r["elapsed_s"], 2),
-            "qc_after_mean": round(float(np.mean(r["qc_after_decode"])), 4),
-            "qc_after_std": round(float(np.std(r["qc_after_decode"])), 4),
+            "objective_mean": round(float(np.mean(r["objective_after_decode"])), 4),
+            "objective_std": round(float(np.std(r["objective_after_decode"])), 4),
         }
-        for t in reg_targets:
-            vals = np.asarray(r["reg_after_decode"][t], dtype=float)
-            row[f"{t}_after_mean"] = round(float(vals.mean()), 3)
-            row[f"{t}_after_std"] = round(float(vals.std()), 3)
+        for s in specs:
+            vals = np.asarray(r["channels_after_decode"][s.task], dtype=float)
+            row[f"{s.task}_after_mean"] = round(float(vals.mean()), 3)
+            row[f"{s.task}_after_std"] = round(float(vals.std()), 3)
         rows.append(row)
     return rows
 
@@ -887,25 +994,37 @@ def _method_color(method: str) -> str:
     return "#55A868" if method == "latent" else SCATTER_COLOR
 
 
-def _plot_comparison(
-    results: list[dict[str, Any]], reg_targets: Mapping[str, float], rec: RunRecorder, rel: str
-) -> None:
-    panels = ["QC", *reg_targets]
+def _target_ref_line(spec: TargetSpec) -> float | None:
+    """The dashed goal line for a target's channel panel (None = no fixed goal)."""
+    if spec.kind is TargetKind.VALUE:
+        return float(spec.value)  # type: ignore[arg-type]
+    if spec.kind is TargetKind.CLASS:
+        return 1.0 if spec.direction == "high" else 0.0
+    if spec.kind is TargetKind.CURVE:
+        return 0.0  # channel is RMSE-to-curve
+    return None  # direction: unbounded
+
+
+def _plot_comparison(results: list[dict[str, Any]], scenario: ScenarioConfig, rec: RunRecorder, rel: str) -> None:
+    specs = scenario.targets
+    panels = ["objective", *[s.task for s in specs]]
     fig, axes = plt.subplots(1, len(panels), figsize=(4.4 * len(panels), 5.0), squeeze=False)
     labels = [r["path"] for r in results]
     colors = [_method_color(r["method"]) for r in results]
     x = np.arange(len(results))
     for ax, panel in zip(axes[0], panels):
-        if panel == "QC":
-            means = [float(np.mean(r["qc_after_decode"])) for r in results]
-            stds = [float(np.std(r["qc_after_decode"])) for r in results]
-            ax.axhline(1.0, color="#C44E52", ls="--", lw=1.0)
-            ax.set_title("P(QC)")
+        if panel == "objective":
+            means = [float(np.mean(r["objective_after_decode"])) for r in results]
+            stds = [float(np.std(r["objective_after_decode"])) for r in results]
+            ax.set_title("objective score  (lower = better)")
         else:
-            means = [float(np.mean(r["reg_after_decode"][panel])) for r in results]
-            stds = [float(np.std(r["reg_after_decode"][panel])) for r in results]
-            ax.axhline(float(reg_targets[panel]), color="#C44E52", ls="--", lw=1.0)
-            ax.set_title(panel)
+            spec = next(s for s in specs if s.task == panel)
+            means = [float(np.mean(r["channels_after_decode"][panel])) for r in results]
+            stds = [float(np.std(r["channels_after_decode"][panel])) for r in results]
+            ref = _target_ref_line(spec)
+            if ref is not None:
+                ax.axhline(ref, color="#C44E52", ls="--", lw=1.0)
+            ax.set_title(target_label(spec))
         ax.bar(x, means, yerr=stds, color=colors, alpha=0.85, capsize=3)
         ax.set_xticks(x, labels, rotation=75, ha="right", fontsize=7)
     fig.suptitle("Inverse-design paths — achieved objectives", y=1.02)
@@ -913,50 +1032,60 @@ def _plot_comparison(
     plt.close(fig)
 
 
-def _plot_qc_vs_secondary(
+def _plot_objective_vs_targets(
     results: list[dict[str, Any]],
-    reg_targets: Mapping[str, float],
-    seed_qc: np.ndarray,
-    seed_reg: dict[str, np.ndarray],
+    scenario: ScenarioConfig,
+    seed_channels: dict[str, np.ndarray],
+    seed_objective: np.ndarray,
     rec: RunRecorder,
     rel: str,
 ) -> None:
-    reg_names = list(reg_targets)
-    fig, axes = plt.subplots(1, len(reg_names), figsize=(5.2 * len(reg_names), 5.0), squeeze=False)
-    for ax, task in zip(axes[0], reg_names):
-        ax.scatter(seed_qc, seed_reg[task], marker="*", s=70, color=DISCOVERED_ELEMENT_COLOR, label="seed", zorder=1)
+    specs = scenario.targets
+    fig, axes = plt.subplots(1, len(specs), figsize=(5.2 * len(specs), 5.0), squeeze=False)
+    for ax, spec in zip(axes[0], specs):
+        task = spec.task
+        ax.scatter(
+            seed_objective,
+            seed_channels[task],
+            marker="*",
+            s=70,
+            color=DISCOVERED_ELEMENT_COLOR,
+            label="seed",
+            zorder=1,
+        )
         for r in results:
             ax.scatter(
-                r["qc_after_decode"],
-                r["reg_after_decode"][task],
+                r["objective_after_decode"],
+                r["channels_after_decode"][task],
                 s=18,
                 alpha=0.6,
                 color=_method_color(r["method"]),
                 zorder=2,
             )
-        ax.axvline(1.0, color="#C44E52", ls="--", lw=1.0)
-        ax.axhline(float(reg_targets[task]), color="#C44E52", ls="--", lw=1.0)
-        ax.set_xlabel("P(QC)")
-        ax.set_ylabel(task)
-    fig.suptitle("QC probability vs secondary properties", y=1.02)
+        ref = _target_ref_line(spec)
+        if ref is not None:
+            ax.axhline(ref, color="#C44E52", ls="--", lw=1.0)
+        ax.set_xlabel("objective score  (lower = better)")
+        ax.set_ylabel(target_label(spec))
+    fig.suptitle("Objective score vs per-target channels", y=1.02)
     rec.save_figure(rel, fig)
     plt.close(fig)
 
 
 def _plot_seed_to_optimized(
-    seeds: list[str], result: dict[str, Any], seed_qc: np.ndarray, rec: RunRecorder, rel: str
+    seeds: list[str], result: dict[str, Any], seed_objective: np.ndarray, rec: RunRecorder, rel: str
 ) -> None:
     decoded = result["decoded_composition"]
-    opt_qc = np.asarray(result["qc_after_decode"])
+    opt_obj = np.asarray(result["objective_after_decode"])
     n = min(len(seeds), len(decoded))
     fig, ax = plt.subplots(figsize=(9.0, max(3.0, 0.32 * n + 1)))
     ax.axis("off")
-    ax.set_title(f"Seed → optimised · {result['path']}", fontsize=11)
+    ax.set_title(f"Seed → optimised · {result['path']}  (obj = objective score, lower = better)", fontsize=11)
     for i in range(n):
         y = n - i
-        ax.text(0.01, y, f"{seeds[i]}  (QC={seed_qc[i] * 100:.0f}%)", fontsize=8, family="monospace", va="center")
+        ax.text(0.01, y, f"{seeds[i]}  (obj={seed_objective[i]:.2f})", fontsize=8, family="monospace", va="center")
         ax.text(0.42, y, "→", fontsize=10, va="center")
-        ax.text(0.47, y, f"{decoded[i]}  (QC={opt_qc[i] * 100:.0f}%)", fontsize=8, family="monospace", va="center")
+        ax.text(0.47, y, f"{decoded[i]}  (obj={opt_obj[i]:.2f})", fontsize=8, family="monospace", va="center")
     ax.set_xlim(0, 1)
     ax.set_ylim(0, n + 1)
     rec.save_figure(rel, fig)
@@ -990,15 +1119,14 @@ def _plot_element_frequency(results: list[dict[str, Any]], seeds: list[str], rec
 
 
 def _write_scenario_md(sc_dir: Path, scenario: ScenarioConfig, summary: list[dict[str, Any]]) -> None:
-    lines = [f"# Inverse design — {scenario.name}", ""]
-    lines.append(f"Primary objective: P({scenario.class_task} in {scenario.class_indices}) ↑")
-    lines.append(f"Regression targets: {scenario.reg_target_map}")
+    lines = [f"# Inverse design — {scenario.name}", "", "Targets:"]
+    lines.extend(f"- {target_label(t)}  (weight {t.weight:g})" for t in scenario.targets)
     lines.append("")
-    lines.append("| path | method | QC (mean±std) | elapsed(s) |")
+    lines.append("| path | method | objective (mean±std, lower = better) | elapsed(s) |")
     lines.append("|---|---|---|---|")
     for row in summary:
         lines.append(
-            f"| {row['path']} | {row['method']} | {row['qc_after_mean']}±{row['qc_after_std']} | {row['elapsed_s']} |"
+            f"| {row['path']} | {row['method']} | {row['objective_mean']}±{row['objective_std']} | {row['elapsed_s']} |"
         )
     (sc_dir / "SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -1006,7 +1134,7 @@ def _write_scenario_md(sc_dir: Path, scenario: ScenarioConfig, summary: list[dic
 def _write_root_summary(root: Path, all_summary: Mapping[str, Any], cfg: InverseConfig) -> None:
     lines = ["# Inverse design — all scenarios", "", f"Checkpoint: `{cfg.checkpoint}`", ""]
     for name, summary in all_summary.items():
-        best = max(summary, key=lambda row: row["qc_after_mean"]) if summary else None
-        best_str = f"best QC path: **{best['path']}** ({best['qc_after_mean']})" if best else "(no paths)"
+        best = min(summary, key=lambda row: row["objective_mean"]) if summary else None
+        best_str = f"best path by objective: **{best['path']}** ({best['objective_mean']})" if best else "(no paths)"
         lines.append(f"- **{name}** — {best_str}")
     (root / "SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

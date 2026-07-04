@@ -16,34 +16,37 @@ descent.
 ### Loss
 
 $$
-\mathcal{L}_{\text{latent}}(h) \;=\; \underbrace{\sum_{t \in \mathcal{T}_{\text{reg}}} \lambda_t \,\bigl\lVert \hat y_t(h) - \text{target}_t \bigr\rVert^2}_{\text{(1) regression term}}
-\;+\;\underbrace{w_{\text{cls}} \cdot \bigl(-\log P\bigl(c = \text{QC} \mid h\bigr)\bigr)}_{\text{(2) classification term}}
-\;+\;\underbrace{\alpha \cdot \bigl\lVert h - \tanh\bigl(E(D(h))\bigr) \bigr\rVert^2}_{\text{(3) AE-alignment term}}
+\mathcal{L}_{\text{latent}}(h) \;=\; \underbrace{\sum_{i \in \text{targets}} w_i \cdot \text{term}_i(h)}_{\text{(1) objective terms}}
+\;+\;\underbrace{\alpha \cdot \bigl\lVert h - \tanh\bigl(E(D(h))\bigr) \bigr\rVert^2}_{\text{(2) AE-alignment term}}
 $$
 
-with
+Every target is user-specified (an `OptimizationTarget` / one `[[inverse.scenarios.targets]]`
+entry) with its own weight $w_i > 0$; the per-kind terms are:
 
-- $\hat y_t(h)$ = prediction of the $t$-th regression head on $h$;
-- $P(c = \text{QC} \mid h)$ = softmax probability of the quasicrystal class out of the QC
-  classification head on $h$;
-- $D(\cdot)$ = AE decoder (latent → input space $\hat x$); $E(\cdot)$ = encoder (input →
-  latent, with the trailing tanh);
-- $\lambda_t$ = the regression task's internal weight (a scalar fixed at training time).
+| Target kind | $\text{term}_i(h)$ | Design intent |
+|---|---|---|
+| regression, `value = v` | $\bigl(\hat y_t(h) - v\bigr)^2$ | Hit the value (MSE in the task's trained units, typically z-scored). |
+| regression, `direction` | $\mp\,\hat y_t(h)$ ($-$ for `"high"`, $+$ for `"low"`) | Push the prediction up/down. **Unbounded** — no stationary point, so the achieved magnitude scales with `steps × lr`; balance with $w_i$. |
+| kernel_regression, `points = {(t_k, y_k)}` | $\frac{1}{K}\sum_k \bigl(\hat y_t(h, t_k) - y_k\bigr)^2$ | Pull the predicted curve onto the target curve at the user's $t$ coordinates (the KR head evaluates at any $t$; outside the trained range it extrapolates). |
+| classification, `classes = C`, `"high"` | $-\log \sum_{c \in C} P(c \mid h)$ | Push the combined probability of the chosen labels up. |
+| classification, `classes = C`, `"low"` | $-\log \sum_{c \notin C} P(c \mid h)$ | Push it down — implemented as *maximising the complement*, which reuses the same logsumexp and stays numerically clean as $P(C) \to 1$. $C$ must be a strict subset of the labels. |
 
-### What each term is for
+with $D(\cdot)$ = AE decoder (latent → input space $\hat x$) and $E(\cdot)$ = encoder (input →
+latent, with the trailing tanh).
 
-| Term | Design intent |
-|---|---|
-| **(1) regression term** | Push the latent to a place where every regression head hits its `target_t` (MSE in z-scored space). |
-| **(2) classification term** | Push the latent to the region where the QC head emits high $P(c = \text{QC})$. $-\log P$ is the cross-entropy against the target class. `w_cls` sets classification priority relative to regression (use $> 1$ when QC is the primary objective and the regression targets are secondary). |
-| **(3) AE-alignment term** | **The crux of this method.** Freely optimised $h$ tends to drift off the AE-learned manifold → decoded $\hat x$ becomes unphysical → the reported composition can't be trusted. This term pulls $h$ toward $\tanh(E(D(h)))$, i.e. the fixed-point of one decode→encode round-trip. $\alpha = 0$ turns the term off (the pre-PR #18 failure mode: QC dropped 0.97 → 0.35); $\alpha = 1$ over-constrains ($h$ effectively locked onto the AE manifold, target attainment drops); **empirical sweet spot $\approx 0.5$**. |
+**(2) AE-alignment term** is the crux of this method: freely optimised $h$ tends to drift off
+the AE-learned manifold → decoded $\hat x$ becomes unphysical → the reported composition can't be
+trusted. This term pulls $h$ toward $\tanh(E(D(h)))$, i.e. the fixed-point of one decode→encode
+round-trip. $\alpha = 0$ turns the term off (the pre-PR #18 failure mode: the class objective
+dropped 0.97 → 0.35 after the round-trip); $\alpha = 1$ over-constrains ($h$ effectively locked
+onto the AE manifold, target attainment drops); **empirical sweet spot $\approx 0.5$**.
 
 ### Main tunable parameters
 
 | Parameter | Range | Default | Meaning |
 |---|---|---|---|
-| `ae_align_scale` (= $\alpha$) | $[0, 1]$ | 0.5 | AE-manifold alignment strength (see (3)). |
-| `class_target_weight` (= $w_{\text{cls}}$) | $> 0$ | 1.0 | Classification weight relative to regression. |
+| `ae_align_scale` (= $\alpha$) | $[0, 1]$ | 0.5 | AE-manifold alignment strength (see (2)). |
+| per-target `weight` (= $w_i$) | $> 0$ | 1.0 | This target's priority relative to the others. |
 | `steps`, `lr` | — | 200, 0.1 | Adam optimisation budget. |
 | `num_restarts`, `perturbation_std` | — | 1, 0.0 | Independent restarts with Gaussian jitter on the seed. |
 
@@ -69,15 +72,15 @@ descriptor vector. **`w` itself is the recipe you would report** — no AE decod
 ### Loss
 
 $$
-\mathcal{L}_{\text{comp}}(\theta) \;=\; \underbrace{\sum_{t \in \mathcal{T}_{\text{reg}}} \lambda_t \,\bigl\lVert \hat y_t(w) - \text{target}_t \bigr\rVert^2}_{\text{(1) regression term}}
-\;+\;\underbrace{w_{\text{cls}} \cdot \bigl(-\log P\bigl(c = \text{QC} \mid w\bigr)\bigr)}_{\text{(2) classification term}}
-\;+\;\underbrace{(1 - d) \cdot H(w)}_{\text{(3) entropy / peakiness term}}
+\mathcal{L}_{\text{comp}}(\theta) \;=\; \underbrace{\sum_{i \in \text{targets}} w_i \cdot \text{term}_i(w)}_{\text{(1) objective terms}}
+\;+\;\underbrace{(1 - d) \cdot H(w)}_{\text{(2) entropy / peakiness term}}
 $$
 
 with
 
+- the per-target terms exactly as in section A (regression value/direction, kernel-regression
+  curve, classification high/low), evaluated on the forward pass above;
 - $H(w) = -\sum_i w_i \log w_i$ — the per-output-row Shannon entropy;
-- $\hat y_t(w)$ and $P(c = \text{QC} \mid w)$ both come from the forward pass above;
 - $d$ = `diversity_scale` $\in [0, 1]$.
 
 ### Constraints (not in the loss, but enforced in the implementation)
@@ -96,16 +99,15 @@ with
 
 | Term | Design intent |
 |---|---|
-| **(1) regression term** | Same as latent — push predictions toward `target_t` via MSE. |
-| **(2) classification term** | Same as latent — maximise $P(c = \text{QC})$. |
-| **(3) entropy / peakiness term** | **The crux of this method.** Larger $H(w)$ ⇒ flatter `w` ⇒ each solution uses more elements; smaller $H(w)$ ⇒ peakier `w` ⇒ a few elements dominate each solution. $(1 - d)$ is the penalty weight: $d = 1$ turns it off (default — the optimiser uses as many elements as the main objective wants); $d = 0$ is the strongest penalty (forced peaky → binary/ternary recipes, useful as an ablation). **Important**: this is a *per-output-complexity* knob, **not** a between-output diversity knob. Whether the $B$ outputs differ from each other is decided by the loss landscape, not by $d$. |
+| **(1) objective terms** | Same as latent — the user-specified targets (section A's per-kind table). |
+| **(2) entropy / peakiness term** | **The crux of this method.** Larger $H(w)$ ⇒ flatter `w` ⇒ each solution uses more elements; smaller $H(w)$ ⇒ peakier `w` ⇒ a few elements dominate each solution. $(1 - d)$ is the penalty weight: $d = 1$ turns it off (default — the optimiser uses as many elements as the main objective wants); $d = 0$ is the strongest penalty (forced peaky → binary/ternary recipes, useful as an ablation). **Important**: this is a *per-output-complexity* knob, **not** a between-output diversity knob. Whether the $B$ outputs differ from each other is decided by the loss landscape, not by $d$. |
 
 ### Main tunable parameters
 
 | Parameter | Range | Default | Meaning |
 |---|---|---|---|
-| `diversity_scale` (= $d$) | $[0, 1]$ | 1.0 | Per-output element diversity (see (3)). |
-| `class_target_weight` (= $w_{\text{cls}}$) | $> 0$ | 1.0 | Classification weight relative to regression. |
+| `diversity_scale` (= $d$) | $[0, 1]$ | 1.0 | Per-output element diversity (see (2)). |
+| per-target `weight` (= $w_i$) | $> 0$ | 1.0 | This target's priority relative to the others. |
 | `seed_blend` | $[0, 1]$ | 0.95 | Fraction of seed kept at the start (the rest is uniform, so new elements can enter). |
 | `allowed_elements` | symbol list or `"all"` | `"all"` | Element whitelist (hard constraint). |
 | `element_step_scale` | float or `{symbol: float}` | 1.0 | Per-element step scaling; `0` = hard-lock to the seed value. |
@@ -128,6 +130,7 @@ with
 | **Failure mode** | $\alpha = 0$: $h$ drifts off the manifold, decoded recipe unphysical (QC 0.97 → 0.35). | `seed_blend = 1.0`: the seed's support set is frozen — no new elements can ever appear. |
 | **Method-specific knobs** | `ae_align_scale` | `diversity_scale`, `seed_blend`, `allowed_elements`, `element_step_scale`, `max_elements` + `annealing_scale` / `annealing_schedule`, `fixed_amounts`, `min_nonzero_weight` |
 
-The shared backbone — (1) regression MSE + (2) classification cross-entropy — is **identical**
-between the two methods. They differ *only* in the third loss term and in which variable is
-being optimised.
+The shared backbone — the user-specified objective terms (regression value/direction,
+kernel-regression curves, classification high/low, each with its own weight) — is **identical**
+between the two methods. They differ *only* in the method-specific loss term and in which
+variable is being optimised.

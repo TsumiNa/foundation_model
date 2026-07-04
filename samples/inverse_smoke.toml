@@ -1,7 +1,7 @@
 # Smoke-test config for `fm inverse` — one scenario, 2 paths, on a smoke checkpoint.
 #
-# Catalog + model dims match samples/pretrain_smoke.toml. The checkpoint must contain the
-# regression heads (density, formation_energy) and the classification head (material_type).
+# Catalog + model dims match samples/pretrain_smoke.toml. The checkpoint must contain a head for
+# every task named in the scenario's [[inverse.scenarios.targets]] entries.
 #
 #   fm inverse --config samples/inverse_smoke.toml \
 #       --checkpoint artifacts/finetune_smoke/training/final_model.pt
@@ -48,20 +48,29 @@ n_kernel = 8
 checkpoint = "artifacts/finetune_smoke/training/final_model.pt"
 steps = 5
 lr = 0.05
-class_weight = 5.0
 record_trajectory = true
 animation_formats = []
 
 [inverse.seeds]
-strategy = "top_qc"
+strategy = "top_objective"
 n = 4
 split = "test"
 
 [[inverse.scenarios]]
 name = "scenario_fe_down_density_up"
-reg_tasks = ["formation_energy", "density"]
-reg_targets = [-2.0, 2.0]
-class_task = "material_type"
+
+[[inverse.scenarios.targets]]
+task = "formation_energy"
+value = -2.0
+
+[[inverse.scenarios.targets]]
+task = "density"
+direction = "high"
+
+[[inverse.scenarios.targets]]
+task = "material_type"
+classes = [1]
+weight = 5.0
 
 [[inverse.paths]]
 name = "latent_align1"

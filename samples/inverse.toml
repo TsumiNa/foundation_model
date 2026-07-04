@@ -1,6 +1,7 @@
 # Formal `fm inverse` config — 3 scenarios over the default 11 algorithm paths (omit
 # [[inverse.paths]] to get DEFAULT_PATHS: 3 latent + 8 composition). Catalog + model dims match
-# samples/pretrain.toml. The checkpoint must contain every reg head + the material_type head.
+# samples/pretrain.toml. The checkpoint must contain a head for every task named in the
+# scenarios' [[inverse.scenarios.targets]] entries.
 #
 #   fm inverse --config samples/inverse.toml \
 #       --checkpoint artifacts/finetune/training/final_model.pt
@@ -60,34 +61,55 @@ n_kernel = 15
 checkpoint = "artifacts/finetune/training/final_model.pt"
 steps = 300
 lr = 0.05
-class_weight = 5.0
 record_trajectory = true
 per_seed_trajectories = false
 animation_formats = ["gif"]
 
 [inverse.seeds]
-strategy = "top_qc"
+strategy = "top_objective"  # rank candidates by the scenario's objective score (lower = better)
 n = 20
 split = "test"
 dedup_by_element_system = true
 
-[[inverse.scenarios]]
-name = "scenario1_fe_down_density_up"
-reg_tasks = ["formation_energy", "density"]
-reg_targets = [-2.0, 2.0]
-class_task = "material_type"
+# Targets are fully user-specified, one [[inverse.scenarios.targets]] per objective term:
+#   regression        → value = <float>  OR  direction = "high"/"low" (unbounded push)
+#   kernel_regression → points = [[t, y], ...] (a target curve)
+#   classification    → classes = [..] (+ direction, default "high"); optional, no default task
+# Every target takes weight (> 0, default 1.0) to balance the terms.
 
 [[inverse.scenarios]]
-name = "scenario2_fe_down"
-reg_tasks = ["formation_energy"]
-reg_targets = [-2.0]
-class_task = "material_type"
+name = "scenario1_fe_down_density_up"
+
+[[inverse.scenarios.targets]]
+task = "formation_energy"
+value = -2.0
+
+[[inverse.scenarios.targets]]
+task = "density"
+value = 2.0
+
+[[inverse.scenarios.targets]]
+task = "material_type"
+classes = [1]
+weight = 5.0  # reproduces the old class_weight = 5.0 behavior
+
+[[inverse.scenarios]]
+name = "scenario2_fe_down_pf_curve"
+
+[[inverse.scenarios.targets]]
+task = "formation_energy"
+value = -2.0
+
+[[inverse.scenarios.targets]]
+task = "power_factor"
+points = [[0.2, 1.0], [0.5, 1.5], [0.8, 1.0]]  # (t, y) in the task's normalized units
 
 [[inverse.scenarios]]
 name = "scenario3_density_up"
-reg_tasks = ["density"]
-reg_targets = [2.0]
-class_task = "material_type"
+
+[[inverse.scenarios.targets]]
+task = "density"
+direction = "high"  # direction-only: push ŷ up, no fixed value
 
 # [[inverse.paths]] omitted → DEFAULT_PATHS (3 latent + 8 composition).
 
