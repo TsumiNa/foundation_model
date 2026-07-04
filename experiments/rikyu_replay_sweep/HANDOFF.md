@@ -3,7 +3,8 @@
 Handoff record so another machine's Claude Code session can pick up this experiment. Everything
 here is committed to the repo; the large data/output files live on the **rikyu** supercomputer.
 
-**Last updated:** 2026-07-04 ~18:15 JST (5/8 jobs done, 3 still running).
+**Last updated:** 2026-07-04 ~19:00 JST. Original 8-job sweep: 5 done, 3 running (0.15/0.20/1000).
+**3 new fixed-count jobs (n=1500/2000/2500) were just submitted for RELAY on another machine — see §9.**
 
 ---
 
@@ -94,6 +95,9 @@ this repo dir are the source of truth.
 | 200 | 45177 | COMPLETED | 7.9 h (28438 s) |
 | 500 | 45178 | COMPLETED | 10.6 h |
 | 1000 | 45179 | RUNNING | (~11 h) |
+| **1500** (relay) | **45776** | submitted 19:00 | 16 h wall |
+| **2000** (relay) | **45777** | submitted 19:00 | 16 h wall |
+| **2500** (relay) | **45778** | submitted 19:00 | 16 h wall |
 
 Sweep jobs were submitted with `--time=16:00:00`. Timing is dominated by the late kernel-regression
 steps (dos_density, seebeck) at ~30–40 min each once 20+ heads are active.
@@ -173,3 +177,28 @@ under fixed counts, which give it its full 58 samples vs 3 at 0.05).
   (both deleted in PR #26 / commit 2b516f5).
 - Config schema: [`docs/configuration.md`](../../docs/configuration.md).
 - `prep_nonqc_norm.py` (this dir) regenerates the `_norm.parquet` derived data.
+
+## 9. RELAY TODO (for the next machine) — finish the n=1500/2000/2500 runs
+
+Three fixed-count jobs were submitted on rikyu to extend the saturation curve's high end (they map
+to ~1500/2000/2500 replay samples per dense qc task — right where the fit predicts the ~90% knee):
+
+| tag | JobID | config (in this repo + on rikyu `jobs/rehearsal/sweep/`) | output dir on rikyu |
+|---|---|---|---|
+| n1500 | **45776** | `configs/sweep_n1500.toml` | `artifacts/replay_sweep/replay_n1500_rikyu/` |
+| n2000 | **45777** | `configs/sweep_n2000.toml` | `artifacts/replay_sweep/replay_n2000_rikyu/` |
+| n2500 | **45778** | `configs/sweep_n2500.toml` | `artifacts/replay_sweep/replay_n2500_rikyu/` |
+
+Steps to finish them:
+1. `git pull` (this handoff + the 3 configs are committed). Confirm rikyu access (§1).
+2. Wait for the 3 jobs (each ~9–12 h; check with the sacct command in §4, adding the new names):
+   `sacct --name=rp_n1500,rp_n2000,rp_n2500 -X --format=JobID,JobName%10,State,Elapsed`
+   (If a job died, resubmit: `cd /home/ea0094/jobs/rehearsal/sweep && sbatch --time=16:00:00 --job-name=rp_n1500 --export=ALL,SWEEP_CFG=sweep_n1500.toml replay_sweep.sbatch`.)
+3. Fetch each run's metrics into `analysis/results/`:
+   `ssh rikyu-login 'cat /home/ea0094/projects/foundation_model/artifacts/replay_sweep/replay_n1500_rikyu/training/metrics_table.csv' > experiments/rikyu_replay_sweep/results/mt_n1500.csv`
+   (repeat for n2000, n2500).
+4. Add the 3 tags to `TAG_ORDER`/`TAG_LABEL` in `analysis/compare_sweep.py` and to the count list in
+   `analysis/saturation.py` / `plot_saturation.py` (as `("count", 1500)` etc.), then rerun both:
+   `python analysis/compare_sweep.py` and `python analysis/plot_saturation.py` — the new points land
+   at the high end and firm up the 90% saturation estimate (fit currently: 90% at n≈6000, knee≈664).
+5. Commit the new `results/mt_n*.csv` + refreshed `replay_saturation.png`.
