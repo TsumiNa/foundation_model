@@ -36,9 +36,12 @@ def mean(vs):
 RUNS = {
     "base0p05": ("frac", 0.05),
     "0p10": ("frac", 0.10),
+    "0p15": ("frac", 0.15),
+    "0p20": ("frac", 0.20),
     "n100": ("count", 100),
     "n200": ("count", 200),
     "n500": ("count", 500),
+    "n1000": ("count", 1000),
 }
 data = {}
 for tag,(kind,val) in RUNS.items():

@@ -28,8 +28,8 @@ def dmean(d):
     v = [d[t] for t in DENSE if d.get(t) is not None]
     return sum(v)/len(v)
 
-RUNS = {"n100":("count",100),"n200":("count",200),"n500":("count",500),
-        "base0p05":("frac",0.05),"0p10":("frac",0.10)}
+RUNS = {"n100":("count",100),"n200":("count",200),"n500":("count",500),"n1000":("count",1000),
+        "base0p05":("frac",0.05),"0p10":("frac",0.10),"0p15":("frac",0.15),"0p20":("frac",0.20)}
 fixed_x, fixed_y, frac_x, frac_y, ceils = [], [], [], [], []
 labels = {}
 for tag,(kind,val) in RUNS.items():
@@ -79,8 +79,9 @@ ax.scatter(frac_x, frac_y, s=95, marker="s", color=ORANGE, zorder=3,
            edgecolor="white", linewidth=1.2, label="fraction  (→ samples/dense-task)")
 for x,(tag,kind,val,y) in labels.items():
     lab = f"{val:g}" if kind=="count" else f"{val:g}×"
-    ax.annotate(lab, (x,y), textcoords="offset points", xytext=(0,9),
-                ha="center", fontsize=9, color=INK)
+    dy = 10 if kind == "count" else -17   # counts label above, fractions below -> no collision
+    ax.annotate(lab, (x,y), textcoords="offset points", xytext=(0,dy),
+                ha="center", fontsize=9, color=(BLUE if kind=="count" else ORANGE))
 
 ax.set_xscale("log")
 ax.set_xlim(80, NTR*1.05)
@@ -92,8 +93,8 @@ ax.grid(True, which="both", color=GRID, lw=0.6, zorder=0)
 ax.tick_params(colors=MUTED)
 for s in ("top","right"): ax.spines[s].set_visible(False)
 ax.legend(loc="upper left", frameon=False, fontsize=9.5)
-fig.text(0.012,0.012,"5 completed runs; 0.15/0.20/1000 still running. Fit extrapolation beyond ~2400 is uncertain.",
-         fontsize=8, color=MUTED)
+fig.text(0.012,0.012,"8 completed runs (original sweep). Relay jobs n=1500/2000/2500 pending on another machine. "
+         "Fit extrapolation beyond ~4700 is uncertain.", fontsize=8, color=MUTED)
 fig.tight_layout()
 fig.savefig(OUT, bbox_inches="tight")
 print("saved", OUT)

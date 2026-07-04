@@ -3,8 +3,9 @@
 Handoff record so another machine's Claude Code session can pick up this experiment. Everything
 here is committed to the repo; the large data/output files live on the **rikyu** supercomputer.
 
-**Last updated:** 2026-07-04 ~19:00 JST. Original 8-job sweep: 5 done, 3 running (0.15/0.20/1000).
-**3 new fixed-count jobs (n=1500/2000/2500) were just submitted for RELAY on another machine — see §9.**
+**Last updated:** 2026-07-04 ~20:30 JST. **Original 8-job sweep: ALL DONE** (results in `results/`,
+final table + saturation plot regenerated). **3 relay jobs (n=1500/2000/2500) RUNNING — finish on
+another machine, see §9.**
 
 ---
 
@@ -89,12 +90,12 @@ this repo dir are the source of truth.
 |---|---|---|---|
 | 0.05 baseline | 45062 | COMPLETED | 8.9 h (32080 s) |
 | 0.10 | 45173 | COMPLETED | 9.6 h |
-| 0.15 | 45174 | RUNNING | (~11 h) |
-| 0.20 | 45175 | RUNNING | (~11 h) |
+| 0.15 | 45174 | COMPLETED | 11.5 h |
+| 0.20 | 45175 | COMPLETED | 12.2 h |
 | 100 | 45176 | COMPLETED | 7.0 h (25257 s) |
 | 200 | 45177 | COMPLETED | 7.9 h (28438 s) |
 | 500 | 45178 | COMPLETED | 10.6 h |
-| 1000 | 45179 | RUNNING | (~11 h) |
+| 1000 | 45179 | COMPLETED | 11.6 h |
 | **1500** (relay) | **45781** | RUNNING | 24 h wall |
 | **2000** (relay) | **45782** | RUNNING | 24 h wall |
 | **2500** (relay) | **45783** | RUNNING | 24 h wall |
@@ -141,18 +142,27 @@ qc tasks get 1000s of samples, sparse tasks almost none), while fixed counts equ
 *absolute* number (sparse tasks get proportionally much more, up to full). So the two families
 stress retention of different tasks.
 
-## 6. Preview result (completed runs only)
+## 6. Final result (all 8 original runs)
 
-Final primary metric (R²; material_type = accuracy). MEAN reg/kr R² is the retention indicator:
+MEAN reg/kr R² is the retention indicator (higher = less forgetting). Full per-task table:
+`python analysis/compare_sweep.py`.
 
 ```
-                          ref   0.05   n100   n200
-MEAN reg/kr R2           0.411  0.447  0.371  0.420
-material_type acc        0.981  0.972  0.941  0.952
+                  ref   0.05   0.10   0.15   0.20    100    200    500   1000
+MEAN reg/kr R2   0.411  0.447  0.518  0.516  0.553  0.371  0.420  0.498  0.556
+material_type ac 0.981  0.972  0.970  0.985  0.976  0.941  0.952  0.980  0.984
 ```
-Clean monotonic trend by replay amount (dense-task view): n100(100) < n200(200) < 0.05(1184 for
-dense) → more replay = better retention. Sparse tasks flip (e.g. magnetic_susceptibility is better
-under fixed counts, which give it its full 58 samples vs 3 at 0.05).
+
+- **Reproduction is faithful**: 0.05 baseline mean R² 0.447 vs reference 0.411; per-task close.
+- **More replay → better retention** in both families (fixed: 0.371→0.420→0.498→0.556 for
+  100→200→500→1000; fraction: 0.447→0.518→…→0.553 for 0.05→0.10→…→0.20).
+- **Saturation** (`analysis/saturation.py`, dense-task view, unified x = replay samples per dense
+  qc task): fit `gap = 0.185/(1 + n/1765)`, no-forgetting ceiling ≈ 0.751. Knee (half-gap) ≈ n≈1765;
+  **90% saturation ≈ n≈15,900/task, 95% ≈ n≈33,500/task** — approaching the ceiling needs replaying
+  a large fraction of each dense task (expensive). Plot: `analysis/replay_saturation.png`.
+  The relay jobs (n=1500/2000/2500) sit right around the knee to firm up that region.
+- Sparse tasks flip: e.g. magnetic_susceptibility does better under small *fixed* counts (which
+  give it its full 58 samples) than under small *fractions* (which give it ~3).
 
 ## 7. How to finish / continue (next session)
 
