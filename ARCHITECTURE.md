@@ -275,7 +275,9 @@ User-facing knobs (all on `[0, 1]` where applicable):
   elements enter the recipe).
 - `allowed_elements` — hard whitelist over element symbols.
 - `element_step_scale` — per-element gradient scaling; `0` hard-locks an element to its seed value.
-- `class_target_weight` — weight on the classification objective vs. the regression targets.
+- `targets` — the objective: a list of `OptimizationTarget`s (regression value or direction
+  high/low, kernel-regression target curves `[[t, y], ...]`, classification label(s) probability
+  high/low), each with a per-target `weight` that sets its priority relative to the others.
 - `max_elements` — cardinality cap "at most K elements per recipe", enforced by a
   differentiable Plötz–Roth iterative soft top-K mask + final hard projection.
 - `annealing_scale` ∈ `[0, 1]` (default 0.5) — single-knob softness of the K-hot annealing
@@ -294,7 +296,7 @@ graph TD
         H["h  (latent — the optimisation variable)"]
         AE["AE round-trip:<br/>D(h) → x̂ → tanh(E(x̂)) = h'"]
         Heads1["Task heads (reg + cls)"]
-        AdamL["Adam updates h ← ∇_h L<br/>L = reg_MSE + w_cls·(−log P(QC)) + α·‖h − h'‖²"]
+        AdamL["Adam updates h ← ∇_h L<br/>L = Σ wᵢ·targetᵢ + α·‖h − h'‖²"]
 
         Seed1 --> Enc1 --> H
         H --> Heads1
@@ -310,7 +312,7 @@ graph TD
         KMD["x = w · K  (KMD transform)"]
         Enc2["encoder + tanh"]
         Heads2["Task heads (reg + cls)"]
-        AdamC["Adam updates θ ← ∇_θ L<br/>L = reg_MSE + w_cls·(−log P(QC)) + (1−d)·H(w)"]
+        AdamC["Adam updates θ ← ∇_θ L<br/>L = Σ wᵢ·targetᵢ + (1−d)·H(w)"]
 
         Theta --> WSoft --> KMD --> Enc2 --> Heads2
         AdamC -.-> Theta
