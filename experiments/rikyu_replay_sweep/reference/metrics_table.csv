@@ -1,0 +1,25 @@
+task,display,type,dataset,metric,at_intro,final,final_mae,samples
+density,Density,regression,qc_ac_te_mp,R2,0.987602473710379,0.957378914204716,0.15541221103888503,5075
+efermi,E_Fermi,regression,qc_ac_te_mp,R2,0.9021314822809229,0.8507956856361198,0.27873283185876974,5073
+final_energy,Final Energy / atom,regression,qc_ac_te_mp,R2,0.5934284109588268,0.4018716299278814,0.5547853036572248,5075
+total_magnetization,Total Magnetization,regression,qc_ac_te_mp,R2,0.6452279789442277,0.3951927231187313,0.5004170429238094,5075
+volume,Volume,regression,qc_ac_te_mp,R2,0.45141002119738927,0.28802774053051594,0.6873423237300156,5075
+dielectric_total,Dielectric (total),regression,qc_ac_te_mp,R2,0.5887868689384148,0.4600401626171815,0.5202588108075046,710
+dielectric_ionic,Dielectric (ionic),regression,qc_ac_te_mp,R2,0.5716349068364484,0.26219825294453203,0.643563757192901,710
+dielectric_electronic,Dielectric (electronic),regression,qc_ac_te_mp,R2,0.8138342082589415,0.6777598834796874,0.34237382021070095,710
+magnetization,Magnetization,regression,NEMAD magnetic,R2,0.6760122976611691,0.3497682144971618,0.571386524711316,228
+curie,Curie Temperature,regression,NEMAD magnetic,R2,0.6199810403994378,0.4620825546493771,0.5453401014355164,1377
+neel,Néel Temperature,regression,NEMAD magnetic,R2,0.6496561039693947,0.4741294004935329,0.5391537403860529,727
+kp,Phonon Conductivity (κₚ),regression,phonix-db,R2,0.5019457467415711,0.20502909631327182,0.6050031042565014,885
+magnetic_susceptibility,Magnetic Susceptibility,kernel regression,qc_ac_te_mp,R2,0.04622596183344463,-0.18823904688033677,0.49490252891000547,20
+zt,ZT,kernel regression,qc_ac_te_mp,R2,0.6161840874653383,0.36312399064740775,0.6114400482076565,748
+power_factor,Power Factor,kernel regression,qc_ac_te_mp,R2,0.6008142844579503,0.2578678333791061,0.6450711806234173,780
+thermal_conductivity,Thermal Conductivity,kernel regression,qc_ac_te_mp,R2,0.6198235119747659,0.39489188867481784,0.5658484457400899,900
+electrical_resistivity,Electrical Resistivity,kernel regression,qc_ac_te_mp,R2,0.1419000296578845,0.020309626719354767,0.4356150130200556,1037
+dos_density,DOS Density,kernel regression,qc_ac_te_mp,R2,0.4967433207068076,0.36483429810185286,0.14579654044578788,1598
+seebeck,Seebeck Coefficient,kernel regression,qc_ac_te_mp,R2,0.5688210663455883,0.2715632495682375,0.6156703812415497,1766
+formation_energy,Formation Energy,regression,qc_ac_te_mp,R2,0.9322766893277701,0.920266027321956,0.2118344294847098,5075
+magnetic_moment,Magnetic Moment,regression,NEMAD magnetic,R2,0.3939973684815903,0.14447339413715254,0.7363819468721781,174
+tc,Critical Temperature (Tc),regression,NEMAD superconductor,R2,0.739265624247617,0.680443856746839,0.4153594506410785,1544
+klat,Lattice Conductivity (κ_lat),regression,phonix-db,R2,0.51633614656557,0.4433102721925539,0.5099603455620018,885
+material_type,Material Type,classification,qc_ac_te_mp,accuracy,0.9808267609464237,0.9808267609464237,,7354
