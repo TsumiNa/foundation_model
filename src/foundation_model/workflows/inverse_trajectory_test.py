@@ -3,10 +3,10 @@
 
 """Tests for the pure helpers in :mod:`foundation_model.workflows.inverse_trajectory`.
 
-The full ``_emit_trajectory_outputs`` orchestrator needs a real trained checkpoint to exercise;
-this file covers the pure functions — seed picker, progress normalisation, and the writer
-smoke-tests (static plot + gif + html + svg). Animations are checked only for "file got written";
-visual correctness is verified by inspecting the rerun artefacts.
+The full trajectory orchestrator needs a real trained checkpoint to exercise; this file covers
+the pure functions — per-kind progress normalisation and the writer smoke-tests (static plot +
+gif + html + svg). Animations are checked only for "file got written"; visual correctness is
+verified by inspecting the rerun artefacts.
 """
 
 from __future__ import annotations
@@ -15,88 +15,98 @@ import numpy as np
 import pytest
 
 from foundation_model.workflows.inverse_trajectory import (
-    best_seed_by_target_distance,
+    TargetMeta,
     normalize_target_trajectories,
     plot_trajectory_animation,
     plot_trajectory_static,
+    target_progress_matrix,
 )
-
-
-# --- best_seed_by_target_distance --------------------------------------------------------------
-
-
-def test_best_seed_picks_closest_joint_distance_to_targets():
-    """Seed 1 is closest to the joint target (QC=1, fe=-2, klat=2); the picker should return 1."""
-    qc = np.array([0.20, 0.95, 0.50])  # seed 1 has highest QC
-    reg = {
-        "formation_energy": np.array([+0.5, -1.9, -1.0]),  # seed 1 hits target -2 best
-        "klat": np.array([0.0, 1.8, 1.2]),  # seed 1 hits target 2 best
-    }
-    reg_targets = {"formation_energy": -2.0, "klat": 2.0}
-    assert best_seed_by_target_distance(qc, reg, reg_targets) == 1
-
-
-def test_best_seed_handles_zero_target_without_div_by_zero():
-    """``target == 0`` would naively divide by zero; the picker uses a min-scale guard."""
-    qc = np.array([0.9, 0.8])
-    reg = {"some_task": np.array([0.1, 0.5])}
-    # Should pick seed 0 (closer to target 0).
-    assert best_seed_by_target_distance(qc, reg, {"some_task": 0.0}) == 0
-
-
-def test_best_seed_empty_qc_raises():
-    with pytest.raises(ValueError, match="empty qc_final"):
-        best_seed_by_target_distance(np.array([]), {}, {})
 
 
 # --- normalize_target_trajectories -------------------------------------------------------------
 
 
-def test_normalize_trajectory_maps_baseline_to_zero_and_target_to_one():
-    """Per (task, seed): a step's value of (target - baseline) + baseline ⇒ progress = 1."""
-    n_steps = 4
-    n_seeds = 2
-    # One reg target only. Baseline = [0.0, 0.5], target = 2.0.
-    reg_targets = {"k": 2.0}
-    seed_reg = {"k": np.array([0.0, 0.5])}
-    # Per-seed trajectory: linear interpolation from baseline → target across 4 steps.
-    traj_k = np.stack(
-        [
-            np.linspace(0.0, 2.0, n_steps),  # seed 0
-            np.linspace(0.5, 2.0, n_steps),  # seed 1
-        ],
-        axis=1,
-    )  # (steps, B)
-    # QC trajectory: flat at the seed baseline so it normalises to 0 progress throughout.
-    seed_qc = np.array([0.1, 0.2])
-    qc_traj = np.tile(seed_qc[None, :], (n_steps, 1))
+def _linear_traj(baselines: np.ndarray, finals: np.ndarray, n_steps: int) -> np.ndarray:
+    """(steps, B) linear interpolation from per-seed baselines to per-seed finals."""
+    t = np.linspace(0.0, 1.0, n_steps)[:, None]
+    return baselines[None, :] * (1 - t) + finals[None, :] * t
 
-    progress = normalize_target_trajectories(
-        qc_trajectory=qc_traj,
-        reg_trajectory={"k": traj_k},
-        reg_targets=reg_targets,
-        seed_qc=seed_qc,
-        seed_reg=seed_reg,
-    )
-    # k progress: starts at 0, ends at 1 (per-seed normalised then mean over B).
-    assert progress["k"].shape == (n_steps,)
-    assert progress["k"][0] == pytest.approx(0.0, abs=1e-9)
-    assert progress["k"][-1] == pytest.approx(1.0, abs=1e-9)
-    # QC stays at baseline ⇒ progress = 0 throughout.
-    assert progress["QC"].shape == (n_steps,)
-    assert np.allclose(progress["QC"], 0.0)
+
+def test_value_kind_maps_baseline_to_zero_and_target_to_one():
+    n_steps, target = 4, 2.0
+    baselines = np.array([0.0, 0.5])
+    traj = _linear_traj(baselines, np.full(2, target), n_steps)[:, :, None]  # (steps, B, 1)
+    metas = [TargetMeta(task="k", kind="value", label="k→2", value=target)]
+    progress = normalize_target_trajectories(traj, metas, {"k": baselines})
+    assert progress["k→2"].shape == (n_steps,)
+    assert progress["k→2"][0] == pytest.approx(0.0, abs=1e-9)
+    assert progress["k→2"][-1] == pytest.approx(1.0, abs=1e-9)
+
+
+@pytest.mark.parametrize(("class_high", "final_p"), [(True, 1.0), (False, 0.0)])
+def test_class_kind_targets_one_or_zero(class_high: bool, final_p: float):
+    n_steps = 5
+    baselines = np.array([0.4, 0.6])
+    traj = _linear_traj(baselines, np.full(2, final_p), n_steps)[:, :, None]
+    metas = [TargetMeta(task="mat", kind="class", label="P", class_high=class_high)]
+    progress = normalize_target_trajectories(traj, metas, {"mat": baselines})
+    assert progress["P"][0] == pytest.approx(0.0, abs=1e-9)
+    assert progress["P"][-1] == pytest.approx(1.0, abs=1e-9)
+
+
+def test_curve_kind_full_rmse_reduction_is_one():
+    n_steps = 3
+    baselines = np.array([1.0, 2.0])  # baseline RMSE per seed
+    traj = _linear_traj(baselines, np.zeros(2), n_steps)[:, :, None]  # RMSE → 0
+    metas = [TargetMeta(task="dos", kind="curve", label="dos~curve")]
+    progress = normalize_target_trajectories(traj, metas, {"dos": baselines})
+    assert progress["dos~curve"][0] == pytest.approx(0.0, abs=1e-9)
+    assert progress["dos~curve"][-1] == pytest.approx(1.0, abs=1e-9)
+
+
+def test_direction_kind_self_normalises_to_final_step():
+    n_steps = 6
+    baselines = np.array([0.0, 1.0])
+    finals = np.array([3.0, -1.0])  # one seed rises, one falls — both normalise 0 → 1
+    traj = _linear_traj(baselines, finals, n_steps)[:, :, None]
+    metas = [TargetMeta(task="b", kind="direction", label="b↑")]
+    progress = normalize_target_trajectories(traj, metas, {"b": baselines})
+    assert progress["b↑"][0] == pytest.approx(0.0, abs=1e-9)
+    assert progress["b↑"][-1] == pytest.approx(1.0, abs=1e-9)
+
+
+def test_flat_trajectory_guarded_against_zero_denominator():
+    n_steps = 4
+    baselines = np.array([0.3, 0.3])
+    traj = np.tile(baselines[None, :], (n_steps, 1))[:, :, None]  # flat at baseline
+    for kind, value in (("value", 0.3), ("direction", None)):
+        metas = [TargetMeta(task="t", kind=kind, label="t", value=value)]
+        progress = normalize_target_trajectories(traj, metas, {"t": baselines})
+        assert np.allclose(progress["t"], 0.0)
+
+
+def test_progress_matrix_keeps_per_seed_curves():
+    n_steps = 4
+    baselines = np.array([0.0, 1.0])
+    traj = _linear_traj(baselines, np.array([2.0, 1.0]), n_steps)[:, :, None]  # seed 1 flat
+    metas = [TargetMeta(task="a", kind="value", label="a→2", value=2.0)]
+    matrix = target_progress_matrix(traj, metas, {"a": baselines})
+    assert matrix["a→2"].shape == (n_steps, 2)
+    assert matrix["a→2"][-1, 0] == pytest.approx(1.0, abs=1e-9)  # seed 0 reaches the target
+    assert np.allclose(matrix["a→2"][:, 1], 0.0)  # seed 1 never moves
 
 
 # --- plot writers ------------------------------------------------------------------------------
 
 
 def _toy_progress() -> dict[str, np.ndarray]:
-    """4-target × 30-step normalised progress, monotone so the picture is interpretable."""
+    """4-target × 30-step normalised progress with the new label styles, monotone curves."""
     n = 30
     return {
-        "QC": np.clip(np.linspace(0.0, 0.95, n) + 0.02 * np.sin(np.linspace(0, 4 * np.pi, n)), 0, 1.5),
-        "formation_energy": np.linspace(0.0, 1.2, n),
-        "klat": np.linspace(0.0, 0.8, n),
+        "P(mat∈{1,3})↑": np.clip(np.linspace(0.0, 0.95, n) + 0.02 * np.sin(np.linspace(0, 4 * np.pi, n)), 0, 1.5),
+        "formation_energy→-2": np.linspace(0.0, 1.2, n),
+        "klat↑": np.linspace(0.0, 0.8, n),
+        "dos~curve(3pts)": np.linspace(0.0, 0.6, n),
     }
 
 
@@ -175,11 +185,12 @@ def test_plot_trajectory_animation_writes_smil_svg(tmp_path):
     assert "step 1/" in body
 
 
-def test_svg_title_is_xml_escaped(tmp_path):
-    """A title with &/</> must be XML-escaped in the SMIL SVG (no invalid markup / injection)."""
+def test_svg_title_and_legend_are_xml_escaped(tmp_path):
+    """User-controlled text (title, target labels) must be XML-escaped in the SMIL SVG."""
     out = tmp_path / "escaped.svg"
+    progress = {"fe<&>↓": np.linspace(0.0, 1.0, 30)}
     plot_trajectory_animation(
-        _toy_progress(),
+        progress,
         per_step_weights=_toy_weights(),
         element_symbols=[f"E{i}" for i in range(12)],
         out_paths_by_format={"svg": out},
@@ -189,6 +200,7 @@ def test_svg_title_is_xml_escaped(tmp_path):
     body = out.read_text(encoding="utf-8")
     assert "&lt;a&gt; &amp; &lt;b&gt;" in body
     assert "<title>path <a>" not in body  # the raw, unescaped title must not appear
+    assert "fe&lt;&amp;&gt;↓" in body  # legend label escaped too
 
 
 def test_plot_trajectory_animation_skips_when_steps_dont_match(tmp_path):

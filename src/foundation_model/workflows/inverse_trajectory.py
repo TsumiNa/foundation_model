@@ -4,16 +4,16 @@
 """Per-step trajectory analytics + plots + animations for inverse-design runs.
 
 Each call to :meth:`FlexibleMultiTaskModel.optimize_latent` /
-:meth:`FlexibleMultiTaskModel.optimize_composition` can now optionally record:
+:meth:`FlexibleMultiTaskModel.optimize_composition` can optionally record:
 
-* ``trajectory_targets``  — shape ``(steps, B, T)``: per-step predicted target values
-  (one column per regression task in ``reg_targets`` order; QC is separate).
+* ``trajectory_targets``  — shape ``(steps, B, T)``: per-step target channels, one column per
+  scenario target in declaration order (regression: ŷ, curve: RMSE-to-curve, classification:
+  P(classes)).
 * ``trajectory_weights``  — shape ``(steps, B, n_components)``: per-step element weights
   (the optimisation variable for ``optimize_composition``; decoded via ``KMD.inverse`` from the
   per-step AE-decoded ``x`` for ``optimize_latent``).
 
-Together with the per-step QC trajectory (also collected from the raw target predictions for
-the QC head), these are enough to visualise:
+These are enough to visualise:
 
 1. How fast each target converges relative to the others (static line plot, normalised so all
    targets are on the same y-axis).
@@ -26,7 +26,8 @@ This module hosts the pure helpers; :func:`foundation_model.workflows.inverse.ru
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 from xml.sax.saxutils import escape as _xml_escape
@@ -41,81 +42,83 @@ import numpy as np
 from loguru import logger
 
 
-# --- representative-seed picker -----------------------------------------------------------------
-
-
-def best_seed_by_target_distance(
-    qc_final: np.ndarray,
-    reg_final: dict[str, np.ndarray],
-    reg_targets: Mapping[str, float],
-) -> int:
-    """Pick the seed whose final state minimises the joint normalised distance to all targets.
-
-    "Joint distance" = $\\sqrt{(1 - \\text{QC})^2 + \\sum_t ((y_t - \\text{target}_t) / s_t)^2}$
-    where $s_t$ is the per-task scale (we use the absolute target value as a stand-in so each
-    task contributes on a comparable scale; a target of ±2 σ in z-scored space gives a scale of 2).
-
-    The QC term uses ``1 - QC`` so closer-to-1 wins; the regression terms use signed deviation
-    so an under-shoot and an over-shoot are penalised equally.
-    """
-    qc_final = np.asarray(qc_final, dtype=float)
-    n = qc_final.shape[0]
-    if n == 0:
-        raise ValueError("best_seed_by_target_distance: empty qc_final array.")
-    dist_sq = (1.0 - qc_final) ** 2
-    for task, target in reg_targets.items():
-        scale = max(abs(float(target)), 1.0)  # avoid divide-by-zero if target == 0
-        vals = np.asarray(reg_final[task], dtype=float)
-        dist_sq = dist_sq + ((vals - float(target)) / scale) ** 2
-    return int(np.argmin(dist_sq))
-
-
 # --- trajectory normalisation -----------------------------------------------------------------
 
 
-def normalize_target_trajectories(
-    qc_trajectory: np.ndarray,
-    reg_trajectory: dict[str, np.ndarray],
-    reg_targets: Mapping[str, float],
-    seed_qc: np.ndarray,
-    seed_reg: Mapping[str, np.ndarray],
-) -> dict[str, np.ndarray]:
-    """Map per-step target predictions to a [0, 1] "progress" fraction.
+@dataclass(frozen=True, kw_only=True)
+class TargetMeta:
+    """The slice of a scenario target this module needs (kept tiny to avoid importing configs).
 
-    For each target, 0 = "at seed baseline", 1 = "exactly at target". Values can exceed [0, 1]
-    if the optimiser overshoots. The transform is per-(task, seed): for seed *i* we compute
-    ``(y[step, i] - baseline[i]) / (target - baseline[i])`` so a noisy seed-to-seed baseline
-    doesn't dilute the average. After per-seed normalisation we mean over seeds so the static
-    plot shows the average progress across the seed cohort.
-
-    Returns: dict ``{"QC": (steps,), task_name: (steps,)}`` of mean progress values.
+    ``kind`` is one of ``"value"`` / ``"direction"`` / ``"curve"`` / ``"class"``; ``value`` is the
+    regression target for the value kind; ``class_high`` is the class-kind direction; ``label`` is
+    the human-readable curve label used as the progress-dict key.
     """
+
+    task: str
+    kind: str
+    label: str
+    value: float | None = None
+    class_high: bool = True
+
+
+def target_progress_matrix(
+    trajectory: np.ndarray,
+    metas: Sequence[TargetMeta],
+    seed_channels: Mapping[str, np.ndarray],
+) -> dict[str, np.ndarray]:
+    """Per-seed progress curves for every target: ``{label: (steps, B)}``.
+
+    0 = "at seed baseline", 1 = "goal reached" — per kind:
+
+    - ``value``: ``(y − baseline) / (target − baseline)`` (can overshoot past 1).
+    - ``class``: same formula with target 1.0 (``class_high``) or 0.0 (low).
+    - ``curve``: ``(baseline_rmse − rmse) / baseline_rmse`` (1 = perfect curve fit).
+    - ``direction``: unbounded objective, no fixed goal — self-normalised over the run:
+      ``(y − baseline) / (y_final − baseline)`` (0 at the seed, 1 at the final step).
+    """
+    steps = np.asarray(trajectory, dtype=float)  # (steps, B, T)
     out: dict[str, np.ndarray] = {}
-
-    # QC always targets 1.0.
-    qc_baseline = np.asarray(seed_qc, dtype=float)  # (B,)
-    qc_target = 1.0
-    qc_denom = qc_target - qc_baseline
-    qc_denom = np.where(np.abs(qc_denom) < 1e-9, 1.0, qc_denom)  # protect against /0
-    qc_progress = (np.asarray(qc_trajectory, dtype=float) - qc_baseline[None, :]) / qc_denom[None, :]
-    out["QC"] = qc_progress.mean(axis=1)
-
-    for task, target in reg_targets.items():
-        baseline = np.asarray(seed_reg[task], dtype=float)  # (B,)
-        denom = float(target) - baseline
-        denom = np.where(np.abs(denom) < 1e-9, 1.0, denom)
-        traj = np.asarray(reg_trajectory[task], dtype=float)  # (steps, B)
-        progress = (traj - baseline[None, :]) / denom[None, :]
-        out[task] = progress.mean(axis=1)
-
+    for j, meta in enumerate(metas):
+        traj = steps[:, :, j]  # (steps, B)
+        baseline = np.asarray(seed_channels[meta.task], dtype=float)  # (B,)
+        if meta.kind == "curve":
+            denom = np.where(np.abs(baseline) < 1e-9, 1.0, baseline)
+            progress = (baseline[None, :] - traj) / denom[None, :]
+        elif meta.kind == "direction":
+            denom = traj[-1, :] - baseline
+            denom = np.where(np.abs(denom) < 1e-9, 1.0, denom)
+            progress = (traj - baseline[None, :]) / denom[None, :]
+        else:
+            if meta.kind == "value":
+                if meta.value is None:
+                    raise ValueError(f"TargetMeta '{meta.task}': value kind requires a value.")
+                target = float(meta.value)
+            else:
+                target = 1.0 if meta.class_high else 0.0
+            denom = target - baseline
+            denom = np.where(np.abs(denom) < 1e-9, 1.0, denom)
+            progress = (traj - baseline[None, :]) / denom[None, :]
+        out[meta.label] = progress
     return out
+
+
+def normalize_target_trajectories(
+    trajectory: np.ndarray,
+    metas: Sequence[TargetMeta],
+    seed_channels: Mapping[str, np.ndarray],
+) -> dict[str, np.ndarray]:
+    """Mean-over-seeds progress curves: ``{label: (steps,)}``.
+
+    The transform is per-(target, seed) — see :func:`target_progress_matrix` — then averaged over
+    the seed cohort so a noisy seed-to-seed baseline doesn't dilute the picture.
+    """
+    return {label: mat.mean(axis=1) for label, mat in target_progress_matrix(trajectory, metas, seed_channels).items()}
 
 
 # --- static plot -------------------------------------------------------------------------------
 
 
-_TARGET_COLOR_QC = "#C44E52"  # red — matches the target lines used elsewhere
-_TARGET_COLORS_REG = ["#2563EB", "#55A868", "#E67E22", "#9467bd"]  # blue / green / orange / purple
+_TARGET_COLORS = ["#2563EB", "#55A868", "#E67E22", "#9467bd", "#C44E52"]  # blue/green/orange/purple/red
 
 
 def plot_trajectory_static(
@@ -127,12 +130,11 @@ def plot_trajectory_static(
 ) -> None:
     """Line plot of normalised progress vs step.
 
-    QC is drawn in red; the regression tasks cycle through the project's blue / green / orange
-    palette. The y-axis is "progress fraction" (0 = at seed, 1 = at target); a horizontal dashed
-    line at 1.0 marks the joint target. The reader gets a one-glance answer to the question the
-    user asked: "do the targets converge together, or does the recipe stabilise early and the
-    targets keep moving?" — divergence between the QC line and the reg lines, or between the reg
-    lines themselves, surfaces immediately.
+    The targets cycle through the project's blue / green / orange palette. The y-axis is
+    "progress fraction" (0 = at seed, 1 = at target); a horizontal dashed line at 1.0 marks the
+    joint target. The reader gets a one-glance answer to: "do the targets converge together, or
+    does the recipe stabilise early and the targets keep moving?" — divergence between the lines
+    surfaces immediately.
 
     When ``seed_composition`` is provided (the per-seed composition string, e.g.
     ``"Au65 Ga20 Gd15"``), it's appended to the figure title under the main title in a monospace
@@ -141,16 +143,11 @@ def plot_trajectory_static(
     fig, ax = plt.subplots(figsize=(8.0, 5.0), dpi=150)
     steps = np.arange(len(next(iter(progress.values()))))
 
-    # QC first so it's visually behind the reg lines (the user usually cares about reg
-    # convergence; QC's behavior is rarely surprising).
-    if "QC" in progress:
-        ax.plot(steps, progress["QC"], color=_TARGET_COLOR_QC, lw=2.0, label="QC (P(quasicrystal))")
-    reg_keys = [k for k in progress if k != "QC"]
-    for i, key in enumerate(reg_keys):
+    for i, key in enumerate(progress):
         ax.plot(
             steps,
             progress[key],
-            color=_TARGET_COLORS_REG[i % len(_TARGET_COLORS_REG)],
+            color=_TARGET_COLORS[i % len(_TARGET_COLORS)],
             lw=1.8,
             label=key,
         )
@@ -246,13 +243,11 @@ def plot_trajectory_animation(
 
     # --- Static line plot in left panel ---
     steps = np.arange(n_steps)
-    if "QC" in progress:
-        ax_line.plot(steps, progress["QC"], color=_TARGET_COLOR_QC, lw=2.0, label="QC (P(quasicrystal))")
-    for i, key in enumerate([k for k in progress if k != "QC"]):
+    for i, key in enumerate(progress):
         ax_line.plot(
             steps,
             progress[key],
-            color=_TARGET_COLORS_REG[i % len(_TARGET_COLORS_REG)],
+            color=_TARGET_COLORS[i % len(_TARGET_COLORS)],
             lw=1.8,
             label=key,
         )
@@ -425,19 +420,16 @@ def _save_smil_svg(
     parts.append(f'<text x="34" y="{y0 + 4}" text-anchor="end" fill="#888">0</text>')
     parts.append(f'<text x="34" y="{y1 + 4}" text-anchor="end" fill="#666">1</text>')
 
-    color_map = {"QC": _TARGET_COLOR_QC}
-    reg_keys = [k for k in progress if k != "QC"]
-    for i, key in enumerate(reg_keys):
-        color_map[key] = _TARGET_COLORS_REG[i % len(_TARGET_COLORS_REG)]
+    color_map = {key: _TARGET_COLORS[i % len(_TARGET_COLORS)] for i, key in enumerate(progress)}
 
-    # Polyline per target.
+    # Polyline per target. Legend labels derive from user task names — escape them for XML.
     legend_y = 50
     for key, vals in progress.items():
         pts = " ".join(f"{_to_x(s):.1f},{_to_y(float(v)):.1f}" for s, v in enumerate(vals))
         color = color_map[key]
         parts.append(f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.8" />')
         parts.append(f'<circle cx="455" cy="{legend_y}" r="4" fill="{color}" />')
-        parts.append(f'<text x="462" y="{legend_y + 4}" fill="#222">{key}</text>')
+        parts.append(f'<text x="462" y="{legend_y + 4}" fill="#222">{_xml_escape(key)}</text>')
         legend_y += 14
 
     # ---- animated step marker (vertical line in line plot) ----
