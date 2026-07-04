@@ -110,6 +110,14 @@ class PretrainConfig:
     task_sequence: list[str] = field(default_factory=list)  # order tasks are introduced; [] = [[tasks]] order
     n_runs: int = 1  # independent repeats (different seeds) written to runs/runNN/
     task_order: TaskOrder = TaskOrder.FIXED  # "fixed" (task_sequence order) or "random" (per-run shuffle)
+    # Random-order controls (both require task_order = "random"). task_order_seed decouples the
+    # shuffle RNG from the run seed: run i shuffles with task_order_seed + i (None = the run seed,
+    # i.e. [training].seed + i — the historical behavior, still reproducible). task_order_groups
+    # constrains the shuffle: tasks are shuffled within each group and the groups are concatenated
+    # in the listed order; the groups must exactly partition task_sequence. Lets e.g. expensive
+    # kernel-regression tasks stay in a final block while the order within blocks is randomized.
+    task_order_seed: int | None = None
+    task_order_groups: list[list[str]] = field(default_factory=list)
     # Warm-start: load encoder + heads from this checkpoint, treat its tasks as already learned, and
     # continue the sequence with the task_sequence tasks it doesn't already contain. None = from scratch.
     checkpoint: Path | None = None
@@ -136,6 +144,23 @@ class PretrainConfig:
         bad_replay = [t for t in self.rehearsal.per_task if t not in catalog_tasks]
         if bad_replay:
             raise ValueError(f"rehearsal.per_task references unknown task(s): {bad_replay}.")
+        if self.task_order is not TaskOrder.RANDOM:
+            if self.task_order_seed is not None:
+                raise ValueError('pretrain.task_order_seed requires task_order = "random".')
+            if self.task_order_groups:
+                raise ValueError('pretrain.task_order_groups requires task_order = "random".')
+        if self.task_order_groups:
+            flat = [t for group in self.task_order_groups for t in group]
+            dupes = sorted({t for t in flat if flat.count(t) > 1})
+            if dupes:
+                raise ValueError(f"pretrain.task_order_groups lists task(s) more than once: {dupes}.")
+            missing = sorted(set(self.task_sequence) - set(flat))
+            extra = sorted(set(flat) - set(self.task_sequence))
+            if missing or extra:
+                raise ValueError(
+                    "pretrain.task_order_groups must exactly partition task_sequence "
+                    f"(missing: {missing}, not in task_sequence: {extra})."
+                )
 
 
 # --- builder ------------------------------------------------------------------------------
@@ -157,7 +182,18 @@ def build_pretrain_config(
 
     pretrain_raw = dict(raw.get("pretrain", {}))
     reject_unknown(
-        "pretrain", pretrain_raw, {"task_sequence", "n_runs", "task_order", "rehearsal", "checkpoint", "resume"}
+        "pretrain",
+        pretrain_raw,
+        {
+            "task_sequence",
+            "n_runs",
+            "task_order",
+            "task_order_seed",
+            "task_order_groups",
+            "rehearsal",
+            "checkpoint",
+            "resume",
+        },
     )
     rehearsal_raw = dict(pretrain_raw.get("rehearsal", {}))
     reject_unknown("pretrain.rehearsal", rehearsal_raw, {"interval", "default_replay", "per_task"})
@@ -181,6 +217,8 @@ def build_pretrain_config(
         task_sequence=list(pretrain_raw.get("task_sequence", [])),
         n_runs=int(pretrain_raw.get("n_runs", 1)),
         task_order=TaskOrder(str(pretrain_raw.get("task_order", "fixed"))),
+        task_order_seed=(None if pretrain_raw.get("task_order_seed") is None else int(pretrain_raw["task_order_seed"])),
+        task_order_groups=[list(group) for group in pretrain_raw.get("task_order_groups", [])],
         checkpoint=Path(resolved_checkpoint) if resolved_checkpoint is not None else None,
         resume=resume or bool(pretrain_raw.get("resume", False)),
     )
@@ -223,7 +261,7 @@ def run(cfg: PretrainConfig, recorder: RunRecorder | None = None) -> dict[str, A
     try:
         for run_idx in range(cfg.n_runs):
             run_seed = cfg.training.seed + run_idx
-            order = _run_task_order(cfg, run_seed)
+            order = _run_task_order(cfg, run_seed, run_idx)
             if cfg.n_runs == 1:
                 run_recorder = root_recorder
             else:
@@ -264,13 +302,17 @@ def run(cfg: PretrainConfig, recorder: RunRecorder | None = None) -> dict[str, A
             root_recorder.close()
 
 
-def _run_task_order(cfg: PretrainConfig, seed: int) -> list[str]:
-    if cfg.task_order is TaskOrder.RANDOM:
-        rng = np.random.default_rng(seed)
-        order = list(cfg.task_sequence)
-        rng.shuffle(order)
-        return order
-    return list(cfg.task_sequence)
+def _run_task_order(cfg: PretrainConfig, run_seed: int, run_idx: int = 0) -> list[str]:
+    if cfg.task_order is not TaskOrder.RANDOM:
+        return list(cfg.task_sequence)
+    seed = run_seed if cfg.task_order_seed is None else cfg.task_order_seed + run_idx
+    rng = np.random.default_rng(seed)
+    order: list[str] = []
+    for group in cfg.task_order_groups or [cfg.task_sequence]:
+        block = list(group)
+        rng.shuffle(block)
+        order.extend(block)
+    return order
 
 
 def _latest_step_checkpoint(training_dir: Path) -> Path | None:

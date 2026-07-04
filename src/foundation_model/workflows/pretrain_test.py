@@ -135,6 +135,58 @@ def test_random_order_same_seed_same_permutation() -> None:
     assert _run_task_order(cfg, 7) == _run_task_order(cfg, 7)
 
 
+def _four_task_toml(pretrain_extra: str) -> str:
+    tasks = "\n".join(
+        f'[[tasks]]\nname = "{n}"\nkind = "regression"\ndataset = "d1"\ncolumn = "{n}"\n' for n in ("a", "b", "c", "d")
+    )
+    return f"""
+[descriptor]
+kind = "kmd"
+n_grids = 4
+
+[datasets.d1]
+path = "data/x.parquet"
+
+{tasks}
+[pretrain]
+{pretrain_extra}
+"""
+
+
+def test_task_order_seed_decouples_shuffle_from_run_seed() -> None:
+    from foundation_model.workflows.pretrain import _run_task_order
+
+    cfg = _build(_four_task_toml('task_order = "random"\ntask_order_seed = 11'))
+    # With task_order_seed set, the run seed no longer influences the order; run_idx does.
+    assert _run_task_order(cfg, 7, 0) == _run_task_order(cfg, 99, 0)
+    assert _run_task_order(cfg, 7, 1) == _run_task_order(cfg, 99, 1)
+
+
+def test_task_order_groups_shuffle_within_blocks() -> None:
+    from foundation_model.workflows.pretrain import _run_task_order
+
+    cfg = _build(_four_task_toml('task_order = "random"\ntask_order_groups = [["a", "b", "c"], ["d"]]'))
+    for run_idx in range(5):
+        order = _run_task_order(cfg, 7, run_idx)
+        assert sorted(order[:3]) == ["a", "b", "c"] and order[3] == "d"
+
+
+def test_task_order_groups_must_partition_sequence() -> None:
+    with pytest.raises(ValueError, match="exactly partition"):
+        _build(_four_task_toml('task_order = "random"\ntask_order_groups = [["a", "b"], ["c"]]'))
+
+
+def test_task_order_groups_duplicate_task_raises() -> None:
+    with pytest.raises(ValueError, match="more than once"):
+        _build(_four_task_toml('task_order = "random"\ntask_order_groups = [["a", "b", "c"], ["c", "d"]]'))
+
+
+@pytest.mark.parametrize("extra", ["task_order_seed = 11", 'task_order_groups = [["a", "b"]]'])
+def test_random_order_controls_require_random_order(extra: str) -> None:
+    with pytest.raises(ValueError, match='requires task_order = "random"'):
+        _build(_config_toml(pretrain_extra=extra))
+
+
 # --- end-to-end smoke --------------------------------------------------------------------
 
 
