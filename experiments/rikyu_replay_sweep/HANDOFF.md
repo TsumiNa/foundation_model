@@ -95,11 +95,13 @@ this repo dir are the source of truth.
 | 200 | 45177 | COMPLETED | 7.9 h (28438 s) |
 | 500 | 45178 | COMPLETED | 10.6 h |
 | 1000 | 45179 | RUNNING | (~11 h) |
-| **1500** (relay) | **45776** | submitted 19:00 | 16 h wall |
-| **2000** (relay) | **45777** | submitted 19:00 | 16 h wall |
-| **2500** (relay) | **45778** | submitted 19:00 | 16 h wall |
+| **1500** (relay) | **45781** | RUNNING | 24 h wall |
+| **2000** (relay) | **45782** | RUNNING | 24 h wall |
+| **2500** (relay) | **45783** | RUNNING | 24 h wall |
 
-Sweep jobs were submitted with `--time=16:00:00`. Timing is dominated by the late kernel-regression
+Original sweep jobs used `--time=16:00:00`. The relay jobs use **`--time=24:00:00`**: measured
+fixed-count wall times are n100=7.0h, n200=7.9h, n500=10.6h, n1000~11.7h, so n2500 was projected
+at ~15h (too close to a 16h wall) — 24h gives headroom (partition max is 96h). Timing is dominated by the late kernel-regression
 steps (dos_density, seebeck) at ~30–40 min each once 20+ heads are active.
 
 **To check status** (with the retry guard for the flaky login-node Slurm):
@@ -185,9 +187,13 @@ to ~1500/2000/2500 replay samples per dense qc task — right where the fit pred
 
 | tag | JobID | config (in this repo + on rikyu `jobs/rehearsal/sweep/`) | output dir on rikyu |
 |---|---|---|---|
-| n1500 | **45776** | `configs/sweep_n1500.toml` | `artifacts/replay_sweep/replay_n1500_rikyu/` |
-| n2000 | **45777** | `configs/sweep_n2000.toml` | `artifacts/replay_sweep/replay_n2000_rikyu/` |
-| n2500 | **45778** | `configs/sweep_n2500.toml` | `artifacts/replay_sweep/replay_n2500_rikyu/` |
+| n1500 | **45781** | `configs/sweep_n1500.toml` | `artifacts/replay_sweep/replay_n1500_rikyu/` |
+| n2000 | **45782** | `configs/sweep_n2000.toml` | `artifacts/replay_sweep/replay_n2000_rikyu/` |
+| n2500 | **45783** | `configs/sweep_n2500.toml` | `artifacts/replay_sweep/replay_n2500_rikyu/` |
+
+(These were resubmitted with a 24h walltime; the 45776/7/8 IDs in git history were the initial 16h
+submission, cancelled at ~17 min. Jobs are `--resume`-capable, so if one still hits the wall,
+resubmit the same command with `--resume` to continue from the last completed step.)
 
 Steps to finish them:
 1. `git pull` (this handoff + the 3 configs are committed). Confirm rikyu access (§1).
