@@ -1,4 +1,4 @@
-# Copyright 2025 TsumiNa.
+# Copyright 2027 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
 """``fm pretrain`` — continual-rehearsal pre-training engine with an n-runs sweep.
