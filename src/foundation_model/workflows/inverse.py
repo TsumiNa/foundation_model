@@ -67,6 +67,7 @@ class InverseMethod(str, Enum):
 
 class SeedStrategy(str, Enum):
     TOP_OBJECTIVE = "top_objective"  # rank candidates by the scenario's objective score
+    WEIGHTED_RANDOM = "weighted_random"  # sample; selection probability rises with a task's true label
     RANDOM = "random"
     EXPLICIT = "explicit"
 
@@ -79,6 +80,10 @@ class SeedConfig:
     strategy: SeedStrategy | str = SeedStrategy.TOP_OBJECTIVE  # str accepted; coerced in __post_init__
     n: int = 20
     split: str = "test"
+    # weighted_random only: the regression task whose TRUE labels weight the sampling — candidates
+    # are drawn without replacement with probability proportional to their label's rank (higher
+    # label = more likely), so the pool keeps variety while favoring high-ground-truth seeds.
+    weight_task: str | None = None
     explicit: list[str] = field(default_factory=list)
     explicit_append: list[str] = field(default_factory=list)
     dedup_by_element_system: bool = True
@@ -92,6 +97,10 @@ class SeedConfig:
             raise ValueError(f"seeds.split must be train/val/test/all, got {self.split!r}.")
         if self.strategy is SeedStrategy.EXPLICIT and not self.explicit:
             raise ValueError("seeds.strategy='explicit' requires a non-empty seeds.explicit list.")
+        if self.strategy is SeedStrategy.WEIGHTED_RANDOM and not self.weight_task:
+            raise ValueError("seeds.strategy='weighted_random' requires seeds.weight_task.")
+        if self.strategy is not SeedStrategy.WEIGHTED_RANDOM and self.weight_task is not None:
+            raise ValueError("seeds.weight_task only applies to strategy='weighted_random'.")
 
 
 class TargetKind(str, Enum):
@@ -387,6 +396,12 @@ class InverseConfig:
         # composition paths require an invertible KMD descriptor
         if self.catalog.descriptor.kind != "kmd" and any(p.method is InverseMethod.COMPOSITION for p in self.paths):
             raise ValueError("composition paths require descriptor.kind == 'kmd' (an invertible KMD descriptor).")
+        if self.seeds.weight_task is not None:
+            spec = next((s for s in self.catalog.tasks if s.name == self.seeds.weight_task), None)
+            if spec is None:
+                raise ValueError(f"seeds.weight_task '{self.seeds.weight_task}' is not a catalog task.")
+            if spec.kind is not TaskKind.REGRESSION:
+                raise ValueError("seeds.weight_task must be a regression task (its scalar labels weight the sampling).")
 
 
 # --- builder ------------------------------------------------------------------------------
@@ -592,6 +607,30 @@ def select_seeds(
     if seed_cfg.strategy is SeedStrategy.EXPLICIT:
         pool = [c for c in seed_cfg.explicit if _has_descriptor(c)]
         return _merge(_dedup_by_system(pool, n_strategy, enabled=seed_cfg.dedup_by_element_system))
+
+    if seed_cfg.strategy is SeedStrategy.WEIGHTED_RANDOM:
+        # Pool = the weight task's rows in the chosen split with a valid label; draw a full
+        # weighted permutation without replacement, probability proportional to the label's rank
+        # (scale-free — z-scored/negative labels are fine), then dedup/merge as usual.
+        assert seed_cfg.weight_task is not None  # guaranteed by SeedConfig validation
+        frame = catalog.task_frames([seed_cfg.weight_task])[seed_cfg.weight_task]
+        spec = catalog.task_spec(seed_cfg.weight_task)
+        if seed_cfg.split == "all" or "split" not in frame.columns:
+            sub = frame
+        else:
+            sub = frame[frame["split"] == seed_cfg.split]
+        labels = sub[spec.column].astype(float)
+        sub = sub[labels.notna()]
+        pairs = [(str(c), float(v)) for c, v in zip(sub.index, labels[labels.notna()]) if _has_descriptor(str(c))]
+        if not pairs:
+            return appended
+        vals = np.array([v for _, v in pairs])
+        ranks = vals.argsort().argsort() + 1  # 1 = lowest label … N = highest
+        probs = ranks / ranks.sum()
+        rng = np.random.default_rng(0)
+        perm = rng.choice(len(pairs), size=len(pairs), replace=False, p=probs)
+        ordered = [pairs[i][0] for i in perm]
+        return _merge(_dedup_by_system(ordered, n_strategy, enabled=seed_cfg.dedup_by_element_system))
 
     # Candidate pool: ordered union across the scenario's target tasks (target order, then frame
     # row order) — no dependence on any particular head kind.

@@ -220,6 +220,52 @@ def test_top_qc_strategy_removed() -> None:
         SeedConfig(strategy="top_qc")
 
 
+def test_weighted_random_requires_weight_task() -> None:
+    with pytest.raises(ValueError, match="requires seeds.weight_task"):
+        SeedConfig(strategy="weighted_random")
+    with pytest.raises(ValueError, match="only applies to"):
+        SeedConfig(strategy="random", weight_task="a")
+
+
+def _weighted_seed_cfg_toml(data_dir, weight_task: str) -> str:
+    return (
+        _catalog_toml(data_dir)
+        + f"""
+[inverse]
+steps = 2
+
+[inverse.seeds]
+strategy = "weighted_random"
+weight_task = "{weight_task}"
+n = 2
+{_SCENARIO_ALL_KINDS}
+[[inverse.paths]]
+name = "latent1"
+method = "latent"
+
+[output]
+dir = "o"
+"""
+    )
+
+
+def test_weighted_random_weight_task_validated_against_catalog(data_dir) -> None:
+    with pytest.raises(ValueError, match="not a catalog task"):
+        build_inverse_config(tomllib.loads(_weighted_seed_cfg_toml(data_dir, "nope")), checkpoint="ck.pt")
+    with pytest.raises(ValueError, match="must be a regression task"):
+        build_inverse_config(tomllib.loads(_weighted_seed_cfg_toml(data_dir, "k")), checkpoint="ck.pt")
+
+
+def test_weighted_random_selection_deterministic_and_from_pool(data_dir) -> None:
+    cat, model = _model_with_heads(data_dir)
+    seed_cfg = SeedConfig(strategy="weighted_random", weight_task="a", n=4, split="all")
+    specs = [_spec(cat, task="a", value=1.0)]
+    s1 = select_seeds(cat, model, seed_cfg, targets=specs, device=torch.device("cpu"))
+    s2 = select_seeds(cat, model, seed_cfg, targets=specs, device=torch.device("cpu"))
+    assert s1 == s2 and len(s1) == 4
+    assert set(s1) <= set(str(c) for c in cat.task_frames(["a"])["a"].index)
+
+
 @pytest.mark.parametrize(
     ("target_toml", "match"),
     [

@@ -156,6 +156,7 @@ value = -1.0
 [[inverse.scenarios.targets]]
 task = "{target}"
 value = 1.0
+weight = 2.0
 """
         for target, short in (
             ("dielectric_total", "total"),
@@ -169,7 +170,9 @@ value = 1.0
                 "fm inverse — design quality probe on a ws/ft output model (--checkpoint).",
                 "THREE scenarios (pure regression, z-scored units): formation_energy down 1 sigma paired",
                 "with EACH dielectric target up 1 sigma separately. The shared seed pool comes from the",
-                "first scenario's objective (engine design). Two paths: latent (default alignment 0.5) and",
+                "first scenario's objective (engine design). Seeds: weighted_random by true dielectric_total",
+                "(top_objective clustered into one perovskite family). Dielectric targets carry weight=2.0",
+                "(moderate priority; higher would stop FE from dropping). Two paths: latent (0.5) and",
                 "composition with max_elements=4 and diversity_scale=0.5 (mid-strength element-diversity penalty;",
                 "0.2 proved too harsh — candidates collapsed to binary systems).",
                 "No animations in batch runs — trajectories land in npz and feed the HTML viewer.",
@@ -186,7 +189,8 @@ animation_formats = []
 seed = 2025
 
 [inverse.seeds]
-strategy = "top_objective"
+strategy = "weighted_random"    # sample seeds, probability rising with the TRUE dielectric_total
+weight_task = "dielectric_total"
 n = 20
 split = "test"
 dedup_by_element_system = true
