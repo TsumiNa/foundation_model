@@ -89,4 +89,5 @@ then resubmit the eval jobs with a fresh `--dependency=afterok:<new pre id>`.
   (same data files, model dims, and training hyper-parameters as the replay sweep).
 - Needs `task_order_seed`/`task_order_groups` (PR #31 range, commit 8e15be6) and the
   user-specified inverse targets (PR #32).
-- Data: on rikyu under `data/` (see `../rikyu_replay_sweep/HANDOFF.md` §2).
+- Data: synced to the local `data/` (originally on rikyu Phase 1; conventions in
+  `../rikyu_replay_sweep/README.md` "Data conventions").

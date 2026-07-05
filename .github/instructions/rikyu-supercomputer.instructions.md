@@ -6,9 +6,16 @@ applyTo: "**"
 
 # rikyu Supercomputer Usage (RIKEN R-CCS AI4S early-access)
 
+> **Phase 1 → Phase 2 migration.** The Phase 1 system shut down for maintenance on 2026-07-06
+> (afternoon JST); Phase 2 operation starts 2026-07-07 (afternoon). **Phase 1 accounts and data
+> were NOT carried over** — the project lead must re-apply for a project and re-register user
+> accounts, and everything below (user name, login host, key setup, possibly partition names)
+> must be re-verified and updated in place once Phase 2 access exists. All Phase 1 computation
+> results were rsync'd to the local machine before shutdown (`artifacts/` + `data/`).
+
 Reference for running this project on **rikyu**. Official docs:
 https://riken-rccs.github.io/ai4s_early_access/ja/ — the whole guide is a single page.
-All facts below were verified on the live system (2026-07).
+All facts below were verified on the live **Phase 1** system (2026-07).
 
 ## Access & layout
 
