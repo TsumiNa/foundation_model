@@ -156,13 +156,26 @@ material_type ac 0.981  0.972  0.970  0.985  0.976  0.941  0.952  0.980  0.984  
 - **Reproduction is faithful**: 0.05 baseline mean R² 0.447 vs reference 0.411; per-task close.
 - **More replay → better retention, with clearly diminishing returns** (fixed:
   0.371→0.420→0.498→0.556→0.578→0.595→0.600 for 100→…→2500; fraction: 0.447→0.518→…→0.553).
-- **Saturation, 11-point fit** (`analysis/saturation.py`, dense-task view, unified x = replay
-  samples per dense qc task): `gap = 0.16/(1 + n/2100)`, no-forgetting ceiling ≈ 0.754.
-  **Knee (half-gap) ≈ n≈2100; 90% saturation ≈ n≈18,900/task, 95% ≈ n≈40,000/task.** The three
-  relay points (dense R² 0.682/0.686/0.699 at n=1500/2000/2500) landed on the curve and firmed up
-  the knee region — vs the 8-point fit the knee moved 1765→~2100 and the 90% estimate 15.9k→18.9k
-  (the curve is a bit flatter than the 8 points suggested). Approaching the ceiling still means
-  replaying a large fraction of each dense task (expensive). Plot: `analysis/replay_saturation.png`.
+- **Per-task saturation** (`analysis/per_task_saturation.py` → `per_task_saturation.png`; the
+  earlier task-averaged fit hid where the gains come from and was replaced): each panel plots the
+  task's final metric vs the labels *that task* gets per replay step (fractions → ratio ×
+  its n_train; counts → clamped), against the task's own at-intro ceiling, with a per-task
+  `gap = g0/(1+x/k)` fit where the model holds. Findings:
+  - The five ~23.7k-label tasks (density, efermi, final_energy, total_magnetization, volume)
+    show classic saturation with knees ≈ 1.1k–3.9k and 90% recovery at ≈ 0.4–1.5× their full
+    train size — replaying them well is inherently expensive.
+  - For many small/mid tasks (dielectric_ionic/electronic, curie, neel, kp, zt, power_factor,
+    dos_density, seebeck, formation_energy, magnetic_moment, tc) the fit is **n/a because high
+    replay pushes the final metric ABOVE the at-intro ceiling** — continued co-training improves
+    them beyond the level at which they were first learned (backward transfer), so "forgetting
+    gap" is the wrong model there.
+  - klat / dielectric_total / material_type saturate almost immediately (knee ≲ 100 labels);
+    magnetic_susceptibility (58 labels) is unlearnable noise.
+- **Per-replay trajectories** (`analysis/replay_trajectories.py` → `replay_trajectories.png`):
+  for the first 20 tasks, the metric after every replay event since introduction, one line per
+  run. Low counts (100/200) oscillate violently and crash right after introduction; n≥1000 and
+  the fraction runs hold nearly flat. Drops are step-shaped (specific interfering task arrivals),
+  not gradual decay.
 - Sparse tasks flip: e.g. magnetic_susceptibility does better under small *fixed* counts (which
   give it its full 58 samples) than under small *fractions* (which give it ~3).
 
