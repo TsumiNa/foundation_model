@@ -5,7 +5,8 @@ Usage:
     python compare_sweep.py [RESULTS_DIR]
 
 RESULTS_DIR holds one long-format metrics_table.csv per run, named mt_<tag>.csv
-(tags: base0p05, 0p10, 0p15, 0p20, n100, n200, n500, n1000). Rsync each run's
+(tags: base0p05, 0p10, 0p15, 0p20, n100, n200, n500, n1000, n1500, n2000, n2500).
+Rsync each run's
 <output_dir>/training/metrics_table.csv into RESULTS_DIR/mt_<tag>.csv first, e.g.:
 
     rsync -avz rikyu-login:/home/ea0094/projects/foundation_model/artifacts/replay_sweep/replay_n100_rikyu/training/metrics_table.csv results/mt_n100.csv
@@ -27,9 +28,10 @@ ORDER = ["density","efermi","final_energy","total_magnetization","volume","diele
          "magnetic_susceptibility","zt","power_factor","thermal_conductivity","electrical_resistivity",
          "dos_density","seebeck","formation_energy","magnetic_moment","tc","klat","material_type"]
 REG_LIKE = [t for t in ORDER if t != "material_type"]
-TAG_ORDER = ["base0p05","0p10","0p15","0p20","n100","n200","n500","n1000"]
+TAG_ORDER = ["base0p05","0p10","0p15","0p20","n100","n200","n500","n1000","n1500","n2000","n2500"]
 TAG_LABEL = {"base0p05":"0.05*","0p10":"0.10","0p15":"0.15","0p20":"0.20",
-             "n100":"100","n200":"200","n500":"500","n1000":"1000"}
+             "n100":"100","n200":"200","n500":"500","n1000":"1000",
+             "n1500":"1500","n2000":"2000","n2500":"2500"}
 
 
 def fnum(x):

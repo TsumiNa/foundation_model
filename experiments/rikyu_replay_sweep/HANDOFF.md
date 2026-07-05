@@ -3,9 +3,9 @@
 Handoff record so another machine's Claude Code session can pick up this experiment. Everything
 here is committed to the repo; the large data/output files live on the **rikyu** supercomputer.
 
-**Last updated:** 2026-07-04 ~20:30 JST. **Original 8-job sweep: ALL DONE** (results in `results/`,
-final table + saturation plot regenerated). **3 relay jobs (n=1500/2000/2500) RUNNING — finish on
-another machine, see §9.**
+**Last updated:** 2026-07-05 ~13:00 JST. **ALL 11 RUNS DONE** — original 8-run sweep + the 3
+relay runs (n=1500/2000/2500). Results in `results/`, final table + saturation analysis + plot
+regenerated with all 11 points (see §6). Nothing left to relay; §9 kept for the record.
 
 ---
 
@@ -96,9 +96,9 @@ this repo dir are the source of truth.
 | 200 | 45177 | COMPLETED | 7.9 h (28438 s) |
 | 500 | 45178 | COMPLETED | 10.6 h |
 | 1000 | 45179 | COMPLETED | 11.6 h |
-| **1500** (relay) | **45781** | RUNNING | 24 h wall |
-| **2000** (relay) | **45782** | RUNNING | 24 h wall |
-| **2500** (relay) | **45783** | RUNNING | 24 h wall |
+| 1500 (relay) | 45781 | COMPLETED | 10.9 h (39101 s) |
+| 2000 (relay) | 45782 | COMPLETED | 12.8 h (45944 s) |
+| 2500 (relay) | 45783 | COMPLETED | 13.3 h (47847 s) |
 
 Original sweep jobs used `--time=16:00:00`. The relay jobs use **`--time=24:00:00`**: measured
 fixed-count wall times are n100=7.0h, n200=7.9h, n500=10.6h, n1000~11.7h, so n2500 was projected
@@ -142,25 +142,27 @@ qc tasks get 1000s of samples, sparse tasks almost none), while fixed counts equ
 *absolute* number (sparse tasks get proportionally much more, up to full). So the two families
 stress retention of different tasks.
 
-## 6. Final result (all 8 original runs)
+## 6. Final result (all 11 runs)
 
 MEAN reg/kr R² is the retention indicator (higher = less forgetting). Full per-task table:
 `python analysis/compare_sweep.py`.
 
 ```
-                  ref   0.05   0.10   0.15   0.20    100    200    500   1000
-MEAN reg/kr R2   0.411  0.447  0.518  0.516  0.553  0.371  0.420  0.498  0.556
-material_type ac 0.981  0.972  0.970  0.985  0.976  0.941  0.952  0.980  0.984
+                  ref   0.05   0.10   0.15   0.20    100    200    500   1000   1500   2000   2500
+MEAN reg/kr R2   0.411  0.447  0.518  0.516  0.553  0.371  0.420  0.498  0.556  0.578  0.595  0.600
+material_type ac 0.981  0.972  0.970  0.985  0.976  0.941  0.952  0.980  0.984  0.974  0.987  0.983
 ```
 
 - **Reproduction is faithful**: 0.05 baseline mean R² 0.447 vs reference 0.411; per-task close.
-- **More replay → better retention** in both families (fixed: 0.371→0.420→0.498→0.556 for
-  100→200→500→1000; fraction: 0.447→0.518→…→0.553 for 0.05→0.10→…→0.20).
-- **Saturation** (`analysis/saturation.py`, dense-task view, unified x = replay samples per dense
-  qc task): fit `gap = 0.185/(1 + n/1765)`, no-forgetting ceiling ≈ 0.751. Knee (half-gap) ≈ n≈1765;
-  **90% saturation ≈ n≈15,900/task, 95% ≈ n≈33,500/task** — approaching the ceiling needs replaying
-  a large fraction of each dense task (expensive). Plot: `analysis/replay_saturation.png`.
-  The relay jobs (n=1500/2000/2500) sit right around the knee to firm up that region.
+- **More replay → better retention, with clearly diminishing returns** (fixed:
+  0.371→0.420→0.498→0.556→0.578→0.595→0.600 for 100→…→2500; fraction: 0.447→0.518→…→0.553).
+- **Saturation, 11-point fit** (`analysis/saturation.py`, dense-task view, unified x = replay
+  samples per dense qc task): `gap = 0.16/(1 + n/2100)`, no-forgetting ceiling ≈ 0.754.
+  **Knee (half-gap) ≈ n≈2100; 90% saturation ≈ n≈18,900/task, 95% ≈ n≈40,000/task.** The three
+  relay points (dense R² 0.682/0.686/0.699 at n=1500/2000/2500) landed on the curve and firmed up
+  the knee region — vs the 8-point fit the knee moved 1765→~2100 and the 90% estimate 15.9k→18.9k
+  (the curve is a bit flatter than the 8 points suggested). Approaching the ceiling still means
+  replaying a large fraction of each dense task (expensive). Plot: `analysis/replay_saturation.png`.
 - Sparse tasks flip: e.g. magnetic_susceptibility does better under small *fixed* counts (which
   give it its full 58 samples) than under small *fractions* (which give it ~3).
 
@@ -190,7 +192,12 @@ material_type ac 0.981  0.972  0.970  0.985  0.976  0.941  0.952  0.980  0.984
 - Config schema: [`docs/configuration.md`](../../docs/configuration.md).
 - `prep_nonqc_norm.py` (this dir) regenerates the `_norm.parquet` derived data.
 
-## 9. RELAY TODO (for the next machine) — finish the n=1500/2000/2500 runs
+## 9. RELAY TODO — **DONE 2026-07-05** (kept for the record)
+
+All three relay runs completed on the first 24h submission (walls 10.9/12.8/13.3 h), metrics
+fetched to `results/mt_n{1500,2000,2500}.csv`, the three analysis scripts extended with the new
+tags, and the 11-point table/fit/plot regenerated (§6). The original step-by-step instructions
+follow unchanged.
 
 Three fixed-count jobs were submitted on rikyu to extend the saturation curve's high end (they map
 to ~1500/2000/2500 replay samples per dense qc task — right where the fit predicts the ~90% knee):

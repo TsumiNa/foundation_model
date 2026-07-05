@@ -42,6 +42,9 @@ RUNS = {
     "n200": ("count", 200),
     "n500": ("count", 500),
     "n1000": ("count", 1000),
+    "n1500": ("count", 1500),
+    "n2000": ("count", 2000),
+    "n2500": ("count", 2500),
 }
 data = {}
 for tag,(kind,val) in RUNS.items():

@@ -29,6 +29,7 @@ def dmean(d):
     return sum(v)/len(v)
 
 RUNS = {"n100":("count",100),"n200":("count",200),"n500":("count",500),"n1000":("count",1000),
+        "n1500":("count",1500),"n2000":("count",2000),"n2500":("count",2500),
         "base0p05":("frac",0.05),"0p10":("frac",0.10),"0p15":("frac",0.15),"0p20":("frac",0.20)}
 fixed_x, fixed_y, frac_x, frac_y, ceils = [], [], [], [], []
 labels = {}
@@ -93,8 +94,8 @@ ax.grid(True, which="both", color=GRID, lw=0.6, zorder=0)
 ax.tick_params(colors=MUTED)
 for s in ("top","right"): ax.spines[s].set_visible(False)
 ax.legend(loc="upper left", frameon=False, fontsize=9.5)
-fig.text(0.012,0.012,"8 completed runs (original sweep). Relay jobs n=1500/2000/2500 pending on another machine. "
-         "Fit extrapolation beyond ~4700 is uncertain.", fontsize=8, color=MUTED)
+fig.text(0.012,0.012,f"{len(X)} completed runs. Fit extrapolation beyond n≈{max(X):,.0f} is uncertain.",
+         fontsize=8, color=MUTED)
 fig.tight_layout()
 fig.savefig(OUT, bbox_inches="tight")
 print("saved", OUT)
