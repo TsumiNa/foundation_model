@@ -5,14 +5,14 @@
 AutoEncoder task head for the FlexibleMultiTaskModel.
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, cast
 
 import torch
 import torch.nn.functional as F
 from numpy import ndarray
 
 from foundation_model.models.components.fc_layers import LinearBlock
-from foundation_model.models.model_config import _AEConfig
+from foundation_model.models.model_config import BaseTaskConfig, _AEConfig
 
 from .base import BaseTaskHead
 
@@ -31,7 +31,8 @@ class AutoEncoderHead(BaseTaskHead):
     """
 
     def __init__(self, config: _AEConfig):
-        super().__init__(config)
+        # _AEConfig duck-types the BaseTaskConfig surface BaseTaskHead reads (name/type/dims).
+        super().__init__(cast(BaseTaskConfig, config))
 
         if not config.dims:
             raise ValueError("AutoEncoderHead: config.dims must be resolved (non-empty) before instantiation.")

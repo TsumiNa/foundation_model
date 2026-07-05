@@ -5,7 +5,7 @@
 Classification task head for the FlexibleMultiTaskModel.
 """
 
-from typing import Optional
+from typing import cast, Optional
 
 import torch
 import torch.nn as nn
@@ -50,6 +50,7 @@ class ClassificationHead(BaseTaskHead):
         last_hidden_dim = hidden_dims[-1] if hidden_dims else d_in
 
         # Construct the network using LinearBlock for hidden layers if hidden_dims are provided
+        self.hidden_layers: nn.Module
         if hidden_dims:
             self.hidden_layers = LinearBlock(
                 [d_in] + hidden_dims,  # Use d_in and hidden_dims
@@ -169,7 +170,7 @@ class ClassificationHead(BaseTaskHead):
         # Use mask mechanism only (no ignore_index) for unified missing data handling
         # Missing data placeholders (-100) in targets won't affect loss due to mask filtering
         losses = F.cross_entropy(
-            pred, final_target_for_loss, weight=self.class_weights, reduction="none"
+            pred, final_target_for_loss, weight=cast("torch.Tensor | None", self.class_weights), reduction="none"
         )  # losses is (B,)
         masked_losses = losses * mask_1d  # Apply 1D mask, result is (B,)
 

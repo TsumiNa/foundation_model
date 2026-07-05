@@ -35,7 +35,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.mark.integration
 def test_full_prediction_flow_produces_kernel_regression_outputs() -> None:
     """Ensure predict_step returns kernel regression outputs for the integration dataset."""
-    task_configs = [
+    task_configs: list[RegressionTaskConfig | KernelRegressionTaskConfig] = [
         RegressionTaskConfig(
             name="density",
             type=TaskType.REGRESSION,

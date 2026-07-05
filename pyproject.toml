@@ -102,9 +102,15 @@ dev = [
     "pytest-cov>=7.0.0",
     "pytest-mock>=3.14.0",
     "scikit-learn>=1.7.0",
+    "scipy-stubs>=1.17.1.5",
 ]
 
 
 [tool.ruff.lint.mccabe]
 # C901
 max-complexity = 10
+
+[[tool.mypy.overrides]]
+# joblib ships neither stubs nor a py.typed marker; a test writes fixtures with it.
+module = ["joblib", "joblib.*"]
+ignore_missing_imports = true

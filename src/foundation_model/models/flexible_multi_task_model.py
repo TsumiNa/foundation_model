@@ -20,7 +20,7 @@ import math
 from collections import namedtuple
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from typing import Any, List, Optional, cast
 
 import lightning as L
 import numpy as np
@@ -37,7 +37,7 @@ from torchmetrics.regression import R2Score
 try:  # pragma: no cover - optional distributed import
     import torch.distributed as dist
 except Exception:  # noqa: BLE001 - keep fallback for CPU-only environments
-    dist = None
+    dist = None  # type: ignore[assignment]
 
 from .components.foundation_encoder import FoundationEncoder
 from .model_config import (
@@ -46,6 +46,7 @@ from .model_config import (
     KernelRegressionTaskConfig,
     MLPEncoderConfig,
     OptimizerConfig,
+    TransformerEncoderConfig,
     RegressionTaskConfig,
     TaskConfigType,
     TaskType,
@@ -333,13 +334,14 @@ class FlexibleMultiTaskModel(L.LightningModule):
     def _reset_stage_metrics(self, stage: str) -> None:
         metrics = self.val_r2_metrics if stage == "val" else self.test_r2_metrics
         for metric in metrics.values():
-            metric.reset()
+            cast(R2Score, metric).reset()
         self._metrics_updated[stage] = set()
 
     def _init_stage_index_tracker(self, stage: str) -> None:
         dataset_len = None
-        if self.trainer is not None and getattr(self.trainer, "datamodule", None) is not None:
-            dataset = getattr(self.trainer.datamodule, f"{stage}_dataset", None)
+        datamodule = getattr(self.trainer, "datamodule", None) if self.trainer is not None else None
+        if datamodule is not None:
+            dataset = getattr(datamodule, f"{stage}_dataset", None)
             if dataset is not None:
                 dataset_len = len(dataset)
         self._stage_index_trackers[stage] = self._build_index_tracker(dataset_len)
@@ -417,6 +419,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     adjusted_masks.append(torch.zeros_like(mask, dtype=torch.bool))
             return adjusted_masks
 
+        if not isinstance(target, torch.Tensor):
+            raise TypeError("Expected tensor target for non-sequence task.")
         if batch_valid_mask is None:
             return sample_mask
         if sample_mask is None:
@@ -438,7 +442,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         sample_mask: torch.Tensor | None,
     ) -> None:
         metrics = self.val_r2_metrics if stage == "val" else self.test_r2_metrics
-        metric = metrics._modules.get(task_name)
+        metric = cast("R2Score | None", metrics._modules.get(task_name))
         if metric is None:
             return
         if sample_mask is None:
@@ -464,7 +468,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
     def _log_stage_r2_metrics(self, stage: str) -> None:
         metrics = self.val_r2_metrics if stage == "val" else self.test_r2_metrics
         for name in self._metrics_updated[stage]:
-            metric = metrics._modules.get(name)
+            metric = cast("R2Score | None", metrics._modules.get(name))
             if metric is None:
                 continue
             self.log(
@@ -619,8 +623,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """Return decoder dims that mirror the encoder: [latent_dim, ..., input_dim]."""
         if isinstance(encoder_config, MLPEncoderConfig):
             return list(reversed(encoder_config.hidden_dims))
-        # TransformerEncoderConfig: single linear projection
-        return [encoder_config.latent_dim, encoder_config.input_dim]
+        if isinstance(encoder_config, TransformerEncoderConfig):
+            # TransformerEncoderConfig: single linear projection
+            return [encoder_config.latent_dim, encoder_config.input_dim]
+        raise TypeError(f"Unsupported encoder config type: {type(encoder_config).__name__}")
 
     def _track_task_types(self):
         """Track which types of tasks are enabled."""
@@ -1369,7 +1375,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
     def configure_optimizers(self) -> OptimizerLRScheduler:
         """Configure optimizers for all parameter groups."""
 
-        optimizers_and_schedulers = []
+        optimizers_and_schedulers: list[Any] = []
 
         # 1. Main parameters (Encoder + optionally task_log_sigmas)
         main_params_to_optimize = list(self.encoder.parameters())
@@ -2257,9 +2263,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 # Setup optimizer
                 optimizer = optim.Adam([optim_latent], lr=lr)
 
-                # Optimization loop
-                step_traj: list[torch.Tensor] = []
-                step_input_traj: list[torch.Tensor] = []
+                # Optimization loop (names already annotated in the input-space branch)
+                step_traj = []
+                step_input_traj = []
 
                 for step in range(steps):
                     optimizer.zero_grad()
@@ -2766,10 +2772,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 )
             # Fixed amounts must themselves be ≥ the floor (else contradiction).
             if fixed_amounts is not None:
-                bad = sorted((s, v) for s, v in fixed_amounts.items() if float(v) < min_nonzero_weight)
-                if bad:
+                bad_pins = sorted((s, float(v)) for s, v in fixed_amounts.items() if float(v) < min_nonzero_weight)
+                if bad_pins:
                     raise ValueError(
-                        f"fixed_amounts entries {bad} are below min_nonzero_weight="
+                        f"fixed_amounts entries {bad_pins} are below min_nonzero_weight="
                         f"{min_nonzero_weight}. The floor cannot override an explicit pin."
                     )
 
@@ -2965,6 +2971,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     # (B, n_components): seed values at locked positions, 0 elsewhere — constant.
                     locked_w0 = (w0_seed * locked_mask.to(dtype)).detach()
             if fixed_mask_dev is not None:
+                assert fixed_w0_dev is not None  # built together with fixed_mask_dev
                 # Broadcast the per-element fixed values to every row in the batch.
                 B = logits.shape[0]
                 fixed_w0_batch = fixed_w0_dev.unsqueeze(0).expand(B, -1).detach()
@@ -2972,6 +2979,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     locked_mask = fixed_mask_dev
                     locked_w0 = fixed_w0_batch
                 else:
+                    assert locked_w0 is not None  # set alongside locked_mask above
                     locked_mask = locked_mask | fixed_mask_dev  # validated disjoint
                     locked_w0 = locked_w0 + fixed_w0_batch
 
@@ -3145,6 +3153,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 """Paste locked seed values onto ``w`` and renormalise unlocked positions."""
                 if locked_mask is None:
                     return w
+                assert locked_w0 is not None  # set alongside locked_mask
                 free_mask_f = (~locked_mask).to(w.dtype)
                 w_unlocked = w * free_mask_f
                 free_mass = (1.0 - locked_w0.sum(dim=-1, keepdim=True)).clamp(min=0.0)
@@ -3162,6 +3171,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 if min_nonzero_weight <= 0.0:
                     return w
                 if locked_mask is not None:
+                    assert locked_w0 is not None  # set alongside locked_mask
                     unlocked_f = (~locked_mask).to(w.dtype)
                     free_mass = (1.0 - locked_w0.sum(dim=-1, keepdim=True)).clamp(min=0.0)
                     unlocked_bool = (~locked_mask).unsqueeze(0).expand_as(w)

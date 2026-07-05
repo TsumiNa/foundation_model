@@ -321,18 +321,18 @@ class CompoundDataset(Dataset):
                 if task_type == TaskType.CLASSIFICATION:
                     # Use -100 as placeholder for missing data (avoids conflict with real class labels 0,1,2,...)
                     # Actual missing data handling is done via mask mechanism, not ignore_index
-                    self.y_dict[task_name] = torch.tensor(
+                    y_tensor = torch.tensor(
                         np.nan_to_num(processed_values_np, nan=-100).astype(np.int64), dtype=torch.long
                     )
+                    self.y_dict[task_name] = y_tensor
                     logger.debug(
-                        f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
+                        f"[{self.dataset_name}] Task '{task_name}': y_dict shape {y_tensor.shape}, base_mask valid count: {np.sum(base_mask_np)}"
                     )
                 else:  # REGRESSION
-                    self.y_dict[task_name] = torch.tensor(
-                        np.nan_to_num(processed_values_np, nan=0.0), dtype=torch.float32
-                    )
+                    y_tensor = torch.tensor(np.nan_to_num(processed_values_np, nan=0.0), dtype=torch.float32)
+                    self.y_dict[task_name] = y_tensor
                     logger.debug(
-                        f"[{self.dataset_name}] Task '{task_name}': y_dict shape {self.y_dict[task_name].shape}, base_mask valid count: {np.sum(base_mask_np)}"
+                        f"[{self.dataset_name}] Task '{task_name}': y_dict shape {y_tensor.shape}, base_mask valid count: {np.sum(base_mask_np)}"
                     )
 
             # --- Task Masking (final_mask_np) ---
@@ -377,11 +377,11 @@ class CompoundDataset(Dataset):
                 # For other tasks, use normal tensor format
                 if final_mask_np.ndim == 1:
                     final_mask_np = final_mask_np.reshape(-1, 1)
-                self.task_masks_dict[task_name] = torch.tensor(final_mask_np, dtype=torch.bool)
+                mask_tensor = torch.tensor(final_mask_np, dtype=torch.bool)
+                self.task_masks_dict[task_name] = mask_tensor
                 logger.debug(
                     f"[{self.dataset_name}] Task '{task_name}': final task_mask shape "
-                    f"{self.task_masks_dict[task_name].shape}, final valid count: "
-                    f"{torch.sum(self.task_masks_dict[task_name]).item()}"
+                    f"{mask_tensor.shape}, final valid count: {torch.sum(mask_tensor).item()}"
                 )
 
         logger.info(

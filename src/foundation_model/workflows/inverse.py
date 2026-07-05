@@ -76,7 +76,7 @@ class SeedStrategy(str, Enum):
 
 @dataclass(kw_only=True)
 class SeedConfig:
-    strategy: SeedStrategy = SeedStrategy.TOP_OBJECTIVE
+    strategy: SeedStrategy | str = SeedStrategy.TOP_OBJECTIVE  # str accepted; coerced in __post_init__
     n: int = 20
     split: str = "test"
     explicit: list[str] = field(default_factory=list)
