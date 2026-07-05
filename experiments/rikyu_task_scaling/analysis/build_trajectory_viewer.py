@@ -22,6 +22,7 @@ from itertools import combinations
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS
 
@@ -35,6 +36,25 @@ LINE_FRAMES = 21
 HM_FRAMES = 12
 MAX_ROWS = 12
 TARGET_VALUES = {"formation_energy": -1.0, "dielectric_total": 1.0, "dielectric_ionic": 1.0, "dielectric_electronic": 1.0}
+TRUTH_COLS = {
+    "formation_energy": "Formation energy per atom (normalized)",
+    "dielectric_total": "Dielectric total (normalized)",
+    "dielectric_ionic": "Dielectric ionic (normalized)",
+    "dielectric_electronic": "Dielectric electronic (normalized)",
+}
+_qc = pd.read_parquet(HERE.parents[2] / "data/qc_ac_te_mp_dos_reformat_20260515.pd.parquet",
+                      columns=["composition", *TRUTH_COLS.values()]).set_index("composition")
+
+
+def truths(comp: str, tasks: list[str]) -> list[float | None]:
+    if comp not in _qc.index:
+        return [None] * len(tasks)
+    row = _qc.loc[comp]
+    out = []
+    for t_ in tasks:
+        v = row[TRUTH_COLS[t_]]
+        out.append(None if pd.isna(v) else round(float(v), 2))
+    return out
 
 
 def top_pairs(w: np.ndarray, top: int = 4) -> list[list[int]]:
@@ -43,7 +63,7 @@ def top_pairs(w: np.ndarray, top: int = 4) -> list[list[int]]:
     return [[int(i), int(round(float(w[int(i)]) * 1000))] for i in idx if w[int(i)] > 1e-3]
 
 
-def build_entry(targets: np.ndarray, weights: np.ndarray, labels: list[str]) -> dict:
+def build_entry(targets: np.ndarray, weights: np.ndarray, labels: list[str], seed_comps: list[str]) -> dict:
     steps, n_seeds, _ = targets.shape
     tasks = [la.split("→")[0].split("~")[0] for la in labels]
     tvals = np.array([TARGET_VALUES[t] for t in tasks])
@@ -68,7 +88,18 @@ def build_entry(targets: np.ndarray, weights: np.ndarray, labels: list[str]) -> 
         systems = {tuple(sorted(np.argsort(final[b])[::-1][:3].tolist())) for b in range(n_seeds)}
         l1 = float(np.mean([np.abs(final[a] - final[c]).sum() for a, c in combinations(range(n_seeds), 2)])) if n_seeds > 1 else 0.0
         div = {"systems": len(systems), "l1": round(l1, 2)}
-        so = [{"s": top_pairs(weights[0, b]), "f": top_pairs(final[b])} for b in range(n_seeds)]
+        so = []
+        for b in range(n_seeds):
+            comp = seed_comps[b] if b < len(seed_comps) else ""
+            so.append(
+                {
+                    "s": top_pairs(weights[0, b]),
+                    "f": top_pairs(final[b]),
+                    "tv": truths(comp, tasks),  # seed ground truth per target task (None = no label)
+                    "sp": [round(float(x), 2) for x in targets[0, b]],  # predicted at the seed
+                    "fp": [round(float(x), 2) for x in targets[-1, b]],  # predicted at the final step
+                }
+            )
         hm_rows = rows
         hm_list = hm.tolist()
     else:
@@ -98,7 +129,9 @@ for mode in ("ws", "ft"):
                     if not p.exists():
                         continue
                     z = np.load(p, allow_pickle=False)
-                    entry = build_entry(z["targets"], z["weights"], [str(x) for x in z["labels"]])
+                    seeds_json = p.parents[2] / "seeds.json"
+                    seed_comps = json.loads(seeds_json.read_text())["seeds"] if seeds_json.exists() else []
+                    entry = build_entry(z["targets"], z["weights"], [str(x) for x in z["labels"]], seed_comps)
                     data.setdefault(mode, {}).setdefault(str(ord_id), {}).setdefault(str(k), {}).setdefault(scen, {})[path] = entry
                     n_loaded += 1
 print(f"loaded {n_loaded} trajectory files")
@@ -248,8 +281,10 @@ function draw(){
 
   // ===== seeds -> optimized list =====
   const so = d.so || [];
-  sel("solist").innerHTML = "<b>seed composition → final optimised</b><br>" + so.map((r,b)=>
-    `<div class="row ${b===seed?'sel':''}" data-b="${b}">${b===d.best?"▲":"&nbsp;"}${String(b).padStart(2)} ${fmt(r.s)} → ${fmt(r.f)}</div>`
+  const vv = v => v==null? "–" : v.toFixed(2);
+  const pair = (arr)=> d.tasks.map((t,i)=>`${t.replace("dielectric_","diel_").replace("formation_energy","FE")} ${vv(arr?arr[i]:null)}`).join(", ");
+  sel("solist").innerHTML = "<b>seed composition → final optimised</b> <span style='color:#6b7280'>(hover a row for true/predicted values)</span><br>" + so.map((r,b)=>
+    `<div class="row ${b===seed?'sel':''}" data-b="${b}" title="seed TRUE: ${pair(r.tv)}\nseed predicted: ${pair(r.sp)}\nfinal predicted: ${pair(r.fp)}">${b===d.best?"▲":"&nbsp;"}${String(b).padStart(2)} ${fmt(r.s)} → ${fmt(r.f)}</div>`
   ).join("");
   document.querySelectorAll("#solist .row").forEach(el=>el.addEventListener("click",()=>{seed=+el.dataset.b;draw();}));
 }
