@@ -24,55 +24,58 @@ HERE = Path(__file__).resolve().parent
 MIRROR = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE.parents[2] / "artifacts/task_scaling"
 REPLAY_N = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
 TAG = "" if REPLAY_N == 1000 else f"_n{REPLAY_N}"
-SCENARIO = "fe_down_diel_up"
-PATHS = {"latent_default": "-", "comp_k4_lowdiv": "--"}
+SCENARIOS = ["fe_down_total_up", "fe_down_ionic_up", "fe_down_electronic_up"]
+PATHS = {"latent_default": "-", "comp_k4": "--"}
 WS_C, FT_C, MUTED, GRID = "#0077BB", "#EE7733", "#6b7280", "#e5e7eb"
 
-stats: dict = defaultdict(dict)  # (mode, path, ord) -> {k: (systems, l1)}
-for mode in ("ws", "ft"):
-    for ord_id in range(3):
-        for k in range(1, 22):
-            for path in PATHS:
-                p = MIRROR / f"{mode}{TAG}_o{ord_id}/k{k:02d}/inverse/{SCENARIO}/trajectories/{path}.npz"
-                if not p.exists():
-                    continue
-                z = np.load(p, allow_pickle=False)
-                w = z["weights"]
-                if w.size == 0:
-                    continue
-                final = w[-1]
-                n = final.shape[0]
-                systems = {tuple(sorted(np.argsort(final[b])[::-1][:3].tolist())) for b in range(n)}
-                l1 = float(np.mean([np.abs(final[a] - final[c]).sum() for a, c in combinations(range(n), 2)]))
-                stats[(mode, path, str(ord_id))][k] = (len(systems), l1)
+stats: dict = defaultdict(dict)  # (scen, mode, path, ord) -> {k: (systems, l1)}
+for scen in SCENARIOS:
+    for mode in ("ws", "ft"):
+        for ord_id in range(3):
+            for k in range(1, 22):
+                for path in PATHS:
+                    p = MIRROR / f"{mode}{TAG}_o{ord_id}/k{k:02d}/inverse3/{scen}/trajectories/{path}.npz"
+                    if not p.exists():
+                        continue
+                    z = np.load(p, allow_pickle=False)
+                    w = z["weights"]
+                    if w.size == 0:
+                        continue
+                    final = w[-1]
+                    n = final.shape[0]
+                    systems = {tuple(sorted(np.argsort(final[b])[::-1][:3].tolist())) for b in range(n)}
+                    l1 = float(np.mean([np.abs(final[a] - final[c]).sum() for a, c in combinations(range(n), 2)]))
+                    stats[(scen, mode, path, str(ord_id))][k] = (len(systems), l1)
 
-fig, axes = plt.subplots(1, 2, figsize=(13.5, 4.8), dpi=150)
-for ax, idx, ylabel in ((axes[0], 0, "distinct top-3 element systems (of 20)"), (axes[1], 1, "mean pairwise L1 distance")):
-    for mode, color in (("ws", WS_C), ("ft", FT_C)):
-        for path, ls in PATHS.items():
-            mean_by_k: dict[int, list[float]] = defaultdict(list)
-            for o in ("0", "1", "2"):
-                s = stats.get((mode, path, o), {})
-                ks = sorted(s)
-                if not ks:
-                    continue
-                ax.plot(ks, [s[k][idx] for k in ks], color=color, ls=ls, lw=0.7, alpha=0.35)
-                for k in ks:
-                    mean_by_k[k].append(s[k][idx])
-            ks = sorted(mean_by_k)
-            ax.plot(ks, [float(np.mean(mean_by_k[k])) for k in ks], color=color, ls=ls, lw=2.2)
-    ax.set_ylabel(ylabel, fontsize=9.5)
-    ax.set_xticks([1, 5, 9, 13, 17, 21])
-    ax.grid(True, color=GRID, lw=0.5, zorder=0)
-    ax.tick_params(colors=MUTED, labelsize=8.5)
-    for sp in ("top", "right"):
-        ax.spines[sp].set_visible(False)
+fig, axes = plt.subplots(2, 3, figsize=(16.5, 8.2), dpi=150)
+for col, scen in enumerate(SCENARIOS):
+    for row, idx, ylabel in ((0, 0, "distinct top-3 element systems (of 20)"), (1, 1, "mean pairwise L1 distance")):
+        ax = axes[row][col]
+        for mode, color in (("ws", WS_C), ("ft", FT_C)):
+            for path, ls in PATHS.items():
+                mean_by_k: dict[int, list[float]] = defaultdict(list)
+                for o in ("0", "1", "2"):
+                    s = stats.get((scen, mode, path, o), {})
+                    for k in sorted(s):
+                        mean_by_k[k].append(s[k][idx])
+                ks = sorted(mean_by_k)
+                if ks:
+                    ax.plot(ks, [float(np.mean(mean_by_k[k])) for k in ks], color=color, ls=ls, lw=2.0)
+        if row == 0:
+            ax.set_title(scen, fontsize=10)
+        if col == 0:
+            ax.set_ylabel(ylabel, fontsize=9.5)
+        ax.set_xticks([1, 5, 9, 13, 17, 21])
+        ax.grid(True, color=GRID, lw=0.5, zorder=0)
+        ax.tick_params(colors=MUTED, labelsize=8.5)
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
 
 HANDLES = [
     Line2D([], [], color=WS_C, lw=2.2, label="warm-start models"),
     Line2D([], [], color=FT_C, lw=2.2, label="finetune models"),
     Line2D([], [], color=MUTED, ls="-", lw=2, label="latent path"),
-    Line2D([], [], color=MUTED, ls="--", lw=2, label="composition path (≤4 elem, low diversity)"),
+    Line2D([], [], color=MUTED, ls="--", lw=2, label="composition path (≤4 elem, d=0.5)"),
 ]
 fig.suptitle(f"Diversity of the 20 designed candidates at the final step vs k (replay n={REPLAY_N})", fontsize=12, y=1.02)
 fig.legend(handles=HANDLES, loc="upper center", ncol=4, frameon=False, fontsize=9, bbox_to_anchor=(0.5, 0.97))
