@@ -144,19 +144,38 @@ dir = "artifacts/task_scaling/ft_adhoc"
 
 
 def inv_config() -> str:
+    scenarios = "".join(
+        f"""
+[[inverse.scenarios]]
+name = "fe_down_{short}_up"
+
+[[inverse.scenarios.targets]]
+task = "formation_energy"
+value = -1.0
+
+[[inverse.scenarios.targets]]
+task = "{target}"
+value = 1.0
+"""
+        for target, short in (
+            ("dielectric_total", "total"),
+            ("dielectric_ionic", "ionic"),
+            ("dielectric_electronic", "electronic"),
+        )
+    )
     return (
         header(
             [
                 "fm inverse — design quality probe on a ws/ft output model (--checkpoint).",
-                "Pure regression objective in z-scored units: formation_energy down 1 sigma, the 3 dielectric",
-                "targets up 1 sigma. Two paths: latent (default alignment 0.5) and composition with",
-                "max_elements=4 and diversity_scale=0.2 (low per-recipe element diversity; 0 = strongest",
-                "penalty, 1 = none). Seeds: top_objective over the test split. No animations in batch runs —",
-                "trajectories land in npz and feed the aggregated HTML viewer at analysis time.",
+                "THREE scenarios (pure regression, z-scored units): formation_energy down 1 sigma paired",
+                "with EACH dielectric target up 1 sigma separately. The shared seed pool comes from the",
+                "first scenario's objective (engine design). Two paths: latent (default alignment 0.5) and",
+                "composition with max_elements=4 and diversity_scale=0.2 (low per-recipe element diversity).",
+                "No animations in batch runs — trajectories land in npz and feed the HTML viewer.",
             ]
         )
         + shared_block(with_training=False)
-        + """
+        + f"""
 [inverse]
 steps = 300
 lr = 0.05
@@ -170,26 +189,7 @@ strategy = "top_objective"
 n = 20
 split = "test"
 dedup_by_element_system = true
-
-[[inverse.scenarios]]
-name = "fe_down_diel_up"
-
-[[inverse.scenarios.targets]]
-task = "formation_energy"
-value = -1.0
-
-[[inverse.scenarios.targets]]
-task = "dielectric_total"
-value = 1.0
-
-[[inverse.scenarios.targets]]
-task = "dielectric_ionic"
-value = 1.0
-
-[[inverse.scenarios.targets]]
-task = "dielectric_electronic"
-value = 1.0
-
+{scenarios}
 [[inverse.paths]]
 name = "latent_default"
 method = "latent"
