@@ -74,3 +74,6 @@ ENV/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Experiment assets/results are sensitive — never sync via git; use rsync within the team.
+experiments/
