@@ -4,17 +4,16 @@
 Usage: python build_trajectory_viewer.py [MIRROR_DIR] [REPLAY_N]
        (defaults: <repo>/artifacts/task_scaling, 1000)
 
-Focus: the DIVERSITY of the designed compositions across optimisation paths and pretraining
-checkpoints k. Three linked panels under mode/order/k/target-scenario/path dropdowns + a step slider:
+Panels under mode / order / k / target-scenario / path dropdowns + a step slider:
+  1. heatmap — elements × the 20 candidates, shade = weight at the current step (final-step
+     diversity stats in the header); click a column to select a candidate.
+  2. progress curves — the selected candidate's per-target progress (0 = seed, 1 = target).
+  3. composition bars — the selected candidate at the current step.
+  4. seeds → optimized — all 20 rows: the seed composition and what it became at the final step
+     (top-4 elements each); click a row to select.
 
-  1. heatmap — elements (rows) × the 20 candidates (columns), cell shade = element weight at the
-     current step. Flipping k or path re-renders instantly, so ensemble differences are directly
-     visible; the header shows diversity stats of the FINAL step (distinct top-3 element systems
-     among the 20 candidates + their mean pairwise L1 distance). Click a column to inspect it.
-  2. progress curves — per-target progress of the selected candidate (0 = seed, 1 = target).
-  3. composition bars — the selected candidate at the current step (same rows as the heatmap).
-
-Everything is embedded; open in any browser. Emits viewer_n<REPLAY_N>.html.
+Rendering is HiDPI-aware (devicePixelRatio-scaled canvases — crisp on retina displays); element
+weights are embedded as permille integers to keep the file small. Emits viewer_n<REPLAY_N>.html.
 """
 
 import json
@@ -34,8 +33,14 @@ SCENARIOS = ["fe_down_total_up", "fe_down_ionic_up", "fe_down_electronic_up"]
 PATHS = ["latent_default", "comp_k4"]
 LINE_FRAMES = 21
 HM_FRAMES = 12
-MAX_ROWS = 12  # heatmap element rows (union of the candidates' final top-4s, by mean weight)
+MAX_ROWS = 12
 TARGET_VALUES = {"formation_energy": -1.0, "dielectric_total": 1.0, "dielectric_ionic": 1.0, "dielectric_electronic": 1.0}
+
+
+def top_pairs(w: np.ndarray, top: int = 4) -> list[list[int]]:
+    """Top elements of one composition as [element_index, permille] pairs."""
+    idx = np.argsort(w)[::-1][:top]
+    return [[int(i), int(round(float(w[int(i)]) * 1000))] for i in idx if w[int(i)] > 1e-3]
 
 
 def build_entry(targets: np.ndarray, weights: np.ndarray, labels: list[str]) -> dict:
@@ -54,28 +59,29 @@ def build_entry(targets: np.ndarray, weights: np.ndarray, labels: list[str]) -> 
 
     have_w = weights.shape[0] == steps
     if have_w:
-        final = weights[-1]  # (B, 94)
-        # Common heatmap rows: union of every candidate's final top-4, ranked by mean final weight.
+        final = weights[-1]
         union: set[int] = set()
         for b in range(n_seeds):
             union.update(int(i) for i in np.argsort(final[b])[::-1][:4] if final[b, int(i)] > 1e-3)
         rows = sorted(union, key=lambda i: -float(final[:, i].mean()))[:MAX_ROWS]
-        hm = np.round(weights[np.array(hm_ids)][:, :, rows], 3)  # (F, B, R)
+        hm = np.round(weights[np.array(hm_ids)][:, :, rows] * 1000).astype(int)  # permille
         systems = {tuple(sorted(np.argsort(final[b])[::-1][:3].tolist())) for b in range(n_seeds)}
         l1 = float(np.mean([np.abs(final[a] - final[c]).sum() for a, c in combinations(range(n_seeds), 2)])) if n_seeds > 1 else 0.0
         div = {"systems": len(systems), "l1": round(l1, 2)}
-        hm_elems = [DEFAULT_ELEMENTS[i] for i in rows]
+        so = [{"s": top_pairs(weights[0, b]), "f": top_pairs(final[b])} for b in range(n_seeds)]
+        hm_rows = rows
         hm_list = hm.tolist()
     else:
-        hm_elems, hm_list, div = [], [], {"systems": 0, "l1": 0.0}
+        hm_rows, hm_list, div, so = [], [], {"systems": 0, "l1": 0.0}, []
 
     return {
         "tasks": tasks,
         "line_steps": [int(s) for s in line_ids],
-        "prog": np.round(prog, 3).tolist(),
+        "prog": np.round(prog, 2).tolist(),
         "hm_steps": [int(s) for s in hm_ids],
-        "hm_elems": hm_elems,
-        "hm": hm_list,
+        "rows": hm_rows,  # element indices; symbols resolved via the global ELEMS table
+        "hm": hm_list,  # (frame, seed, row) permille ints
+        "so": so,  # per seed: seed composition + final optimised composition (top-4 pairs)
         "best": best,
         "div": div,
     }
@@ -105,9 +111,14 @@ body{font-family:system-ui,sans-serif;margin:16px;color:#1a1a2e}
 select,button{font-size:14px;padding:2px 6px}
 #slider{width:300px}
 #divline{color:#374151;font-size:13px;margin:4px 0 6px 0}
-.panels{display:flex;gap:8px}
+.panels{display:flex;gap:10px;flex-wrap:wrap}
+#solist{font:12px ui-monospace,Menlo,monospace;line-height:1.75;max-height:420px;overflow-y:auto;
+  border:1px solid #e5e7eb;border-radius:6px;padding:8px 10px;min-width:430px}
+#solist .row{cursor:pointer;white-space:nowrap}
+#solist .row:hover{background:#f3f4f6}
+#solist .sel{background:#fdeaea}
 #tip{position:fixed;background:#1a1a2e;color:#fff;padding:3px 7px;border-radius:4px;font-size:12px;pointer-events:none;display:none}
-.legend{color:#6b7280;font-size:12.5px;margin-top:6px;max-width:1100px}
+.legend{color:#6b7280;font-size:12.5px;margin-top:6px;max-width:1120px}
 </style></head><body>
 <h3>Inverse-design candidates — composition diversity across targets, paths and k (replay n=%%N%%)</h3>
 <div class="controls">
@@ -117,21 +128,33 @@ select,button{font-size:14px;padding:2px 6px}
   <button id="play">▶ play</button>
 </div>
 <div id="divline"></div>
-<canvas id="hm" width="1090" height="330"></canvas>
-<div class="panels"><canvas id="line" width="640" height="400"></canvas><canvas id="bar" width="440" height="400"></canvas></div>
-<div class="legend"><b>top</b>: elements × the 20 candidates, shade = weight at the current step — flip k / path to compare the
-ensembles; ▲ marks the best-final candidate, click a column to inspect it below · <b>bottom left</b>: the selected candidate's
-per-target progress (0 = seed, 1 = target, dashed) with the current-step marker · <b>bottom right</b>: its composition at the
-current step. Latent-path compositions are KMD-decoded from the optimised latent; composition-path ones are the recipe itself.</div>
+<canvas id="hm"></canvas>
+<div class="panels">
+  <canvas id="line"></canvas>
+  <canvas id="bar"></canvas>
+  <div id="solist"></div>
+</div>
+<div class="legend"><b>heatmap</b>: elements × 20 candidates, shade = weight at the current step (▲ = best final; click a column
+to select) · <b>curves</b>: the selected candidate's per-target progress (0 = seed, 1 = target, dashed) · <b>bars</b>: its
+composition at the current step · <b>list</b>: every candidate's seed composition → final optimised composition (top-4 elements,
+numbers = fraction; click to select). Latent-path compositions are KMD-decoded from the optimised latent; composition-path
+ones are the recipe itself.</div>
 <div id="tip"></div>
 <script>
 const DATA = %%DATA%%;
+const ELEMS = %%ELEMS%%;
 const COLORS = ["#2563EB","#55A868","#E67E22","#9467bd"];
+const DPR = window.devicePixelRatio || 1;
 const sel = id => document.getElementById(id);
 const cnv = {hm:sel("hm"), line:sel("line"), bar:sel("bar")};
-const ctx = {hm:cnv.hm.getContext("2d"), line:cnv.line.getContext("2d"), bar:cnv.bar.getContext("2d")};
+const ctx = {};
+function setup(c, w, h){ c.style.width=w+"px"; c.style.height=h+"px"; c.width=Math.round(w*DPR); c.height=Math.round(h*DPR);
+  const x=c.getContext("2d"); x.setTransform(DPR,0,0,DPR,0,0); return x; }
+ctx.hm = setup(cnv.hm, 1100, 320); ctx.line = setup(cnv.line, 560, 420); ctx.bar = setup(cnv.bar, 340, 420);
+const HMW=1100, HMH=320, LNW=560, LNH=420, BRW=340, BRH=420;
 const tip = sel("tip");
 let seed = 0, hmCells = [];
+const fmt = pairs => pairs.map(([e,pm])=>ELEMS[e]+(pm/1000).toFixed(2)).join(" ") || "-";
 function fill(el, opts, keep){ const v=el.value; el.innerHTML = opts.map(o=>`<option>${o}</option>`).join("");
   if(keep && opts.includes(v)) el.value = v; }
 function keys(o){ return Object.keys(o); }
@@ -152,45 +175,44 @@ function draw(){
   sel("slider").max=F-1;
   const step=d.line_steps[f], total=d.line_steps[F-1]+1;
   sel("stepLabel").textContent=`step ${step+1}/${total}`;
-  sel("divline").textContent=`final-step diversity of the 20 candidates: ${d.div.systems} distinct top-3 element systems · mean pairwise L1 = ${d.div.l1}`;
+  sel("divline").textContent=`final-step diversity of the 20 candidates: ${d.div.systems} distinct top-3 element systems · mean pairwise L1 = ${d.div.l1}  (0 = identical recipes, 2 = no shared elements)`;
 
   // ===== heatmap =====
-  const H=ctx.hm, rows=d.hm_elems.length, B=d.prog.length;
-  H.clearRect(0,0,cnv.hm.width,cnv.hm.height);
-  hmCells=[];
+  const H=ctx.hm, rows=d.rows.length, B=d.prog.length;
+  H.clearRect(0,0,HMW,HMH); hmCells=[];
   if(rows){
     const bf=hmFrame(d, step), grid=d.hm[bf];
-    const L=52,T=30, cw=(cnv.hm.width-L-20)/B, ch=(cnv.hm.height-T-24)/rows;
-    let maxw=0.001; grid.forEach(r=>r.forEach(v=>{if(v>maxw)maxw=v;}));
+    const L=50,T=28, cw=(HMW-L-16)/B, chh=(HMH-T-22)/rows;
+    let maxw=1; grid.forEach(r=>r.forEach(v=>{if(v>maxw)maxw=v;}));
     H.font="11px sans-serif";
     for(let r=0;r<rows;r++){
-      H.fillStyle="#374151"; H.fillText(d.hm_elems[r], 14, T+r*ch+ch*0.65);
+      H.fillStyle="#374151"; H.fillText(ELEMS[d.rows[r]], 14, T+r*chh+chh*0.65);
       for(let b=0;b<B;b++){
         const v=grid[b][r]/maxw;
         H.fillStyle=`rgba(37,99,235,${Math.min(1,v).toFixed(2)})`;
-        H.fillRect(L+b*cw+1, T+r*ch+1, cw-2, ch-2);
-        hmCells.push({x:L+b*cw,y:T+r*ch,w:cw,h:ch,b,elem:d.hm_elems[r],v:grid[b][r]});
+        H.fillRect(L+b*cw+1, T+r*chh+1, cw-2, chh-2);
+        hmCells.push({x:L+b*cw,y:T+r*chh,w:cw,h:chh,b,elem:ELEMS[d.rows[r]],v:grid[b][r]/1000});
       }
     }
     for(let b=0;b<B;b++){
       H.fillStyle = b===seed? "#C44E52" : "#6b7280";
-      H.fillText((b===d.best?"▲":"")+b, L+b*cw+cw/2-8, 18);
-      if(b===seed){H.strokeStyle="#C44E52";H.lineWidth=1.5;H.strokeRect(L+b*cw,T,cw,rows*(cnv.hm.height-T-24)/rows);}
+      H.fillText((b===d.best?"▲":"")+b, L+b*cw+cw/2-8, 17);
+      if(b===seed){H.strokeStyle="#C44E52";H.lineWidth=1.5;H.strokeRect(L+b*cw,T,cw,rows*chh);}
     }
-    H.fillStyle="#6b7280"; H.fillText("candidate (▲ = best final) — click a column to inspect", L, cnv.hm.height-6);
+    H.fillStyle="#6b7280"; H.fillText("candidate (▲ = best final) — click a column to inspect", L, HMH-6);
   }
 
   // ===== progress curves =====
   const X2=ctx.line, P=d.prog[seed];
   let vals=[]; P.forEach(row=>row.forEach(v=>vals.push(v))); vals.push(0,1.05);
   const y0=Math.min(...vals)-0.05, y1=Math.max(...vals)+0.05;
-  const L=52,R=14,T=20,Bm=44, W=cnv.line.width-L-R, Hh=cnv.line.height-T-Bm;
+  const L=50,R=12,T=20,Bm=42, W=LNW-L-R, Hh=LNH-T-Bm;
   const px=i=>L+d.line_steps[i]/(total-1)*W, py=v=>T+Hh-(v-y0)/(y1-y0)*Hh;
-  X2.clearRect(0,0,cnv.line.width,cnv.line.height);
+  X2.clearRect(0,0,LNW,LNH);
   X2.strokeStyle="#e5e7eb"; X2.fillStyle="#6b7280"; X2.font="11px sans-serif";
   for(let i=0;i<=5;i++){const vy=y0+(y1-y0)*i/5;
     X2.beginPath();X2.moveTo(L,py(vy));X2.lineTo(L+W,py(vy));X2.stroke();
-    X2.fillText(vy.toFixed(1),16,py(vy)+4);}
+    X2.fillText(vy.toFixed(1),14,py(vy)+4);}
   X2.strokeStyle="#666";X2.setLineDash([5,4]);
   X2.beginPath();X2.moveTo(L,py(1));X2.lineTo(L+W,py(1));X2.stroke();X2.setLineDash([]);
   d.tasks.forEach((t,c)=>{
@@ -203,31 +225,35 @@ function draw(){
   X2.strokeStyle="#444";X2.lineWidth=1.4;
   X2.beginPath();X2.moveTo(px(f),T);X2.lineTo(px(f),T+Hh);X2.stroke();
   X2.fillStyle="#6b7280";
-  X2.fillText(`candidate ${seed}${seed===d.best?" (best)":""} — progress`, L+W/2-70, 12);
-  X2.fillText("Optimisation step", L+W/2-46, cnv.line.height-8);
+  X2.fillText(`candidate ${seed}${seed===d.best?" (best)":""}`, L+W/2-40, 12);
+  X2.fillText("Optimisation step", L+W/2-46, LNH-8);
   for(let i=0;i<=4;i++){const s=Math.round((total-1)*i/4);
     X2.fillText(String(s), L+s/(total-1)*W-8, T+Hh+16);}
 
-  // ===== composition bars for the selected candidate =====
+  // ===== bars =====
   const X3=ctx.bar;
-  X3.clearRect(0,0,cnv.bar.width,cnv.bar.height);
+  X3.clearRect(0,0,BRW,BRH);
   if(rows){
-    const bf=hmFrame(d, step), col=d.hm[bf].map(r=>r), w=d.hm[bf][0].map((_,r)=>d.hm[bf][seed][r]);
+    const bf=hmFrame(d, step), w=d.rows.map((_,r)=>d.hm[bf][seed][r]/1000);
     X3.fillStyle="#1a1a2e"; X3.font="bold 12px sans-serif";
-    X3.fillText(`Composition — candidate ${seed} (step ${d.hm_steps[bf]+1})`, 90, 16);
-    const bh=Math.min(24,(cnv.bar.height-64)/rows), maxw=Math.max(0.4,...w);
-    d.hm_elems.forEach((e,i)=>{
+    X3.fillText(`candidate ${seed} @ step ${d.hm_steps[bf]+1}`, 60, 16);
+    const bh=Math.min(22,(BRH-64)/rows), maxw=Math.max(0.4,...w);
+    d.rows.forEach((ei,i)=>{
       const y=30+i*(bh+5);
-      X3.fillStyle="#6b7280"; X3.font="12px sans-serif"; X3.fillText(e, 18, y+bh*0.7);
-      X3.fillStyle="#2563EB"; X3.fillRect(50,y,(w[i]||0)/maxw*(cnv.bar.width-104),bh);
-      X3.fillStyle="#374151"; X3.fillText((w[i]||0).toFixed(2), 54+(w[i]||0)/maxw*(cnv.bar.width-104), y+bh*0.7);
+      X3.fillStyle="#6b7280"; X3.font="12px sans-serif"; X3.fillText(ELEMS[ei], 14, y+bh*0.7);
+      X3.fillStyle="#2563EB"; X3.fillRect(44,y,(w[i]||0)/maxw*(BRW-104),bh);
+      X3.fillStyle="#374151"; X3.fillText((w[i]||0).toFixed(2), 48+(w[i]||0)/maxw*(BRW-104), y+bh*0.7);
     });
-    X3.fillStyle="#6b7280"; X3.fillText("weight", cnv.bar.width/2-18, cnv.bar.height-8);
-  } else {
-    X3.fillStyle="#6b7280"; X3.fillText("no per-step weights recorded for this run", 60, 60);
   }
+
+  // ===== seeds -> optimized list =====
+  const so = d.so || [];
+  sel("solist").innerHTML = "<b>seed composition → final optimised</b><br>" + so.map((r,b)=>
+    `<div class="row ${b===seed?'sel':''}" data-b="${b}">${b===d.best?"▲":"&nbsp;"}${String(b).padStart(2)} ${fmt(r.s)} → ${fmt(r.f)}</div>`
+  ).join("");
+  document.querySelectorAll("#solist .row").forEach(el=>el.addEventListener("click",()=>{seed=+el.dataset.b;draw();}));
 }
-["mode","ord","k","scen","path"].forEach(id=>sel(id).addEventListener("change",()=>{refreshMenus(id!=="mode"&&id!=="ord"?false:true);
+["mode","ord","k","scen","path"].forEach(id=>sel(id).addEventListener("change",()=>{refreshMenus(id==="mode"||id==="ord");
   const d=cur(); if(d && seed>=d.prog.length) seed=d.best; draw();}));
 sel("slider").addEventListener("input",draw);
 let timer=null;
@@ -245,7 +271,7 @@ cnv.hm.addEventListener("mousemove",e=>{
   const r=cnv.hm.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
   const c=hmCells.find(c=>mx>=c.x&&mx<c.x+c.w&&my>=c.y&&my<c.y+c.h);
   if(c){tip.style.display="block";tip.style.left=(e.clientX+12)+"px";tip.style.top=(e.clientY+12)+"px";
-    tip.textContent=`candidate ${c.b} · ${c.elem} = ${c.v}`;}
+    tip.textContent=`candidate ${c.b} · ${c.elem} = ${c.v.toFixed(3)}`;}
   else tip.style.display="none";
 });
 refreshMenus(true); draw();
@@ -253,5 +279,9 @@ refreshMenus(true); draw();
 """
 
 out = HERE / f"viewer_n{REPLAY_N}.html"
-out.write_text(html.replace("%%DATA%%", json.dumps(data, separators=(",", ":"))).replace("%%N%%", str(REPLAY_N)))
+out.write_text(
+    html.replace("%%DATA%%", json.dumps(data, separators=(",", ":")))
+    .replace("%%ELEMS%%", json.dumps(list(DEFAULT_ELEMENTS), separators=(",", ":")))
+    .replace("%%N%%", str(REPLAY_N))
+)
 print(f"saved {out} ({out.stat().st_size / 1e6:.1f} MB)")
