@@ -14,11 +14,13 @@ PROJ=/home/ea0094/projects/foundation_model
 CFG=$PROJ/experiments/rikyu_task_scaling/configs
 FM=$PROJ/.venv/bin/fm
 : "${ORD:?need ORD=0|1|2}"
-PRE=$PROJ/artifacts/task_scaling/pre_o${ORD}/training
+N=${N:-1000}
+DIRTAG=""; [ "$N" != "1000" ] && DIRTAG="_n${N}"
+PRE=$PROJ/artifacts/task_scaling/pre${DIRTAG}_o${ORD}/training
 
 module load nvhpc
 cd "$PROJ"
-echo "== $(hostname) $(date) ws ord=$ORD =="
+echo "== $(hostname) $(date) ws ord=$ORD n=$N =="
 nvidia-smi --query-gpu=name --format=csv,noheader
 
 rc=0
@@ -31,12 +33,12 @@ for k in $(seq 1 21); do
         rc=1
         continue
     fi
-    OUT=$PROJ/artifacts/task_scaling/ws_o${ORD}/k${kk}
+    OUT=$PROJ/artifacts/task_scaling/ws${DIRTAG}_o${ORD}/k${kk}
     t0=$SECONDS
     if [ -f "$OUT/training/final_model.pt" ]; then
         echo "-- k=$kk ws: already done, skip"
     else
-        "$FM" pretrain --config "$CFG/ws_n1000.toml" --checkpoint "$ckpt" --resume \
+        "$FM" pretrain --config "$CFG/ws_n${N}.toml" --checkpoint "$ckpt" --resume \
             --output-dir "$OUT" --seed 2025 2>&1
         if [ $? -ne 0 ]; then
             echo "!! k=$kk ws FAILED"

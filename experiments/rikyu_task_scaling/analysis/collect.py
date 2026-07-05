@@ -57,7 +57,7 @@ def collect(mirror: Path, out_dir: Path) -> None:
     scaling: list[dict] = []
     inverse: list[dict] = []
 
-    def add_training_rows(mode: str, ord_id: str, k: int, per_task: dict[str, dict], added: str) -> None:
+    def add_training_rows(mode: str, replay_n: int, ord_id: str, k: int, per_task: dict[str, dict], added: str) -> None:
         for t in TARGETS:
             r = per_task.get(t)
             if r is None:
@@ -65,6 +65,7 @@ def collect(mirror: Path, out_dir: Path) -> None:
             scaling.append(
                 {
                     "mode": mode,
+                    "replay_n": replay_n,
                     "ord": ord_id,
                     "k": k,
                     "task_added_at_k": added,
@@ -75,7 +76,7 @@ def collect(mirror: Path, out_dir: Path) -> None:
                 }
             )
 
-    def add_inverse_rows(mode: str, ord_id: str, k: int, inv_dir: Path) -> None:
+    def add_inverse_rows(mode: str, replay_n: int, ord_id: str, k: int, inv_dir: Path) -> None:
         summary_p = inv_dir / SCENARIO / "summary.json"
         results_p = inv_dir / SCENARIO / "results.json"
         if not summary_p.exists():
@@ -89,6 +90,7 @@ def collect(mirror: Path, out_dir: Path) -> None:
         for row in summary:
             rec = {
                 "mode": mode,
+                "replay_n": replay_n,
                 "ord": ord_id,
                 "k": k,
                 "path": row["path"],
@@ -101,25 +103,26 @@ def collect(mirror: Path, out_dir: Path) -> None:
                 rec[f"{t}_after_mean"] = row.get(f"{t}_after_mean")
             inverse.append(rec)
 
-    for o in range(3):
-        pre_mt = mirror / f"pre_o{o}/training/metrics_table.csv"
-        for k in range(1, 22):
-            kk = f"k{k:02d}"
-            added = added_task_at(pre_mt, k) if pre_mt.exists() else ""
-            ws = mirror / f"ws_o{o}/{kk}/training/metrics_table.csv"
-            if ws.exists():
-                add_training_rows("ws", str(o), k, final_rows(ws), added)
-            ft = mirror / f"ft_o{o}/{kk}/training/finetune_summary.json"
-            if ft.exists():
-                after = json.loads(ft.read_text()).get("metrics_after", {})
-                add_training_rows("ft", str(o), k, after, added)
-            for mode in ("ws", "ft"):
-                add_inverse_rows(mode, str(o), k, mirror / f"{mode}_o{o}/{kk}/inverse")
+    for replay_n, tag in ((1000, ""), (1500, "_n1500")):
+        for o in range(3):
+            pre_mt = mirror / f"pre{tag}_o{o}/training/metrics_table.csv"
+            for k in range(1, 22):
+                kk = f"k{k:02d}"
+                added = added_task_at(pre_mt, k) if pre_mt.exists() else ""
+                ws = mirror / f"ws{tag}_o{o}/{kk}/training/metrics_table.csv"
+                if ws.exists():
+                    add_training_rows("ws", replay_n, str(o), k, final_rows(ws), added)
+                ft = mirror / f"ft{tag}_o{o}/{kk}/training/finetune_summary.json"
+                if ft.exists():
+                    after = json.loads(ft.read_text()).get("metrics_after", {})
+                    add_training_rows("ft", replay_n, str(o), k, after, added)
+                for mode in ("ws", "ft"):
+                    add_inverse_rows(mode, replay_n, str(o), k, mirror / f"{mode}{tag}_o{o}/{kk}/inverse")
 
-    for seed in (2025, 2026, 2027):
-        mt = mirror / f"scratch_s{seed}/training/metrics_table.csv"
-        if mt.exists():
-            add_training_rows("scratch", str(seed), 0, final_rows(mt), "")
+        for seed in (2025, 2026, 2027):
+            mt = mirror / f"scratch{tag}_s{seed}/training/metrics_table.csv"
+            if mt.exists():
+                add_training_rows("scratch", replay_n, str(seed), 0, final_rows(mt), "")
 
     for name, rows in (("scaling.csv", scaling), ("inverse.csv", inverse)):
         if not rows:

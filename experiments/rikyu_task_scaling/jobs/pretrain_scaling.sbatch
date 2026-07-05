@@ -14,15 +14,17 @@ set -uo pipefail
 PROJ=/home/ea0094/projects/foundation_model
 CFG=$PROJ/experiments/rikyu_task_scaling/configs
 : "${ORD:?need ORD=0|1|2}"
-OUT=$PROJ/artifacts/task_scaling/pre_o${ORD}
+N=${N:-1000}                 # replay amount branch; 1000 keeps the original (untagged) dirs
+DIRTAG=""; [ "$N" != "1000" ] && DIRTAG="_n${N}"
+OUT=$PROJ/artifacts/task_scaling/pre${DIRTAG}_o${ORD}
 
 module load nvhpc            # mandatory: GPU is not allocated without a loaded module
 cd "$PROJ"
-echo "== $(hostname) $(date) ord=$ORD seed=$((2025 + ORD)) task_order_seed=$((7501 + ORD)) =="
+echo "== $(hostname) $(date) ord=$ORD n=$N seed=$((2025 + ORD)) task_order_seed=$((7501 + ORD)) =="
 nvidia-smi --query-gpu=name --format=csv,noheader
 
 t0=$SECONDS
-"$PROJ/.venv/bin/fm" pretrain --config "$CFG/pre_n1000.toml" \
+"$PROJ/.venv/bin/fm" pretrain --config "$CFG/pre_n${N}.toml" \
     --output-dir "$OUT" --resume \
     --seed $((2025 + ORD)) \
     --set pretrain.task_order_seed=$((7501 + ORD)) 2>&1

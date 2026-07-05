@@ -18,15 +18,17 @@ cd "$PROJ"
 echo "== $(hostname) $(date) scratch baseline =="
 nvidia-smi --query-gpu=name --format=csv,noheader
 
+N=${N:-1000}
+DIRTAG=""; [ "$N" != "1000" ] && DIRTAG="_n${N}"
 rc=0
 for S in 2025 2026 2027; do
-    OUT=$PROJ/artifacts/task_scaling/scratch_s${S}
+    OUT=$PROJ/artifacts/task_scaling/scratch${DIRTAG}_s${S}
     if [ -f "$OUT/training/final_model.pt" ]; then
         echo "-- seed=$S already done, skip"
         continue
     fi
     t0=$SECONDS
-    "$FM" pretrain --config "$CFG/ws_n1000.toml" --resume --output-dir "$OUT" --seed "$S" 2>&1
+    "$FM" pretrain --config "$CFG/ws_n${N}.toml" --resume --output-dir "$OUT" --seed "$S" 2>&1
     if [ $? -ne 0 ]; then
         echo "!! seed=$S FAILED"
         rc=1

@@ -8,8 +8,11 @@ quality improve with it?
   `dielectric_electronic` (qc regression, n_train ≈ 3124 each).
 - **Pretrain pool** (21 = 24 rehearsal tasks minus the 3 targets): 14 non-KR (13 regression +
   `material_type`) + 7 kernel-regression tasks.
-- **Replay**: fixed count n=1000, `interval=1` (from the replay-sweep result: n=1000 ≈ mean
-  reg/kr R² 0.556).
+- **Replay**: two branches, fixed count **n=1000** and **n=1500**, `interval=1`. Both branches
+  use the SAME three task orders (same `task_order_seed`), so the k-curves are directly
+  comparable across replay amounts. The n=1000 branch writes to the untagged dirs
+  (`pre_o*`, `ws_o*`, …); n=1500 to `pre_n1500_o*` etc. Submit a branch with
+  `bash jobs/submit_all.sh 1000|1500`.
 
 ## Design
 

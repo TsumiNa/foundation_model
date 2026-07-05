@@ -6,13 +6,15 @@
 set -euo pipefail
 PROJ=/home/ea0094/projects/foundation_model
 JOBS=$PROJ/experiments/rikyu_task_scaling/jobs
+N=${1:-1000}   # replay branch: bash submit_all.sh [1000|1500]
+TAG=""; [ "$N" != "1000" ] && TAG="_n${N}"
 mkdir -p /home/ea0094/jobs/task_scaling
 
 for ORD in 0 1 2; do
-    pre=$(sbatch --parsable --job-name=ts_pre_o${ORD} --export=ALL,ORD=$ORD "$JOBS/pretrain_scaling.sbatch")
-    ws=$(sbatch --parsable --dependency=afterok:$pre --job-name=ts_ws_o${ORD} --export=ALL,ORD=$ORD "$JOBS/ws_scaling.sbatch")
-    ft=$(sbatch --parsable --dependency=afterok:$pre --job-name=ts_ft_o${ORD} --export=ALL,ORD=$ORD "$JOBS/ft_scaling.sbatch")
+    pre=$(sbatch --parsable --job-name=ts_pre${TAG}_o${ORD} --export=ALL,ORD=$ORD,N=$N "$JOBS/pretrain_scaling.sbatch")
+    ws=$(sbatch --parsable --dependency=afterok:$pre --job-name=ts_ws${TAG}_o${ORD} --export=ALL,ORD=$ORD,N=$N "$JOBS/ws_scaling.sbatch")
+    ft=$(sbatch --parsable --dependency=afterok:$pre --job-name=ts_ft${TAG}_o${ORD} --export=ALL,ORD=$ORD,N=$N "$JOBS/ft_scaling.sbatch")
     echo "ord$ORD: pre=$pre ws=$ws ft=$ft"
 done
-sc=$(sbatch --parsable --job-name=ts_scratch "$JOBS/scratch_baseline.sbatch")
+sc=$(sbatch --parsable --job-name=ts_scratch${TAG} --export=ALL,N=$N "$JOBS/scratch_baseline.sbatch")
 echo "scratch=$sc"
