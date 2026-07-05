@@ -1,3 +1,6 @@
+# Copyright 2027 TsumiNa.
+# SPDX-License-Identifier: Apache-2.0
+
 import ast  # For safely evaluating string representations of lists/arrays
 from typing import Dict, List, Mapping, Sequence
 

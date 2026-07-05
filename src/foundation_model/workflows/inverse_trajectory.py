@@ -1,4 +1,4 @@
-# Copyright 2026 TsumiNa.
+# Copyright 2027 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
 """Per-step trajectory analytics + plots + animations for inverse-design runs.

@@ -1,3 +1,6 @@
+# Copyright 2027 TsumiNa.
+# SPDX-License-Identifier: Apache-2.0
+
 import lightning as L
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger

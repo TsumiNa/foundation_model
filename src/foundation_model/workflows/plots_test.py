@@ -1,4 +1,4 @@
-# Copyright 2025 TsumiNa.
+# Copyright 2027 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
 """Smoke tests for :mod:`foundation_model.workflows.plots` (render without error)."""

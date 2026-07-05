@@ -1,4 +1,4 @@
-# Copyright 2025 TsumiNa.
+# Copyright 2027 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
 """Shared config sections used by more than one workflow (``[model]`` / ``[training]``)."""

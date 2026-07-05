@@ -1,4 +1,4 @@
-# Copyright 2026 TsumiNa.
+# Copyright 2027 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
 """Tests for the pure helpers in :mod:`foundation_model.workflows.inverse_trajectory`.

@@ -1,4 +1,4 @@
-# Copyright 2025 TsumiNa.
+# Copyright 2027 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
 """Tests for composition-keyed data-source helpers (refactor PR2)."""
