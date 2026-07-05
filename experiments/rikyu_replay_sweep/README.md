@@ -1,6 +1,6 @@
 # rikyu replay-amount sweep — design & reproduction notes
 
-A replay-amount sweep of the 24-task continual-rehearsal pre-training (a faithful reproduction of
+A replay-amount sweep of the 24-task replay-based continual pre-training (a faithful reproduction of
 the reference run `artifacts/continual_rehearsal_full_260524/` on the new `fm pretrain` CLI),
 plus a warm-restart control that measures every task's true single-task baseline. Ran on the
 RIKEN rikyu Phase 1 system (2026-06/07); all raw outputs were rsync'd to the local machine before
@@ -13,7 +13,7 @@ until the result files are synced in.
 
 ## Design
 
-Two run families sweep `[pretrain.rehearsal].default_replay` (11 full runs, 24 tasks each,
+Two run families sweep `[pretrain.replay].amount` (11 full runs, 24 tasks each,
 `interval = 1`, 100 epochs/step with early stopping, 1 GB200 GPU per run):
 
 | family | runs | meaning |
@@ -58,7 +58,7 @@ self-restarts — the task's real ceiling when trained alone).
 
 - `configs/full24_baseline_0p05.toml` — reference-faithful baseline (run by
   `jobs/rehearsal_full24.sbatch`).
-- `configs/sweep_<tag>.toml` — the sweep variants, identical except `[pretrain.rehearsal]`
+- `configs/sweep_<tag>.toml` — the sweep variants, identical except `[pretrain.replay]`
   (run by `jobs/replay_sweep.sbatch`, config selected via the `SWEEP_CFG` env var).
 - `jobs/warm_restart_control.sbatch` — the single-task control (env `TASK=<name>`).
 - Outputs land in `artifacts/replay_sweep/replay_<tag>_rikyu/` and `artifacts/warm_restart/<task>/`

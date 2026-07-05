@@ -11,7 +11,7 @@ Derives the shared sections ([data] .. [training.logging], incl. the full 24-tas
   --seed 2025+ORD / task_order_seed 7501+ORD to replicate what n_runs=3 would produce, but in
   parallel Slurm jobs.
 - ws_n1000.toml  : warm-start continuation adding the 3 dielectric targets jointly (fixed order
-  total -> ionic -> electronic) with the same rehearsal n; checkpoint via --checkpoint. Without
+  total -> ionic -> electronic) with the same replay n; checkpoint via --checkpoint. Without
   --checkpoint it trains the 3 targets from scratch (the k=0 baseline).
 - ft.toml        : frozen-encoder finetune of the 3 dielectric targets, epochs=100 with the
   shared early-stopping config (default 20 would confound "better pretraining" with
@@ -84,9 +84,9 @@ task_order_groups = [
     {toml_list(KR, indent="        ")},
 ]
 
-[pretrain.rehearsal]
+[pretrain.replay]
 interval = 1
-default_replay = {replay_n}
+amount = {replay_n}
 
 [output]
 dir = "artifacts/task_scaling/pre_adhoc"
@@ -110,9 +110,9 @@ task_sequence = {toml_list(TARGETS)}
 n_runs = 1
 task_order = "fixed"
 
-[pretrain.rehearsal]
+[pretrain.replay]
 interval = 1
-default_replay = {replay_n}
+amount = {replay_n}
 
 [output]
 dir = "artifacts/task_scaling/ws_adhoc"

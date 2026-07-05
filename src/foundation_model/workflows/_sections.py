@@ -117,7 +117,7 @@ class EarlyStoppingConfig:
 class CheckpointConfig:
     """``[training.checkpoint]`` — a subset of Lightning's ``ModelCheckpoint``.
 
-    Off by default: the RunRecorder already writes rehearsal-schema checkpoints that the finetune/
+    Off by default: the RunRecorder already writes replay-schema checkpoints that the finetune/
     inverse/predict flows consume. Enable to also emit Lightning ``.ckpt`` files (best/last).
     """
 

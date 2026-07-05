@@ -275,9 +275,9 @@ task_order_groups = [
 ],
 ]
 
-[pretrain.rehearsal]
+[pretrain.replay]
 interval = 1
-default_replay = 1000
+amount = 1000
 
 [output]
 dir = "artifacts/task_scaling/pre_adhoc"

@@ -38,7 +38,7 @@ _ELEMENTS = ["Fe", "Al", "Cu", "Ni", "Ti", "Zn", "Mg", "Ca", "Na", "Cl", "O", "S
 _FORMULAS = [f"{a}2 {b}3" for i, a in enumerate(_ELEMENTS) for b in _ELEMENTS[i + 1 :]][:24]
 
 
-def _config_toml(*, pretrain_extra: str = "", rehearsal: str = "") -> str:
+def _config_toml(*, pretrain_extra: str = "", replay: str = "") -> str:
     return f"""
 [descriptor]
 kind = "kmd"
@@ -61,7 +61,7 @@ column = "b"
 
 [pretrain]
 {pretrain_extra}
-{rehearsal}
+{replay}
 """
 
 
@@ -75,12 +75,12 @@ def _build(toml_str: str):
 def test_build_happy_path_defaults_task_sequence() -> None:
     cfg = _build(_config_toml())
     assert cfg.task_sequence == ["a", "b"]  # defaults to [[tasks]] order
-    assert cfg.n_runs == 1 and cfg.rehearsal.interval == 1
+    assert cfg.n_runs == 1 and cfg.replay.interval == 1
 
 
 def test_interval_below_one_raises() -> None:
     with pytest.raises(ValueError, match="interval must be >= 1"):
-        _build(_config_toml(rehearsal="[pretrain.rehearsal]\ninterval = 0"))
+        _build(_config_toml(replay="[pretrain.replay]\ninterval = 0"))
 
 
 def test_unknown_task_in_sequence_raises() -> None:
@@ -95,12 +95,12 @@ def test_invalid_task_order_raises() -> None:
 
 def test_per_task_replay_unknown_task_raises() -> None:
     with pytest.raises(ValueError, match="unknown task"):
-        _build(_config_toml(rehearsal="[pretrain.rehearsal.per_task]\nnope = 0.1"))
+        _build(_config_toml(replay="[pretrain.replay.per_task]\nnope = 0.1"))
 
 
 def test_per_task_replay_bad_value_raises() -> None:
     with pytest.raises(ValueError, match="replay"):
-        _build(_config_toml(rehearsal="[pretrain.rehearsal.per_task]\na = 0.0"))
+        _build(_config_toml(replay="[pretrain.replay.per_task]\na = 0.0"))
 
 
 # --- pure helpers ------------------------------------------------------------------------
@@ -242,9 +242,9 @@ seed = 1
 [pretrain]
 task_sequence = ["a", "b"]
 
-[pretrain.rehearsal]
+[pretrain.replay]
 interval = 1
-default_replay = 0.5
+amount = 0.5
 """
     return build_pretrain_config(tomllib.loads(toml), output_dir=str(output_dir))
 
@@ -308,9 +308,9 @@ seed = 1
 
 [pretrain]
 task_sequence = {sequence!r}
-[pretrain.rehearsal]
+[pretrain.replay]
 interval = 1
-default_replay = 0.5
+amount = 0.5
 """
 
 

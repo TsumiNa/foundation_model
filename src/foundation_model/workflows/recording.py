@@ -4,9 +4,9 @@
 """The single artifact writer for the training / predict workflows.
 
 :class:`RunRecorder` centralises the output layout, provenance, per-step checkpoints, metrics,
-prediction parquets and figures that used to be scattered across the legacy rehearsal scripts.
+prediction parquets and figures that used to be scattered across the legacy continual_rehearsal scripts.
 Every ``fm`` subcommand instantiates one recorder at startup and calls :meth:`write_provenance`
-before doing any work. :func:`load_checkpoint_state` normalizes both the rehearsal checkpoint
+before doing any work. :func:`load_checkpoint_state` normalizes both the replay-schema checkpoint
 schema and a bare ``state_dict`` (fm-trainer era) so downstream flows can consume either.
 """
 
@@ -110,7 +110,7 @@ class RunRecorder:
     # -- checkpoints
 
     def save_step_checkpoint(self, step: int, task: str, model: Any, active_tasks: list[str]) -> Path:
-        """``training/stepNN_<task>/checkpoint.pt`` with the rehearsal schema."""
+        """``training/stepNN_<task>/checkpoint.pt`` with the replay schema."""
 
         step_dir = self.paths.step_dir(step, task)
         step_dir.mkdir(parents=True, exist_ok=True)
@@ -231,7 +231,7 @@ def load_checkpoint_state(path: Path) -> dict[str, Any]:
     """Load a checkpoint and normalize to ``{"model": state_dict, "task_sequence": list|None, ...}``.
 
     Accepts three shapes, in priority order:
-    1. the rehearsal schema — ``{"model": state_dict, "task_sequence": ...}``;
+    1. the replay schema — ``{"model": state_dict, "task_sequence": ...}``;
     2. a Lightning checkpoint — ``{"state_dict": ..., "epoch": ..., ...}`` (fm-trainer era,
        ``ModelCheckpoint`` output): the parameters live under ``state_dict``, so unwrap it;
     3. a bare ``state_dict`` (an ``OrderedDict`` of parameter tensors).

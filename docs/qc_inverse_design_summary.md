@@ -8,7 +8,7 @@
 > [inverse_design_algorithms.md](inverse_design_algorithms.md) for the current schema; the QC
 > setup below is reproducible as an ordinary scenario (`classes = [1]`, `weight = 5.0`).
 
-One-page summary of the messages the continual-rehearsal + inverse-design pipeline
+One-page summary of the messages the replay-based continual pre-training + inverse-design pipeline
 (`fm pretrain` → `fm finetune` → `fm inverse`) carries. Written so each bullet maps to either a
 slide or a paragraph of the paper.
 
@@ -18,7 +18,7 @@ slide or a paragraph of the paper.
 
 * The same model is trained once on **11 supervised tasks** (7 regression + 1 kernel
   regression + 3 inverse-design tail tasks: `formation_energy`, `klat`, `material_type`).
-  Continual rehearsal (small replay) keeps earlier tasks from collapsing while new ones land —
+  Continual training with a small replay keeps earlier tasks from collapsing while new ones land —
   what we get out is a single descriptor → latent representation that all heads share.
 * On top of that one checkpoint we run **three multi-objective scenarios** with no retraining:
   (a) FE↓ + magnetisation↑, (b) FE↓ + Tc↑ + magnetisation↑, (c) FE↓ + klat↑. All three are

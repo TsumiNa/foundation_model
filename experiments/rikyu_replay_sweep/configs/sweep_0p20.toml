@@ -238,9 +238,9 @@ task_sequence = [
 n_runs = 1
 task_order = "fixed"
 
-[pretrain.rehearsal]
+[pretrain.replay]
 interval = 1
-default_replay = 0.20
+amount = 0.20
 # uniform replay across all already-learned tasks (no per-task override) for a clean sweep.
 
 [output]

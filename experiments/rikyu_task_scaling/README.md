@@ -6,7 +6,7 @@ quality improve with it?
 
 - **Targets** (3, evaluated jointly): `dielectric_total`, `dielectric_ionic`,
   `dielectric_electronic` (qc regression, n_train ≈ 3124 each).
-- **Pretrain pool** (21 = 24 rehearsal tasks minus the 3 targets): 14 non-KR (13 regression +
+- **Pretrain pool** (21 = the 24 sweep tasks minus the 3 targets): 14 non-KR (13 regression +
   `material_type`) + 7 kernel-regression tasks.
 - **Replay**: two branches, fixed count **n=1000** and **n=1500**, `interval=1`. Both branches
   use the SAME three task orders (same `task_order_seed`), so the k-curves are directly

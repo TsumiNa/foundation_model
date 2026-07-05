@@ -45,7 +45,7 @@ Run `pytest` (or `uv run pytest`) before submitting; for long-running suites, at
 A single console script `fm` (declared in `pyproject.toml [project.scripts]` →
 `cli/main.py:main`), a [click](https://click.palletsprojects.com/) group with four subcommands:
 
-- `fm pretrain --config <toml>` — continual-rehearsal pre-training (rehearsal-interval replay +
+- `fm pretrain --config <toml>` — replay-based continual pre-training (interval replay +
   optional `n_runs` sweep). Engine: `workflows/pretrain.py`.
 - `fm finetune --config <toml> --checkpoint <ckpt>` — frozen-encoder fine-tuning of selected task
   heads (AE head stays trainable). Engine: `workflows/finetune.py`.

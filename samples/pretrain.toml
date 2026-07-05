@@ -1,7 +1,7 @@
-# Formal `fm pretrain` config — continual-rehearsal pre-training over the qc dataset.
+# Formal `fm pretrain` config — replay-based continual pre-training over the qc dataset.
 #
 # 2 regression + 2 kernel-regression + 1 classification head, KMD-1d descriptors, a single full
-# run with interval=1 rehearsal. Extend `[datasets]` / `[[tasks]]` to add NEMAD / phonix property
+# run with interval=1 replay. Extend `[datasets]` / `[[tasks]]` to add NEMAD / phonix property
 # heads (raw columns should be pre-normalized before use).
 #
 #   fm pretrain --config samples/pretrain.toml
@@ -109,9 +109,9 @@ task_sequence = ["density", "dos_density", "power_factor", "formation_energy", "
 n_runs = 1
 task_order = "fixed"
 
-[pretrain.rehearsal]
+[pretrain.replay]
 interval = 1
-default_replay = 0.05
+amount = 0.05
 
 [output]
 dir = "artifacts/pretrain"

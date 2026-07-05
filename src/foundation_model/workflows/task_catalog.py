@@ -155,7 +155,7 @@ class TaskSpec:
     t_column: str | None = None  # required iff kind == KERNEL_REGRESSION
     num_classes: int | None = None  # required iff kind == CLASSIFICATION
     lr: float | None = None  # per-task LR override
-    replay: float | int | None = None  # per-task rehearsal override (fraction or count)
+    replay: float | int | None = None  # per-task replay override (fraction or count)
     scaler: ScalerSpec | None = None
     # Per-head architecture overrides (fall back to [model] defaults when None).
     hidden_dims: list[int] | None = None  # reg/clf hidden widths

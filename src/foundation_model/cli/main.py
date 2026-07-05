@@ -167,7 +167,7 @@ def pretrain_cmd(
     checkpoint: str | None,
     resume: bool,
 ) -> None:
-    """Continual-rehearsal pre-training (multi-run sweep)."""
+    """Replay-based continual pre-training (multi-run sweep)."""
     cfg = _pretrain_config(
         config_path, overrides, output_dir, seed, accelerator, sample, max_epochs, checkpoint, resume
     )

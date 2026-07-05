@@ -1,7 +1,7 @@
 # Smoke-test config for `fm pretrain` — a fast CPU end-to-end run.
 #
 # 2 regression + 1 classification task over the qc dataset (pre-normalized columns +
-# integer material-type label), KMD-1d descriptors, sample=300 rows, rehearsal interval=2,
+# integer material-type label), KMD-1d descriptors, sample=300 rows, replay interval=2,
 # a 2-run sweep, 2 epochs/step. Shares its catalog with the finetune/inverse/predict smoke
 # configs so the checkpoints chain cleanly.
 #
@@ -68,9 +68,9 @@ task_sequence = ["density", "formation_energy", "material_type"]
 n_runs = 2
 task_order = "fixed"
 
-[pretrain.rehearsal]
+[pretrain.replay]
 interval = 2
-default_replay = 0.1
+amount = 0.1
 
 [output]
 dir = "artifacts/pretrain_smoke"

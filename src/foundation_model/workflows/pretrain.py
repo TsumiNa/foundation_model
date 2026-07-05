@@ -1,12 +1,12 @@
 # Copyright 2027 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-"""``fm pretrain`` — continual-rehearsal pre-training engine with an n-runs sweep.
+"""``fm pretrain`` — replay-based continual pre-training engine with an n-runs sweep.
 
 Migrated from ``scripts/continual_rehearsal_full.py`` (``ContinualRehearsalFullRunner.run`` /
 ``_build_empty_model`` / ``_evaluate_task``) with three deliberate changes vs. the legacy runner:
 
-1. **Rehearsal interval** (new): on step ``s`` (1-based) already-learned tasks join training only
+1. **Replay interval** (new): on step ``s`` (1-based) already-learned tasks join training only
    when ``s % interval == 0``; other steps train the new task + AE alone. ``interval == 1``
    reproduces the legacy "every step replays every old task" behaviour. Evaluation still covers
    **all** learned heads at every step (the forgetting trajectory is interval-independent).
@@ -81,31 +81,29 @@ def _validate_replay_amount(value: float | int, *, where: str) -> None:
 
 
 @dataclass(kw_only=True)
-class RehearsalConfig:
-    """[pretrain.rehearsal] — interval schedule + replay amounts."""
+class ReplayConfig:
+    """[pretrain.replay] — interval schedule + replay amounts."""
 
     interval: int = 1  # old tasks rejoin training every Nth step (1 = always replay)
-    default_replay: float | int = (
-        0.05  # replay amount per old task: float in (0,1) = fraction of its labels, int >= 1 = count
-    )
-    per_task: dict[str, float | int] = field(default_factory=dict)  # override default_replay for named tasks
+    amount: float | int = 0.05  # replay amount per old task: float in (0,1) = fraction of its labels, int >= 1 = count
+    per_task: dict[str, float | int] = field(default_factory=dict)  # override the global amount for named tasks
 
     def __post_init__(self) -> None:
         if self.interval < 1:
-            raise ValueError(f"rehearsal.interval must be >= 1, got {self.interval}.")
-        _validate_replay_amount(self.default_replay, where="rehearsal.default_replay")
+            raise ValueError(f"replay.interval must be >= 1, got {self.interval}.")
+        _validate_replay_amount(self.amount, where="replay.amount")
         for task, value in self.per_task.items():
-            _validate_replay_amount(value, where=f"rehearsal.per_task.{task}")
+            _validate_replay_amount(value, where=f"replay.per_task.{task}")
 
 
 @dataclass(kw_only=True)
 class PretrainConfig:
-    """``[pretrain]`` + shared sections — continual-rehearsal pre-training config."""
+    """``[pretrain]`` + shared sections — replay-based continual pre-training config."""
 
     catalog: TaskCatalogConfig
     model: ModelSectionConfig
     training: TrainingSectionConfig
-    rehearsal: RehearsalConfig
+    replay: ReplayConfig
     output_dir: Path
     task_sequence: list[str] = field(default_factory=list)  # order tasks are introduced; [] = [[tasks]] order
     n_runs: int = 1  # independent repeats (different seeds) written to runs/runNN/
@@ -141,9 +139,9 @@ class PretrainConfig:
         unknown = [t for t in self.task_sequence if t not in catalog_tasks]
         if unknown:
             raise ValueError(f"pretrain.task_sequence references unknown task(s): {unknown}.")
-        bad_replay = [t for t in self.rehearsal.per_task if t not in catalog_tasks]
+        bad_replay = [t for t in self.replay.per_task if t not in catalog_tasks]
         if bad_replay:
-            raise ValueError(f"rehearsal.per_task references unknown task(s): {bad_replay}.")
+            raise ValueError(f"replay.per_task references unknown task(s): {bad_replay}.")
         if self.task_order is not TaskOrder.RANDOM:
             if self.task_order_seed is not None:
                 raise ValueError('pretrain.task_order_seed requires task_order = "random".')
@@ -190,17 +188,17 @@ def build_pretrain_config(
             "task_order",
             "task_order_seed",
             "task_order_groups",
-            "rehearsal",
+            "replay",
             "checkpoint",
             "resume",
         },
     )
-    rehearsal_raw = dict(pretrain_raw.get("rehearsal", {}))
-    reject_unknown("pretrain.rehearsal", rehearsal_raw, {"interval", "default_replay", "per_task"})
-    rehearsal = RehearsalConfig(
-        interval=rehearsal_raw.get("interval", 1),
-        default_replay=rehearsal_raw.get("default_replay", 0.05),
-        per_task=dict(rehearsal_raw.get("per_task", {})),
+    replay_raw = dict(pretrain_raw.get("replay", {}))
+    reject_unknown("pretrain.replay", replay_raw, {"interval", "amount", "per_task"})
+    replay = ReplayConfig(
+        interval=replay_raw.get("interval", 1),
+        amount=replay_raw.get("amount", 0.05),
+        per_task=dict(replay_raw.get("per_task", {})),
     )
 
     resolved_output = output_dir if output_dir is not None else raw.get("output", {}).get("dir")
@@ -212,7 +210,7 @@ def build_pretrain_config(
         catalog=catalog,
         model=model,
         training=training,
-        rehearsal=rehearsal,
+        replay=replay,
         output_dir=Path(resolved_output),
         task_sequence=list(pretrain_raw.get("task_sequence", [])),
         n_runs=int(pretrain_raw.get("n_runs", 1)),
@@ -362,7 +360,7 @@ def _run_single(
     model, preloaded, built = _warm_start(cfg, catalog, warm_start_source)
 
     # New tasks = task_order entries not already loaded from the checkpoint; preloaded tasks are
-    # already trained and only participate as rehearsal/eval targets.
+    # already trained and only participate as replay/eval targets.
     new_tasks = [t for t in task_order if t not in preloaded]
     if not new_tasks:
         if is_resume:  # killed after the last step but before final_model was written — just finalize
@@ -377,7 +375,7 @@ def _run_single(
     metric_history: dict[str, list[tuple[int, float]]] = {name: [] for name in full_order}
     records: list[dict[str, Any]] = []
 
-    # Global step numbering continues past the preloaded tasks so the rehearsal-interval schedule
+    # Global step numbering continues past the preloaded tasks so the replay-interval schedule
     # picks up where the checkpoint left off (step == 1 for a from-scratch run, offset == 0).
     offset = len(preloaded)
     for i, task_name in enumerate(new_tasks):
@@ -387,7 +385,7 @@ def _run_single(
         model.add_task(built[task_name])
 
         learned = [*preloaded, *new_tasks[:i]]
-        participating = active_old_tasks(step, learned, cfg.rehearsal.interval)
+        participating = active_old_tasks(step, learned, cfg.replay.interval)
         active = [task_name, *participating]
         for name in participating:
             built[name].task_masking_ratio = _replay_ratio_for(cfg, catalog, name)
@@ -450,7 +448,7 @@ def _run_single(
 
 
 def _replay_ratio_for(cfg: PretrainConfig, catalog: TaskCatalog, name: str) -> float:
-    replay = cfg.rehearsal.per_task.get(name, cfg.rehearsal.default_replay)
+    replay = cfg.replay.per_task.get(name, cfg.replay.amount)
     if isinstance(replay, float):
         return replay
     return replay_to_ratio(replay, _n_valid_train_labels(catalog, name))

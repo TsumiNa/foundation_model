@@ -238,9 +238,9 @@ task_sequence = [
 n_runs = 1
 task_order = "fixed"
 
-[pretrain.rehearsal]
+[pretrain.replay]
 interval = 1
-default_replay = 0.05
+amount = 0.05
 # fixed inverse-design tail keeps a higher (10%) replay share, matching replay_ratio_high.
 per_task = { formation_energy = 0.10, magnetic_moment = 0.10, tc = 0.10, klat = 0.10, material_type = 0.10 }
 

@@ -224,9 +224,9 @@ task_sequence = [
 n_runs = 1
 task_order = "fixed"
 
-[pretrain.rehearsal]
+[pretrain.replay]
 interval = 1
-default_replay = 1500
+amount = 1500
 
 [output]
 dir = "artifacts/task_scaling/ws_adhoc"

@@ -22,7 +22,7 @@ foundation_model/
 │       ├── task_catalog.py               # TOML → dataset/task/descriptor/scaler config + loaders
 │       ├── recording.py                  # RunRecorder: layout, provenance, checkpoints, metrics
 │       ├── _sections.py / _engine.py     # shared [model]/[training] configs + model build + eval
-│       ├── pretrain.py                   # continual-rehearsal engine (interval replay, n_runs)
+│       ├── pretrain.py                   # replay-based continual engine (interval replay, n_runs)
 │       ├── finetune.py                   # freeze policy + fine-tune engine
 │       ├── inverse.py                    # scenario × path inverse-design engine
 │       ├── inverse_trajectory.py         # trajectory analytics / plots / animations

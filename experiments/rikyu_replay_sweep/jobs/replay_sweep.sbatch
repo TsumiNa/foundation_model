@@ -16,7 +16,7 @@ module load nvhpc            # mandatory: GPU is not allocated without a loaded 
 cd "$PROJ"
 echo "== $(hostname) $(date) =="
 echo "cfg=$CFG"
-grep -E "default_replay|^dir" "$CFG"
+grep -E "^amount|^dir" "$CFG"
 nvidia-smi --query-gpu=name --format=csv,noheader
 
 t0=$SECONDS

@@ -90,7 +90,7 @@ One entry per prediction head. At least one is required; names must be unique.
 | `t_column` | str | `None` | required iff `kind = kernel_regression`; forbidden otherwise | The sequence x-axis column (e.g. energies for DOS, temperatures for ZT). |
 | `num_classes` | int | `None` | required iff `kind = classification`, `>= 2`; forbidden otherwise | Number of classes. |
 | `lr` | float | `None` | | Per-task learning-rate override (else the section LR for its kind). |
-| `replay` | float \| int | `None` | float in `(0,1)` or int `>= 1` | Per-task rehearsal amount (pretrain); see `[pretrain.rehearsal]`. |
+| `replay` | float \| int | `None` | float in `(0,1)` or int `>= 1` | Per-task replay amount (pretrain); overrides `[pretrain.replay]`. |
 | `hidden_dims` | list[int] | `None` | positive ints; reg/clf only | Override `[model].head_hidden_dims` for this head. |
 | `x_hidden_dims` | list[int] | `None` | positive ints; KR only | Override `[model].kr_x_hidden_dims` (value branch). |
 | `t_hidden_dims` | list[int] | `None` | positive ints; KR only | Override `[model].kr_t_hidden_dims` (coordinate branch). |
@@ -148,7 +148,7 @@ above).
 
 ### `[training.checkpoint]` → Lightning `ModelCheckpoint` (opt-in)
 
-Off by default — the run recorder already writes rehearsal-schema checkpoints that
+Off by default — the run recorder already writes replay-schema checkpoints that
 finetune/inverse/predict consume. Enable to *also* emit Lightning `.ckpt` files.
 
 | Key | Type | Default | Constraint | Description |
@@ -177,7 +177,7 @@ finetune/inverse/predict consume. Enable to *also* emit Lightning `.ckpt` files.
 
 # Command sections
 
-## `[pretrain]` — continual-rehearsal pre-training
+## `[pretrain]` — replay-based continual pre-training
 
 | Key | Type | Default | Constraint | Description |
 |---|---|---|---|---|
@@ -186,16 +186,16 @@ finetune/inverse/predict consume. Enable to *also* emit Lightning `.ckpt` files.
 | `task_order` | str | `"fixed"` | `fixed` \| `random` | `fixed` = `task_sequence` order; `random` = per-run shuffle (reproducible: run *i* shuffles with `numpy` seed `[training].seed + i`, or `task_order_seed + i` when set). |
 | `task_order_seed` | int | `None` | requires `task_order = "random"` | Decouple the order shuffle from the training seed: run *i* (0-based) shuffles with `task_order_seed + i`, so the same orders can be replayed under different training seeds (and vice versa). `None` = derive from the run seed (`[training].seed + i`). |
 | `task_order_groups` | list[list[str]] | `[]` | requires `task_order = "random"`; must exactly partition `task_sequence` | Constrained shuffle: tasks are shuffled within each group and the groups are concatenated in the listed order — e.g. keep expensive kernel-regression tasks in a final block while still randomizing within blocks. |
-| `checkpoint` | str (path) | `None` | | **Warm-start**: load this checkpoint's encoder + heads as the starting point (`--checkpoint` overrides). Its tasks count as already-learned and are skipped as new steps (they still take part in rehearsal + evaluation); training continues with the `task_sequence` tasks the checkpoint doesn't already contain. Errors if a checkpoint task isn't in the catalog, or if every `task_sequence` task is already in the checkpoint. |
+| `checkpoint` | str (path) | `None` | | **Warm-start**: load this checkpoint's encoder + heads as the starting point (`--checkpoint` overrides). Its tasks count as already-learned and are skipped as new steps (they still take part in replay + evaluation); training continues with the `task_sequence` tasks the checkpoint doesn't already contain. Errors if a checkpoint task isn't in the catalog, or if every `task_sequence` task is already in the checkpoint. |
 | `resume` | bool | `false` | | **Kill-restart** (`--resume` sets it): on start, if a run's output dir already holds step checkpoints, warm-start from the latest and continue **in place** at the next task; a run whose `final_model.pt` exists is skipped. For long pre-training that can exceed a scheduler's job time — re-submit the same command and it picks up where it stopped. Resume granularity is one completed task-step; optimizer state is not restored (each step trains a fresh optimizer regardless). |
 
-### `[pretrain.rehearsal]`
+### `[pretrain.replay]`
 
 | Key | Type | Default | Constraint | Description |
 |---|---|---|---|---|
 | `interval` | int | `1` | `>= 1` | Already-learned tasks rejoin training every Nth step; `1` = always replay. |
-| `default_replay` | float \| int | `0.05` | float in `(0,1)` or int `>= 1` | Replay amount per old task: a fraction of its labels, or an absolute label count. |
-| `per_task` | table (str→num) | `{}` | keys must be tasks; same value rule | Override `default_replay` for named tasks, e.g. `per_task = { density = 0.2 }`. |
+| `amount` | float \| int | `0.05` | float in `(0,1)` or int `>= 1` | Replay amount per old task: a fraction of its labels, or an absolute label count. |
+| `per_task` | table (str→num) | `{}` | keys must be tasks; same value rule | Override `amount` for named tasks, e.g. `per_task = { density = 0.2 }`. |
 
 ## `[finetune]` — frozen-encoder head fine-tuning
 
@@ -386,9 +386,9 @@ csv = true
 
 [pretrain]
 task_sequence = ["density", "material_type"]
-[pretrain.rehearsal]
+[pretrain.replay]
 interval = 1
-default_replay = 0.05
+amount = 0.05
 
 [output]
 dir = "artifacts/pretrain"

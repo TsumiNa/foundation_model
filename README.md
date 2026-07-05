@@ -80,7 +80,7 @@ Everything runs through a single console command, **`fm`**, with four subcommand
 TOML config and writes `run_provenance.json` + `run.log` into its output directory.
 
 ```bash
-# 1. Continual-rehearsal pre-training (rehearsal-interval replay, optional n_runs sweep).
+# 1. Replay-based continual pre-training (interval replay, optional n_runs sweep).
 fm pretrain --config samples/pretrain.toml
 
 # 2. Frozen-encoder fine-tuning of selected heads on a checkpoint.
@@ -122,7 +122,7 @@ Training callbacks and loggers map to Lightning's built-ins via `[training]` sub
 subset of each): `[training.early_stopping]` → `EarlyStopping` (on by default),
 `[training.checkpoint]` → `ModelCheckpoint`, and `[training.logging]` (`csv` / `tensorboard`) →
 `CSVLogger` / `TensorBoardLogger`. Lightning checkpointing/logging are opt-in; the run recorder
-writes the rehearsal-schema checkpoints + `run.log` regardless.
+writes the replay-schema checkpoints + `run.log` regardless.
 
 **[`docs/configuration.md`](docs/configuration.md) is the authoritative schema** — every section,
 key, type, default, constraint, and which subcommands read it. See [`samples/`](samples/) for
@@ -146,7 +146,7 @@ ready-to-copy templates.
     directly, with optional element whitelist (`allowed_elements`), per-element step scaling
     (`element_step_scale`), seed-vs-uniform mix (`seed_blend`), and per-output entropy penalty
     (`diversity_scale ∈ [0, 1]`).
-- **Continual-rehearsal pre-training** (`fm pretrain`) with rehearsal-interval replay, per-step
+- **Replay-based continual pre-training** (`fm pretrain`) with interval replay, per-step
   checkpoints + parquet predictions, forgetting-trajectory plots, and an optional `n_runs` sweep;
   inverse design (`fm inverse`) produces a paper-grade output folder (figures + JSON + SUMMARY.md
   per scenario).
@@ -358,7 +358,7 @@ Pre-train a multi-task model, optionally sharpen the inverse-design heads, then 
 design on the checkpoint:
 
 ```bash
-# 1. Continual-rehearsal pre-training — saves training/final_model.pt under the output dir.
+# 1. Replay-based continual pre-training — saves training/final_model.pt under the output dir.
 fm pretrain --config samples/pretrain.toml
 
 # 2. (Optional) targeted frozen-encoder fine-tune of the inverse-design heads.
