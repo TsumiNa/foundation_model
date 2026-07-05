@@ -112,21 +112,42 @@ for ax, task in zip(axes.flat, TASKS):
     draw_panel(ax, task)
 
 handles, labels = axes.flat[0].get_legend_handles_labels()
-fig.legend(handles, labels, loc="lower center", ncol=len(labels), frameon=False, fontsize=9, title=LEGEND_TITLE)
-fig.suptitle("Per-task metric across replay events — first 20 tasks of the sequence", fontsize=13, y=0.995)
+fig.suptitle("Per-task metric across replay events — first 20 tasks of the sequence", fontsize=14, y=0.995)
+fig.legend(
+    handles,
+    labels,
+    loc="upper center",
+    ncol=len(labels),
+    frameon=False,
+    fontsize=10,
+    bbox_to_anchor=(0.5, 0.978),
+    title=LEGEND_TITLE,
+    title_fontsize=10,
+)
 fig.supxlabel("replay events since the task was introduced (0 = at introduction)", fontsize=11)
 fig.supylabel("primary test metric (R²)", fontsize=11)
-fig.tight_layout(rect=(0.01, 0.045, 1, 0.97))
+fig.tight_layout(rect=(0.01, 0.01, 1, 0.925))
 fig.savefig(OUT, bbox_inches="tight")
 print(f"saved {OUT}")
 
 for task in task_order:  # singles for ALL 24 tasks (the grid keeps the first 20)
-    fig1, ax1 = plt.subplots(figsize=(7.6, 5.2), dpi=150)
+    fig1, ax1 = plt.subplots(figsize=(7.6, 6.0), dpi=150)
     draw_panel(ax1, task, tick_size=9.5)
     ax1.set_xlabel("replay events since the task was introduced (0 = at introduction)")
     ax1.set_ylabel("primary test metric")
-    ax1.legend(loc="best", fontsize=7.5, ncol=2, frameon=False, title=LEGEND_TITLE, title_fontsize=7)
-    fig1.tight_layout()
+    h1, l1 = ax1.get_legend_handles_labels()
+    fig1.legend(
+        h1,
+        l1,
+        loc="upper center",
+        ncol=6,  # 11 entries -> two rows
+        frameon=False,
+        fontsize=8,
+        bbox_to_anchor=(0.5, 0.985),
+        title=LEGEND_TITLE,
+        title_fontsize=7.5,
+    )
+    fig1.tight_layout(rect=(0, 0, 1, 0.845))
     fig1.savefig(SINGLE_DIR / f"{task}.png", bbox_inches="tight")
     plt.close(fig1)
 print(f"saved {len(task_order)} per-task figures to {SINGLE_DIR}/")

@@ -98,15 +98,23 @@ for tag, (kind, val) in RUNS.items():
         final, intro = load(p)
         data[tag] = dict(kind=kind, val=val, final=final, intro=intro)
 
-BLUE, ORANGE, MUTED, GRID = "#0077BB", "#EE7733", "#6b7280", "#e5e7eb"
+BLUE, ORANGE, MUTED, VLINE = "#0077BB", "#EE7733", "#6b7280", "#9ca3af"
+GRID = "#e5e7eb"
 plt.rcParams.update({"font.size": 9, "font.family": "DejaVu Sans", "axes.edgecolor": MUTED})
 SINGLE_DIR = HERE / "per_task_saturation"
 SINGLE_DIR.mkdir(exist_ok=True)
 
-LEGEND_NOTE = (
-    "blue ○ fixed-count runs · orange □ fraction runs · dashed = the task's own at-intro ceiling\n"
-    "dotted vertical = the task's full train size · fit: gap = g0/(1+x/k)"
-)
+from matplotlib.lines import Line2D  # noqa: E402
+
+
+def legend_handles() -> list[Line2D]:
+    return [
+        Line2D([], [], marker="o", ls="none", color=BLUE, mec="white", ms=8, label="fixed-count run (100…2500)"),
+        Line2D([], [], marker="s", ls="none", color=ORANGE, mec="white", ms=8, label="fraction run (0.05…0.20)"),
+        Line2D([], [], ls="--", color=MUTED, lw=1.4, label="this task's at-intro level (its own ceiling)"),
+        Line2D([], [], ls=":", color=VLINE, lw=1.4, label="this task's full train-set size"),
+        Line2D([], [], ls="-", color="#334155", lw=1.8, label="saturation fit  gap = g0/(1+x/k)"),
+    ]
 
 
 def draw_panel(ax, task: str, *, annotate_size: float = 7.5) -> tuple[str, str]:
@@ -142,7 +150,7 @@ def draw_panel(ax, task: str, *, annotate_size: float = 7.5) -> tuple[str, str]:
         sel = [i for i, kk in enumerate(kinds) if kk == kind]
         ax.scatter(xs_arr[sel], ys_arr[sel], s=34, marker=marker, color=color, edgecolor="white", lw=0.6, zorder=3)
     ax.axhline(ceiling, color=MUTED, ls="--", lw=1.1, zorder=1)
-    ax.axvline(n_train, color=GRID, lw=1.0, ls=":", zorder=0)
+    ax.axvline(n_train, color=VLINE, lw=1.2, ls=":", zorder=0)
     ax.set_xscale("log")
     ax.set_title(f"{task}  (n_train={n_train:,})", fontsize=9 if annotate_size < 9 else 12)
     ax.text(0.02, 0.03, fit_txt, transform=ax.transAxes, fontsize=annotate_size, color="#334155", va="bottom")
@@ -161,20 +169,21 @@ for ax, task in zip(axes.flat, ORDER):
     _, row = draw_panel(ax, task)
     print(row)
 
-fig.suptitle(f"Per-task replay saturation — final metric vs labels replayed per step\n{LEGEND_NOTE}", fontsize=13, y=0.995)
+fig.suptitle("Per-task replay saturation — final metric vs labels replayed per step", fontsize=14, y=0.995)
+fig.legend(handles=legend_handles(), loc="upper center", ncol=5, frameon=False, fontsize=10.5, bbox_to_anchor=(0.5, 0.975))
 fig.supxlabel("labels replayed per step for this task (log scale)", fontsize=11)
 fig.supylabel("final primary metric after all 24 steps (test R²; accuracy for material_type)", fontsize=11)
-fig.tight_layout(rect=(0.01, 0.01, 1, 0.96))
+fig.tight_layout(rect=(0.01, 0.01, 1, 0.945))
 fig.savefig(OUT, bbox_inches="tight")
 print(f"\nsaved {OUT}")
 
 for task in ORDER:
-    fig1, ax1 = plt.subplots(figsize=(7.2, 5.2), dpi=150)
+    fig1, ax1 = plt.subplots(figsize=(7.2, 6.0), dpi=150)
     draw_panel(ax1, task, annotate_size=9.5)
     ax1.set_xlabel("labels replayed per step for this task (log scale)")
     ax1.set_ylabel("final primary metric (test)")
-    fig1.text(0.01, 0.005, LEGEND_NOTE.replace("\n", " · "), fontsize=6.5, color=MUTED)
-    fig1.tight_layout(rect=(0, 0.02, 1, 1))
+    fig1.legend(handles=legend_handles(), loc="upper center", ncol=2, frameon=False, fontsize=8.5, bbox_to_anchor=(0.5, 0.995))
+    fig1.tight_layout(rect=(0, 0, 1, 0.86))
     fig1.savefig(SINGLE_DIR / f"{task}.png", bbox_inches="tight")
     plt.close(fig1)
 print(f"saved 24 per-task figures to {SINGLE_DIR}/")
