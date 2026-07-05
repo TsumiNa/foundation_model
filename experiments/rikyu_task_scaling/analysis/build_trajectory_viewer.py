@@ -5,7 +5,7 @@ Usage: python build_trajectory_viewer.py [MIRROR_DIR] [REPLAY_N]
        (defaults: <repo>/artifacts/task_scaling, 1000)
 
 Focus: the DIVERSITY of the designed compositions across optimisation paths and pretraining
-checkpoints k. Three linked panels under mode/order/k/path dropdowns + a step slider:
+checkpoints k. Three linked panels under mode/order/k/target-scenario/path dropdowns + a step slider:
 
   1. heatmap — elements (rows) × the 20 candidates (columns), cell shade = element weight at the
      current step. Flipping k or path re-renders instantly, so ensemble differences are directly
@@ -30,11 +30,11 @@ HERE = Path(__file__).resolve().parent
 MIRROR = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE.parents[2] / "artifacts/task_scaling"
 REPLAY_N = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
 TAG = "" if REPLAY_N == 1000 else f"_n{REPLAY_N}"
-SCENARIO = "fe_down_diel_up"
+SCENARIOS = ["fe_down_total_up", "fe_down_ionic_up", "fe_down_electronic_up"]
 PATHS = ["latent_default", "comp_k4_lowdiv"]
-LINE_FRAMES = 31
-HM_FRAMES = 16
-MAX_ROWS = 14  # heatmap element rows (union of the candidates' final top-4s, by mean weight)
+LINE_FRAMES = 21
+HM_FRAMES = 12
+MAX_ROWS = 12  # heatmap element rows (union of the candidates' final top-4s, by mean weight)
 TARGET_VALUES = {"formation_energy": -1.0, "dielectric_total": 1.0, "dielectric_ionic": 1.0, "dielectric_electronic": 1.0}
 
 
@@ -86,14 +86,15 @@ n_loaded = 0
 for mode in ("ws", "ft"):
     for ord_id in range(3):
         for k in range(1, 22):
-            for path in PATHS:
-                p = MIRROR / f"{mode}{TAG}_o{ord_id}/k{k:02d}/inverse/{SCENARIO}/trajectories/{path}.npz"
-                if not p.exists():
-                    continue
-                z = np.load(p, allow_pickle=False)
-                entry = build_entry(z["targets"], z["weights"], [str(x) for x in z["labels"]])
-                data.setdefault(mode, {}).setdefault(str(ord_id), {}).setdefault(str(k), {})[path] = entry
-                n_loaded += 1
+            for scen in SCENARIOS:
+                for path in PATHS:
+                    p = MIRROR / f"{mode}{TAG}_o{ord_id}/k{k:02d}/inverse3/{scen}/trajectories/{path}.npz"
+                    if not p.exists():
+                        continue
+                    z = np.load(p, allow_pickle=False)
+                    entry = build_entry(z["targets"], z["weights"], [str(x) for x in z["labels"]])
+                    data.setdefault(mode, {}).setdefault(str(ord_id), {}).setdefault(str(k), {}).setdefault(scen, {})[path] = entry
+                    n_loaded += 1
 print(f"loaded {n_loaded} trajectory files")
 
 html = """<!DOCTYPE html>
@@ -108,10 +109,10 @@ select,button{font-size:14px;padding:2px 6px}
 #tip{position:fixed;background:#1a1a2e;color:#fff;padding:3px 7px;border-radius:4px;font-size:12px;pointer-events:none;display:none}
 .legend{color:#6b7280;font-size:12.5px;margin-top:6px;max-width:1100px}
 </style></head><body>
-<h3>Inverse-design candidates — composition diversity across paths and k (replay n=%%N%%, fe_down_diel_up)</h3>
+<h3>Inverse-design candidates — composition diversity across targets, paths and k (replay n=%%N%%)</h3>
 <div class="controls">
   mode <select id="mode"></select> order <select id="ord"></select> k <select id="k"></select>
-  path <select id="path"></select>
+  target <select id="scen"></select> path <select id="path"></select>
   step <input type="range" id="slider" min="0" value="0"> <span id="stepLabel"></span>
   <button id="play">▶ play</button>
 </div>
@@ -134,13 +135,14 @@ let seed = 0, hmCells = [];
 function fill(el, opts, keep){ const v=el.value; el.innerHTML = opts.map(o=>`<option>${o}</option>`).join("");
   if(keep && opts.includes(v)) el.value = v; }
 function keys(o){ return Object.keys(o); }
-function cur(){ const m=sel("mode").value,o=sel("ord").value,k=sel("k").value,p=sel("path").value;
-  return (((DATA[m]||{})[o]||{})[k]||{})[p] || null; }
+function cur(){ const m=sel("mode").value,o=sel("ord").value,k=sel("k").value,s=sel("scen").value,p=sel("path").value;
+  return ((((DATA[m]||{})[o]||{})[k]||{})[s]||{})[p] || null; }
 function refreshMenus(resetSeed){
   fill(sel("mode"), keys(DATA), true);
   const m=sel("mode").value; fill(sel("ord"), keys(DATA[m]), true);
   const o=sel("ord").value; fill(sel("k"), keys(DATA[m][o]).sort((a,b)=>+a-+b), true);
-  const k=sel("k").value; fill(sel("path"), keys(DATA[m][o][k]), true);
+  const k=sel("k").value; fill(sel("scen"), keys(DATA[m][o][k]), true);
+  const s=sel("scen").value; fill(sel("path"), keys(DATA[m][o][k][s]), true);
   const d=cur(); if(d && resetSeed) seed = d.best;
 }
 function hmFrame(d, step){ return d.hm_steps.reduce((acc,s,i)=> s<=step? i: acc, 0); }
@@ -225,7 +227,7 @@ function draw(){
     X3.fillStyle="#6b7280"; X3.fillText("no per-step weights recorded for this run", 60, 60);
   }
 }
-["mode","ord","k","path"].forEach(id=>sel(id).addEventListener("change",()=>{refreshMenus(id!=="mode"&&id!=="ord"?false:true);
+["mode","ord","k","scen","path"].forEach(id=>sel(id).addEventListener("change",()=>{refreshMenus(id!=="mode"&&id!=="ord"?false:true);
   const d=cur(); if(d && seed>=d.prog.length) seed=d.best; draw();}));
 sel("slider").addEventListener("input",draw);
 let timer=null;
