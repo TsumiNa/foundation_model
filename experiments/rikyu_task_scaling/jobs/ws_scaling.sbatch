@@ -15,16 +15,18 @@ CFG=$PROJ/experiments/rikyu_task_scaling/configs
 FM=$PROJ/.venv/bin/fm
 : "${ORD:?need ORD=0|1|2}"
 N=${N:-1000}
+K_FROM=${K_FROM:-1}   # per-checkpoint range: lets a helper job take the slow tail in parallel
+K_TO=${K_TO:-21}      # (per-k skip-if-done keeps two jobs from redoing each other's finished work)
 DIRTAG=""; [ "$N" != "1000" ] && DIRTAG="_n${N}"
 PRE=$PROJ/artifacts/task_scaling/pre${DIRTAG}_o${ORD}/training
 
 module load nvhpc
 cd "$PROJ"
-echo "== $(hostname) $(date) ws ord=$ORD n=$N =="
+echo "== $(hostname) $(date) ws ord=$ORD n=$N k=$K_FROM..$K_TO =="
 nvidia-smi --query-gpu=name --format=csv,noheader
 
 rc=0
-for k in $(seq 1 21); do
+for k in $(seq "$K_FROM" "$K_TO"); do
     kk=$(printf "%02d" "$k")
     step_dir=$(ls -d "$PRE"/step${kk}_* 2>/dev/null | head -1)
     ckpt="$step_dir/checkpoint.pt"
