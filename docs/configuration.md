@@ -242,6 +242,8 @@ paths** (3 latent + 8 composition) is used.
 |---|---|---|---|---|
 | `strategy` | str | `"top_objective"` | `top_objective` \| `weighted_random` \| `random` \| `explicit` | Seed-selection algorithm. `top_objective` ranks the candidate pool (the target tasks' rows in the chosen split) by the scenario's objective score — the exact weighted loss the optimizers minimise — and takes the best (lowest) `n`. `weighted_random` samples without replacement with probability proportional to the rank of `weight_task`'s true label (higher label = more likely). |
 | `weight_task` | str | `None` | required iff `strategy = "weighted_random"`; must be a regression task | Task whose TRUE labels weight the sampling. |
+| `weight_direction` | str | `"high"` | `high` \| `low`; `weighted_random` only; exclusive with `weight_value` | `high`: higher label = more likely; `low`: lower label = more likely. |
+| `weight_value` | float | `None` | `weighted_random` only; exclusive with `weight_direction` | Sample by closeness: labels nearer this value are more likely. |
 | `n` | int | `20` | `>= 1` | Total seed compositions to return. |
 | `split` | str | `"test"` | `train`/`val`/`test`/`all` | Split to draw candidates from. |
 | `explicit` | list[str] | `[]` | required (non-empty) when `strategy = explicit` | Explicit candidate pool. |

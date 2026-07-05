@@ -81,9 +81,14 @@ class SeedConfig:
     n: int = 20
     split: str = "test"
     # weighted_random only: the regression task whose TRUE labels weight the sampling — candidates
-    # are drawn without replacement with probability proportional to their label's rank (higher
-    # label = more likely), so the pool keeps variety while favoring high-ground-truth seeds.
+    # are drawn without replacement with probability proportional to a rank score, so the pool
+    # keeps variety while favoring seeds that match the exploration intent:
+    #   weight_direction = "high"  → higher label = more likely (default)
+    #   weight_direction = "low"   → lower label = more likely
+    #   weight_value = <float>     → closer to that label value = more likely
     weight_task: str | None = None
+    weight_direction: str | None = None
+    weight_value: float | None = None
     explicit: list[str] = field(default_factory=list)
     explicit_append: list[str] = field(default_factory=list)
     dedup_by_element_system: bool = True
@@ -99,8 +104,23 @@ class SeedConfig:
             raise ValueError("seeds.strategy='explicit' requires a non-empty seeds.explicit list.")
         if self.strategy is SeedStrategy.WEIGHTED_RANDOM and not self.weight_task:
             raise ValueError("seeds.strategy='weighted_random' requires seeds.weight_task.")
-        if self.strategy is not SeedStrategy.WEIGHTED_RANDOM and self.weight_task is not None:
-            raise ValueError("seeds.weight_task only applies to strategy='weighted_random'.")
+        weight_keys_set = (
+            self.weight_task is not None or self.weight_direction is not None or self.weight_value is not None
+        )
+        if self.strategy is not SeedStrategy.WEIGHTED_RANDOM and weight_keys_set:
+            raise ValueError(
+                "seeds.weight_task/weight_direction/weight_value only apply to strategy='weighted_random'."
+            )
+        if self.weight_direction is not None and self.weight_value is not None:
+            raise ValueError("seeds.weight_direction and seeds.weight_value are mutually exclusive.")
+        if self.weight_direction is not None and self.weight_direction not in {"high", "low"}:
+            raise ValueError(f"seeds.weight_direction must be 'high' or 'low', got {self.weight_direction!r}.")
+        if (
+            self.strategy is SeedStrategy.WEIGHTED_RANDOM
+            and self.weight_direction is None
+            and self.weight_value is None
+        ):
+            self.weight_direction = "high"
 
 
 class TargetKind(str, Enum):
@@ -610,8 +630,9 @@ def select_seeds(
 
     if seed_cfg.strategy is SeedStrategy.WEIGHTED_RANDOM:
         # Pool = the weight task's rows in the chosen split with a valid label; draw a full
-        # weighted permutation without replacement, probability proportional to the label's rank
-        # (scale-free — z-scored/negative labels are fine), then dedup/merge as usual.
+        # weighted permutation without replacement, probability proportional to the rank of a
+        # score encoding the exploration intent (scale-free — z-scored/negative labels are fine),
+        # then dedup/merge as usual.
         assert seed_cfg.weight_task is not None  # guaranteed by SeedConfig validation
         frame = catalog.task_frames([seed_cfg.weight_task])[seed_cfg.weight_task]
         spec = catalog.task_spec(seed_cfg.weight_task)
@@ -625,7 +646,13 @@ def select_seeds(
         if not pairs:
             return appended
         vals = np.array([v for _, v in pairs])
-        ranks = vals.argsort().argsort() + 1  # 1 = lowest label … N = highest
+        if seed_cfg.weight_value is not None:  # closer to the requested value = more likely
+            score = -np.abs(vals - seed_cfg.weight_value)
+        elif seed_cfg.weight_direction == "low":  # lower label = more likely
+            score = -vals
+        else:  # "high": higher label = more likely
+            score = vals
+        ranks = score.argsort().argsort() + 1  # 1 = worst match … N = best match
         probs = ranks / ranks.sum()
         rng = np.random.default_rng(0)
         perm = rng.choice(len(pairs), size=len(pairs), replace=False, p=probs)

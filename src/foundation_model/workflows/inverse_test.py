@@ -223,8 +223,16 @@ def test_top_qc_strategy_removed() -> None:
 def test_weighted_random_requires_weight_task() -> None:
     with pytest.raises(ValueError, match="requires seeds.weight_task"):
         SeedConfig(strategy="weighted_random")
-    with pytest.raises(ValueError, match="only applies to"):
+    with pytest.raises(ValueError, match="only apply to"):
         SeedConfig(strategy="random", weight_task="a")
+    with pytest.raises(ValueError, match="only apply to"):
+        SeedConfig(strategy="random", weight_direction="low")
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        SeedConfig(strategy="weighted_random", weight_task="a", weight_direction="high", weight_value=1.0)
+    with pytest.raises(ValueError, match="'high' or 'low'"):
+        SeedConfig(strategy="weighted_random", weight_task="a", weight_direction="up")
+    assert SeedConfig(strategy="weighted_random", weight_task="a").weight_direction == "high"
+    assert SeedConfig(strategy="weighted_random", weight_task="a", weight_value=0.5).weight_direction is None
 
 
 def _weighted_seed_cfg_toml(data_dir, weight_task: str) -> str:
@@ -264,6 +272,36 @@ def test_weighted_random_selection_deterministic_and_from_pool(data_dir) -> None
     s2 = select_seeds(cat, model, seed_cfg, targets=specs, device=torch.device("cpu"))
     assert s1 == s2 and len(s1) == 4
     assert set(s1) <= set(str(c) for c in cat.task_frames(["a"])["a"].index)
+
+
+def test_weighted_random_direction_and_value_bias(data_dir) -> None:
+    """With n = pool_size - 1, the excluded candidate reveals the weighting: the sole miss should
+    sit at the unfavored end (statistically; deterministic here via the fixed rng)."""
+    cat, model = _model_with_heads(data_dir)
+    frame = cat.task_frames(["a"])["a"]
+    spec = cat.task_spec("a")
+    labels = frame[spec.column].astype(float)
+    ordered_by_label = [str(c) for c in labels.sort_values().index]
+    n = len(ordered_by_label) - 1
+    specs = [_spec(cat, task="a", value=1.0)]
+
+    def picked(**kw):
+        cfg = SeedConfig(
+            strategy="weighted_random", weight_task="a", n=n, split="all", dedup_by_element_system=False, **kw
+        )
+        return select_seeds(cat, model, cfg, targets=specs, device=torch.device("cpu"))
+
+    for kw, favored_end in (
+        ({"weight_direction": "high"}, ordered_by_label[-1]),
+        ({"weight_direction": "low"}, ordered_by_label[0]),
+    ):
+        got = picked(**kw)
+        assert len(got) == n
+        assert favored_end in got  # the best-matching candidate must survive an n-1 draw
+    v = float(labels.median())
+    got = picked(weight_value=v)
+    closest = str((labels - v).abs().sort_values().index[0])
+    assert closest in got
 
 
 @pytest.mark.parametrize(
