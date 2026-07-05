@@ -31,7 +31,7 @@ MIRROR = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE.parents[2] / "artifact
 REPLAY_N = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
 TAG = "" if REPLAY_N == 1000 else f"_n{REPLAY_N}"
 SCENARIOS = ["fe_down_total_up", "fe_down_ionic_up", "fe_down_electronic_up"]
-PATHS = ["latent_default", "comp_k4_lowdiv"]
+PATHS = ["latent_default", "comp_k4"]
 LINE_FRAMES = 21
 HM_FRAMES = 12
 MAX_ROWS = 12  # heatmap element rows (union of the candidates' final top-4s, by mean weight)
