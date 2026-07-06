@@ -177,13 +177,14 @@ select,button,input[type=number]{font-size:13.5px;padding:2px 6px}
 .left{flex:0 0 66%;max-width:66%}
 .lrow{display:flex;gap:8px;margin-top:6px}
 .right{flex:1 1 auto;min-width:0}
-#solist{font:11.5px ui-monospace,Menlo,monospace;line-height:1.7;max-height:392px;overflow-y:auto;
+#solist{font:11.5px ui-monospace,Menlo,monospace;line-height:1.7;height:400px;overflow-y:auto;
   border:1px solid #e5e7eb;border-radius:6px;padding:7px 9px}
 #solist .row{cursor:pointer;white-space:nowrap}
 #solist .row:hover{background:#f3f4f6}
 #solist .sel{background:#fdeaea}
+#solist .det{background:#f8fafc;border-left:3px solid #C44E52;margin:1px 0 3px 14px;padding:3px 8px;color:#374151;white-space:normal}
 #info{border:1px solid #e5e7eb;border-radius:6px;padding:8px 11px;margin-top:10px;color:#374151;font-size:12.5px;line-height:1.55}
-#orderline{border:1px solid #e5e7eb;border-radius:6px;padding:7px 10px;margin-top:8px;font-size:11.5px;line-height:2.0}
+#orderline{border:1px solid #e5e7eb;border-radius:6px;padding:7px 10px;margin-top:8px;font-size:11.5px;line-height:2.1;overflow-wrap:anywhere}
 #orderline b{font-size:12px}
 .tk{white-space:nowrap;padding:1px 5px;border-radius:4px;margin:0 1px}
 .tk.seen{background:#eaf1fb;color:#0b4f8c}
@@ -223,7 +224,7 @@ select,button,input[type=number]{font-size:13.5px;padding:2px 6px}
       · Slider or "step + jump" moves to any optimisation step (animation: 1 frame per 5 steps); ▶ play animates<br>
       · Heatmap rows = the 12 most common elements across candidates (capped); the bar panel and the list always\n        show the selected candidate's full composition<br>\n      · Click a heatmap column or a list row to select a candidate; hover heatmap cells for weights,
         hover list rows for values<br>
-      · List-row tooltip: seed TRUE values (dataset labels, – = unlabeled) / seed predicted / final predicted<br>
+      · The selected list row expands to show the model's predicted values at the seed and at the final step<br>
       · ⬇ buttons download the raw data as JSON (current selection or the whole dataset)<br><br>
       <b>Experiment</b><br>
       · Objective: formation_energy → −1σ AND the selected dielectric task → +1σ (dielectric weight 2.0), z-scored units<br>
@@ -355,17 +356,20 @@ function draw(){
   const seq=ORDERS[sel("ord").value]||[], kk=+sel("k").value;
   sel("orderline").innerHTML = seq.length
     ? `<b>Pretraining task order ${sel("ord").value}</b> <span style="color:#6b7280">— the selected checkpoint k=${kk} contains the first ${kk} task${kk>1?"s":""}</span><br>`
-      + seq.map((tk,i)=>`<span class="tk ${i+1<kk?"seen":i+1===kk?"last":"unseen"}"><span class="no">${i+1}</span>${tk}</span>`).join("<span style='color:#c9ced6'>›</span>")
+      + seq.map((tk,i)=>`<span class="tk ${i+1<kk?"seen":i+1===kk?"last":"unseen"}"><span class="no">${i+1}</span>${tk}</span>`).join(" <span style='color:#c9ced6'>›</span> ")
     : "";
 
   // ===== seeds -> optimized (right) =====
   const so=d.so||[];
   const vv=v=>v==null?"–":v.toFixed(2);
   const pair=arr=>d.tasks.map((t,i)=>`${t.replace("dielectric_","diel_").replace("formation_energy","FE")} ${vv(arr?arr[i]:null)}`).join(", ");
-  sel("solist").innerHTML="<b>seed composition → final optimised</b> <span style='color:#6b7280'>(hover for values, click to select)</span><br>"+so.map((r,b)=>
-    `<div class="row ${b===seed?'sel':''}" data-b="${b}" title="seed TRUE: ${pair(r.tv)}\\nseed predicted: ${pair(r.sp)}\\nfinal predicted: ${pair(r.fp)}">${b===d.best?"▲":"&nbsp;"}${String(b).padStart(2)} ${fmt(r.s)} → ${fmt(r.f)}</div>`
+  sel("solist").innerHTML="<b>seed composition → final optimised</b> <span style='color:#6b7280'>(click a row to select & expand)</span><br>"+so.map((r,b)=>
+    `<div class="row ${b===seed?'sel':''}" data-b="${b}">${b===d.best?"▲":"&nbsp;"}${String(b).padStart(2)} ${fmt(r.s)} → ${fmt(r.f)}</div>`
+    +(b===seed?`<div class="det">predicted: seed [${pair(r.sp)}] → final [${pair(r.fp)}]</div>`:"")
   ).join("");
   document.querySelectorAll("#solist .row").forEach(el=>el.addEventListener("click",()=>{seed=+el.dataset.b;draw();}));
+  const selRow=document.querySelector("#solist .sel");
+  if(selRow) selRow.scrollIntoView({block:"nearest"});
 }
 function jumpToStep(raw){
   const d=cur();if(!d)return;
