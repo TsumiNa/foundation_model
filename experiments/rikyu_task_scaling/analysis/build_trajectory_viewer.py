@@ -126,6 +126,22 @@ def build_entry(targets: np.ndarray, weights: np.ndarray, labels: list[str], see
     }
 
 
+import csv as _csv
+
+
+def realized_order(o: int) -> list[str]:
+    mt = MIRROR / f"pre{TAG}_o{o}/training/metrics_table.csv"
+    if not mt.exists():
+        return []
+    seq: dict[int, str] = {}
+    for r in _csv.DictReader(open(mt)):
+        if r["task"] == r["new_task"]:
+            seq[int(r["step"])] = r["task"]
+    return [seq[k] for k in sorted(seq)]
+
+
+ORDERS = {str(o): realized_order(o) for o in range(3)}
+
 data: dict = {}
 n_loaded = 0
 for mode in ("ws", "ft"):
@@ -144,7 +160,7 @@ for mode in ("ws", "ft"):
                     n_loaded += 1
 print(f"loaded {n_loaded} trajectory files")
 
-payload = {"data": data, "elems": list(DEFAULT_ELEMENTS)}
+payload = {"data": data, "elems": list(DEFAULT_ELEMENTS), "orders": ORDERS}
 b64 = base64.b64encode(gzip.compress(json.dumps(payload, separators=(",", ":")).encode(), 6)).decode()
 
 html = """<!DOCTYPE html>
@@ -167,6 +183,13 @@ select,button,input[type=number]{font-size:13.5px;padding:2px 6px}
 #solist .row:hover{background:#f3f4f6}
 #solist .sel{background:#fdeaea}
 #info{border:1px solid #e5e7eb;border-radius:6px;padding:8px 11px;margin-top:10px;color:#374151;font-size:12.5px;line-height:1.55}
+#orderline{border:1px solid #e5e7eb;border-radius:6px;padding:7px 10px;margin-top:8px;font-size:11.5px;line-height:2.0}
+#orderline b{font-size:12px}
+.tk{white-space:nowrap;padding:1px 5px;border-radius:4px;margin:0 1px}
+.tk.seen{background:#eaf1fb;color:#0b4f8c}
+.tk.last{background:#0077BB;color:#fff;font-weight:600}
+.tk.unseen{color:#9ca3af}
+.tk .no{opacity:0.65;font-size:10px;margin-right:2px}
 #info b{color:#1a1a2e}
 #tip{position:fixed;background:#1a1a2e;color:#fff;padding:3px 7px;border-radius:4px;font-size:12px;pointer-events:none;display:none;white-space:pre}
 #loading{color:#6b7280;font-size:14px;margin:30px}
@@ -189,6 +212,7 @@ select,button,input[type=number]{font-size:13.5px;padding:2px 6px}
   <div class="left">
     <canvas id="hm"></canvas>
     <div class="lrow"><canvas id="line"></canvas><canvas id="bar"></canvas></div>
+    <div id="orderline"></div>
   </div>
   <div class="right">
     <div id="solist"></div>
@@ -219,7 +243,7 @@ async function decode(){
   const ds = new Response(new Blob([bin]).stream().pipeThrough(new DecompressionStream("gzip")));
   return JSON.parse(await ds.text());
 }
-let DATA=null, ELEMS=null;
+let DATA=null, ELEMS=null, ORDERS=null;
 const COLORS=["#2563EB","#55A868","#E67E22","#9467bd"];
 const DPR=window.devicePixelRatio||1;
 const sel=id=>document.getElementById(id);
@@ -327,6 +351,13 @@ function draw(){
     });
   }
 
+  // ===== pretraining order timeline (left bottom) =====
+  const seq=ORDERS[sel("ord").value]||[], kk=+sel("k").value;
+  sel("orderline").innerHTML = seq.length
+    ? `<b>Pretraining task order ${sel("ord").value}</b> <span style="color:#6b7280">— the selected checkpoint k=${kk} contains the first ${kk} task${kk>1?"s":""}</span><br>`
+      + seq.map((tk,i)=>`<span class="tk ${i+1<kk?"seen":i+1===kk?"last":"unseen"}"><span class="no">${i+1}</span>${tk}</span>`).join("<span style='color:#c9ced6'>›</span>")
+    : "";
+
   // ===== seeds -> optimized (right) =====
   const so=d.so||[];
   const vv=v=>v==null?"–":v.toFixed(2);
@@ -344,7 +375,7 @@ function jumpToStep(raw){
   sel("slider").value=bi;draw();
 }
 async function main(){
-  const p=await decode();DATA=p.data;ELEMS=p.elems;
+  const p=await decode();DATA=p.data;ELEMS=p.elems;ORDERS=p.orders||{};
   document.getElementById("loading").style.display="none";
   document.getElementById("app").style.display="block";
   sizeCanvases();
