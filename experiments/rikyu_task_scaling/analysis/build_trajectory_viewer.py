@@ -149,9 +149,9 @@ select,button,input[type=number]{font-size:13.5px;padding:2px 6px}
 #jump{width:64px}
 #divline{color:#374151;font-size:12.5px;margin:2px 0 8px 0}
 .cols{display:flex;gap:14px;align-items:flex-start}
-.left{flex:0 0 auto}
+.left{flex:0 0 66%;max-width:66%}
 .lrow{display:flex;gap:8px;margin-top:6px}
-.right{flex:1 1 auto;min-width:400px}
+.right{flex:1 1 auto;min-width:0}
 #solist{font:11.5px ui-monospace,Menlo,monospace;line-height:1.7;max-height:392px;overflow-y:auto;
   border:1px solid #e5e7eb;border-radius:6px;padding:7px 9px}
 #solist .row{cursor:pointer;white-space:nowrap}
@@ -172,6 +172,8 @@ select,button,input[type=number]{font-size:13.5px;padding:2px 6px}
   <span id="stepLabel"></span>
   step <input type="number" id="jump" min="1" step="1"> <button id="go">jump</button>
   <button id="play">▶ play</button>
+  <button id="dlcur" title="Download the current selection as JSON">⬇ selection</button>
+  <button id="dlall" title="Download the whole dataset as JSON">⬇ all</button>
 </div>
 <div id="divline"></div>
 <div class="cols">
@@ -182,16 +184,20 @@ select,button,input[type=number]{font-size:13.5px;padding:2px 6px}
   <div class="right">
     <div id="solist"></div>
     <div id="info">
-      <b>操作说明</b><br>
-      · 五个下拉切换：mode（ws=整模型 warm-start / ft=冻结 encoder finetune）× 任务顺序 × k（预训练任务数）× 目标 scenario × 优化路径<br>
-      · 滑条或「step + jump」跳到任意优化步（动画 5 步/帧）；▶ play 播放<br>
-      · 热图点击列 / 右侧列表点击行 = 选中该 candidate；悬停热图看权重、悬停列表行看数值详情<br>
-      · 列表行悬停显示：种子真值（数据集标注，– 表示无标注）/ 种子预测 / 最终预测<br><br>
-      <b>实验说明</b><br>
-      · 目标：formation_energy → −1σ 且所选介电任务 → +1σ（介电权重 2.0），z-scored 单位<br>
-      · 种子：weighted_random —— 按真值 dielectric_total 秩加权抽样 20 个、元素体系去重<br>
-      · 路径：latent = 潜空间优化 + AE 对齐后 KMD 解码；comp_k4 = 直接组分优化（≤4 元素，diversity 0.5）<br>
-      · 300 步优化；曲线纵轴 0 = 种子水平、1 = 达标（虚线）
+      <b>How to use</b><br>
+      · Dropdowns: mode (ws = full-model warm-start / ft = frozen-encoder finetune) × task order × k (number of
+        pretraining tasks) × target scenario × optimisation path<br>
+      · Slider or "step + jump" moves to any optimisation step (animation: 1 frame per 5 steps); ▶ play animates<br>
+      · Click a heatmap column or a list row to select a candidate; hover heatmap cells for weights,
+        hover list rows for values<br>
+      · List-row tooltip: seed TRUE values (dataset labels, – = unlabeled) / seed predicted / final predicted<br>
+      · ⬇ buttons download the raw data as JSON (current selection or the whole dataset)<br><br>
+      <b>Experiment</b><br>
+      · Objective: formation_energy → −1σ AND the selected dielectric task → +1σ (dielectric weight 2.0), z-scored units<br>
+      · Seeds: weighted_random — 20 test compositions sampled by rank of TRUE dielectric_total, element systems deduplicated<br>
+      · Paths: latent = latent-space optimisation with AE alignment, KMD-decoded; comp_k4 = direct composition
+        optimisation (≤4 elements, diversity 0.5)<br>
+      · 300 optimisation steps; progress axis: 0 = seed level, 1 = target reached (dashed line)
     </div>
   </div>
 </div>
@@ -208,8 +214,13 @@ let DATA=null, ELEMS=null;
 const COLORS=["#2563EB","#55A868","#E67E22","#9467bd"];
 const DPR=window.devicePixelRatio||1;
 const sel=id=>document.getElementById(id);
-const HMW=760,HMH=300,LNW=560,LNH=390,BRW=192,BRH=390;
+let HMW=760,HMH=300,LNW=560,LNH=390,BRW=192,BRH=390;
 let ctx={}, tip=null, seed=0, hmCells=[];
+function sizeCanvases(){
+  const lw = document.querySelector(".left").clientWidth;
+  HMW = lw; LNW = Math.floor(lw*0.75)-8; BRW = lw-LNW-8;
+  ctx.hm=setup(sel("hm"),HMW,HMH); ctx.line=setup(sel("line"),LNW,LNH); ctx.bar=setup(sel("bar"),BRW,BRH);
+}
 function setup(c,w,h){c.style.width=w+"px";c.style.height=h+"px";c.width=Math.round(w*DPR);c.height=Math.round(h*DPR);
   const x=c.getContext("2d");x.setTransform(DPR,0,0,DPR,0,0);return x;}
 const fmt=p=>p.map(([e,pm])=>ELEMS[e]+(pm/1000).toFixed(2)).join(" ")||"-";
@@ -326,12 +337,26 @@ async function main(){
   const p=await decode();DATA=p.data;ELEMS=p.elems;
   document.getElementById("loading").style.display="none";
   document.getElementById("app").style.display="block";
-  ctx.hm=setup(sel("hm"),HMW,HMH);ctx.line=setup(sel("line"),LNW,LNH);ctx.bar=setup(sel("bar"),BRW,BRH);
+  sizeCanvases();
+  window.addEventListener("resize",()=>{sizeCanvases();draw();});
   tip=sel("tip");
   ["mode","ord","k","scen","path"].forEach(id=>sel(id).addEventListener("change",()=>{
     refreshMenus(id==="mode"||id==="ord");
     const d=cur();if(d&&seed>=d.prog.length)seed=d.best;draw();}));
   sel("slider").addEventListener("input",draw);
+  function dl(obj,name){
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(new Blob([JSON.stringify(obj,null,1)],{type:"application/json"}));
+    a.download=name;a.click();URL.revokeObjectURL(a.href);
+  }
+  sel("dlcur").addEventListener("click",()=>{
+    const d=cur();if(!d)return;
+    const m=sel("mode").value,o=sel("ord").value,k=sel("k").value,s=sel("scen").value,pp=sel("path").value;
+    dl({selection:{mode:m,order:+o,k:+k,scenario:s,path:pp,replay_n:%%N%%},
+        element_table:ELEMS,notes:"prog: (candidate,frame,task) progress 0=seed 1=target; hm: (frame,candidate,row) element weight in permille; rows: element indices; so: per-candidate seed/final top-4 [elem,permille] + tv/sp/fp = seed-true/seed-pred/final-pred per task",
+        ...d}, `inverse_n%%N%%_${m}_o${o}_k${k}_${s}_${pp}.json`);
+  });
+  sel("dlall").addEventListener("click",()=>dl({replay_n:%%N%%,element_table:ELEMS,data:DATA},"inverse_n%%N%%_all.json"));
   sel("go").addEventListener("click",()=>jumpToStep(sel("jump").value));
   sel("jump").addEventListener("keydown",e=>{if(e.key==="Enter")jumpToStep(sel("jump").value);});
   let timer=null;
