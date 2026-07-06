@@ -101,9 +101,17 @@ def build_entry(targets: np.ndarray, weights: np.ndarray, labels: list[str], see
                     "fp": [round(float(x), 2) for x in targets[-1, b]],
                 }
             )
+        # Bar-panel completeness: the heatmap row set is capped, so store each candidate's
+        # OVERFLOW elements (top-8 minus the shared rows) per frame — usually 0-2 pairs, tiny.
+        row_set = set(rows)
+        # keep only overflow elements >= 1% — smaller ones are invisible at bar scale
+        xtra = [
+            [[pr for pr in top_pairs(weights[s, b], top=8) if pr[0] not in row_set and pr[1] >= 10] for s in frame_ids]
+            for b in range(n_seeds)
+        ]
         hm_rows, hm_list = rows, hm.tolist()
     else:
-        hm_rows, hm_list, div, so = [], [], {"systems": 0, "l1": 0.0}, []
+        hm_rows, hm_list, div, so, xtra = [], [], {"systems": 0, "l1": 0.0}, [], []
 
     return {
         "tasks": tasks,
@@ -112,6 +120,7 @@ def build_entry(targets: np.ndarray, weights: np.ndarray, labels: list[str], see
         "rows": hm_rows,
         "hm": hm_list,
         "so": so,
+        "xtra": xtra,  # (seed, frame) -> composition pairs for elements OUTSIDE the heatmap rows
         "best": best,
         "div": div,
     }
@@ -188,7 +197,7 @@ select,button,input[type=number]{font-size:13.5px;padding:2px 6px}
       · Dropdowns: mode (ws = full-model warm-start / ft = frozen-encoder finetune) × task order × k (number of
         pretraining tasks) × target scenario × optimisation path<br>
       · Slider or "step + jump" moves to any optimisation step (animation: 1 frame per 5 steps); ▶ play animates<br>
-      · Click a heatmap column or a list row to select a candidate; hover heatmap cells for weights,
+      · Heatmap rows = the 12 most common elements across candidates (capped); the bar panel and the list always\n        show the selected candidate's full composition<br>\n      · Click a heatmap column or a list row to select a candidate; hover heatmap cells for weights,
         hover list rows for values<br>
       · List-row tooltip: seed TRUE values (dataset labels, – = unlabeled) / seed predicted / final predicted<br>
       · ⬇ buttons download the raw data as JSON (current selection or the whole dataset)<br><br>
@@ -267,7 +276,7 @@ function draw(){
       H.fillText((b===d.best?"▲":"")+b,L+b*cw+cw/2-8,16);
       if(b===seed){H.strokeStyle="#C44E52";H.lineWidth=1.5;H.strokeRect(L+b*cw,T,cw,rows*chh);}
     }
-    H.fillStyle="#6b7280";H.fillText("candidate (▲ = best final; click a column to inspect)",L,HMH-5);
+    H.fillStyle="#6b7280";H.fillText("candidate (▲ = best final; click a column to inspect) — rows = top-12 shared elements; bars/list show each candidate in full",L,HMH-5);
   }
 
   // ===== progress curves (left bottom, 3/4) =====
@@ -302,8 +311,9 @@ function draw(){
   const X3=ctx.bar;
   X3.clearRect(0,0,BRW,BRH);
   if(rows){
-    const pairs=d.rows.map((ei,r)=>[ei,d.hm[f][seed][r]/1000]).filter(p=>p[1]>0.001)
-                      .sort((a,b)=>b[1]-a[1]);
+    const inRows=d.rows.map((ei,r)=>[ei,d.hm[f][seed][r]/1000]);
+    const extra=(((d.xtra||[])[seed]||[])[f]||[]).map(([ei,pm])=>[ei,pm/1000]);
+    const pairs=inRows.concat(extra).filter(p=>p[1]>0.001).sort((a,b)=>b[1]-a[1]);
     X3.fillStyle="#1a1a2e";X3.font="bold 11px sans-serif";
     X3.fillText(`candidate ${seed}`,8,14);
     X3.font="10.5px sans-serif";X3.fillStyle="#6b7280";
