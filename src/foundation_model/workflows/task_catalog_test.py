@@ -75,6 +75,51 @@ def test_build_happy_path() -> None:
     assert "qc" in cfg.datasets
 
 
+def test_persistent_workers_requires_num_workers() -> None:
+    toml = _base_toml("data/qc.parquet").replace("batch_size = 8", "batch_size = 8\npersistent_workers = true")
+    with pytest.raises(ValueError, match="persistent_workers = true requires data.num_workers >= 1"):
+        _build(toml)
+
+
+def test_persistent_workers_accepted_with_workers() -> None:
+    toml = _base_toml("data/qc.parquet").replace(
+        "batch_size = 8", "batch_size = 8\nnum_workers = 2\npersistent_workers = true"
+    )
+    cfg = _build(toml)
+    assert cfg.data.persistent_workers is True and cfg.data.num_workers == 2
+
+
+@pytest.mark.parametrize("extra", ["prefetch_factor = 4", 'multiprocessing_context = "spawn"'])
+def test_worker_only_loader_options_require_num_workers(extra: str) -> None:
+    toml = _base_toml("data/qc.parquet").replace("batch_size = 8", f"batch_size = 8\n{extra}")
+    with pytest.raises(ValueError, match="num_workers >= 1"):
+        _build(toml)
+
+
+def test_loader_tuning_options_parse_and_flow() -> None:
+    toml = _base_toml("data/qc.parquet").replace(
+        "batch_size = 8",
+        'batch_size = 8\nnum_workers = 2\npin_memory = false\nprefetch_factor = 4\nmultiprocessing_context = "spawn"',
+    )
+    cfg = _build(toml)
+    assert cfg.data.loader_kwargs() == {
+        "batch_size": 8,
+        "num_workers": 2,
+        "persistent_workers": False,
+        "pin_memory": False,
+        "prefetch_factor": 4,
+        "multiprocessing_context": "spawn",
+    }
+
+
+def test_bad_multiprocessing_context_raises() -> None:
+    toml = _base_toml("data/qc.parquet").replace(
+        "batch_size = 8", 'batch_size = 8\nnum_workers = 2\nmultiprocessing_context = "thread"'
+    )
+    with pytest.raises(ValueError, match="multiprocessing_context"):
+        _build(toml)
+
+
 def test_legacy_kind_aliases_normalize() -> None:
     toml = """
 [descriptor]

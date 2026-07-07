@@ -8,6 +8,7 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 from loguru import logger
 from torch.utils.data.distributed import DistributedSampler
 
@@ -293,6 +294,80 @@ def test_masking_ratio_from_config(descriptors_df):
     dm.setup(stage="test")
     if dm.test_dataset is not None:
         assert dm.test_dataset.task_masking_ratios is None
+
+
+def test_resample_train_masks_redraws_per_epoch(descriptors_df):
+    configs = [
+        RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1], task_masking_ratio=0.5),
+    ]
+    dm = build_dm(
+        descriptors_df,
+        task_frames={"task1": _reg_cls_frames()["task1"]},
+        configs=configs,
+        test_all=False,
+        test_split=0.0,
+        val_split=0.0,
+    )
+    dm.resample_train_masks(epoch=1)  # no-op before setup
+    dm.setup(stage="fit")
+    assert dm.train_dataset is not None
+    epoch0 = dm.train_dataset.task_masks_dict["task1"].clone()
+    dm.resample_train_masks(epoch=1)
+    epoch1 = dm.train_dataset.task_masks_dict["task1"].clone()
+    assert not torch.equal(epoch0, epoch1)
+    assert epoch1.sum() == epoch0.sum()
+    dm.resample_train_masks(epoch=0)  # epoch 0 stream == construction draw
+    assert torch.equal(epoch0, dm.train_dataset.task_masks_dict["task1"])
+
+
+def test_persistent_workers_requires_workers(descriptors_df, reg_cls_configs):
+    with pytest.raises(ValueError, match="persistent_workers"):
+        build_dm(
+            descriptors_df,
+            task_frames=_reg_cls_frames(),
+            configs=reg_cls_configs,
+            num_workers=0,
+            persistent_workers=True,
+        )
+
+
+def test_persistent_workers_reaches_dataloader(descriptors_df, reg_cls_configs):
+    dm = build_dm(
+        descriptors_df,
+        task_frames=_reg_cls_frames(),
+        configs=reg_cls_configs,
+        num_workers=1,
+        persistent_workers=True,
+    )
+    dm.setup("fit")
+    loader = dm.train_dataloader()  # workers spawn only on iteration; constructing is safe
+    assert loader is not None and loader.persistent_workers and loader.num_workers == 1
+    # default stays off
+    dm_default = build_dm(descriptors_df, task_frames=_reg_cls_frames(), configs=reg_cls_configs)
+    dm_default.setup("fit")
+    default_loader = dm_default.train_dataloader()
+    assert default_loader is not None and not default_loader.persistent_workers
+
+
+def test_loader_tuning_options_reach_dataloader(descriptors_df, reg_cls_configs):
+    dm = build_dm(
+        descriptors_df,
+        task_frames=_reg_cls_frames(),
+        configs=reg_cls_configs,
+        num_workers=1,
+        pin_memory=False,
+        prefetch_factor=4,
+    )
+    dm.setup("fit")
+    loader = dm.train_dataloader()
+    assert loader is not None
+    assert loader.pin_memory is False and loader.prefetch_factor == 4
+
+
+@pytest.mark.parametrize("kwargs", [{"prefetch_factor": 2}, {"multiprocessing_context": "spawn"}])
+def test_worker_only_loader_options_rejected_without_workers(descriptors_df, reg_cls_configs, kwargs):
+    with pytest.raises(ValueError, match="num_workers >= 1"):
+        build_dm(descriptors_df, task_frames=_reg_cls_frames(), configs=reg_cls_configs, **kwargs)
 
 
 # --- prediction -------------------------------------------------------------

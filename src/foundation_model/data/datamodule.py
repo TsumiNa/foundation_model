@@ -181,6 +181,18 @@ class CompoundDataModule(L.LightningDataModule):
         Fraction of samples to exchange between train and validation after splitting. Defaults 0.
     batch_size, num_workers : int, optional
         DataLoader settings.
+    persistent_workers : bool, optional
+        Keep dataloader workers alive across epochs (requires ``num_workers >= 1``). Defaults to
+        False. Incompatible with per-epoch replay resampling (persistent workers never see mask
+        redraws); ``pretrain.replay.resample = "epoch"`` rejects it.
+    pin_memory : bool, optional
+        Page-locked host memory for faster async host→GPU copies. Defaults to True (only has an
+        effect on CUDA; harmless elsewhere).
+    prefetch_factor : int | None, optional
+        Batches prefetched per worker (requires ``num_workers >= 1``). None = torch default (2).
+    multiprocessing_context : str | None, optional
+        Worker start method: ``"fork"`` / ``"spawn"`` / ``"forkserver"`` (requires
+        ``num_workers >= 1``). None = platform default.
 
     See Also
     --------
@@ -204,6 +216,10 @@ class CompoundDataModule(L.LightningDataModule):
         swap_train_val_split: float = 0.0,
         batch_size: int = 32,
         num_workers: int = 0,
+        persistent_workers: bool = False,
+        pin_memory: bool = True,
+        prefetch_factor: int | None = None,
+        multiprocessing_context: str | None = None,
     ):
         super().__init__()
         logger.info("Initializing CompoundDataModule...")
@@ -212,6 +228,12 @@ class CompoundDataModule(L.LightningDataModule):
             raise ValueError("task_configs cannot be empty.")
         if descriptor_fn is None:
             raise ValueError("descriptor_fn must be provided.")
+        if persistent_workers and num_workers < 1:
+            raise ValueError("persistent_workers=True requires num_workers >= 1.")
+        if prefetch_factor is not None and num_workers < 1:
+            raise ValueError("prefetch_factor requires num_workers >= 1.")
+        if multiprocessing_context is not None and num_workers < 1:
+            raise ValueError("multiprocessing_context requires num_workers >= 1.")
         if not 0.0 <= swap_train_val_split <= 1.0:
             raise ValueError("swap_train_val_split must be between 0.0 and 1.0 inclusive.")
         for split_name, split_value in (("val_split", val_split), ("test_split", test_split)):
@@ -244,6 +266,10 @@ class CompoundDataModule(L.LightningDataModule):
         self.swap_train_val_split = swap_train_val_split
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.persistent_workers = persistent_workers
+        self.pin_memory = pin_memory
+        self.prefetch_factor = prefetch_factor
+        self.multiprocessing_context = multiprocessing_context
 
         self._seed_offsets: Dict[str, int] = {
             "train_split": 0,
@@ -539,6 +565,15 @@ class CompoundDataModule(L.LightningDataModule):
             )
         logger.info(f"--- DataModule setup for stage '{stage}' complete ---")
 
+    def resample_train_masks(self, *, epoch: int) -> None:
+        """Redraw the train dataset's per-task keep masks for ``epoch`` (no-op before setup).
+
+        Only tasks with a ``task_masking_ratio`` < 1.0 are affected; val/test/predict datasets
+        never subsample. See :meth:`CompoundDataset.resample_task_masks` for the RNG contract.
+        """
+        if self.train_dataset is not None:
+            self.train_dataset.resample_task_masks(epoch=epoch)
+
     # ------------------------------------------------------------------ dataloaders
 
     def _make_loader(self, dataset, *, shuffle: bool, track_sampler: bool):
@@ -559,7 +594,10 @@ class CompoundDataModule(L.LightningDataModule):
             shuffle=loader_shuffle,
             sampler=sampler,
             num_workers=self.num_workers,
-            pin_memory=True,
+            persistent_workers=self.persistent_workers,
+            pin_memory=self.pin_memory,
+            prefetch_factor=self.prefetch_factor,
+            multiprocessing_context=self.multiprocessing_context,
             collate_fn=collate_fn,
         )
 

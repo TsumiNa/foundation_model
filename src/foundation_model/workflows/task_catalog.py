@@ -227,6 +227,10 @@ class DataConfig:
     split_random_seed: int = 42
     batch_size: int = 256
     num_workers: int = 0
+    persistent_workers: bool = False  # keep dataloader workers alive across epochs (needs num_workers >= 1)
+    pin_memory: bool = True  # page-locked host memory for faster async host->GPU copies (CUDA only)
+    prefetch_factor: int | None = None  # batches prefetched per worker (None = torch default 2; needs workers)
+    multiprocessing_context: str | None = None  # "fork" | "spawn" | "forkserver" (None = platform default)
 
     def __post_init__(self) -> None:
         for name in ("val_split", "test_split"):
@@ -239,6 +243,32 @@ class DataConfig:
             raise ValueError(f"data.batch_size must be >= 1, got {self.batch_size}.")
         if self.num_workers < 0:
             raise ValueError(f"data.num_workers must be >= 0, got {self.num_workers}.")
+        if self.persistent_workers and self.num_workers < 1:
+            raise ValueError("data.persistent_workers = true requires data.num_workers >= 1.")
+        if self.prefetch_factor is not None:
+            if self.prefetch_factor < 1:
+                raise ValueError(f"data.prefetch_factor must be >= 1, got {self.prefetch_factor}.")
+            if self.num_workers < 1:
+                raise ValueError("data.prefetch_factor requires data.num_workers >= 1.")
+        if self.multiprocessing_context is not None:
+            if self.multiprocessing_context not in ("fork", "spawn", "forkserver"):
+                raise ValueError(
+                    'data.multiprocessing_context must be "fork", "spawn" or "forkserver", '
+                    f"got {self.multiprocessing_context!r}."
+                )
+            if self.num_workers < 1:
+                raise ValueError("data.multiprocessing_context requires data.num_workers >= 1.")
+
+    def loader_kwargs(self) -> dict[str, Any]:
+        """The DataLoader-tuning knobs, as ``CompoundDataModule`` keyword arguments."""
+        return {
+            "batch_size": self.batch_size,
+            "num_workers": self.num_workers,
+            "persistent_workers": self.persistent_workers,
+            "pin_memory": self.pin_memory,
+            "prefetch_factor": self.prefetch_factor,
+            "multiprocessing_context": self.multiprocessing_context,
+        }
 
 
 @dataclass(kw_only=True)
@@ -685,6 +715,5 @@ class TaskCatalog:
             random_seed=data.split_random_seed,
             val_split=data.val_split,
             test_split=data.test_split,
-            batch_size=data.batch_size,
-            num_workers=data.num_workers,
+            **data.loader_kwargs(),
         )
