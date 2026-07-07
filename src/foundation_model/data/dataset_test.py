@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging  # Add logging import
+import zlib
 
 import numpy as np
 import pandas as pd
@@ -272,7 +273,7 @@ def test_ratio_masking_predict(sample_compositions, sample_descriptors, sample_a
 def test_task_masking_seed_controls_rng(
     sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs
 ):
-    """Ensure task_masking_seed makes masking deterministic."""
+    """The keep mask is drawn from the documented per-task stream: rng([seed, crc32(task), epoch])."""
     task_name = "task_reg"
     masking_ratio = 0.5
     masking_ratios = {task_name: masking_ratio}
@@ -296,7 +297,7 @@ def test_task_masking_seed_controls_rng(
     num_to_keep = int(np.round(len(valid_indices) * masking_ratio))
     num_to_drop = len(valid_indices) - num_to_keep
     if num_to_drop > 0:
-        rng = np.random.default_rng(masking_seed)
+        rng = np.random.default_rng([masking_seed, zlib.crc32(task_name.encode()), 0])
         indices_to_drop = rng.choice(valid_indices, size=num_to_drop, replace=False)
         expected_mask[indices_to_drop] = False
     assert np.array_equal(final_mask, expected_mask)
@@ -314,6 +315,100 @@ def test_task_masking_seed_controls_rng(
     )
     repeated_mask = dataset_seeded_repeat.task_masks_dict[task_name].squeeze().numpy()
     assert np.array_equal(final_mask, repeated_mask)
+
+
+# --- keep-ratio masking: per-task streams & epoch resampling ---
+
+
+def _wide_reg_dataset(n_rows=40, *, ratios=None, seed=123, extra_task=False, nan_rows=(), predict=False):
+    """A one/two-regression-task dataset big enough that mask collisions are implausible."""
+    comps = [f"m{i}" for i in range(n_rows)]
+    desc = pd.DataFrame({"f0": np.arange(n_rows, dtype=float), "f1": np.ones(n_rows)}, index=comps)
+    y_a = np.arange(n_rows, dtype=float)
+    y_a[list(nan_rows)] = np.nan
+    frames = {"task_a": pd.DataFrame({"y_a": y_a}, index=comps)}
+    configs = [RegressionTaskConfig(name="task_a", type=TaskType.REGRESSION, data_column="y_a")]
+    if extra_task:
+        frames["task_b"] = pd.DataFrame({"y_b": np.arange(n_rows, dtype=float)}, index=comps)
+        configs.append(RegressionTaskConfig(name="task_b", type=TaskType.REGRESSION, data_column="y_b"))
+    return CompoundDataset(
+        compositions=comps,
+        descriptors=desc,
+        task_frames=frames,
+        task_configs=configs,
+        task_masking_ratios=ratios,
+        task_masking_seed=seed,
+        is_predict_set=predict,
+        dataset_name="wide",
+    )
+
+
+def test_mask_draw_independent_of_other_tasks():
+    """A task's keep mask depends only on (seed, task, epoch) — not on which tasks share the dataset."""
+    alone = _wide_reg_dataset(ratios={"task_a": 0.5})
+    with_b = _wide_reg_dataset(ratios={"task_a": 0.5, "task_b": 0.3}, extra_task=True)
+    assert torch.equal(alone.task_masks_dict["task_a"], with_b.task_masks_dict["task_a"])
+
+
+def test_resample_epoch_zero_matches_construction():
+    dataset = _wide_reg_dataset(ratios={"task_a": 0.5})
+    construction = dataset.task_masks_dict["task_a"].clone()
+    dataset.resample_task_masks(epoch=0)
+    assert torch.equal(construction, dataset.task_masks_dict["task_a"])
+
+
+def test_resample_changes_across_epochs_and_is_deterministic():
+    dataset = _wide_reg_dataset(ratios={"task_a": 0.5})
+    epoch0 = dataset.task_masks_dict["task_a"].clone()
+    dataset.resample_task_masks(epoch=1)
+    epoch1 = dataset.task_masks_dict["task_a"].clone()
+    assert not torch.equal(epoch0, epoch1)
+    assert epoch1.sum() == epoch0.sum()  # subset size is preserved
+    dataset.resample_task_masks(epoch=1)
+    assert torch.equal(epoch1, dataset.task_masks_dict["task_a"])  # same epoch -> same draw
+
+
+def test_resample_never_unmasks_missing_labels():
+    nan_rows = (0, 7, 13, 21)
+    dataset = _wide_reg_dataset(ratios={"task_a": 0.5}, nan_rows=nan_rows)
+    n_valid = 40 - len(nan_rows)
+    expected_kept = int(np.round(n_valid * 0.5))
+    for epoch in range(5):
+        dataset.resample_task_masks(epoch=epoch)
+        mask = dataset.task_masks_dict["task_a"].squeeze().numpy()
+        assert int(mask.sum()) == expected_kept
+        assert not mask[list(nan_rows)].any()
+
+
+def test_resample_noop_for_predict_set():
+    dataset = _wide_reg_dataset(ratios={"task_a": 0.5}, predict=True)
+    full = dataset.task_masks_dict["task_a"].clone()
+    assert int(full.sum()) == 40  # predict sets never subsample
+    dataset.resample_task_masks(epoch=3)
+    assert torch.equal(full, dataset.task_masks_dict["task_a"])
+
+
+def test_resample_rebuilds_kernel_masks(
+    sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs
+):
+    """KR keep masks stay List[Tensor], all-ones/all-zeros per row, and the all-NaN row stays off."""
+    dataset = _make_dataset(
+        sample_compositions,
+        sample_descriptors,
+        sample_task_configs,
+        sample_attributes_df,
+        task_masking_ratios={"task_seq": 0.5},
+        task_masking_seed=7,
+        dataset_name="test_kr_resample",
+    )
+    for epoch in (0, 1, 2):
+        dataset.resample_task_masks(epoch=epoch)
+        masks = dataset.task_masks_dict["task_seq"]
+        assert isinstance(masks, list) and len(masks) == 5
+        row_mask = [bool(m.any()) for m in masks]
+        assert all(m.all() or not m.any() for m in masks)  # per-row all-on or all-off
+        assert not row_mask[2]  # id_2 is the all-NaN sequence -> never selected
+        assert sum(row_mask) == int(np.round(4 * 0.5))
 
 
 def test_getitem_predict_mode(sample_compositions, sample_descriptors, sample_attributes_df, sample_task_configs):

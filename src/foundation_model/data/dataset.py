@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import ast  # For safely evaluating string representations of lists/arrays
+import zlib
 from typing import Dict, List, Mapping, Sequence
 
 import numpy as np
@@ -88,6 +89,22 @@ def _parse_structured_element(
         return np.full(expected_shape_for_nan, np.nan)
 
 
+def subsample_keep_mask(base_mask: np.ndarray, keep_ratio: float, rng: np.random.Generator) -> np.ndarray:
+    """Randomly reduce a boolean row mask to ``round(n_valid * keep_ratio)`` kept rows.
+
+    Pure function: returns a copy of ``base_mask`` with ``n_valid - n_keep`` of its True entries
+    flipped to False, drawn without replacement from ``rng``. Rows that are False in ``base_mask``
+    (no usable label) are never turned on.
+    """
+    kept = base_mask.copy()
+    valid_indices = np.flatnonzero(base_mask)
+    num_to_keep = int(np.round(len(valid_indices) * keep_ratio))
+    num_to_drop = len(valid_indices) - num_to_keep
+    if num_to_drop > 0:
+        kept[rng.choice(valid_indices, size=num_to_drop, replace=False)] = False
+    return kept
+
+
 class CompoundDataset(Dataset):
     """Composition-keyed dataset for the multi-task model.
 
@@ -96,6 +113,21 @@ class CompoundDataset(Dataset):
     from a task's frame become NaN rows and are masked out for that task. ``__getitem__`` then
     fetches positionally from these aligned structures, yielding the unchanged batch tuple
     ``(x_formula, y_dict, task_masks_dict, t_sequences_dict)``.
+
+    Mask lifecycle
+    --------------
+    Two layers, kept separate so subsampling is re-drawable:
+
+    1. **Base mask** (``_base_masks[task]``, immutable): one bool per row — "this row has a
+       usable label for this task" (derived from NaN presence at construction).
+    2. **Keep mask** (``task_masks_dict[task]``, what ``__getitem__`` serves): the base mask,
+       optionally subsampled to ``task_masking_ratios[task]`` of its valid rows (training only).
+
+    Each task draws its keep mask from its **own** RNG stream seeded with
+    ``(task_masking_seed, crc32(task_name), epoch)`` — so the drawn subset depends only on the
+    seed, the task, and the epoch, never on which other tasks share the dataset or the order
+    they are processed in. :meth:`resample_task_masks` redraws layer 2 for a new epoch
+    (construction uses ``epoch=0``, so a later ``resample_task_masks(epoch=0)`` is a no-op).
 
     Parameters
     ----------
@@ -111,7 +143,7 @@ class CompoundDataset(Dataset):
     task_masking_ratios : Mapping[str, float] | None
         Optional per-task keep ratios applied during training only.
     task_masking_seed : int | None
-        Seed for deterministic random task masking.
+        Base seed for the per-task masking streams. ``None`` = non-reproducible draws.
     is_predict_set : bool
         When True, disables random task masking (masks come from NaN presence only).
     dataset_name : str
@@ -135,9 +167,6 @@ class CompoundDataset(Dataset):
         self.is_predict_set = is_predict_set
         self.task_masking_ratios = task_masking_ratios
         self.task_masking_seed = task_masking_seed
-        self._task_masking_rng = np.random.default_rng(task_masking_seed) if task_masking_seed is not None else None
-        if self._task_masking_rng is not None:
-            logger.info(f"[{self.dataset_name}] Task masking RNG seeded with {task_masking_seed}.")
 
         # --- Input validation ---
         if not isinstance(descriptors, pd.DataFrame):
@@ -152,10 +181,44 @@ class CompoundDataset(Dataset):
         if descriptors.empty:
             raise ValueError("descriptors DataFrame cannot be empty.")
 
-        # --- Align descriptors to the composition order ---
-        descriptor_index = descriptors.index.astype(str)
+        self.x_formula = self._align_descriptors(descriptors)
+        self.x_struct: torch.Tensor | None = None
+        logger.info(f"[{self.dataset_name}] Final x_formula shape: {self.x_formula.shape}")
+
+        self._aligned_frames = self._align_task_frames(task_frames)
+
+        # Per-task aligned structures, filled by _build_task_targets below.
+        self.y_dict: Dict[str, torch.Tensor | List[torch.Tensor]] = {}
+        self.t_sequences_dict: Dict[str, torch.Tensor | List[torch.Tensor]] = {}
+        self.task_masks_dict: Dict[str, torch.Tensor | List[torch.Tensor]] = {}
+        self._base_masks: Dict[str, np.ndarray] = {}  # 1-D "row has a label" masks; never mutated
+        self.enabled_task_names: List[str] = []
+
+        for cfg in task_configs:
+            if not hasattr(cfg, "enabled") or not cfg.enabled:
+                continue
+            self.enabled_task_names.append(cfg.name)
+            logger.info(f"[{self.dataset_name}] Processing enabled task '{cfg.name}' (type: {cfg.type.name})")
+            if cfg.type == TaskType.AUTOENCODER:
+                # AutoEncoder tasks use the input features as target, so no external data loading is
+                # needed. The model handles target generation (x) and masking (ones) internally.
+                continue
+            self._build_task_targets(cfg)
+            self.task_masks_dict[cfg.name] = self._mask_to_storage(cfg.name, self._base_masks[cfg.name])
+
+        self.resample_task_masks(epoch=0)
+
+        logger.info(
+            f"[{self.dataset_name}] CompoundDataset initialization complete. "
+            f"Processed {len(self.enabled_task_names)} enabled tasks."
+        )
+
+    # ------------------------------------------------------------------ construction stages
+
+    def _align_descriptors(self, descriptors: pd.DataFrame) -> torch.Tensor:
+        """Reindex the descriptor frame to the composition order and return it as a tensor."""
         descriptors = descriptors.copy()
-        descriptors.index = descriptor_index
+        descriptors.index = descriptors.index.astype(str)
         missing_desc = [c for c in self.compositions if c not in descriptors.index]
         if missing_desc:
             preview = ", ".join(missing_desc[:5])
@@ -163,231 +226,149 @@ class CompoundDataset(Dataset):
                 f"[{self.dataset_name}] descriptors is missing {len(missing_desc)} composition(s) "
                 f"required by this split (e.g. {preview})."
             )
-        x_formula_df = descriptors.loc[self.compositions]
-        self.x_formula = torch.tensor(x_formula_df.values, dtype=torch.float32)
-        self.x_struct: torch.Tensor | None = None
-        logger.info(f"[{self.dataset_name}] Final x_formula shape: {self.x_formula.shape}")
+        return torch.tensor(descriptors.loc[self.compositions].values, dtype=torch.float32)
 
-        # --- Reindex each provided task frame to the composition order ---
-        self._aligned_frames: Dict[str, pd.DataFrame] = {}
+    def _align_task_frames(self, task_frames: Mapping[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+        """Reindex each provided task frame to the composition order (absent rows become NaN)."""
+        aligned: Dict[str, pd.DataFrame] = {}
         for task_name, frame in task_frames.items():
             if frame is None:
                 continue
             frame = frame.copy()
             frame.index = frame.index.astype(str)
-            self._aligned_frames[task_name] = frame.reindex(self.compositions)
+            aligned[task_name] = frame.reindex(self.compositions)
+        return aligned
 
-        self.y_dict: Dict[str, torch.Tensor | List[torch.Tensor]] = {}
-        self.t_sequences_dict: Dict[str, torch.Tensor | List[torch.Tensor]] = {}
-        self.task_masks_dict: Dict[str, torch.Tensor | List[torch.Tensor]] = {}
-        self.enabled_task_names: List[str] = []
+    def _task_column(self, task_name: str, column: str) -> pd.Series | None:
+        """One aligned column for a task; None when the column is absent from its frame."""
+        frame = self._aligned_frames.get(task_name)
+        if frame is None or column not in frame.columns:
+            return None
+        logger.debug(f"[{self.dataset_name}] Task '{task_name}': Loading data from column '{column}'.")
+        return frame[column]
 
-        for cfg in task_configs:
-            if not hasattr(cfg, "enabled") or not cfg.enabled:
-                continue
+    def _build_task_targets(self, cfg) -> None:
+        """Build y (+t) tensors and the base mask for one supervised task."""
+        task_name = cfg.name
+        if not cfg.data_column:
+            logger.error(f"[{self.dataset_name}] Task '{task_name}': data_column is not specified in config.")
+            raise ValueError(f"data_column for task '{task_name}' must be specified.")
+        raw = self._task_column(task_name, cfg.data_column)
+        if raw is None:
+            level = logger.debug if self.is_predict_set else logger.warning
+            level(
+                f"[{self.dataset_name}] Task '{task_name}': data_column '{cfg.data_column}' not found. "
+                "Using placeholder values."
+            )
+            raw = pd.Series([np.nan] * len(self.compositions), index=self.compositions)
 
-            task_name = cfg.name
-            task_type = cfg.type  # This is TaskType Enum
-            self.enabled_task_names.append(task_name)
-            logger.info(f"[{self.dataset_name}] Processing enabled task '{task_name}' (type: {task_type.name})")
+        if cfg.type == TaskType.KERNEL_REGRESSION:
+            self._build_kernel_targets(cfg, raw)
+        else:
+            self._build_dense_targets(cfg, raw)
 
-            if task_type == TaskType.AUTOENCODER:
-                # AutoEncoder tasks use the input features as target, so no external data loading is needed.
-                # The model handles target generation (x) and masking (ones) internally.
-                continue
-
-            task_frame = self._aligned_frames.get(task_name)
-
-            # --- Primary Data Loading (y_dict) using cfg.data_column ---
-            data_col_for_task = cfg.data_column
-
-            # Strict validation for data_column
-            if not data_col_for_task:  # Not specified
-                logger.error(f"[{self.dataset_name}] Task '{task_name}': data_column is not specified in config.")
-                raise ValueError(f"data_column for task '{task_name}' must be specified.")
-            elif task_frame is None or data_col_for_task not in task_frame.columns:  # Specified but not found
-                if self.is_predict_set:
-                    logger.debug(
-                        f"[{self.dataset_name}] Task '{task_name}': data_column '{data_col_for_task}' not found. "
-                        "Using placeholder values for predict-only dataset."
-                    )
-                else:
-                    logger.warning(
-                        f"[{self.dataset_name}] Task '{task_name}': data_column '{data_col_for_task}' not found. Using placeholder values."
-                    )
-                raw_column_data = pd.Series([np.nan] * len(self.compositions), index=self.compositions)
-            else:
-                logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': Loading data from column '{data_col_for_task}'."
-                )
-                raw_column_data = task_frame[data_col_for_task]
-
-            # Process data differently based on task type
-
-            if task_type == TaskType.KERNEL_REGRESSION:
-                # For KernelRegression, handle variable-length sequences without stacking
-                current_task_values_list = []
-                current_task_mask_list = []
-
-                for element in raw_column_data:
-                    parsed_val = _parse_structured_element(
-                        element,
-                        task_name,
-                        data_col_for_task,
-                        self.dataset_name,
-                        (1,),  # Use (1,) as default for variable-length
-                    )
-                    current_task_values_list.append(parsed_val)
-                    current_task_mask_list.append(not np.all(np.isnan(parsed_val)))
-
-                # Store as List[Tensor] to support variable-length sequences
-                self.y_dict[task_name] = [
-                    torch.tensor(np.nan_to_num(seq, nan=0.0), dtype=torch.float32) for seq in current_task_values_list
-                ]
-                base_mask_np = np.array(current_task_mask_list, dtype=bool)
-                logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': y_dict stored as List[Tensor] with {len(self.y_dict[task_name])} sequences, base_mask valid count: {np.sum(base_mask_np)}"
-                )
-
-                # --- T-parameter Data Loading (t_sequences_dict for KernelRegression tasks) using cfg.t_column ---
-                t_col_for_task = cfg.t_column
-
-                # Strict validation for t_column
-                if not t_col_for_task:  # Not specified
-                    logger.error(f"[{self.dataset_name}] Task '{task_name}': t_column is not specified in config.")
-                    raise ValueError(f"t_column for KernelRegression task '{task_name}' must be specified.")
-                elif task_frame is None or t_col_for_task not in task_frame.columns:  # Specified but not found
-                    logger.error(
-                        f"[{self.dataset_name}] Task '{task_name}': t_column '{t_col_for_task}' "
-                        f"is specified in config but not found in the task data frame."
-                    )
-                    raise ValueError(
-                        f"T-parameter column '{t_col_for_task}' for task '{task_name}' not found in task data."
-                    )
-                else:  # Column exists, load data
-                    logger.debug(
-                        f"[{self.dataset_name}] Task '{task_name}': Loading t-parameters from column '{t_col_for_task}'."
-                    )
-                    raw_t_data = task_frame[t_col_for_task]
-                    current_task_t_list = []
-                    for element in raw_t_data:
-                        # For KernelRegression, we expect variable-length sequences, so don't use expected_t_len
-                        parsed_t = _parse_structured_element(
-                            element,
-                            task_name,
-                            t_col_for_task,
-                            self.dataset_name,
-                            (1,),  # Use (1,) as default
-                        )
-                        current_task_t_list.append(parsed_t)
-
-                # For KernelRegression, store as List[Tensor] to support variable-length sequences
-                self.t_sequences_dict[task_name] = [
-                    torch.tensor(np.nan_to_num(seq, nan=0.0), dtype=torch.float32) for seq in current_task_t_list
-                ]
-                logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': t_sequences_dict stored as List[Tensor] with {len(self.t_sequences_dict[task_name])} sequences"
-                )
-
-            else:
-                # For REGRESSION and CLASSIFICATION, use traditional stacking approach
-                current_task_values_list = []
-                current_task_mask_list = []
-                expected_data_dim = 1  # Default for scalar
-
-                if task_type == TaskType.REGRESSION:
-                    # For regression targets, the expected dimension is typically 1 (a single scalar value).
-                    expected_data_dim = 1
-                elif task_type == TaskType.CLASSIFICATION:  # Target is class index, so dim is 1
-                    expected_data_dim = 1
-
-                for element in raw_column_data:
-                    parsed_val = _parse_structured_element(
-                        element, task_name, data_col_for_task, self.dataset_name, (expected_data_dim,)
-                    )
-                    current_task_values_list.append(parsed_val)
-                    current_task_mask_list.append(not np.all(np.isnan(parsed_val)))
-
-                try:
-                    processed_values_np = np.stack(current_task_values_list)
-                except ValueError as e:  # Stacking failed, likely inconsistent shapes
-                    logger.error(
-                        f"[{self.dataset_name}] Task '{task_name}', column '{data_col_for_task}': Error stacking parsed data - {e}. Check data consistency."
-                    )
-                    raise ValueError(f"Error processing data column '{data_col_for_task}' for task '{task_name}': {e}")
-
-                base_mask_np = np.array(current_task_mask_list, dtype=bool)
-
-                if task_type == TaskType.CLASSIFICATION:
-                    # Use -100 as placeholder for missing data (avoids conflict with real class labels 0,1,2,...)
-                    # Actual missing data handling is done via mask mechanism, not ignore_index
-                    y_tensor = torch.tensor(
-                        np.nan_to_num(processed_values_np, nan=-100).astype(np.int64), dtype=torch.long
-                    )
-                    self.y_dict[task_name] = y_tensor
-                    logger.debug(
-                        f"[{self.dataset_name}] Task '{task_name}': y_dict shape {y_tensor.shape}, base_mask valid count: {np.sum(base_mask_np)}"
-                    )
-                else:  # REGRESSION
-                    y_tensor = torch.tensor(np.nan_to_num(processed_values_np, nan=0.0), dtype=torch.float32)
-                    self.y_dict[task_name] = y_tensor
-                    logger.debug(
-                        f"[{self.dataset_name}] Task '{task_name}': y_dict shape {y_tensor.shape}, base_mask valid count: {np.sum(base_mask_np)}"
-                    )
-
-            # --- Task Masking (final_mask_np) ---
-            final_mask_np = base_mask_np.copy()  # Start with NaN-based mask
-            num_valid_after_nan_mask = np.sum(final_mask_np)
-
-            if self.task_masking_ratios and task_name in self.task_masking_ratios and not self.is_predict_set:
-                ratio_to_keep = self.task_masking_ratios[task_name]
-                logger.info(
-                    f"[{self.dataset_name}] Task '{task_name}': Applying random masking "
-                    f"with keep_ratio={ratio_to_keep}. Initial valid "
-                    f"samples: {num_valid_after_nan_mask}"
-                )
-                if 0.0 <= ratio_to_keep < 1.0:
-                    valid_indices = np.where(final_mask_np)[0]
-                    if len(valid_indices) > 0:
-                        num_to_keep = int(np.round(len(valid_indices) * ratio_to_keep))
-                        if num_to_keep < len(valid_indices):
-                            rng_choice = (
-                                self._task_masking_rng.choice
-                                if self._task_masking_rng is not None
-                                else np.random.choice
-                            )
-                            indices_to_set_false = rng_choice(
-                                valid_indices, size=len(valid_indices) - num_to_keep, replace=False
-                            )
-                            final_mask_np[indices_to_set_false] = False
-
-            if task_type == TaskType.KERNEL_REGRESSION:
-                # For KernelRegression, store masks as List[Tensor] to match y_dict format
-                self.task_masks_dict[task_name] = [
-                    torch.ones_like(seq, dtype=torch.bool)
-                    if final_mask_np[i]
-                    else torch.zeros_like(seq, dtype=torch.bool)
-                    for i, seq in enumerate(self.y_dict[task_name])
-                ]
-                total_valid_count = sum(mask.sum().item() for mask in self.task_masks_dict[task_name])
-                logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': final task_mask stored as List[Tensor] with {len(self.task_masks_dict[task_name])} masks, total valid count: {total_valid_count}"
-                )
-            else:
-                # For other tasks, use normal tensor format
-                if final_mask_np.ndim == 1:
-                    final_mask_np = final_mask_np.reshape(-1, 1)
-                mask_tensor = torch.tensor(final_mask_np, dtype=torch.bool)
-                self.task_masks_dict[task_name] = mask_tensor
-                logger.debug(
-                    f"[{self.dataset_name}] Task '{task_name}': final task_mask shape "
-                    f"{mask_tensor.shape}, final valid count: {torch.sum(mask_tensor).item()}"
-                )
-
-        logger.info(
-            f"[{self.dataset_name}] CompoundDataset initialization complete. "
-            f"Processed {len(self.enabled_task_names)} enabled tasks."
+    def _build_kernel_targets(self, cfg, raw: pd.Series) -> None:
+        """Variable-length sequence targets stored as List[Tensor]; a row is valid unless all-NaN."""
+        task_name = cfg.name
+        values = [
+            _parse_structured_element(element, task_name, cfg.data_column, self.dataset_name, (1,)) for element in raw
+        ]
+        self.y_dict[task_name] = [torch.tensor(np.nan_to_num(seq, nan=0.0), dtype=torch.float32) for seq in values]
+        self._base_masks[task_name] = np.array([not np.all(np.isnan(seq)) for seq in values], dtype=bool)
+        logger.debug(
+            f"[{self.dataset_name}] Task '{task_name}': y_dict stored as List[Tensor] with "
+            f"{len(values)} sequences, base_mask valid count: {int(self._base_masks[task_name].sum())}"
         )
+
+        if not cfg.t_column:
+            logger.error(f"[{self.dataset_name}] Task '{task_name}': t_column is not specified in config.")
+            raise ValueError(f"t_column for KernelRegression task '{task_name}' must be specified.")
+        raw_t = self._task_column(task_name, cfg.t_column)
+        if raw_t is None:
+            logger.error(
+                f"[{self.dataset_name}] Task '{task_name}': t_column '{cfg.t_column}' "
+                f"is specified in config but not found in the task data frame."
+            )
+            raise ValueError(f"T-parameter column '{cfg.t_column}' for task '{task_name}' not found in task data.")
+        t_values = [
+            _parse_structured_element(element, task_name, cfg.t_column, self.dataset_name, (1,)) for element in raw_t
+        ]
+        self.t_sequences_dict[task_name] = [
+            torch.tensor(np.nan_to_num(seq, nan=0.0), dtype=torch.float32) for seq in t_values
+        ]
+        logger.debug(
+            f"[{self.dataset_name}] Task '{task_name}': t_sequences_dict stored as List[Tensor] "
+            f"with {len(t_values)} sequences"
+        )
+
+    def _build_dense_targets(self, cfg, raw: pd.Series) -> None:
+        """Scalar regression / classification targets stacked into one tensor."""
+        task_name = cfg.name
+        values = [
+            _parse_structured_element(element, task_name, cfg.data_column, self.dataset_name, (1,)) for element in raw
+        ]
+        try:
+            stacked = np.stack(values)
+        except ValueError as e:  # Stacking failed, likely inconsistent shapes
+            logger.error(
+                f"[{self.dataset_name}] Task '{task_name}', column '{cfg.data_column}': "
+                f"Error stacking parsed data - {e}. Check data consistency."
+            )
+            raise ValueError(f"Error processing data column '{cfg.data_column}' for task '{task_name}': {e}")
+
+        self._base_masks[task_name] = np.array([not np.all(np.isnan(v)) for v in values], dtype=bool)
+
+        if cfg.type == TaskType.CLASSIFICATION:
+            # Use -100 as placeholder for missing data (avoids conflict with real class labels
+            # 0,1,2,...). Actual missing data handling is done via the mask mechanism.
+            y_tensor = torch.tensor(np.nan_to_num(stacked, nan=-100).astype(np.int64), dtype=torch.long)
+        else:  # REGRESSION
+            y_tensor = torch.tensor(np.nan_to_num(stacked, nan=0.0), dtype=torch.float32)
+        self.y_dict[task_name] = y_tensor
+        logger.debug(
+            f"[{self.dataset_name}] Task '{task_name}': y_dict shape {y_tensor.shape}, "
+            f"base_mask valid count: {int(self._base_masks[task_name].sum())}"
+        )
+
+    # ------------------------------------------------------------------ keep-ratio masking
+
+    def _mask_rng(self, task_name: str, epoch: int) -> np.random.Generator:
+        """Independent RNG stream per (seed, task, epoch); entropy-seeded when seed is None."""
+        if self.task_masking_seed is None:
+            return np.random.default_rng()
+        return np.random.default_rng([self.task_masking_seed, zlib.crc32(task_name.encode()), epoch])
+
+    def _mask_to_storage(self, task_name: str, mask_np: np.ndarray) -> torch.Tensor | List[torch.Tensor]:
+        """Convert a 1-D row mask to the per-task storage format served by ``__getitem__``."""
+        y = self.y_dict.get(task_name)
+        if isinstance(y, list):  # kernel regression: one bool tensor per variable-length sequence
+            return [
+                torch.ones_like(seq, dtype=torch.bool) if mask_np[i] else torch.zeros_like(seq, dtype=torch.bool)
+                for i, seq in enumerate(y)
+            ]
+        return torch.tensor(mask_np.reshape(-1, 1), dtype=torch.bool)
+
+    def resample_task_masks(self, *, epoch: int) -> None:
+        """(Re)draw the keep mask of every ratio-masked task for ``epoch``.
+
+        Deterministic given ``(task_masking_seed, task_name, epoch)``; construction already draws
+        with ``epoch=0``. Predict sets and tasks with ratio >= 1.0 are untouched. Used by the
+        per-epoch replay resampling callback (``pretrain.replay.resample = "epoch"``).
+        """
+        if self.is_predict_set:
+            return
+        for task_name, keep_ratio in (self.task_masking_ratios or {}).items():
+            if task_name not in self._base_masks or not 0.0 <= keep_ratio < 1.0:
+                continue
+            base = self._base_masks[task_name]
+            kept = subsample_keep_mask(base, keep_ratio, self._mask_rng(task_name, epoch))
+            self.task_masks_dict[task_name] = self._mask_to_storage(task_name, kept)
+            logger.debug(
+                f"[{self.dataset_name}] Task '{task_name}': keep mask drawn for epoch {epoch} "
+                f"(keep_ratio={keep_ratio}, kept {int(kept.sum())}/{int(base.sum())} labelled rows)."
+            )
+
+    # ------------------------------------------------------------------ Dataset protocol
 
     def __len__(self):
         return len(self.x_formula)
