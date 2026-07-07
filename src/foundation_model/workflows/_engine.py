@@ -175,6 +175,52 @@ def build_head_config(
     )
 
 
+class ReplayResampleCallback(Callback):
+    """Redraw replay keep-masks at the start of every training epoch.
+
+    Attached when ``pretrain.replay.resample = "epoch"``: instead of training a step on one
+    frozen replay subset, each epoch draws a fresh subset of the same size from the task's full
+    labelled pool, so over E epochs replay coverage approaches ``N * (1 - (1 - n/N)^E)`` labels
+    at unchanged per-epoch cost.
+
+    Timing contract (verified on Lightning 2.5): ``on_train_epoch_start`` fires before the train
+    dataloader iterator — and its worker processes — is created for the epoch, so mutated masks
+    are visible to that epoch's batches. Epoch 0's iterator is created earlier (setup_data), but
+    the epoch-0 redraw equals the dataset's construction draw (same RNG stream), so it is
+    consistent by design. Persistent dataloader workers would break this silently (they keep
+    serving the dataset copy they were forked with), so the callback rejects them explicitly.
+    """
+
+    def __init__(self) -> None:
+        self._loader_checked = False
+
+    def on_train_epoch_start(self, trainer, pl_module) -> None:
+        datamodule = getattr(trainer, "datamodule", None)
+        if not isinstance(datamodule, CompoundDataModule):
+            return
+        self._reject_persistent_workers(trainer)
+        datamodule.resample_train_masks(epoch=trainer.current_epoch)
+
+    def _reject_persistent_workers(self, trainer) -> None:
+        """Fail loudly on persistent workers instead of silently training on frozen masks."""
+        if self._loader_checked:
+            return
+        loaders: Any = getattr(trainer, "train_dataloader", None)
+        if isinstance(loaders, Mapping):
+            loaders = list(loaders.values())
+        elif not isinstance(loaders, (list, tuple)):
+            loaders = [loaders]
+        for loader in loaders:
+            if isinstance(loader, DataLoader) and loader.num_workers > 0 and loader.persistent_workers:
+                raise ValueError(
+                    'pretrain.replay.resample = "epoch" is incompatible with persistent_workers=True: '
+                    "persistent workers keep the dataset copy they were forked with, so per-epoch "
+                    "replay redraws would silently never reach them. Use persistent_workers=False "
+                    '(the default) or resample = "step".'
+                )
+        self._loader_checked = True
+
+
 class DropLastTrainCompoundDataModule(CompoundDataModule):
     """``CompoundDataModule`` whose train loader drops the final partial batch.
 
@@ -190,7 +236,10 @@ class DropLastTrainCompoundDataModule(CompoundDataModule):
         kwargs: dict[str, Any] = dict(
             batch_size=base.batch_size,
             num_workers=base.num_workers,
+            persistent_workers=base.persistent_workers,
             pin_memory=base.pin_memory,
+            prefetch_factor=base.prefetch_factor,
+            multiprocessing_context=base.multiprocessing_context,
             collate_fn=base.collate_fn,
             drop_last=True,
         )

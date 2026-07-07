@@ -53,6 +53,10 @@ passed to the builder directly and take precedence over `[…].checkpoint` / `[o
 | `split_random_seed` | int | `42` | | Seed for the random train/val/test split (when no `split` column is present). |
 | `batch_size` | int | `256` | `>= 1` | Training/eval batch size. |
 | `num_workers` | int | `0` | `>= 0` | DataLoader worker processes. |
+| `persistent_workers` | bool | `false` | requires `num_workers >= 1` | Keep DataLoader workers alive across epochs (saves per-epoch worker startup). Incompatible with `pretrain.replay.resample = "epoch"` — persistent workers hold a one-time dataset copy and would never see the per-epoch replay redraws; the config builder rejects the combination. |
+| `pin_memory` | bool | `true` | | Page-locked host memory for faster async host→GPU copies. Only has an effect on CUDA; harmless elsewhere. |
+| `prefetch_factor` | int | unset | `>= 1`; requires `num_workers >= 1` | Batches prefetched per worker. Unset = torch default (2). |
+| `multiprocessing_context` | str | unset | `"fork"` \| `"spawn"` \| `"forkserver"`; requires `num_workers >= 1` | Worker start method. Unset = platform default (fork on Linux, spawn on macOS). |
 
 If a dataset file has a `split` column (`train`/`val`/`test`), it is honored directly and the
 random split is not used.
@@ -196,6 +200,7 @@ finetune/inverse/predict consume. Enable to *also* emit Lightning `.ckpt` files.
 | `interval` | int | `1` | `>= 1` | Already-learned tasks rejoin training every Nth step; `1` = always replay. |
 | `amount` | float \| int | `0.05` | float in `(0,1)` or int `>= 1` | Replay amount per old task: a fraction of its labels, or an absolute label count. |
 | `per_task` | table (str→num) | `{}` | keys must be tasks; same value rule | Override `amount` for named tasks, e.g. `per_task = { density = 0.2 }`. |
+| `resample` | str | `"step"` | `"step"` \| `"epoch"` | `"step"`: one frozen replay subset per training step (historical behavior). `"epoch"`: redraw the subset (same size) at every epoch start, so over E epochs a step's replay coverage approaches `N·(1−(1−n/N)^E)` of the task's N labelled rows at unchanged per-epoch cost. Draws are deterministic per `([data].split_random_seed, task, epoch)` and independent across tasks. Incompatible with `persistent_workers=True` dataloaders (redraws would never reach the frozen worker copies) — the run fails fast with a clear error if one is detected. |
 
 ## `[finetune]` — frozen-encoder head fine-tuning
 

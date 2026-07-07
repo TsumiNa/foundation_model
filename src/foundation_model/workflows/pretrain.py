@@ -33,6 +33,7 @@ from loguru import logger
 from . import plots
 from ._engine import (
     DropLastTrainCompoundDataModule,
+    ReplayResampleCallback,
     build_empty_model,
     build_head_config,
     build_trainer_extras,
@@ -87,6 +88,10 @@ class ReplayConfig:
     interval: int = 1  # old tasks rejoin training every Nth step (1 = always replay)
     amount: float | int = 0.05  # replay amount per old task: float in (0,1) = fraction of its labels, int >= 1 = count
     per_task: dict[str, float | int] = field(default_factory=dict)  # override the global amount for named tasks
+    # "step" = one frozen replay subset per training step (historical behavior); "epoch" = redraw
+    # the subset (same size) every epoch, so a step's replay coverage approaches the task's full
+    # labelled pool over the epochs instead of repeating the same n labels.
+    resample: str = "step"
 
     def __post_init__(self) -> None:
         if self.interval < 1:
@@ -94,6 +99,8 @@ class ReplayConfig:
         _validate_replay_amount(self.amount, where="replay.amount")
         for task, value in self.per_task.items():
             _validate_replay_amount(value, where=f"replay.per_task.{task}")
+        if self.resample not in ("step", "epoch"):
+            raise ValueError(f'replay.resample must be "step" or "epoch", got {self.resample!r}.')
 
 
 @dataclass(kw_only=True)
@@ -142,6 +149,12 @@ class PretrainConfig:
         bad_replay = [t for t in self.replay.per_task if t not in catalog_tasks]
         if bad_replay:
             raise ValueError(f"replay.per_task references unknown task(s): {bad_replay}.")
+        if self.replay.resample == "epoch" and self.catalog.data.persistent_workers:
+            raise ValueError(
+                'replay.resample = "epoch" is incompatible with data.persistent_workers = true: '
+                "persistent workers keep the dataset copy they were forked with, so per-epoch "
+                "replay redraws would never reach them."
+            )
         if self.task_order is not TaskOrder.RANDOM:
             if self.task_order_seed is not None:
                 raise ValueError('pretrain.task_order_seed requires task_order = "random".')
@@ -194,11 +207,12 @@ def build_pretrain_config(
         },
     )
     replay_raw = dict(pretrain_raw.get("replay", {}))
-    reject_unknown("pretrain.replay", replay_raw, {"interval", "amount", "per_task"})
+    reject_unknown("pretrain.replay", replay_raw, {"interval", "amount", "per_task", "resample"})
     replay = ReplayConfig(
         interval=replay_raw.get("interval", 1),
         amount=replay_raw.get("amount", 0.05),
         per_task=dict(replay_raw.get("per_task", {})),
+        resample=str(replay_raw.get("resample", "step")),
     )
 
     resolved_output = output_dir if output_dir is not None else raw.get("output", {}).get("dir")
@@ -399,8 +413,7 @@ def _run_single(
             random_seed=cfg.catalog.data.split_random_seed,
             val_split=cfg.catalog.data.val_split,
             test_split=cfg.catalog.data.test_split,
-            batch_size=cfg.catalog.data.batch_size,
-            num_workers=cfg.catalog.data.num_workers,
+            **cfg.catalog.data.loader_kwargs(),
         )
         callbacks, loggers, enable_ckpt = build_trainer_extras(
             cfg.training,
@@ -408,6 +421,8 @@ def _run_single(
             ckpt_dir=recorder.paths.step_dir(step, task_name) / "lightning",
             run_name=f"step{step:02d}_{task_name}",
         )
+        if cfg.replay.resample == "epoch":
+            callbacks.append(ReplayResampleCallback())
         trainer = Trainer(
             max_epochs=cfg.training.max_epochs,
             accelerator=cfg.training.accelerator,

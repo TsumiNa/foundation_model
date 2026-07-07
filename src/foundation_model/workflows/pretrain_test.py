@@ -103,6 +103,33 @@ def test_per_task_replay_bad_value_raises() -> None:
         _build(_config_toml(replay="[pretrain.replay.per_task]\na = 0.0"))
 
 
+def test_replay_resample_defaults_to_step() -> None:
+    assert _build(_config_toml()).replay.resample == "step"
+
+
+def test_replay_resample_accepts_epoch() -> None:
+    cfg = _build(_config_toml(replay='[pretrain.replay]\nresample = "epoch"'))
+    assert cfg.replay.resample == "epoch"
+
+
+def test_replay_resample_invalid_raises() -> None:
+    with pytest.raises(ValueError, match="resample"):
+        _build(_config_toml(replay='[pretrain.replay]\nresample = "batch"'))
+
+
+def test_replay_epoch_resample_rejects_persistent_workers() -> None:
+    toml = _config_toml(replay='[pretrain.replay]\nresample = "epoch"').replace(
+        "[descriptor]", "[data]\nnum_workers = 2\npersistent_workers = true\n\n[descriptor]"
+    )
+    with pytest.raises(ValueError, match="persistent_workers"):
+        _build(toml)
+
+
+def test_replay_step_resample_allows_persistent_workers() -> None:
+    toml = _config_toml().replace("[descriptor]", "[data]\nnum_workers = 2\npersistent_workers = true\n\n[descriptor]")
+    assert _build(toml).catalog.data.persistent_workers is True
+
+
 # --- pure helpers ------------------------------------------------------------------------
 
 
@@ -346,6 +373,50 @@ def test_warm_start_continues_sequence(smoke_dir, tmp_path) -> None:
     assert not list((out2 / "training").glob("step*_a"))
     # 'a' head is still evaluated at the new step (already learned)
     assert (out2 / "training" / "step02_b" / "a_metrics.json").exists()
+
+
+def test_replay_epoch_resample_fires_each_epoch(smoke_dir, tmp_path, monkeypatch) -> None:
+    """resample = "epoch" redraws replay masks inside a real Trainer fit, once per epoch."""
+    from foundation_model.data.dataset import CompoundDataset
+
+    calls: list[int] = []
+    original = CompoundDataset.resample_task_masks
+
+    def recording(self, *, epoch: int) -> None:
+        calls.append(epoch)
+        original(self, epoch=epoch)
+
+    monkeypatch.setattr(CompoundDataset, "resample_task_masks", recording)
+
+    toml = (
+        _ws_toml(smoke_dir, ["a", "b"])
+        .replace("max_epochs = 1", "max_epochs = 3")
+        .replace("amount = 0.5", 'amount = 0.5\nresample = "epoch"')
+    )
+    out = tmp_path / "epoch_resample"
+    _run_pretrain(build_pretrain_config(tomllib.loads(toml), output_dir=str(out)), out)
+    # Dataset construction always draws epoch 0; epochs >= 1 can only come from the per-epoch
+    # callback firing inside trainer.fit (max_epochs = 3 -> epochs 1 and 2).
+    assert {1, 2} <= set(calls)
+
+
+def test_replay_step_resample_never_redraws(smoke_dir, tmp_path, monkeypatch) -> None:
+    """Default resample = "step" keeps the construction draw: no epoch >= 1 redraws."""
+    from foundation_model.data.dataset import CompoundDataset
+
+    calls: list[int] = []
+    original = CompoundDataset.resample_task_masks
+
+    def recording(self, *, epoch: int) -> None:
+        calls.append(epoch)
+        original(self, epoch=epoch)
+
+    monkeypatch.setattr(CompoundDataset, "resample_task_masks", recording)
+
+    toml = _ws_toml(smoke_dir, ["a", "b"]).replace("max_epochs = 1", "max_epochs = 3")
+    out = tmp_path / "step_resample"
+    _run_pretrain(build_pretrain_config(tomllib.loads(toml), output_dir=str(out)), out)
+    assert set(calls) == {0}
 
 
 def test_warm_start_checkpoint_task_not_in_catalog_raises(smoke_dir, tmp_path) -> None:

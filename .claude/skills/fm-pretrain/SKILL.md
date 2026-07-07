@@ -27,6 +27,9 @@ task_order_groups = [ [...], [...], [...] ]  # optional; must partition task_seq
 [pretrain.replay]
 interval = 1                 # replay every step
 amount = 1000                # labels per seen task per step; per_task = {...} to override
+resample = "step"            # "epoch" = redraw the n-label subset every epoch (rotating buffer):
+                             # coverage ≈ N·(1−(1−n/N)^E) of the task's N labels over E epochs at
+                             # the same per-epoch cost. "step" = one frozen subset (historical).
 
 [output]
 dir = "artifacts/<experiment>/<run>"
@@ -36,7 +39,13 @@ dir = "artifacts/<experiment>/<run>"
 
 - **Replay n ≥ 1000 essentially resists forgetting**; returns diminish beyond (mean R²
   0.371@n100 → 0.600@n2500). Forgetting is event-driven (step collapses when specific
-  interfering tasks arrive), not gradual.
+  interfering tasks arrive), not gradual. NOTE: measured under `resample = "step"` (frozen
+  subset); with `"epoch"` (rotating subset, far higher coverage per step) the n threshold
+  likely drops — re-calibrate with a small sweep before assuming n1000 is needed.
+- Replay subsets are drawn per task from independent RNG streams `(seed, task, epoch)` — a
+  task's subset never depends on which other tasks are active. Across steps the subset is
+  redrawn (it is NOT the same n labels at every k); within a step it is frozen unless
+  `resample = "epoch"`.
 - **Kernel-regression tasks dominate replay wall-time** — with random orders, pin them to a
   final group so early checkpoints stay cheap.
 - **Pin tasks needed downstream to step 1** via `task_order_groups` (e.g. formation_energy when
