@@ -1,4 +1,4 @@
-# Copyright 2027 TsumiNa.
+# Copyright 2026 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
 """``fm predict`` — evaluate / predict with an arbitrary checkpoint.
