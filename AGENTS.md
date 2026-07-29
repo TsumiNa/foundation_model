@@ -3,9 +3,11 @@
 ## Instruction Loading
 
 - `AGENTS.md` is the canonical agent entry point.
-- Before acting, inspect `.github/instructions/*.instructions.md` and read every file whose frontmatter
-  `applyTo` matches the task or affected files.
-- Treat an instruction file without `applyTo` as repository-wide.
+- Before acting, inspect `.github/instructions/*.instructions.md` and use the table below to select files
+  whose stated purpose matches the task.
+- For selected files, use frontmatter `applyTo` only to narrow their file scope. An `applyTo: "**"` value
+  does not make a purpose-specific instruction relevant to every task.
+- A selected instruction without `applyTo` applies repository-wide.
 - Follow all applicable supplemental instructions alongside this file.
 
 | Instruction | Use for |
