@@ -1,115 +1,206 @@
 ---
-description: "Use when running, training, or submitting jobs on the RIKEN R-CCS rikyu supercomputer (AI4S early-access, NVIDIA GB200). Covers SSH access, Slurm sbatch on the 1n1gpu partition, the nvhpc module, the CUDA-13 (cu130) PyTorch setup, local scratch staging, and the .venv PATH conventions."
-name: "rikyu Supercomputer Usage"
+description: "Use when running, training, or submitting jobs on the RIKEN R-CCS RIKYU supercomputer (Early Access Phase 2, NVIDIA GB200 NVL4). Covers Phase 2 SSH access, the unified Slurm gpu partition, supported GPU/node sizes, project charging, modules, CUDA-13 PyTorch, persistent and local storage, and the project .venv conventions."
+name: "RIKYU Supercomputer Usage"
 applyTo: "**"
 ---
 
-# rikyu Supercomputer Usage (RIKEN R-CCS AI4S early-access)
+# RIKYU Supercomputer Usage (RIKEN R-CCS Early Access Phase 2)
 
-> **Phase 1 → Phase 2 migration.** The Phase 1 system shut down for maintenance on 2026-07-06
-> (afternoon JST); Phase 2 operation starts 2026-07-07 (afternoon). **Phase 1 accounts and data
-> were NOT carried over** — the project lead must re-apply for a project and re-register user
-> accounts, and everything below (user name, login host, key setup, possibly partition names)
-> must be re-verified and updated in place once Phase 2 access exists. All Phase 1 computation
-> results were rsync'd to the local machine before shutdown (`artifacts/` + `data/`).
+Reference for running this project on **RIKYU**. Official Phase 2 manual:
+https://docs.r-ccs.riken.jp/rikyu/en/
 
-Reference for running this project on **rikyu**. Official docs:
-https://riken-rccs.github.io/ai4s_early_access/ja/ — the whole guide is a single page.
-All facts below were verified on the live **Phase 1** system (2026-07).
+Early Access Phase 2 is scheduled to continue through the end of September 2026. Phase 1 job
+scripts and environment variables are not compatible with Phase 2; the official manual recommends
+recreating job scripts rather than carrying them over.
 
-## Access & layout
+## Access and current project layout
 
-- SSH: `ssh rikyu-login` (already configured; user `ea0094`, login node `ar08n01-m.ai.r-ccs.riken.jp`, aarch64).
-- Repo clone on rikyu: `/home/ea0094/projects/foundation_model` (home is Lustre `/work/hps0`).
-- Job assets & example scripts live in `/home/ea0094/jobs/` (see `jobs/smoke/smoke_test.sbatch`, `jobs/smoke/gpu_verify.sbatch`).
-- Scheduler: **Slurm** (`/usr/bin/{sbatch,squeue,sinfo,scancel,salloc,srun}`).
-- GPU: **NVIDIA GB200** (Grace-Blackwell, compute capability `sm_100`, ~186 GB HBM, driver 595.45.04, max CUDA 13.2).
+- Official SSH host: `login.rikyu.r-ccs.riken.jp`.
+- SSH user: `ea0094`.
+- Existing key: `~/.ssh/rikyu_rccs` (verified to authenticate to Phase 2).
+- Local alias: `ssh rikyu-login`, after updating its `HostName` to the official Phase 2 host.
+- Phase 2 login node verified as `c000`, Ubuntu, AArch64.
+- Home: `/home/ea0094` on Lustre.
+- Repo clone: `/home/ea0094/projects/foundation_model`.
+- Job scripts/logs: `/home/ea0094/jobs`.
+- Scheduler: Slurm.
 
-## Non-interactive SSH gotcha (modules)
+The local SSH configuration should contain the equivalent of:
 
-`module` is a shell function loaded by the login profile. A bare `ssh rikyu-login 'module ...'`
-will NOT find it. Always wrap remote commands in a **login shell**:
+```sshconfig
+Host rikyu-*
+    User ea0094
+    IdentityFile ~/.ssh/rikyu_rccs
 
-```bash
-ssh rikyu-login 'bash -lc "module load nvhpc && module list"'
+Host rikyu-login
+    HostName login.rikyu.r-ccs.riken.jp
 ```
 
-When authoring a remote script, do **not** pipe complex heredocs with `(` `)` through `ssh '...'`
-(the outer shell mis-parses them). Write the file locally, then transfer it:
+Do not use the old Phase 1 hosts `login01.ai.r-ccs.riken.jp` or
+`ar08n01-m.ai.r-ccs.riken.jp`.
+
+## Login-node and non-interactive SSH rules
+
+Do not run training, benchmarks, long builds, or other heavy computation on a login node. The Phase
+2 login node exposes GB200 devices, so `nvidia-smi` and even `torch.cuda.is_available()` may succeed
+there; this does **not** authorize computation or prove that a Slurm job has allocated a GPU.
+
+Phase 2 sets `SLURM_CONF_SERVER` through shell initialization. A non-login remote command can fail
+to find the Slurm controller:
 
 ```bash
-ssh rikyu-login 'cat > /home/ea0094/jobs/smoke/job.sbatch' < ./job.sbatch
+ssh rikyu-login 'sinfo'                    # may fail
+ssh rikyu-login 'bash -lc "sinfo"'         # correct
+ssh rikyu-login 'bash -lc "module avail"'  # correct
 ```
 
-## Partitions
+Wrap all non-interactive remote Slurm and module commands in `bash -lc`.
 
-| Partition   | Nodes | GPU/node | Cores/node | Mem/node | Max walltime |
-|-------------|-------|----------|------------|----------|--------------|
-| `1n1gpu` *  | 1     | 1        | 36         | 400 GB   | 4 days       |
-| `1n2gpu`    | 1     | 2        | 72         | 800 GB   | 4 days       |
-| `1n4gpu`    | 1     | 4        | 144        | 1600 GB  | 4 days       |
-| `2n4gpu`    | 2     | 4        | 144        | 1600 GB  | 4 days       |
-| `4n4gpu`    | 4     | 4        | 144        | 1600 GB  | 4 days       |
-| `4n4gpu-p`  | 4     | 4        | 144        | ∞        | ∞            |
+## Project/account readiness check
 
-`1n1gpu` is the default and our main partition. Check availability: `sinfo -p 1n1gpu`.
-Note: on `1n1gpu`, `nvidia-smi` may show another user's process on the same physical GB200 —
-GPU memory is large but do not assume the card is exclusively idle; check before large allocations.
+Jobs are charged to a Phase 2 project account. If a user belongs to multiple projects, select the
+project with `--account=PROJECT_NAME` / `-A PROJECT_NAME`.
 
-## Long pre-training past the walltime (`fm pretrain --resume`)
-
-Partitions cap at **4 days**. A `fm pretrain` run whose `task_sequence` won't finish in one job can
-be re-submitted with **`--resume`**: it warm-starts from the output dir's latest step checkpoint and
-continues at the next task in place (finished runs are skipped). Use the **same** `--output-dir` and
-put it on persistent storage (not per-job `/scratch`, which is deleted at job end). A resubmit-until-
-done pattern: make the sbatch script re-queue itself while `final_model.pt` is absent, e.g.
+Before the first submission, verify the Slurm association and group storage:
 
 ```bash
-OUT=/home/ea0094/projects/foundation_model/artifacts/pretrain_big
-.venv/bin/fm pretrain --config pretrain.toml --output-dir "$OUT" --resume
-test -f "$OUT/training/final_model.pt" || sbatch "$0"   # (n_runs=1; adjust the path for sweeps)
+sacctmgr show user "$USER" withassoc
+id
+ls -ld /data1/rkp*
 ```
 
-Resume is per completed task-step (a step killed mid-fit restarts from the previous step's
-checkpoint); optimizer state is not restored, which is fine since each step trains a fresh optimizer.
+As of 2026-07-29, `ea0094` could log in to Phase 2 but had no Slurm association and no accessible
+`/data1/rkp*` group directory. Legal GPU requests were rejected with:
+
+```text
+Invalid account or account/partition combination specified
+```
+
+Do not attempt real jobs until the project representative adds the user to the Phase 2 project (or
+the association finishes synchronizing). After that is fixed, record the project account and group
+directory here.
+
+## System and job resources
+
+RIKYU consists of 400 NVIDIA GB200 NVL4 compute nodes (1,600 GPUs total). Each node has:
+
+- 2 Grace CPUs and 4 B200 GPUs.
+- 960 GiB CPU memory.
+- 173.2 GiB HBM3e per GPU.
+- InfiniBand XDR (`800 Gbps × 4`).
+- One 7.68 TB local NVMe SSD.
+
+Slurm uses one default partition named `gpu`. Check the live schedulable capacity rather than
+hard-coding a node count:
+
+```bash
+sinfo
+scontrol show partition gpu
+```
+
+Supported job sizes are:
+
+| GPUs | Nodes | Maximum CPU cores/node | Maximum memory/node | Maximum walltime |
+|---:|---:|---:|---:|---:|
+| 1 | 1 | 36 | 400 GB | 96 h |
+| 2 | 1 | 72 | 800 GB | 96 h |
+| 3 | 1 | 108 | 1,200 GB | 96 h |
+| 4 | 1 | 144 | 1,600 GB | 96 h |
+| 8 | 2 | 144 | 1,600 GB | 96 h |
+| 12 | 3 | 144 | 1,600 GB | 96 h |
+| 16 | 4 | 144 | 1,600 GB | 96 h |
+
+The live partition default time is 12 hours and the maximum is 4 days. Specify `--time` explicitly.
+For more than 4 GPUs, Phase 2 allocates whole four-GPU nodes, so the GPU count must be a multiple of
+4. A five-GPU request was verified to be rejected by Slurm.
+
+The memory figures are estimates combining usable CPU and GPU memory. CPU and GPU memory have
+different performance characteristics even though GB200 connects them coherently through NVLink-C2C.
+
+## Usage fees
+
+Early Access Phase 2 compute jobs cost **300 JPY per GPU-hour**, plus consumption tax, billed to the
+selected project after Phase 2. Estimate cost before submission:
+
+```text
+estimated cost (JPY, before tax) = requested GPUs × requested/actual hours × 300
+```
+
+Examples:
+
+- 1 GPU for 1 hour: 300 JPY.
+- 4 GPUs for 5 hours: 6,000 JPY.
+- 16 GPUs for 24 hours: 115,200 JPY.
+
+Use the RIKYU Portal to inspect project usage:
+https://portal.rikyu.r-ccs.riken.jp/en/
 
 ## Modules
 
+Phase 2 provides NVIDIA HPC SDK module families:
+
+- `nvhpc`
+- `nvhpc-nompi`
+- `nvhpc-hpcx`
+- `nvhpc-hpcx-cuda13`
+- `nvhpc-byo-compiler`
+
+Use:
+
 ```bash
-module avail                 # nvhpc/26.3 (default), nvhpc-nompi, nvhpc-hpcx, nvhpc-hpcx-cuda13,
-                             # nvhpc-byo-compiler, cuda/11.8, cuda/13.2
-module load nvhpc            # our default; provides CUDA/compilers/MPI toolchain
+module purge
+module avail
+module load nvhpc
+module list
 ```
 
-**Always load a module in every GPU job** — without one the GPU is not allocated. The documented
-batch example always includes `module load nvhpc`, so treat it as mandatory: put `module load nvhpc`
-in every job script. It does not conflict with the cu130 torch wheels used here (PyTorch ships its
-own CUDA runtime), and it also provides the toolchain for MPI/NCCL and compiled CUDA.
+The manual documents 26.3. The live system also exposed 26.5 when checked in 2026-07; unversioned
+`module load nvhpc` selected 26.3 at that time. Pin a version only when compiler/runtime
+reproducibility requires it, and always record `module list` in run provenance.
 
-## Python / uv / .venv — PATH conventions
+`module load nvhpc` configures compilers, CUDA, MPI, NCCL, and related development libraries. It
+does **not** allocate a GPU; GPU allocation comes from Slurm `--gpus=N`.
 
-- System Python is 3.9 (too old — never use it). Use the project venv only.
-- `uv` is at `~/.local/bin/uv` (on PATH); the project venv Python is 3.13 (`.venv/bin/python`).
-- **Programs under `.venv/bin` are not on PATH inside a batch job.** Use one of:
-  1. **Absolute path** (preferred in job scripts): `/home/ea0094/projects/foundation_model/.venv/bin/python`
-     (the `fm` console script carries an absolute-path shebang, so it also works standalone).
-  2. **Symlink into a PATH dir**: `~/.local/bin` is on PATH; symlink the `fm` command there.
-     Recreate with:
-     ```bash
-     ln -sfn /home/ea0094/projects/foundation_model/.venv/bin/fm ~/.local/bin/fm
-     ```
-- Sync deps: `cd /home/ea0094/projects/foundation_model && uv sync` (set `UV_HTTP_TIMEOUT=300`
-  for the large CUDA wheels).
+## Spack-provided software
 
-## PyTorch: CUDA 13 on Linux, default on macOS
+System-provided scientific applications are managed through a public Spack 1.2.0 instance:
 
-rikyu needs a **CUDA-13** torch (`cu130`); a plain PyPI aarch64 wheel is **CPU-only** and will
-silently fail to use the GPU (`torch.cuda.is_available() == False`). This is configured in
-`pyproject.toml` so it is platform-split and does not affect local macOS resolution:
+```bash
+. /shared/software/spack-1.2.0/share/spack/setup-env.sh
+spack find -x
+spack find -lx
+spack load <package>
+```
+
+Include the setup line inside a batch job when using Spack software. For MPI-enabled Spack
+applications, confirm the package's MPI build and normally launch it with `srun`. Do not carry over
+the Phase 1 UCX/NCCL environment-variable block unless a Phase 2-specific test proves it is needed.
+
+## Python, uv, and isolated project environment
+
+- Phase 2 system Python was 3.12.3 when checked.
+- `uv` is at `/home/ea0094/.local/bin/uv`.
+- The project venv is `/home/ea0094/projects/foundation_model/.venv`.
+- The existing project venv was verified as Python 3.13.14 with
+  `torch==2.12.1+cu130`, `torch.version.cuda == "13.0"`, and AArch64 wheels.
+- Never copy this `.venv` to an x86_64 machine.
+
+Use the project environment explicitly:
+
+```bash
+cd /home/ea0094/projects/foundation_model
+uv sync --frozen --all-groups
+.venv/bin/python --version
+.venv/bin/python -c \
+  'import platform, torch; print(platform.machine(), torch.__version__, torch.version.cuda)'
+```
+
+Programs under `.venv/bin` are not automatically added to `PATH`. In batch jobs, use absolute paths
+or activate the venv explicitly. Absolute paths are preferred for reproducibility.
+
+The repository config selects CUDA-13 PyTorch on Linux:
 
 ```toml
-# dependencies:  "torch>=2.9.1, <3.0"   # cu130 aarch64 wheels start at 2.9.1
-
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'linux'" }]
 
@@ -119,92 +210,155 @@ url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 ```
 
-Result: Linux → `torch==2.x+cu130` (cu13 runtime, GB200 `sm_100`); macOS → `torch==2.x` (MPS/CPU).
-Quick GPU check inside a job: `torch.version.cuda` should be `13.0` and `torch.cuda.is_available()` `True`.
+## Storage
 
-## Local scratch (fast I/O)
+Phase 2 has three storage areas:
 
-Each job gets a per-job NVMe scratch dir, auto-deleted at job end (measured ~6 GB/s):
+| Area | Path | Default capacity | Filesystem | Lifetime/access |
+|---|---|---:|---|---|
+| Home | `/home/USER` | 50 GB/user | Lustre, SSD-backed | Persistent; owner only |
+| Group | `/data1/GROUP` | 1 TB/group | Lustre, HDD-backed | Persistent; group members |
+| Scratch | `/tmp` | 1.5 TB/requested GPU | XFS on local NVMe | Deleted when the job ends |
 
-- `USER_SCRATCH_DIR` = `/scratch/job-<jobid>` (set only inside a job; empty on the login node).
-- `SLURM_SUBMIT_DIR` = the directory you submitted from (persistent Lustre).
-- Pattern: stage inputs into `$USER_SCRATCH_DIR`, write outputs there, then copy results back
-  to persistent storage before the job exits:
-  ```bash
-  cp -r "$USER_SCRATCH_DIR/output" "$SLURM_SUBMIT_DIR/results/"
-  ```
-
-## Submitting & controlling jobs
+Use home for configuration, code, and small persistent files. Use `/data1/rkpNNNNN` for large
+persistent project data after the Phase 2 group is assigned. Check quotas with the official
+project-ID form:
 
 ```bash
-JID=$(sbatch --parsable job.sbatch)   # capture the job id
-squeue -j "$JID"                       # or: squeue -u $USER
-scancel "$JID"                         # cancel
-sacct -j "$JID" -X --format=JobID,State,Elapsed,ExitCode   # after completion
+lfs quota -h -p "$(lfs project -d "$HOME" | awk '{print $1}')" /home
+lfs quota -h -p "$(lfs project -d /data1/GROUP | awk '{print $1}')" /data1
 ```
 
-## Minimal sbatch template (1 GPU)
+The home quota command currently needs re-validation after the Phase 2 project/account association
+is fixed; the live account returned project ID `0`.
+
+## Local scratch staging
+
+The old Phase 1 `USER_SCRATCH_DIR=/scratch/job-<jobid>` convention is removed. Phase 2 scratch is
+the job node's `/tmp`.
+
+Files in `/tmp` are deleted at job completion. Copy outputs to `/home` or `/data1/GROUP` before the
+job exits. For multi-node jobs, `/tmp` is local to each node and is not shared.
+
+Example single-node pattern:
+
+```bash
+SCRATCH="/tmp/$USER/$SLURM_JOB_ID"
+mkdir -p "$SCRATCH"
+
+# Stage inputs into "$SCRATCH", run there, then persist results:
+cp -a "$SCRATCH/output/." /data1/GROUP/results/
+```
+
+The exact job-time scratch quota, cleanup behavior, and environment variables are pending a Phase 2
+smoke test after the Slurm account association is fixed.
+
+## Minimal Phase 2 batch template (1 GPU)
+
+This template follows the official Phase 2 resource model but has not yet completed an end-to-end
+job test because the current user lacks a Slurm account association.
 
 ```bash
 #!/bin/bash
 #SBATCH --job-name=fm-job
-#SBATCH --partition=1n1gpu
-#SBATCH --nodes=1
-#SBATCH --gpus-per-node=1
+#SBATCH --gpus=1
 #SBATCH --time=01:00:00
 #SBATCH --output=/home/ea0094/jobs/%x_%j.out
 #SBATCH --error=/home/ea0094/jobs/%x_%j.err
-set -uo pipefail
+# Add only after the project account is known:
+##SBATCH --account=PROJECT_NAME
+set -euo pipefail
+
+module purge
+module load nvhpc
 
 PROJ=/home/ea0094/projects/foundation_model
 VENV_PY="$PROJ/.venv/bin/python"
+PERSISTENT_OUT="$PROJ/artifacts/<run-name>"
 
-module load nvhpc            # mandatory: GPU is not allocated without a loaded module
 cd "$PROJ"
 
-# ... optionally stage data into "$USER_SCRATCH_DIR" ...
-
-"$VENV_PY" -m foundation_model.cli.main pretrain --config <toml> --output-dir <persistent-dir>
-# or, with the symlink on PATH:  fm pretrain --config <toml> --output-dir <persistent-dir>
-
-# ... copy results from "$USER_SCRATCH_DIR" back to "$SLURM_SUBMIT_DIR" ...
+"$VENV_PY" -c \
+  'import torch; print(torch.cuda.device_count(), torch.cuda.get_device_name(), torch.version.cuda)'
+"$VENV_PY" -m foundation_model.cli.main pretrain \
+  --config <toml> \
+  --output-dir "$PERSISTENT_OUT"
 ```
 
-## GPU selection (`[training].accelerator` / `devices`)
+The module is loaded for a consistent development/runtime environment, not to request the GPU.
 
-The `fm` CLI drives a Lightning `Trainer`, so the GPU is chosen by the `[training]` config, not by
-env vars. Both default to **`"auto"`**, so on any GPU job (`--gpus-per-node>=1` + `module load nvhpc`)
-`fm pretrain` / `fm finetune` use the allocated GPU(s) automatically — no config change needed on
-`1n1gpu`. To pin devices on a multi-GPU partition (`1n2gpu` / `1n4gpu`), set `[training].devices`:
+## Submitting and controlling jobs
+
+Run these on a login shell:
+
+```bash
+JID=$(sbatch --parsable job.sbatch)
+squeue -j "$JID"
+scontrol show job "$JID"
+sacct -j "$JID" -X --format=JobID,Account,State,Elapsed,ExitCode,AllocTRES
+scancel "$JID"
+```
+
+Interactive examples:
+
+```bash
+salloc --gpus=1 --time=00:10:00
+srun hostname
+
+# Or directly:
+srun --gpus=1 --time=00:10:00 --pty bash
+```
+
+Add `--account=PROJECT_NAME` when required.
+
+## Lightning GPU selection
+
+The `fm` CLI drives a Lightning `Trainer`; `[training].accelerator` and `[training].devices` select
+among GPUs that Slurm has allocated.
+
+For a single-node job using 1–4 GPUs:
 
 ```toml
 [training]
-accelerator = "auto"   # or "gpu"
-devices = -1            # all allocated GPUs (single-node DDP); or an int count, or e.g. [0, 1]
+accelerator = "auto"  # or "gpu"
+devices = -1          # use all GPUs allocated to this job
 ```
 
-Lightning spawns single-node DDP itself (NCCL) — you do **not** launch it under `srun`/`mpirun` or
-set the MPI env below for single-node multi-GPU. `fm predict` / `fm inverse` are single-device
-(`accelerator = "auto" | "cpu"`, no `devices`).
+Lightning can launch single-node DDP itself; do not wrap the `fm` command in `mpirun`. The current
+`fm` CLI does not expose `num_nodes`, so do not request 8/12/16 GPUs for `fm` training until a
+Phase 2 multi-node launch path is implemented and tested.
 
-## Multi-node MPI env (generic; the `fm` CLI is single-node)
+`fm predict` and `fm inverse` remain single-device workflows.
 
-The `fm` CLI does not expose `num_nodes`, so it targets a **single node**. These env vars are for
-hand-rolled MPI/NCCL jobs on the multi-node partitions (`2n4gpu` / `4n4gpu`), per the rikyu docs —
-not needed for the single-node DDP above:
+## Long runs and resume
 
-```bash
-export OMPI_MCA_pml=ucx
-export UCX_CUDA_COPY_DMABUF=no
-export UCX_MAX_RNDV_RAILS=4
-export NCCL_DMABUF_ENABLE=0
-export NCCL_NET_GDR_LEVEL=SYS
-export UCX_PROTO_ENABLE=n
-# one process per GPU:
-export CUDA_VISIBLE_DEVICES=${OMPI_COMM_WORLD_LOCAL_RANK:-0}
-```
+The maximum walltime is 96 hours. Store checkpoints and output on persistent storage, never solely
+under `/tmp`.
 
-## Keeping macOS ↔ rikyu in sync
+`fm pretrain --resume` can continue from the latest completed task-step by reusing the same
+`--output-dir`. A step interrupted mid-fit restarts from the previous completed step checkpoint;
+optimizer state is not restored because each task-step starts a new optimizer.
 
-`pyproject.toml` / `uv.lock` are shared via git (`origin` = `TsumiNa/foundation_model`).
-Commit on one clone, `git pull` on the other, then `uv sync` on each. `.venv` is git-ignored.
+Because Phase 2 is billed per GPU-hour, do not introduce an unbounded self-resubmission loop.
+Estimate the cost, bound the number of submissions, and check completion and exit status after each
+job.
+
+## Phase 2 execution validation still required
+
+After the Slurm project association is fixed, run a short one-GPU smoke job and record:
+
+- Project account and `/data1/rkpNNNNN` group.
+- `SLURM_JOB_GPUS`, `CUDA_VISIBLE_DEVICES`, and other changed Phase 2 job variables.
+- PyTorch device count, name, memory, and CUDA version.
+- Actual `/tmp` quota for one GPU and cleanup after job completion.
+- `module load nvhpc` versus the standalone cu130 PyTorch environment.
+- Single-node Lightning runs with 1, 2, and 4 GPUs.
+- `sacct` accounting and billed GPU-hours.
+
+Do not reintroduce Phase 1 environment variables or partition names while these tests are pending.
+
+## Keeping macOS and RIKYU in sync
+
+`pyproject.toml` and `uv.lock` are shared through git (`origin = TsumiNa/foundation_model`).
+Commit on one clone, pull the same commit on the other, then run `uv sync --frozen --all-groups`.
+Never copy `.venv` between macOS and RIKYU.
