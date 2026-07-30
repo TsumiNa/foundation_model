@@ -38,6 +38,23 @@ seen-task mean R² +0.06 at matched n; n500-epoch beat frozen n1000). This is th
 - Every run is idempotent (`--resume`); a failed tag is rerun manually with the same command.
 - Remote logs: `logs/replay_n*_epoch.log` + `logs/worker_gpu*.log` under the repo clone.
 
+## Variant: 3x early-stopping patience (p24, RIKEN R-CCS)
+
+Same 7 fixed-count runs and the same two-way setup, plus ONE extra delta:
+`--set 'training.early_stopping.patience=24'` (8 → 24). Question: does patience=8 cut the
+resampling benefit short (each extra epoch adds fresh replay coverage), or does longer
+training just overfit? Three-way comparison: step-p8 (rikyu) vs epoch-p8 (ism) vs epoch-p24.
+
+- Machine: R-CCS Cloud `ai-h200-brc` (H200, 1 GPU + 28 cores per job), clone
+  `~/projects/foundation_model-x86-cuda` at commit `25a58b1`, data hardlinked from the
+  gh200 clone. Job script: `p24_h200.sbatch` (TAG env selects the config; idempotent
+  `--resume`, resubmit on walltime kill).
+- Submission staggered under the per-user nodes×72h cap: 4 heavy jobs at 18 h first
+  (2026-07-30 ≈11:20 JST: n2500 #263688, n2000 #263689, n1500 #263690, n1000 #263691),
+  lights follow as slots free.
+- Outputs: `artifacts/replay_sweep_epoch_p24/replay_n*_epoch_p24/` on R-CCS, collected as
+  `results/mt_n*_epoch_p24.csv`.
+
 ## Results & provenance (not in git, rsync policy)
 
 - Raw run outputs: `artifacts/replay_sweep_epoch/replay_n*_epoch/` on ism-gpu-a100, rsync'd
