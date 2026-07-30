@@ -55,6 +55,16 @@ training just overfit? Three-way comparison: step-p8 (rikyu) vs epoch-p8 (ism) v
 - Outputs: `artifacts/replay_sweep_epoch_p24/replay_n*_epoch_p24/` on R-CCS, collected as
   `results/mt_n*_epoch_p24.csv`.
 
+## Variant: raised epoch budget (m150, RIKEN R-CCS)
+
+Motivated by the p24 finding that 100% of completed steps hit the 100-epoch cap (patience is
+no longer the binding constraint): `m150_h200.sbatch` = epoch resampling + patience 24 +
+`--set 'training.max_epochs=150'`. Probes the marginal return of a 1.5x epoch budget.
+Rollout order: n2500/n1000 first (the informative extremes), n1500/n2000 later, all under the
+partition's hard per-user quota of 72 node-hours of *submitted* work (sbatch REJECTS above it —
+observed live), so submissions trickle in as running jobs complete. Outputs:
+`artifacts/replay_sweep_epoch_m150/replay_n*_epoch_m150/` → `results/mt_n*_epoch_m150.csv`.
+
 ## Results & provenance (not in git, rsync policy)
 
 - Raw run outputs: `artifacts/replay_sweep_epoch/replay_n*_epoch/` on ism-gpu-a100, rsync'd
