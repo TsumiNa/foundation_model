@@ -67,6 +67,10 @@ observed live), so submissions trickle in as running jobs complete. Outputs:
 
 ## Outcome (2026-08-02)
 
+Extension 2026-08-02: the m150 arm is being completed to all 7 n (n100/n200/n500 submitted on
+the same H200 partition as the p24 lights, so the m150-vs-p24 comparison at matched n stays
+same-hardware). Report to be refreshed when they land.
+
 All 25 runs complete. Headline (23-task mean final R², vs step baseline): epoch resampling
 +0.022…+0.126 at every n (peak @n200); with patience 24 (⇒ full 100 epochs) the n-dependence
 nearly flattens (n100-p24 0.592 ≈ n2500-step 0.600); max_epochs 150 adds only +0.009 mean —
