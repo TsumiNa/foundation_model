@@ -65,6 +65,14 @@ partition's hard per-user quota of 72 node-hours of *submitted* work (sbatch REJ
 observed live), so submissions trickle in as running jobs complete. Outputs:
 `artifacts/replay_sweep_epoch_m150/replay_n*_epoch_m150/` → `results/mt_n*_epoch_m150.csv`.
 
+## Outcome (2026-08-02)
+
+All 25 runs complete. Headline (23-task mean final R², vs step baseline): epoch resampling
++0.022…+0.126 at every n (peak @n200); with patience 24 (⇒ full 100 epochs) the n-dependence
+nearly flattens (n100-p24 0.592 ≈ n2500-step 0.600); max_epochs 150 adds only +0.009 mean —
+the epoch budget saturates near 100. Full report: `results/REPORT_20260802.md` + `.pptx`
+(build with `build_report_pptx.py`). Open control: step-p24 (not run).
+
 ## Results & provenance (not in git, rsync policy)
 
 - Raw run outputs: `artifacts/replay_sweep_epoch/replay_n*_epoch/` on ism-gpu-a100, rsync'd
