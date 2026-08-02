@@ -108,6 +108,14 @@ Slurm currently accepts an over-limit submission and assigns it a job ID, but le
 check `squeue` or `scontrol show job "$JID"` rather than treating a returned job ID as validation.
 Slurm also rounds a request containing seconds up to the next whole minute.
 
+The **72 node-hour aggregate quota behaves differently** (live-verified 2026-07-30 on
+`ai-h200-brc`): exceeding it makes `sbatch` FAIL outright with
+`Quota exceeded on partition '<name>' (limit: N x 72 node-hours per user)` — no job ID, nothing
+queued. The quota counts the *requested* walltime of pending+running jobs and is released per job
+on completion, so long campaigns must trickle submissions in as earlier jobs finish (an
+event-driven "one completes → submit the next" relay works well; idempotent `--resume` workers
+make walltime kills recoverable).
+
 ## GPU selection policy
 
 Before submission, inspect current availability:
