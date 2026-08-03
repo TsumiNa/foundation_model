@@ -44,14 +44,14 @@ def title_bar(slide, title, sub=None):
         txt(slide, 0.5, 0.85, 12.3, 0.4, [sub], size=12, color=MUT)
 
 
-def pic_slide(title, sub, img, top=1.35):
+def pic_slide(title, sub, img, top=1.35, bottom=0.2):
     s = prs.slides.add_slide(BLANK)
     title_bar(s, title, sub)
     from PIL import Image
 
     with Image.open(img) as im:
         iw, ih = im.size
-    max_w, max_h = Inches(12.9), prs.slide_height - Inches(top) - Inches(0.2)
+    max_w, max_h = Inches(12.9), prs.slide_height - Inches(top) - Inches(bottom)
     scale = min(max_w / iw, max_h / ih)
     w, h = int(iw * scale), int(ih * scale)
     s.shapes.add_picture(str(img), Emu(int((prs.slide_width - w) / 2)), Inches(top), Emu(w), Emu(h))
@@ -131,6 +131,17 @@ pic_slide("Per-task saturation with both baselines — step vs epoch, 24 panels"
 pic_slide("Forgetting stays event-driven — but small-n collapses are suppressed",
           "per-task trajectories across replay events; blues = frozen (light→dark = n100→n2500), reds = per-epoch resampling",
           AN / "replay_trajectories_compare.png")
+
+# 6b — replay requirement vs task size
+s = pic_slide("Residual forgetting concentrates in the data-rich tasks — the case for ratio replay",
+              "residual gap (at-intro − final) at n=2500, the largest tested count: full replay for every task "
+              "under 2.5k labels, but only ~11% of a ~23k-label task",
+              AN / "replay_requirement_vs_size.png", top=1.5, bottom=0.85)
+txt(s, 0.5, 6.9, 12.4, 0.5, [
+    "step-p8: the ≥23k tasks keep gaps up to +0.19 (final_energy) · epoch-p8 shrinks them · epoch-p24 nearly closes them "
+    "(≤ +0.02) — yet every remaining positive residual still sits in the ≥23k group ⇒ the replay requirement scales with "
+    "task size; next phase: ratio family (0.05–0.20) × epoch resampling.",
+], size=11.5, color=MUT)
 
 # 7 — variants table
 s = prs.slides.add_slide(BLANK)
