@@ -132,16 +132,17 @@ pic_slide("Forgetting stays event-driven — but small-n collapses are suppresse
           "per-task trajectories across replay events; blues = frozen (light→dark = n100→n2500), reds = per-epoch resampling",
           AN / "replay_trajectories_compare.png")
 
-# 6b — replay requirement vs task size
-s = pic_slide("Residual forgetting concentrates in the data-rich tasks — the case for ratio replay",
-              "residual gap (at-intro − final) at n=2500, the largest tested count: full replay for every task "
-              "under 2.5k labels, but only ~11% of a ~23k-label task",
-              AN / "replay_requirement_vs_size.png", top=1.5, bottom=0.85)
-txt(s, 0.5, 6.9, 12.4, 0.5, [
-    "step-p8: the ≥23k tasks keep gaps up to +0.19 (final_energy) · epoch-p8 shrinks them · epoch-p24 nearly closes them "
-    "(≤ +0.02) — yet every remaining positive residual still sits in the ≥23k group ⇒ the replay requirement scales with "
-    "task size; next phase: ratio family (0.05–0.20) × epoch resampling.",
-], size=11.5, color=MUT)
+# 6b — replay requirement vs task size (both baselines, all budgets)
+s = pic_slide("Distance to the single-task ceiling — every budget, every arm, by task size",
+              "y = single-task baseline − final; solid 0-line = single-task ceiling, dashed = at-intro level "
+              "(multi-task cost); green zone = run ends ABOVE its own introduction level",
+              AN / "replay_requirement_vs_size.png", top=1.5, bottom=1.0)
+txt(s, 0.5, 6.65, 12.4, 0.75, [
+    "big (≥20k): frozen replay never reaches at-intro even at n2500 (11% of own data); epoch+full-epochs recovers to "
+    "at-intro from n≈500–1000 and plateaus there — the residual ~0.045 is multi-task cost, not forgetting. "
+    "mid (3k–8k): epoch-p24/m150 reach the single-task ceiling itself (deficit ≤0.02 from n≥500) — the historical "
+    "\"never past at-intro\" boundary is broken. Requirement scales with task size ⇒ next phase: ratio × epoch resampling.",
+], size=11, color=MUT)
 
 # 7 — variants table
 s = prs.slides.add_slide(BLANK)
