@@ -145,39 +145,67 @@ txt(s, 0.5, 6.65, 12.4, 0.75, [
 ], size=11, color=MUT)
 
 # 7 — variants table
+from pptx.enum.text import PP_ALIGN
+
 s = prs.slides.add_slide(BLANK)
-title_bar(s, "Training-budget variants — patience 24 flattens n; epochs saturate near 100")
-rows = [
-    ("n", "step-p8", "epoch-p8", "epoch-p24", "epoch-m150"),
-    ("100", "0.371", "0.475", "0.592", "0.580"),
-    ("200", "0.420", "0.546", "0.606", "0.624"),
-    ("500", "0.498", "0.582", "0.637", "0.632"),
-    ("1000", "0.556", "0.612", "0.644", "0.643"),
-    ("1500", "0.578", "0.621", "0.641", "0.660"),
-    ("2000", "0.595", "0.632", "0.647", "0.642"),
-    ("2500", "0.600", "0.622", "0.639", "0.663"),
+title_bar(s, "Training-budget variants — patience 24 flattens n; epochs saturate near 100",
+          "mean final test R² (23 tasks) · bold = best in row · amber pair = same score at 25× different replay budget")
+HEAD = ("n", "step-p8", "epoch-p8", "epoch-p24", "epoch-m150")
+VALS = [
+    (100, 0.371, 0.475, 0.592, 0.580),
+    (200, 0.420, 0.546, 0.606, 0.624),
+    (500, 0.498, 0.582, 0.637, 0.632),
+    (1000, 0.556, 0.612, 0.644, 0.643),
+    (1500, 0.578, 0.621, 0.641, 0.660),
+    (2000, 0.595, 0.632, 0.647, 0.642),
+    (2500, 0.600, 0.622, 0.639, 0.663),
 ]
-tbl = s.shapes.add_table(len(rows), 5, Inches(0.8), Inches(1.5), Inches(6.6), Inches(4.6)).table
-for r, row in enumerate(rows):
+ARM_RGB = {1: RGBColor(0x00, 0x77, 0xBB), 2: RGBColor(0xCC, 0x33, 0x11),
+           3: RGBColor(0x00, 0x9E, 0x73), 4: RGBColor(0xEE, 0x77, 0x33)}
+WHITE, AMBER, HEADGREY = RGBColor(0xFF, 0xFF, 0xFF), RGBColor(0xFD, 0xE6, 0x8A), RGBColor(0x4B, 0x55, 0x63)
+PAIR_CELLS = {(1, 3), (7, 1)}  # n100 × epoch-p24  ↔  n2500 × step-p8: 0.592 ≈ 0.600
+
+tbl = s.shapes.add_table(len(VALS) + 1, 5, Inches(0.7), Inches(1.6), Inches(6.8), Inches(4.6)).table
+for c, name in enumerate(HEAD):
+    cell = tbl.cell(0, c)
+    cell.text = name
+    cell.fill.solid()
+    cell.fill.fore_color.rgb = ARM_RGB.get(c, HEADGREY)
+    p = cell.text_frame.paragraphs[0]
+    p.alignment = PP_ALIGN.CENTER
+    p.font.size = Pt(13)
+    p.font.bold = True
+    p.font.color.rgb = WHITE
+for r, row in enumerate(VALS, start=1):
+    best = max(row[1:])
     for c, val in enumerate(row):
         cell = tbl.cell(r, c)
-        cell.text = val
+        cell.text = str(val) if c == 0 else f"{val:.3f}"
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = AMBER if (r, c) in PAIR_CELLS else WHITE
         p = cell.text_frame.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
         p.font.size = Pt(13)
-        p.font.bold = r == 0
-txt(s, 7.8, 1.5, 5.0, 5.2, [
-    "Reading:",
-    "· p24 column is nearly flat (0.59–0.65) — with enough",
-    "  epochs, the replay budget n almost stops mattering",
-    "· m150 − p24 (all 7 n): −0.012 … +0.024, mean +0.005,",
-    "  no n-trend — the epoch budget is saturated at ~100",
-    "  everywhere, incl. the smallest n (n100: 0.580 ≤ 0.592)",
-    "· best overall: n2500-m150 (0.663), within the noise band",
-    "  of the p24 plateau",
-    "",
-    "Open control: step-p24 (frozen + long training) would",
-    "cleanly separate training-time vs coverage — not yet run.",
-], size=13)
+        p.font.bold = (c == 0) or (c >= 1 and val == best) or (r, c) in PAIR_CELLS
+        p.font.color.rgb = INK if c else HEADGREY
+
+CATS = [
+    ("Resampling (epoch-p8)", ARM_RGB[2], "+0.022…+0.126 vs frozen — positive at every n"),
+    ("Full 100 epochs (p24)", ARM_RGB[3], "column goes flat: 0.59–0.65 across a 25× budget range"),
+    ("Budget equivalence", None, "amber pair: 100 redrawn labels ≈ 2500 frozen (0.592 ≈ 0.600)"),
+    ("150-epoch cap (m150)", ARM_RGB[4], "vs p24: mean +0.005, no n-trend — saturated at ~100 epochs"),
+    ("Not yet run", None, "step-p24 control (frozen + long training)"),
+]
+y = 1.75
+for label, color, desc in CATS:
+    box = txt(s, 7.9, y, 5.0, 0.85, [label, desc], size=12.5)
+    ps = box.text_frame.paragraphs
+    ps[0].font.bold = True
+    if color is not None:
+        ps[0].font.color.rgb = color
+    ps[1].font.size = Pt(11.5)
+    ps[1].font.color.rgb = MUT
+    y += 1.0
 
 # 8 — next steps
 s = prs.slides.add_slide(BLANK)
