@@ -68,57 +68,69 @@ txt(s, 0.7, 4.1, 12, 1.5, [
     "step-p8 baseline (rikyu GB200, 2026-07) · epoch-p8 (ism 4×A100) · epoch-p24 / epoch-m150 (R-CCS H200)",
 ], size=15, color=MUT)
 
-# 2 — TL;DR
+# 2 — design (explains the experiment before any results)
 s = prs.slides.add_slide(BLANK)
-title_bar(s, "TL;DR — five findings")
-txt(s, 0.6, 1.3, 12.2, 5.8, [
-    "1. Per-epoch resampling lifts retention at EVERY replay budget: mean final R² +0.022 … +0.126; the whole",
-    "    saturation curve shifts up-left. Effective replay multiplier 3–5× (epoch-n200 ≈ step-n1000; epoch-n500 > step-n1500).",
+title_bar(s, "The experiment — what is being varied, and what the numbers mean")
+txt(s, 0.6, 1.3, 6.4, 5.9, [
+    "The setting (same as the 2026-07 sweep):",
+    "· 24 material-property tasks are learned ONE AT A TIME on a",
+    "  shared encoder (continual pretraining, fixed order, seed 2025)",
+    "· while learning each new task, the model also revisits a small",
+    "  sample of every earlier task's data — the \"replay\" that fights",
+    "  catastrophic forgetting",
+    "· the budget knob n = how many labeled examples PER old task",
+    "  are replayed at each step; we sweep n = 100 … 2500",
+    "· score = mean test R² over the 23 regression tasks AFTER all",
+    "  24 steps (higher = less was forgotten)",
     "",
-    "2. The gain is coverage-shaped: largest at small n (peak +0.126 @ n200), shrinking monotonically to +0.022 @ n2500 —",
-    "    exactly the N·(1−(1−n/N)^E) prediction. At n2500 the frozen subset already ≈ the full pool, and the two modes converge.",
+    "What is new — how the n examples are picked:",
+    "· historically: chosen once when the step starts, then frozen —",
+    "  every epoch re-trains the SAME n examples",
+    "· this experiment: redraw a fresh n-example subset EVERY epoch —",
+    "  same cost per epoch, but over ~60–100 epochs the model",
+    "  eventually sees most of the old task's data",
+], size=12.5)
+txt(s, 7.2, 1.3, 5.6, 5.9, [
+    "The four arms (only these flags differ, configs otherwise identical):",
+    "· step-p8 — frozen subsets (the 2026-07 baseline, rikyu GB200)",
+    "· epoch-p8 — per-epoch resampling (ism 4×A100)",
+    "· epoch-p24 — + early-stop patience 8→24, which in practice",
+    "  means every step trains the full 100 epochs (R-CCS H200)",
+    "· epoch-m150 — + epoch cap 100→150 (R-CCS H200)",
+    "7 budgets × 4 arms = 28 runs, every run idempotent & resumable;",
+    "each records its resolved config + git commit (run_provenance.json)",
     "",
-    "3. Training length amplifies it: with patience 24 every step runs the full 100 epochs and the n-dependence nearly",
-    "    flattens (0.59–0.65 over a 25× budget range). n100-p24 (0.592) ≈ n2500-step (0.600): 100 resampled labels ≈ 2500 frozen.",
-    "",
-    "4. The epoch budget saturates near ~100 across the WHOLE n range (m150 row complete): m150−p24 = −0.012…+0.024,",
-    "    mean +0.005, no n-trend — even n100 does not keep climbing (0.580 vs 0.592). Coverage accumulation is capped by",
-    "    the per-epoch replay gradient weight, not the epoch count.",
-    "",
-    "5. Early stopping was silently the binding constraint under resampling: fresh data each epoch delays the val-loss plateau",
-    "    (mean 60–65 epochs/step vs 52–59 frozen at patience 8); at patience 24, 100% of steps hit the max_epochs cap.",
-], size=13.5)
+    "Caveats accepted by design:",
+    "· single seed, single task order — deltas < ~0.02 ≈ noise band",
+    "· arms ran on different machines (GB200 / A100 / H200); the",
+    "  n2500 convergence between arms (next slide) is the built-in",
+    "  negative control showing this does not distort the comparison",
+], size=12.5)
 
-# 3 — design
+# 3 — findings, each carried by one worked example
 s = prs.slides.add_slide(BLANK)
-title_bar(s, "Design — one flag changed, everything else pinned",
-          "canonical rikyu sweep configs (24 tasks, fixed order, seed 2025, batch 256, max 100 epochs + early stop)")
-txt(s, 0.6, 1.4, 6.2, 5.6, [
-    "Arms (fixed-count family only, n = 100…2500):",
-    "· step-p8 — frozen subset per step (historical baseline)",
-    "· epoch-p8 — only delta: --set replay.resample=\"epoch\"",
-    "· epoch-p24 — + early_stopping.patience 8→24",
-    "· epoch-m150 — + max_epochs 100→150 (4 heavy n)",
+title_bar(s, "Five findings — each with one number you can read off the tables",
+          "all examples: mean final test R² over the 23 regression tasks; n = replayed labels per old task per step")
+txt(s, 0.6, 1.45, 12.2, 5.7, [
+    "1. Resampling helps at EVERY budget.  Example: at n=200 the mean rises 0.420 → 0.546 (+0.126) — frozen replay",
+    "    needs n≈1000 to reach that level, so redrawing bought a ~5× budget multiplier at identical per-epoch cost.",
     "",
-    "Execution:",
-    "· epoch-p8: ism-gpu-a100, 4 workers, heavy-first FIFO",
-    "· p24/m150: R-CCS ai-h200-brc, 1 GPU + 28 cores/job,",
-    "  submissions trickled under the 72 node-hour quota,",
-    "  walltime kills recovered by idempotent --resume",
-], size=13, bold_first=False)
-txt(s, 7.0, 1.4, 5.8, 5.6, [
-    "Provenance:",
-    "· every run: run_provenance.json (resolved config + git commit)",
-    "· commits de711ed (ism) / 25a58b1 (R-CCS); configs untouched",
-    "· metrics collected as results/mt_n*_{epoch,epoch_p24,epoch_m150}.csv",
+    "2. The gain shrinks as n approaches a task's full data.  Example: at n=2500 — full data for all but the largest",
+    "    tasks — the modes nearly tie (0.600 frozen vs 0.622): when there is nothing new left to redraw, resampling",
+    "    cannot add information. (This convergence is also the negative control for the hardware caveat.)",
     "",
-    "Caveats (accepted by design):",
-    "· single seed (2025), single fixed task order",
-    "· cross-hardware arms (GB200 / A100 / H200)",
-    "· mask-RNG protocol differs from the 2026-07 baseline",
-    "  (statistically equivalent subsets, not bit-identical)",
-    "· n2500-step ≈ epoch convergence acts as the negative control",
-], size=13)
+    "3. Training longer amplifies resampling.  Example: with every step trained the full 100 epochs (p24), n=100 —",
+    "    just 100 replayed labels per old task — scores 0.592, matching frozen replay's best with 25× the budget",
+    "    (n=2500 → 0.600). More epochs = more distinct redraws = more of the old data eventually seen.",
+    "",
+    "4. But beyond ~100 epochs nothing more is gained.  Example: raising the cap to 150 epochs moves the mean by",
+    "    +0.005 averaged over all 7 budgets (at n=1000: 0.644 → 0.643) — once the redraws have covered the data,",
+    "    extra passes are dead weight.",
+    "",
+    "5. Why training length mattered at all: early stopping was quietly cutting resampling short.  Example: at",
+    "    patience 8 a typical step stops after 60–65 epochs (fresh redraws keep improving val loss, vs 52–59 frozen);",
+    "    at patience 24, 100% of completed steps ran to the 100-epoch cap — patience 8 had been the hidden binding limit.",
+], size=12.5)
 
 # 4-6 — figures
 pic_slide("Headline — the saturation curve shifts up-left",
