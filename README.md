@@ -374,7 +374,9 @@ Each scenario folder ends up with `comparison.png` (bar chart: objective score +
 target), `element_frequency_heatmap.png` (per-path × top-K elements with newly-discovered
 elements highlighted), `objective_vs_targets_scatter.png` (per-seed cloud with the seed-baseline
 layer), and
-`seed_to_optimized__<path>.png` (per-path 1:1 mapping), plus `scenario.json` / `results.json` /
+`seed_to_optimized__<path>.png` (per-path 1:1 mapping — each seed next to what the optimiser made
+of it, element symbols coloured by how often that path reached for them, and every target's
+channel value with its change from the seed), plus `scenario.json` / `results.json` /
 `summary.json` + `SUMMARY.md` and per-path trajectory `.npz` (+ static/animated plots).
 
 For the headline messages from the 3-scenario sweep (multi-objective optimisation, element
