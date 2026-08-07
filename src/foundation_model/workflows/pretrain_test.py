@@ -375,6 +375,73 @@ def test_warm_start_continues_sequence(smoke_dir, tmp_path) -> None:
     assert (out2 / "training" / "step02_b" / "a_metrics.json").exists()
 
 
+def test_no_replay_interval_disables_learned_kr_head(smoke_dir, tmp_path) -> None:
+    """interval > n_steps ⇒ replay never fires: a later single-task step must not crash on the
+    learned kernel-regression head, whose forward needs a t-sequence only active tasks provide."""
+    kr = pd.DataFrame(
+        {
+            "composition": _FORMULAS,
+            "dos": ["[0.1, 0.2, 0.3]"] * len(_FORMULAS),
+            "energy": ["[1.0, 2.0, 3.0]"] * len(_FORMULAS),
+        }
+    )
+    kr.to_parquet(smoke_dir / "kr.parquet")
+    toml = f"""
+[data]
+batch_size = 8
+
+[descriptor]
+kind = "kmd"
+n_grids = 4
+
+[datasets.d1]
+path = "{smoke_dir / "x.parquet"}"
+
+[datasets.kr]
+path = "{smoke_dir / "kr.parquet"}"
+
+[[tasks]]
+name = "a"
+kind = "regression"
+dataset = "d1"
+column = "a"
+
+[[tasks]]
+name = "dos"
+kind = "kernel_regression"
+dataset = "kr"
+column = "dos"
+t_column = "energy"
+
+[model]
+latent_dim = 8
+encoder_hidden_dims = [16]
+head_hidden_dims = [8]
+n_kernel = 4
+
+[training]
+max_epochs = 1
+accelerator = "cpu"
+seed = 1
+
+[pretrain]
+task_sequence = ["dos", "a"]
+
+[pretrain.replay]
+interval = 999
+amount = 0.5
+"""
+    out = tmp_path / "noreplay"
+    _run_pretrain(build_pretrain_config(tomllib.loads(toml), output_dir=str(out)), out)
+
+    final = torch.load(out / "training" / "final_model.pt", weights_only=True)
+    heads = {k.split(".", 2)[1] for k in final["model"] if k.startswith("task_heads.")}
+    assert {"a", "dos"} <= heads  # sat-out head re-enabled before saving
+    assert not any(k.startswith("disabled_task_heads.") for k in final["model"])
+    # the sat-out head is still evaluated at the no-replay step
+    assert (out / "training" / "step02_a" / "dos_metrics.json").exists()
+
+
 def test_replay_epoch_resample_fires_each_epoch(smoke_dir, tmp_path, monkeypatch) -> None:
     """resample = "epoch" redraws replay masks inside a real Trainer fit, once per epoch."""
     from foundation_model.data.dataset import CompoundDataset
