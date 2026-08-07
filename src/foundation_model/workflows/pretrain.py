@@ -432,7 +432,16 @@ def _run_single(
             enable_progress_bar=False,
             callbacks=callbacks,
         )
+        # Learned-but-not-participating heads (replay off this step) must sit out the fit: forward
+        # runs every registered head, and a kernel-regression head raises without its t-sequence,
+        # which the datamodule only carries for active tasks. Restore before eval/checkpointing so
+        # the saved state keeps every head under its task_heads.* key.
+        inactive = [name for name in learned if name not in participating]
+        if inactive:
+            model.disable_task(*inactive)
         trainer.fit(model, datamodule=datamodule)
+        if inactive:
+            model.enable_task(*inactive)
 
         test_keys: set[str] | None = None
         if datamodule.split_series is not None:
