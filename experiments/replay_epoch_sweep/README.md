@@ -65,6 +65,28 @@ partition's hard per-user quota of 72 node-hours of *submitted* work (sbatch REJ
 observed live), so submissions trickle in as running jobs complete. Outputs:
 `artifacts/replay_sweep_epoch_m150/replay_n*_epoch_m150/` → `results/mt_n*_epoch_m150.csv`.
 
+## Extension: ratio-replay family + no-replay/joint-retrain baseline (2026-08-08, R-CCS)
+
+Follow-up to the report's ratio-parameterization evidence. Two additions, both on ai-h200-brc:
+
+1. **Ratio family under the m150 recipe** — replay `amount` ∈ {0.1, 0.2, 0.3, 0.5} (fraction of
+   each old task's labels, redrawn every epoch) with the same overrides as the m150 arm
+   (`resample="epoch"`, patience 24, max_epochs 150). Reuses `m150_h200.sbatch` verbatim with
+   `TAG=0p10/0p20/0p30/0p50` — configs `sweep_0p10/0p20.toml` predate this experiment
+   (their frozen-subset step-p8 runs exist: `../rikyu_replay_sweep/results/mt_0p10/0p15/0p20.csv`);
+   `sweep_0p30/0p50.toml` are new copies differing only in `amount`. Outputs
+   `artifacts/replay_sweep_epoch_m150/replay_0p*_epoch_m150/` → `results/mt_0p*_epoch_m150.csv`.
+2. **Baseline: no replay + one full joint retrain** — arm A `configs/noreplay_full24.toml`
+   (`noreplay_h200.sbatch`): sequential 24 tasks with replay disabled via `interval = 999`,
+   patience 24 / max 150 (the pure-forgetting trajectory). Arm B
+   `configs/joint_retrain_full24.toml` (`joint_retrain_h200.sbatch`): `fm finetune` with
+   `freeze_encoder = false` on all 24 heads at full data from arm A's `final_model.pt` — i.e.
+   plain multi-task training, ≤150 epochs, patience 24. `finetune_summary.json` carries
+   before (= arm A final) and after metrics. No `--resume` in finetune: must fit in 24 h.
+
+Smoke first (`smoke_ratio_baseline.sbatch`: all three paths at `--sample 400`, 1 epoch), then
+relay-submitted under the 72 node-hour quota, heaviest first (0p50 ≈ 2× the n2500 replay volume).
+
 ## Outcome (2026-08-02)
 
 Extension 2026-08-02: the m150 arm is being completed to all 7 n (n100/n200/n500 submitted on
