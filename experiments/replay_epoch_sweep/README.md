@@ -87,6 +87,15 @@ Follow-up to the report's ratio-parameterization evidence. Two additions, both o
 Smoke first (`smoke_ratio_baseline.sbatch`: all three paths at `--sample 400`, 1 epoch), then
 relay-submitted under the 72 node-hour quota, heaviest first (0p50 ≈ 2× the n2500 replay volume).
 
+Arm B convergence probe (2026-08-08 follow-up): the 150-epoch joint retrain ran to its cap
+without early-stopping (epochs_run = 150), so caps 200/250/300 are added — same checkpoint,
+same config, `--epochs` override via `EP` in `joint_retrain_h200.sbatch` (outputs
+`joint_retrain_m{200,250,300}/`; the original 150-epoch run stays in `joint_retrain/`).
+Patience 24 stays on: an early stop below the cap, or flat final metrics across caps, is the
+convergence evidence. The per-epoch val-loss curves (`logs/finetune/*/metrics.csv`) back this
+graphically. All baseline cases (arm A, arm B ×4 caps) are part of the final report/PPT
+comparison alongside the ratio and fixed-n arms.
+
 ## Outcome (2026-08-02)
 
 Extension 2026-08-02: the m150 arm is being completed to all 7 n (n100/n200/n500 submitted on
