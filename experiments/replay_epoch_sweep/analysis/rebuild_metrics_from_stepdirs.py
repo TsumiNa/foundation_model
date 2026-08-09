@@ -27,6 +27,7 @@ RUNS = {
     "artifacts/replay_sweep_epoch_m150/replay_n2000_epoch_m150": "mt_n2000_epoch_m150.csv",
     "artifacts/replay_sweep_epoch_m150/replay_n2500_epoch_m150": "mt_n2500_epoch_m150.csv",
     "artifacts/replay_sweep_epoch_m150/replay_0p10_epoch_m150": "mt_0p10_epoch_m150.csv",
+    "artifacts/replay_sweep_epoch_m150/replay_0p20_epoch_m150": "mt_0p20_epoch_m150.csv",
 }
 FIELDS = ["step", "new_task", "epochs_run", "task", "r2", "mae", "samples", "primary",
           "points", "accuracy", "macro_f1"]

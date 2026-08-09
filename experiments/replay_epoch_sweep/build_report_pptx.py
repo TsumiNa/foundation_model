@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Build results/REPORT_20260802.pptx — replay epoch-resampling sweep + budget variants.
+"""Build results/REPORT_20260809.pptx — replay epoch-resampling sweep + budget variants +
+ratio-replay family + no-replay/joint-retrain baselines.
 
 Run: uv run --with python-pptx python experiments/replay_epoch_sweep/build_report_pptx.py
 """
@@ -12,7 +13,7 @@ from pptx.util import Emu, Inches, Pt
 
 HERE = Path(__file__).resolve().parent
 AN = HERE / "analysis"
-OUT = HERE / "results" / "REPORT_20260802.pptx"
+OUT = HERE / "results" / "REPORT_20260809.pptx"
 
 INK = RGBColor(0x1F, 0x29, 0x37)
 MUT = RGBColor(0x6B, 0x72, 0x80)
@@ -61,11 +62,13 @@ def pic_slide(title, sub, img, top=1.35, bottom=0.2):
 # 1 — title
 s = prs.slides.add_slide(BLANK)
 txt(s, 0.7, 2.3, 12, 1.6, ["Replay with Per-Epoch Resampling",
-                           "Full fixed-count sweep + training-budget variants"], size=32, bold_first=True)
+                           "Fixed-count & ratio sweeps · training-budget variants · no-replay baselines"],
+    size=32, bold_first=True)
 txt(s, 0.7, 4.1, 12, 1.5, [
-    "replay.resample = \"epoch\": redraw each old task's n-label replay subset every epoch",
-    "25 runs · 4 arms · 3 machines | 2026-07-29 → 08-02",
-    "step-p8 baseline (rikyu GB200, 2026-07) · epoch-p8 (ism 4×A100) · epoch-p24 / epoch-m150 (R-CCS H200)",
+    "replay.resample = \"epoch\": redraw each old task's replay subset (count n or fraction r) every epoch",
+    "34 runs · 7 arms · 3 machines | 2026-07-29 → 08-09",
+    "step-p8 baseline (rikyu GB200, 2026-07) · epoch-p8 (ism 4×A100) · epoch-p24 / epoch-m150 / ratio-m150 (R-CCS H200)",
+    "baselines: no-replay sequential (H200) → joint retrain at 4 epoch caps (H200 + 3×A100)",
 ], size=15, color=MUT)
 
 # 2 — TL;DR
@@ -87,6 +90,26 @@ txt(s, 0.6, 1.3, 12.2, 5.8, [
     "",
     "5. Early stopping was silently the binding constraint under resampling: fresh data each epoch delays the val-loss plateau",
     "    (mean 60–65 epochs/step vs 52–59 frozen at patience 8); at patience 24, 100% of steps hit the max_epochs cap.",
+], size=13.5)
+
+# 2b — TL;DR extension: ratio family + baselines
+s = prs.slides.add_slide(BLANK)
+title_bar(s, "Extension — ratio replay & the no-replay baselines (three more findings)",
+          "ratio amount r ∈ {0.1, 0.2, 0.3, 0.5} of each old task's labels, m150 recipe · "
+          "baseline: 24 tasks with NO replay, then ONE full-data joint retrain of all 24 heads")
+txt(s, 0.6, 1.5, 12.2, 5.6, [
+    "6. On the MEAN, ratio buys nothing new: put on the same cost axis (total labels replayed per step), ratio and",
+    "    fixed-count land on one saturated curve (ratio 0.64–0.65 ≈ fixed n1000–n2500). Parameterization ≠ more performance.",
+    "",
+    "7. But allocation decides WHO pays: fixed-count starves big tasks (deficit plateaus at ~0.045 — what the previous",
+    "    report called \"multi-task cost\" was half recoverable forgetting: ratio 0.3/0.5 cuts it to ~0.025). Ratio starves",
+    "    small tasks symmetrically (r0.5 deficit 0.085 vs 0.002 at n2500, which replays 100% of their data).",
+    "    ⇒ hybrid rule: amount = max(floor_n, r·N_task) — expressible today via replay.per_task overrides.",
+    "",
+    "8. Rehearsal timing is structural: without replay only 4% of learned tasks still beat a constant predictor by step 24",
+    "    (mean R² −33). One full-data joint retrain at the end CONVERGES (early stop @214 of a 300-epoch cap, verified",
+    "    caps 150/200/250/300) at 0.584 — below every continual-replay arm (0.639–0.663). Replaying during training,",
+    "    even 100 labels/task, beats unlimited rehearsal after the damage is done.",
 ], size=13.5)
 
 # 3 — design
@@ -143,6 +166,21 @@ txt(s, 0.5, 6.65, 12.4, 0.75, [
     "mid (3k–8k): epoch-p24/m150 reach the single-task ceiling itself (deficit ≤0.02 from n≥500) — the historical "
     "\"never past at-intro\" boundary is broken. Requirement scales with task size ⇒ next phase: ratio × epoch resampling.",
 ], size=11, color=MUT)
+
+# 6c-6e — ratio family + baselines
+pic_slide("Ratio replay joins the same cost curve — no free lunch on the mean",
+          "mean final R² (23 tasks) vs TOTAL labels replayed per step; both families under the m150 recipe; "
+          "references: converged end-of-run joint retrain (0.584) and the best frozen-subset arm (0.600)",
+          AN / "ratio_cost_view.png")
+pic_slide("…but allocation decides who pays: fixed-count starves BIG tasks, ratio starves SMALL ones",
+          "deficit to the single-task ceiling vs fraction of a task's OWN labels replayed per step; "
+          "grey diamond = joint retrain at the end (full data, fraction 1.0) — worst in every group ⇒ "
+          "hybrid amount = max(floor, r·N) via replay.per_task",
+          AN / "ratio_deficit_by_size.png")
+pic_slide("Baseline family — collapse without replay; end-of-run rehearsal converges below every replay arm",
+          "left: share of learned tasks still beating a constant predictor (no replay: 4% by step 24, mean R² −33) · "
+          "right: joint retrain vs epoch cap — early-stops at 214, caps 250/300 identical (deterministic replicate)",
+          AN / "baseline_family.png")
 
 # 7 — variants table
 from pptx.enum.text import PP_ALIGN
@@ -213,16 +251,21 @@ title_bar(s, "Practical guidance & next steps")
 txt(s, 0.6, 1.4, 12.2, 5.4, [
     "Adopt now:",
     "· default pretrain.replay.resample = \"epoch\" — it never hurt at any n (worst case +0.022, no regression observed)",
-    "· with resampling, budget n≈200–500 + patience ≥24 replaces n≥1000 frozen replay at ~5–12× less replay data per epoch;",
-    "  the old \"n ≥ 1000\" threshold (measured under frozen subsets) is obsolete — re-anchor at n200–500 with full-epoch training",
+    "· replay DURING training is non-negotiable: skipping it and jointly retraining at the end converges 0.055–0.08 below",
+    "  every continual-replay arm — and hits big & small tasks hardest",
+    "· size replay as a hybrid: amount = max(floor ≈ 500–1000, r·N_task) with r ≈ 0.1–0.3, via replay.per_task overrides —",
+    "  fixes the fixed-count big-task deficit without the pure-ratio small-task starvation",
+    "",
+    "Cost note: ratio replay is wall-clock heavy — late steps at r=0.1 take ~3 h/step on H200 (kernel-regression replay",
+    "dominates); r=0.5 ran 22.5 h for 24 steps. The hybrid floor keeps most of the gain at a fraction of the cost.",
     "",
     "Next:",
     "· step-p24 control (4 runs, ism) to split \"train longer\" from \"resample coverage\" at large n",
     "· multi-seed (≥3) confirmation of the headline deltas before publishing numbers",
-    "· propagate to the task-scaling protocol: its replay branches (n1000/n1500) were sized under frozen-subset assumptions",
+    "· hybrid-rule validation run: max(500, 0.2·N) × epoch resampling vs n2500 and r0.3 at matched wall-clock",
     "",
-    "Data & reproduction: experiments/replay_epoch_sweep/ (README, worker/launch/sbatch scripts, analysis/*.py — all in git);",
-    "results mt_*.csv + figures + this deck under results/ & analysis/ (rsync policy, not in git); raw runs on ism & R-CCS + local mirror.",
+    "Data & reproduction: experiments/replay_epoch_sweep/ (README, worker/launch/sbatch/collect scripts, analysis/*.py — in git);",
+    "results mt_*.csv + joint_retrain_m*.json + figures + this deck under results/ & analysis/ (rsync policy, not in git).",
 ], size=13.5)
 
 OUT.parent.mkdir(exist_ok=True)

@@ -96,6 +96,18 @@ convergence evidence. The per-epoch val-loss curves (`logs/finetune/*/metrics.cs
 graphically. All baseline cases (arm A, arm B ×4 caps) are part of the final report/PPT
 comparison alongside the ratio and fixed-n arms.
 
+## Outcome — extension (2026-08-09)
+
+All 9 extension runs complete (ratio 0p10/0p20/0p30/0p50 + no-replay + joint retrain ×4 caps).
+On the mean, ratio joins the fixed-count plateau (0.639–0.653 — no free lunch at matched cost),
+but allocation is mirror-imaged: ratio 0.3/0.5 cuts the big-task deficit to ~0.025 (half the old
+"multi-task cost" was recoverable forgetting) while starving small tasks (r0.5: 0.085 vs 0.002 at
+n2500) ⇒ hybrid `amount = max(floor, r·N)` via `replay.per_task`. Baselines: no replay collapses
+to 4% task retention (mean R² −33/−88 by protocol); one full joint retrain at the end CONVERGES
+(early stop @214; caps 250≡300) at 0.584 — below every continual-replay arm. Upstream fix
+required and merged: PR #36 (interval>1 crash on learned kernel-regression heads). Full report:
+`results/REPORT_20260809.md` + `.pptx` (13 slides, builder shared with the 08-02 deck).
+
 ## Outcome (2026-08-02)
 
 Extension 2026-08-02: the m150 arm is being completed to all 7 n (n100/n200/n500 submitted on
