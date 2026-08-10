@@ -96,6 +96,21 @@ convergence evidence. The per-epoch val-loss curves (`logs/finetune/*/metrics.cs
 graphically. All baseline cases (arm A, arm B ×4 caps) are part of the final report/PPT
 comparison alongside the ratio and fixed-n arms.
 
+## Hybrid validation run (2026-08-09, R-CCS)
+
+The extension's punchline put to the test: `configs/hybrid_full24.toml` = global ratio 0.3 with
+a 1500-label per-task floor (`amount = max(1500, 0.3·N)` — big tasks 30%, mid tasks floored at
+35–48%, both small tasks 100%), m150 recipe baked in; ~68k labels/step. Two deliverables:
+
+1. **hybrid replay alone** — `hybrid_h200.sbatch` → `artifacts/replay_sweep_hybrid/hybrid_r03_f1500/`
+2. **hybrid + one full-data joint retrain** — `hybrid_joint_h200.sbatch` (cap 250, patience 24,
+   same mechanism as baseline B) → `artifacts/replay_sweep_hybrid/joint_retrain/`
+
+Predictions to check: (1) ≈ plateau on the mean but big-task deficit ≤0.025 AND small-task
+deficit ≤0.01 simultaneously — the first arm to win every size group; (2) tests whether a
+final consolidation ADDS anything on top of healthy continual replay, completing the 2×2
+(replay × end-retrain) design that the baseline family opened.
+
 ## Outcome — extension (2026-08-09)
 
 All 9 extension runs complete (ratio 0p10/0p20/0p30/0p50 + no-replay + joint retrain ×4 caps).
