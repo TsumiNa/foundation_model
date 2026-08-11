@@ -182,8 +182,62 @@ pic_slide("Baseline family — collapse without replay; end-of-run rehearsal con
           "right: joint retrain vs epoch cap — early-stops at 214, caps 250/300 identical (deterministic replicate)",
           AN / "baseline_family.png")
 
-# 7 — variants table
+# 6f — hybrid validation (the 2×2 closes)
 from pptx.enum.text import PP_ALIGN
+
+s = prs.slides.add_slide(BLANK)
+title_bar(s, "Validation — the hybrid rule works; consolidation closes the 2×2",
+          "hybrid = max(1500 labels, 0.3·N) per old task, m150 recipe (~68k labels/step, 21.6 h) · "
+          "then ONE full-data joint retrain (cap 250, patience 24)")
+VHEAD = ("arm", "mean R²", "big deficit", "mid deficit", "small deficit")
+VROWS = [
+    ("hybrid replay", "0.652", "0.031", "0.012", "0.008"),
+    ("hybrid + joint retrain", "0.658", "0.022", "0.005", "0.016"),
+    ("best pure ratio (r0.3)", "0.652", "0.025", "0.008", "0.046"),
+    ("best pure fixed (n2500)", "0.663", "0.044", "−0.007", "0.002"),
+    ("no replay + joint retrain", "0.584", "0.112", "0.061", "0.146"),
+]
+INKCLR = RGBColor(0x1F, 0x29, 0x37)
+vt = s.shapes.add_table(len(VROWS) + 1, 5, Inches(0.7), Inches(1.7), Inches(7.6), Inches(3.2)).table
+for c, name in enumerate(VHEAD):
+    cell = vt.cell(0, c)
+    cell.text = name
+    cell.fill.solid()
+    cell.fill.fore_color.rgb = RGBColor(0x4B, 0x55, 0x63)
+    p = cell.text_frame.paragraphs[0]
+    p.alignment = PP_ALIGN.CENTER
+    p.font.size = Pt(12)
+    p.font.bold = True
+    p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+for r, row in enumerate(VROWS, start=1):
+    for c, val in enumerate(row):
+        cell = vt.cell(r, c)
+        cell.text = val
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = RGBColor(0xFD, 0xE6, 0x8A) if r == 2 else RGBColor(0xFF, 0xFF, 0xFF)
+        p = cell.text_frame.paragraphs[0]
+        p.alignment = PP_ALIGN.LEFT if c == 0 else PP_ALIGN.CENTER
+        p.font.size = Pt(12)
+        p.font.bold = (r == 2) or (c == 0)
+        p.font.color.rgb = INKCLR
+txt(s, 8.6, 1.7, 4.3, 5.0, [
+    "Hybrid replay alone:",
+    "first arm to hold EVERY size group ≤0.031 — the",
+    "minimax winner among all 12 replay settings",
+    "",
+    "+ joint retrain (result 2):",
+    "early-stops at 76 epochs (vs 214 from the collapsed",
+    "model) — replay already learned almost everything;",
+    "mean +0.006 (noise-level), but big-task deficit",
+    "0.031 → 0.022: best big-task value of ANY arm.",
+    "Small tasks give back a little (0.008 → 0.016).",
+    "",
+    "⇒ recipe: hybrid replay DURING training;",
+    "a ~1.5 h consolidation pass is optional polish,",
+    "not a rescue mechanism.",
+], size=12)
+
+# 7 — variants table
 
 s = prs.slides.add_slide(BLANK)
 title_bar(s, "Training-budget variants — patience 24 flattens n; epochs saturate near 100",

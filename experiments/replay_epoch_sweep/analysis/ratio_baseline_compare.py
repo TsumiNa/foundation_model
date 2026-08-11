@@ -173,6 +173,13 @@ for ax, (glabel, tasks) in zip(axes, GROUPS):
         ax.plot([1.0], [yj], marker="D", ms=7, color=MUTED, mec="white", zorder=3)
         ax.annotate("joint retrain\n@ end (full data)", (1.0, yj), textcoords="offset points",
                     xytext=(-4, 6), fontsize=7.5, color=MUTED, ha="right")
+    hyb = load_final(RES_E / "mt_hybrid_r03_f1500.csv")
+    if hyb:
+        fr = float(np.mean([min(max(1500, 0.3 * DEFICIT_TASKS[t]), DEFICIT_TASKS[t]) / DEFICIT_TASKS[t]
+                            for t in tasks]))
+        yh = float(np.mean([SINGLE[t] - hyb[t] for t in tasks if hyb.get(t) is not None]))
+        ax.plot([fr], [yh], marker="*", ms=15, color="#1f2937", mec="white", ls="none",
+                label="hybrid max(1500, 0.3·N)" if ax is axes[0] else None, zorder=4)
     ax.set_xscale("log")
     ax.set_xlim(2e-3, 1.6)
     ax.set_title(glabel, fontsize=11)
@@ -186,7 +193,7 @@ axes[0].annotate("at-intro level (green zone = ends above own introduction)",
                  (2.5e-3, axes[0].get_ylim()[1]), fontsize=8.5, color=MUTED, va="top",
                  xytext=(0, -2), textcoords="offset points")
 handles, labels = axes[0].get_legend_handles_labels()
-fig.legend(handles, labels, loc="upper center", ncol=2, frameon=False, fontsize=10, bbox_to_anchor=(0.5, 0.98))
+fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, fontsize=10, bbox_to_anchor=(0.5, 0.98))
 fig.suptitle("Who gets starved: fixed-count caps BIG tasks, ratio caps SMALL tasks", fontsize=13, y=1.04)
 fig.supxlabel("fraction of a task's own training labels replayed per step (log)", fontsize=11)
 fig.tight_layout(rect=(0, 0.02, 1, 0.95))
@@ -263,8 +270,21 @@ for c in caps:
     print(f"  joint m{c:<5} {y:.3f}  (epochs_run {joint[c]['epochs_run']})")
 print(f"  noreplay     {mean23({r['task']: fnum(r['primary']) for r in noreplay_rows if int(r['step']) == 24}):.3f}")
 
+hyb_final = load_final(RES_E / "mt_hybrid_r03_f1500.csv")
+if hyb_final:
+    print(f"  hybrid       {mean23(hyb_final):.3f}  (max(1500, 0.3N))")
+hj = RES_E / "hybrid_joint_retrain.json"
+if hj.exists():
+    hja = json.loads(hj.read_text())
+    m = float(np.mean([v["primary"] for t, v in hja["metrics_after"].items() if t != "material_type"]))
+    print(f"  hybrid+joint {m:.3f}  (epochs_run {hja['epochs_run']})")
+
 print("\ndeficit to single-task ceiling (group means)")
 hdr = [f"n{n}" for n in COUNTS if fixed[n]] + [f"r{r:g}" for r, _ in RATIOS if ratio[r]] + ["joint300"]
+if hyb_final:
+    hdr += ["hybrid"]
+if hj.exists():
+    hdr += ["hyb+jnt"]
 print(f"  {'group':16}" + "".join(f"{h:>9}" for h in hdr))
 for glabel, tasks in GROUPS:
     cells = []
@@ -276,4 +296,8 @@ for glabel, tasks in GROUPS:
             cells.append(float(np.mean([SINGLE[t] - ratio[r][t] for t in tasks])))
     if 300 in joint:
         cells.append(float(np.mean([SINGLE[t] - joint[300]["after"][t] for t in tasks])))
+    if hyb_final:
+        cells.append(float(np.mean([SINGLE[t] - hyb_final[t] for t in tasks])))
+    if hj.exists():
+        cells.append(float(np.mean([SINGLE[t] - hja["metrics_after"][t]["primary"] for t in tasks])))
     print(f"  {glabel.split(' —')[0]:16}" + "".join(f"{c:9.3f}" for c in cells))
