@@ -1,3 +1,5 @@
+*[English version](README.en.md)*
+
 # 逆向设计教学材料
 
 两节课的自包含教材，围绕**准晶（quasicrystal）合金的逆向设计**展开。
@@ -26,6 +28,7 @@ uv run jupyter lab                   # 打开 notebooks/teaching_inverse_design/
 ```
 teaching_inverse_design/
 ├── README.md                              ← 本文件
+├── README.en.md                           ← 英文版
 ├── data/
 │   └── qc_inverse_design_teaching.parquet ← 唯一的数据文件（585 KB，29 802 个成分）
 ├── prepare_data.py                        ← 上面那个 parquet 的来源存档（不需要跑）
