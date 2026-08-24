@@ -1,27 +1,27 @@
 # Copyright 2026 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Build the self-contained teaching dataset for `notebooks/teaching_inverse_design/`.
+"""Provenance record for `data/qc_inverse_design_teaching.parquet` — not part of the course.
 
-The teaching notebooks deliberately skip data wrangling: they open ONE parquet file and start
-modelling. This script is what produces that file from the four raw sources the research run
-used, and it is kept next to the notebooks so the provenance of every column is auditable.
+**Nothing in the course runs this file.** The parquet it produces is committed next to it, and
+that single parquet is the only data either notebook opens. This script exists so the origin of
+every column can be audited: it merges four raw property databases into one composition-keyed
+table, and each step below carries the reasoning behind it.
 
-Students do not need to run it — `data/qc_inverse_design_teaching.parquet` is committed.
+Running it requires the four upstream database files, which are NOT shipped with the course.
+The paths below are the ones used when the parquet was built; point them elsewhere if you want
+to rebuild the table from your own copies of the same databases.
 
-    uv run python notebooks/teaching_inverse_design/prepare_data.py
+Upstream databases and what each contributes
+--------------------------------------------
+QC/AC material set          -> material_type (5 fine labels merged to AC / QC / others),
+                               formation_energy
+NEMAD superconductor set    -> tc
+NEMAD magnetic set          -> magnetization
+phonix-db thermal set       -> klat
 
-Sources (paths relative to the repo root)
------------------------------------------
-qc              data/qc_ac_te_mp_dos_reformat_20250615_enforce_quaternary_test.pd.parquet
-                  -> material_type (5 fine labels merged to AC / QC / others), formation_energy
-superconductor  data/NEMAD_superconductor_20260425.parquet   -> tc
-magnetic        data/NEMAD_magnetic_20260419.parquet         -> magnetization
-phonix          data/phonix-db-filtered_20260425.parquet     -> klat
-
-Every source is keyed by the project's canonical composition string
-(`data.composition_sources.normalize_composition`) and outer-joined on that key, so one row =
-one composition and a missing property is simply NaN (the model masks those out per task).
+Every source is keyed by a canonical composition string and outer-joined on that key, so one row
+= one composition and a missing property is simply NaN (the model masks those out per task).
 """
 
 from __future__ import annotations
@@ -35,14 +35,17 @@ from loguru import logger
 
 from foundation_model.data.composition_sources import normalize_composition
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 OUT_PATH = Path(__file__).resolve().parent / "data" / "qc_inverse_design_teaching.parquet"
 
-QC_PATH = REPO_ROOT / "data/qc_ac_te_mp_dos_reformat_20250615_enforce_quaternary_test.pd.parquet"
-QC_PREPROCESSING = REPO_ROOT / "data/preprocessing_objects_20250615.pkl.z"
-SUPERCONDUCTOR_PATH = REPO_ROOT / "data/NEMAD_superconductor_20260425.parquet"
-MAGNETIC_PATH = REPO_ROOT / "data/NEMAD_magnetic_20260419.parquet"
-PHONIX_PATH = REPO_ROOT / "data/phonix-db-filtered_20260425.parquet"
+#: Where the four upstream databases were read from when the committed parquet was built.
+#: They are not shipped with the course — override this if you are rebuilding the table.
+SOURCE_DIR = Path(__file__).resolve().parents[2] / "data"
+
+QC_PATH = SOURCE_DIR / "qc_ac_te_mp_dos_reformat_20250615_enforce_quaternary_test.pd.parquet"
+QC_PREPROCESSING = SOURCE_DIR / "preprocessing_objects_20250615.pkl.z"
+SUPERCONDUCTOR_PATH = SOURCE_DIR / "NEMAD_superconductor_20260425.parquet"
+MAGNETIC_PATH = SOURCE_DIR / "NEMAD_magnetic_20260419.parquet"
+PHONIX_PATH = SOURCE_DIR / "phonix-db-filtered_20260425.parquet"
 
 #: The qc set has 48 631 "others" against 367 AC/QC rows. Keeping every minority row and
 #: sampling the majority down keeps the teaching file small and the class ratio workable

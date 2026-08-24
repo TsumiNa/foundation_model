@@ -1,12 +1,12 @@
 # 逆向设计教学材料
 
-两节课的自包含教材，围绕**准晶（quasicrystal）合金的逆向设计**展开，
-对应研究产物 `artifacts/inverse_design_run/.../inverse_design_max_elements`。
+两节课的自包含教材，围绕**准晶（quasicrystal）合金的逆向设计**展开。
+数据、模型、优化器全部在这个目录里跑通，不依赖任何外部产物。
 
 ## 怎么用
 
 ```bash
-uv sync --frozen --all-groups        # 在仓库根目录执行一次
+uv sync --frozen --all-groups        # 在项目根目录执行一次，装好依赖
 uv run jupyter lab                   # 打开 notebooks/teaching_inverse_design/
 ```
 
@@ -19,7 +19,7 @@ uv run jupyter lab                   # 打开 notebooks/teaching_inverse_design/
 
 **必须先跑 01**：它把训练好的模型写进 `outputs/`，02 从那里读。
 
-仓库里的 `.ipynb` **带着运行结果**，可以先当讲义读一遍，再自己动手跑。
+两个 `.ipynb` **带着运行结果**，可以先当讲义读一遍，再自己动手跑。
 
 ## 目录
 
@@ -28,7 +28,7 @@ teaching_inverse_design/
 ├── README.md                              ← 本文件
 ├── data/
 │   └── qc_inverse_design_teaching.parquet ← 唯一的数据文件（585 KB，29 802 个成分）
-├── prepare_data.py                        ← 上面那个 parquet 是怎么来的（学生不需要跑）
+├── prepare_data.py                        ← 上面那个 parquet 的来源存档（不需要跑）
 ├── 01_multitask_model.ipynb
 ├── 02_inverse_design.ipynb
 └── outputs/                               ← 01 生成、02 消费，已 gitignore
@@ -46,9 +46,10 @@ teaching_inverse_design/
 不是物理单位；`material_type` 是三分类标签（`0=AC`、`1=QC`、`2=others`）。
 大量单元格是 NaN——不同性质来自不同数据库，覆盖的成分不重叠，模型按任务做掩码处理。
 
-原始数据来自四个来源（QC/AC 材料库、NEMAD 超导、NEMAD 磁性、phonix-db 热导），
+这张表由四个性质数据库（QC/AC 材料库、超导、磁性、热导）合并而来，
 合并、规范化、标准化的全过程写在 `prepare_data.py` 里，有完整注释。
-**教学刻意跳过数据整理**，所以正常上课不需要碰这个脚本。
+那个脚本**只是来源存档**：上课不需要跑它，也不需要那四个上游数据库——
+课程要用的一切都在这个目录里。
 
 ## 这两节课教什么、不教什么
 
