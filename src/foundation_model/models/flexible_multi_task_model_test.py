@@ -799,6 +799,61 @@ def test_r2_metric_updates_respect_masks(model_config_mixed_tasks):
     assert torch.isclose(computed, torch.tensor(1.0))
 
 
+@pytest.mark.parametrize("stage", ["val", "test"])
+def test_r2_metric_uses_each_tasks_own_tensors(model_config_mixed_tasks, sample_batch_mixed_tasks, mocker, stage):
+    """Every task's R² must be fed that task's own predictions, not the last task's.
+
+    The two loops in ``validation_step`` / ``test_step`` are separate: losses are computed in the
+    first, R² updated in the second. Reading the first loop's tensors from the second scored every
+    task against whichever task iterated last — silently wrong when the shapes happened to agree
+    (``regr_task_1`` is (B, 1), ``regr_task_2`` is (B, 2)) and a hard ``RuntimeError`` from
+    torchmetrics when they did not (a classification head last).
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=config.shared_block_optimizer,
+    )
+    model.eval()
+    mocker.patch.object(model, "log_dict")
+    mocker.patch.object(model, "log")
+    spy = mocker.spy(model, "_update_r2_metric")
+
+    step = model.validation_step if stage == "val" else model.test_step
+    step(sample_batch_mixed_tasks, batch_idx=0)
+
+    seen = {call.kwargs["task_name"]: call.kwargs for call in spy.call_args_list}
+    batch_size = sample_batch_mixed_tasks[0].shape[0]
+    # Head output widths differ per task (dims[-1]), which is what pins the tensors to the task.
+    assert seen["regr_task_1"]["preds"].shape == (batch_size, 1)
+    assert seen["regr_task_2"]["preds"].shape == (batch_size, 2)
+    assert seen["clf_task_1"]["preds"].shape == (batch_size, 3)
+    for name, kwargs in seen.items():
+        expected = sample_batch_mixed_tasks[1][name]
+        assert torch.equal(kwargs["targets"], expected), f"{name} scored against another task's targets"
+
+
+def test_classification_task_last_does_not_break_r2(model_config_mixed_tasks, sample_batch_mixed_tasks, mocker):
+    """A classification head as the final task used to crash the R² update with a shape mismatch."""
+    config = model_config_mixed_tasks
+    reordered = [tc for tc in config.task_configs if tc.name != "clf_task_1"]
+    reordered.append(next(tc for tc in config.task_configs if tc.name == "clf_task_1"))
+    model = FlexibleMultiTaskModel(
+        task_configs=reordered,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=config.shared_block_optimizer,
+    )
+    model.eval()
+    mocker.patch.object(model, "log_dict")
+    mocker.patch.object(model, "log")
+
+    model.validation_step(sample_batch_mixed_tasks, batch_idx=0)  # used to raise RuntimeError
+
+    # Only the regression tasks own an R² metric; both must have been updated.
+    assert model._metrics_updated["val"] == {"regr_task_1", "regr_task_2"}
+
+
 # Helper for creating dummy dataframes
 def create_dummy_dataframe(num_samples, num_features, index_prefix="sample_"):
     data = np.random.rand(num_samples, num_features)

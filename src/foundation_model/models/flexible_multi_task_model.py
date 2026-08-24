@@ -1003,6 +1003,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             batch_valid_mask, batch_valid_list = valid_mask_info
 
         raw_val_supervised_losses = {}
+        val_metric_inputs: dict[str, tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]] = {}
         for name, pred_tensor in preds.items():
             head = self.task_heads[name]
 
@@ -1050,6 +1051,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 )
 
             raw_val_supervised_losses[name] = raw_loss_t
+            # Keep this task's own tensors: the R2 update below runs in a second loop, and
+            # reading the loop variables there would score every task against whichever task
+            # happened to be processed last.
+            val_metric_inputs[name] = (pred_tensor, target, sample_mask)
             val_sum_supervised_raw_loss += raw_loss_t.detach()
             val_logs[f"val_{name}_raw_loss"] = raw_loss_t.detach()
             val_logs[f"val_{name}_all_missing"] = torch.tensor(0.0, device=x.device)
@@ -1074,12 +1079,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 val_logs[f"val_{name}_final_loss_contrib"] = final_task_loss_component.detach()
             val_logs[f"val_{name}_static_weight"] = torch.tensor(static_weight, device=x.device)
 
+            metric_preds, metric_targets, metric_mask = val_metric_inputs[name]
             self._update_r2_metric(
                 stage="val",
                 task_name=name,
-                preds=pred_tensor,
-                targets=target,
-                sample_mask=sample_mask,
+                preds=metric_preds,
+                targets=metric_targets,
+                sample_mask=metric_mask,
             )
 
         val_logs["val_final_supervised_loss"] = val_supervised_loss_contribution.detach()
@@ -1123,6 +1129,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             batch_valid_mask, batch_valid_list = valid_mask_info
 
         raw_test_supervised_losses = {}
+        test_metric_inputs: dict[str, tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]] = {}
         for name, pred_tensor in preds.items():
             head = self.task_heads[name]
 
@@ -1170,6 +1177,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 )
 
             raw_test_supervised_losses[name] = raw_loss_t
+            # Keep this task's own tensors: the R2 update below runs in a second loop, and
+            # reading the loop variables there would score every task against whichever task
+            # happened to be processed last.
+            test_metric_inputs[name] = (pred_tensor, target, sample_mask)
             test_sum_supervised_raw_loss += raw_loss_t.detach()
             test_logs[f"test_{name}_raw_loss"] = raw_loss_t.detach()
             test_logs[f"test_{name}_all_missing"] = torch.tensor(0.0, device=x.device)
@@ -1194,12 +1205,13 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 test_logs[f"test_{name}_final_loss_contrib"] = final_task_loss_component.detach()
             test_logs[f"test_{name}_static_weight"] = torch.tensor(static_weight, device=x.device)
 
+            metric_preds, metric_targets, metric_mask = test_metric_inputs[name]
             self._update_r2_metric(
                 stage="test",
                 task_name=name,
-                preds=pred_tensor,
-                targets=target,
-                sample_mask=sample_mask,
+                preds=metric_preds,
+                targets=metric_targets,
+                sample_mask=metric_mask,
             )
 
         test_logs["test_final_supervised_loss"] = test_supervised_loss_contribution.detach()
