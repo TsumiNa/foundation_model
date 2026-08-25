@@ -43,12 +43,24 @@ BASE = {
 # REPORT_20260809 size group (formation_energy 23180 / tc 7207 / magnetization 1160). The task
 # sequence lives in that config, so stage-A grid points override architecture only.
 ENC_TASKS = ["formation_energy", "tc", "magnetization"]
-# Stage B keeps the same shape: each head family is probed by a multi-task sequence carried by
-# its own config, so a grid point is ONE run and the ranking averages over that probe's tasks.
-#   B-reg  -> configs/probe3.toml     (the stage-A probe, three plain regression tasks)
-#   B-kr   -> configs/probe3_kr.toml  (seebeck / dos_density / zt)
-#   B-clf  -> configs/single_task.toml with material_type (the only classification task)
-CLF_TASK = "material_type"
+
+# Stage B tunes EVERY task's own head independently: one single-task probe per (task, head
+# config), ranked within that task. Winners are expressible verbatim in the final config because
+# TaskSpec carries per-task `hidden_dims` / `x_hidden_dims` / `t_hidden_dims` / `n_kernel` / `lr`.
+#
+# Known and accepted limitation: a head tuned in isolation is not guaranteed to be the best head
+# under 24-task continual training. Stage C measures the combination end-to-end, which is where
+# that assumption is actually tested.
+REG_TASKS = [
+    "density", "efermi", "final_energy", "total_magnetization", "volume",
+    "dielectric_total", "dielectric_ionic", "dielectric_electronic", "formation_energy",
+    "magnetization", "curie", "neel", "magnetic_moment", "tc", "kp", "klat",
+]  # fmt: skip
+KR_TASKS = [
+    "magnetic_susceptibility", "zt", "power_factor", "thermal_conductivity",
+    "electrical_resistivity", "dos_density", "seebeck",
+]  # fmt: skip
+CLF_TASKS = ["material_type"]
 
 
 def fmt(value) -> str:
@@ -185,86 +197,66 @@ def stage_a6(winner: str, batch_size: int) -> list[tuple[str, str]]:
     return rows
 
 
-# --- stage B: task heads (encoder frozen at the stage-A winner) ------------------------------
+# --- stage B: task heads, one grid per task (encoder pinned to the stage-A winner) ---
 
-HEAD_HIDDEN = [[64], [128, 64], [256, 128], [256, 128, 64], [512, 256, 128]]
-HEAD_LRS = [5e-4, 1e-3, 2e-3, 5e-3, 1e-2]
-KR_N_KERNEL = [15, 32, 64, 128]
+HEAD_HIDDEN = [[64], [128, 64], [256, 128], [256, 128, 64]]
+HEAD_LRS = [1e-3, 2e-3, 5e-3, 1e-2]
+KR_N_KERNEL = [15, 32, 64]
 KR_X_HIDDEN = [[128, 64], [256, 128, 64]]
-KR_LRS = [2e-4, 5e-4, 1e-3, 2e-3]
-KR_T_HIDDEN = [[16, 8], [32, 16], [64, 32, 16]]
-KR_WD = [5e-5, 5e-4]
-CLF_HIDDEN = [[64], [128, 64], [256, 128], [256, 128, 64]]
-CLF_LRS = [5e-4, 1e-3, 2e-3, 5e-3, 1e-2]
+KR_LRS = [5e-4, 1e-3, 2e-3]
 
 
 def stage_b_reg(enc: dict) -> list[tuple[str, str]]:
-    """Regression head, on configs/probe3.toml (same probe as stage A)."""
+    """16 regression tasks x 16 head configs. Head LR is set per task so the winner transfers
+    as a `[[tasks]].lr` override rather than as a global `[training].head_lr`."""
     rows = []
-    for hidden in HEAD_HIDDEN:
-        for lr in HEAD_LRS:
-            runid = f"breg_H{tag(hidden)}_L{tag(lr)}"
-            ov = overrides(**enc, model__head_hidden_dims=hidden, training__head_lr=lr)
-            rows.append((runid, ov))
-    return rows
-
-
-def stage_b_kr(enc: dict) -> list[tuple[str, str]]:
-    """Kernel-regression head, on configs/probe3_kr.toml."""
-    rows = []
-    for n_kernel in KR_N_KERNEL:
-        for x_hidden in KR_X_HIDDEN:
-            for lr in KR_LRS:
-                runid = f"bkr_K{n_kernel}_X{tag(x_hidden)}_L{tag(lr)}"
-                ov = overrides(
-                    **enc,
-                    model__n_kernel=n_kernel,
-                    model__kr_x_hidden_dims=x_hidden,
-                    training__kr_lr=lr,
+    for task in REG_TASKS:
+        for hidden in HEAD_HIDDEN:
+            for lr in HEAD_LRS:
+                runid = f"breg_H{tag(hidden)}_L{tag(lr)}_{task}"
+                ov = task_override(task) + " " + overrides(
+                    **enc, model__head_hidden_dims=hidden, training__head_lr=lr
                 )
                 rows.append((runid, ov))
     return rows
 
 
-def stage_b_kr2(enc: dict, n_kernel: int, x_hidden: list[int], kr_lr: float) -> list[tuple[str, str]]:
-    """Coordinate-branch width and weight decay, conditioned on the stage-B-KR winner."""
+def stage_b_kr(enc: dict) -> list[tuple[str, str]]:
+    """7 kernel-regression tasks x 18 head configs (n_kernel x value-branch width x LR)."""
     rows = []
-    for t_hidden in KR_T_HIDDEN:
-        for wd in KR_WD:
-            if t_hidden == BASE["model.kr_t_hidden_dims"] and wd == BASE["training.kr_weight_decay"]:
-                continue  # identical to the stage-B-KR winner, already measured
-            runid = f"bkr2_T{tag(t_hidden)}_W{tag(wd)}"
-            ov = overrides(
-                **enc,
-                model__n_kernel=n_kernel,
-                model__kr_x_hidden_dims=x_hidden,
-                model__kr_t_hidden_dims=t_hidden,
-                training__kr_lr=kr_lr,
-                training__kr_weight_decay=wd,
-            )
-            rows.append((runid, ov))
+    for task in KR_TASKS:
+        for n_kernel in KR_N_KERNEL:
+            for x_hidden in KR_X_HIDDEN:
+                for lr in KR_LRS:
+                    runid = f"bkr_K{n_kernel}_X{tag(x_hidden)}_L{tag(lr)}_{task}"
+                    ov = task_override(task) + " " + overrides(
+                        **enc,
+                        model__n_kernel=n_kernel,
+                        model__kr_x_hidden_dims=x_hidden,
+                        training__kr_lr=lr,
+                    )
+                    rows.append((runid, ov))
     return rows
 
 
 def stage_b_clf(enc: dict) -> list[tuple[str, str]]:
-    """material_type. Its head LR is set per task (``[[tasks]].lr``) because [training].head_lr
-    is shared with every regression head and stage B tunes them independently."""
+    """material_type, the only classification task. Ranked on macro_f1: the measured single-task
+    probe hit accuracy 0.989 with macro-F1 0.551, so accuracy has no resolution here."""
     rows = []
-    for hidden in CLF_HIDDEN:
-        for lr in CLF_LRS:
-            runid = f"bclf_H{tag(hidden)}_L{tag(lr)}"
-            ov = task_override(CLF_TASK) + " " + overrides(
-                **enc,
-                model__head_hidden_dims=hidden,
-                training__head_lr=lr,
-            )
-            rows.append((runid, ov))
+    for task in CLF_TASKS:
+        for hidden in HEAD_HIDDEN:
+            for lr in HEAD_LRS:
+                runid = f"bclf_H{tag(hidden)}_L{tag(lr)}_{task}"
+                ov = task_override(task) + " " + overrides(
+                    **enc, model__head_hidden_dims=hidden, training__head_lr=lr
+                )
+                rows.append((runid, ov))
     return rows
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("stage", choices=["a1", "a2", "a3", "a4", "a6", "breg", "bkr", "bkr2", "bclf"])
+    ap.add_argument("stage", choices=["a1", "a2", "a3", "a4", "a6", "breg", "bkr", "bclf"])
     ap.add_argument("--winner", help="stage-A1 runid of the winning encoder (a1_L..._H..._E...)")
     ap.add_argument("--winners", nargs="+", help="stage-A1 short list (a2 / a5)")
     ap.add_argument("--batch-size", type=int, default=BASE["data.batch_size"])
@@ -296,8 +288,6 @@ def main() -> None:
         write("breg", stage_b_reg(enc_settings()))
     elif args.stage == "bkr":
         write("bkr", stage_b_kr(enc_settings()))
-    elif args.stage == "bkr2":
-        write("bkr2", stage_b_kr2(enc_settings(), args.n_kernel, args.kr_x_hidden, args.kr_lr))
     elif args.stage == "bclf":
         write("bclf", stage_b_clf(enc_settings()))
 

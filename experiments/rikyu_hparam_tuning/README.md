@@ -10,7 +10,7 @@ is the best backbone + head configuration to freeze as the base of every future 
 | Stage | What is tuned | Probe | Held fixed |
 |---|---|---|---|
 | **A** | encoder / shared trunk + its optimiser | 3-task sequence, one per size group | heads at baseline |
-| **B** | one grid per head family (regression · kernel-regression · classification) | one multi-task probe per family | encoder = stage-A winner |
+| **B** | every task's own head, independently | single-task probe, one per task | encoder = stage-A winner |
 | **C** | nothing — final 24-task run with hybrid replay + end-of-run consolidation | full sequence | everything from A+B |
 
 Stage C runs **two arms that differ only in the tuned knobs** (tuned vs. untuned baseline), so
@@ -70,33 +70,42 @@ the **mean relative MAE improvement over the untuned baseline run of the same pr
 per-task R² deltas reported alongside. A config is only preferred when its margin exceeds the
 seed-to-seed spread measured in A4.
 
-## Stage B — task heads
+## Stage B — task heads, one grid per task
 
-Encoder pinned to the stage-A winner. Each head family keeps stage A's shape: its own multi-task
-probe config, one run per grid point, ranked on the mean over that probe's tasks.
+Encoder pinned to the stage-A winner; each of the 24 tasks then gets its **own** head grid,
+ranked within that task. This is directly expressible in the final config: `TaskSpec` already
+carries per-task `hidden_dims` / `x_hidden_dims` / `t_hidden_dims` / `n_kernel` / `lr`, and a
+task's own value wins over the `[model]` / `[training]` defaults
+(`TaskCatalog.build_task_config`), so a winner transfers verbatim.
 
-| Sub-stage | Probe | Grid | Runs |
+| Sub-stage | Tasks | Grid per task | Runs |
 |---|---|---|---|
-| **B-reg** | [`probe3.toml`](configs/probe3.toml) (as stage A) | `head_hidden_dims` {[64],[128,64],[256,128],[256,128,64],[512,256,128]} × `head_lr` {5e-4,1e-3,2e-3,5e-3,1e-2} | 25 |
-| **B-kr** | [`probe3_kr.toml`](configs/probe3_kr.toml) | `n_kernel` {15,32,64,128} × `kr_x_hidden_dims` {[128,64],[256,128,64]} × `kr_lr` {2e-4,5e-4,1e-3,2e-3} | 32 |
-| **B-kr2** | same | conditioned on the B-kr winner: `kr_t_hidden_dims` {[16,8],[32,16],[64,32,16]} × `kr_weight_decay` {5e-5,5e-4} | 5 |
-| **B-clf** | `single_task.toml` + `material_type` | `head_hidden_dims` {[64],[128,64],[256,128],[256,128,64]} × head LR {5e-4,1e-3,2e-3,5e-3,1e-2} | 20 |
+| **B-reg** | 16 regression | `head_hidden_dims` {[64],[128,64],[256,128],[256,128,64]} × head LR {1e-3,2e-3,5e-3,1e-2} | 256 |
+| **B-kr** | 7 kernel-regression | `n_kernel` {15,32,64} × `kr_x_hidden_dims` {[128,64],[256,128,64]} × `kr_lr` {5e-4,1e-3,2e-3} | 126 |
+| **B-clf** | 1 classification | `head_hidden_dims` {[64],[128,64],[256,128],[256,128,64]} × head LR {1e-3,2e-3,5e-3,1e-2} | 16 |
 
-The kernel-regression probe spans a different axis than stage A's, and deliberately: **every** KR
-task in the catalog sits in the mid band (3.4k–8.1k labels), so there is no big/small axis to
-span. What varies instead is the meaning of the `t` coordinate the kernel is fitted over —
-`seebeck` (8,072, temperature), `dos_density` (7,009, DOS energy), `zt` (3,445, temperature).
+**Stated limitation, accepted by design.** A head tuned on its task alone is not guaranteed to be
+the best head under 24-task continual training. The campaign takes this trade deliberately: it
+buys a real, per-task tuning step at a cost that fits the schedule, and stage C is where the
+combination is actually measured end-to-end against the untuned control.
 
-Two code facts shape this stage:
+### Which metric ranks which task
 
-- **`[training].head_lr` is shared by regression and classification heads.** A per-task
-  `[[tasks]].lr` override exists and wins over it (`TaskCatalog.build_task_config`), so B-clf can
-  be tuned independently — but the adopted value must be written into the final config as a
-  per-task override, which is what [`scripts/make_tuned_config.py`](scripts/make_tuned_config.py)
-  `--task-lr` is for (`--set` cannot address `[[tasks]]` array entries).
-- **`material_type` is ranked on `macro_f1`, not accuracy.** The measured single-task probe hit
-  accuracy 0.989 with macro-F1 **0.551** — the head is near-perfect on the dominant class and
-  poor on the minority ones, so accuracy has no resolution while macro-F1 has a lot of headroom.
+The 24 tasks do not share a regime, so
+[`analysis/pick_heads.py`](analysis/pick_heads.py) picks per task and prints the rule it used:
+
+- **classification** → `macro_f1`. The measured `material_type` probe hit accuracy 0.989 with
+  macro-F1 **0.551** — near-perfect on the dominant class, poor on the minority ones, so accuracy
+  carries no signal while macro-F1 has headroom.
+- **regression / kernel-regression** → `r2`, unless that task's R² spread across its whole grid
+  is below 0.005, i.e. saturated (`formation_energy` 0.995, `density` 0.988) or degenerate
+  (`magnetic_susceptibility`, 58 labels). Those fall back to **`mae`**, which still resolves —
+  the two measured encoder probes differ by 0.001 in R² and 13% in MAE.
+
+Winners are emitted as JSON and written into the stage-C config by
+[`scripts/make_tuned_config.py --task-overrides`](scripts/make_tuned_config.py); keys that equal
+the untuned default are dropped, so the generated config's header diff shows only what tuning
+actually changed.
 
 ## Stage C — final model, two arms
 
@@ -107,9 +116,10 @@ full-data joint retrain (consolidation).
 | Arm | Pretrain | Consolidate |
 |---|---|---|
 | **C-base** (control) | [`configs/final_hybrid.toml`](configs/final_hybrid.toml) as-is | [`configs/final_consolidate.toml`](configs/final_consolidate.toml) |
-| **C-tuned** | same file + stage A/B winners via `--set` | same file + the same `--set` |
+| **C-tuned** | `final_hybrid_tuned.toml`, generated from the control's own file | `final_consolidate_tuned.toml`, likewise |
 
-One file per role for both arms, so the two arms provably differ only in the tuned knobs.
+The tuned arm's config is *generated by patching the control's file*, not authored separately, so
+every untouched line is byte-identical and the generated header lists exactly which keys differ.
 The published H200 numbers (`mt_hybrid_r03_f1500.csv`, mean R² 0.652 → 0.658 after
 consolidation) are a *reference*, not the control: C-base re-establishes the baseline on RIKYU
 hardware with the same container, removing the hardware/version confound from the headline delta.
