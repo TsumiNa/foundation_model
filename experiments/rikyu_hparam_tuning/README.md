@@ -112,6 +112,22 @@ task's own value wins over the `[model]` / `[training]` defaults
 | **B-kr** | 7 kernel-regression | `n_kernel` {15,32,64} × `kr_x_hidden_dims` {[128,64],[256,128,64]} × `kr_lr` {5e-4,1e-3,2e-3} | 126 |
 | **B-clf** | 1 classification | `head_hidden_dims` {[64],[128,64],[256,128],[256,128,64]} × head LR {1e-3,2e-3,5e-3,1e-2} | 16 |
 
+### B4 — confirming each per-task pick against its own seed band
+
+Stage B ranks each task on a single seed, and stage A measured what that is worth: its leader
+scored +23.9% at seed 2025 and +15.9%/+15.5% at 2026/2027, against a seed band of 8.5% relative.
+Several stage-B per-task gains are 1–2%, which without a band cannot be told apart from seed luck.
+
+**B4** re-runs every task's winner *and* its untuned baseline at seeds 2026 and 2027 (96 runs,
+~17 GPU-h). The rule, fixed before B4 was read and identical in principle to stage A's:
+
+> A task keeps its tuned head only if (mean winner − mean baseline) exceeds that task's own seed
+> band; otherwise it reverts to the untuned default.
+
+Stage A preferred the simplest configuration among ties for the same reason — do not pay for what
+you cannot measure. Stage C deploys the **confirmed** set; the raw point-estimate set is kept and
+reported alongside so the deck can state how much of the grid's output survived.
+
 **Stated limitation, accepted by design.** A head tuned on its task alone is not guaranteed to be
 the best head under 24-task continual training. The campaign takes this trade deliberately: it
 buys a real, per-task tuning step at a cost that fits the schedule, and stage C is where the
