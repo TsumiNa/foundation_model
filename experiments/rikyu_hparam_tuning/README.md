@@ -77,6 +77,19 @@ comparison, because stage C spends exactly the same budget, so the deployment bu
 one to rank under; but it is *not* a statement about which encoder would win given unlimited
 epochs, and the report says so.
 
+### The adoption rule
+
+Ranking produces an order; adopting needs a rule, fixed before A4 is read so the noise band cannot
+be reinterpreted after the fact:
+
+> **Adopt the cheapest configuration whose score is within the A4 seed band of the best score.**
+
+Two reasons this is the right rule here rather than "take the argmax". A1 found a *plateau*, not a
+peak — at `encoder_lr` 1e-3 every cell is positive and the whole `latent_dim` 384 row sits at
++15…+21%, so the argmax cell is not meaningfully separated from a dozen others. And the encoder
+chosen here is paid for 24 times over: it is the backbone of all 398 stage-B runs and of both
+stage-C arms, so a deep encoder that ties a shallow one on quality loses on cost.
+
 ### Scoring
 
 Per-task MAE lives on different scales across the three tasks, so absolute deltas cannot be
