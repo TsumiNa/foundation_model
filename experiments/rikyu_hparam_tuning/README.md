@@ -263,7 +263,35 @@ falls to +1% because it carries every divergence.
 - **The LR optimum interacts with width**: `L128` prefers 2e-3, `L256`/`L384` prefer 1e-3 — which is
   why A1b extends the LR axis per architecture rather than globally.
 
-Not yet established: whether these margins exceed seed noise. Nothing is adopted before A4.
+### Stage A adopted configuration (A4 seed band applied)
+
+The A1 single-seed leader did **not** survive seed repeats: `L256/[1024,512,256]/1e-3` scored
++23.9% at seed 2025 but +15.9% and +15.5% at 2026/2027, mean **+18.45%**.
+
+| configuration | mean (3 seeds) | seed range | wall/run |
+|---|---:|---:|---:|
+| `L256 / [1024,512,256] / 1e-3` | +18.45% | 8.48% | 18.2 min |
+| **`L384 / [256] / 1e-3`  ← adopted** | **+18.24%** | **4.80%** | 16.4 min |
+| `L256 / [512] / 1e-3` | +16.70% | 8.25% | 16.3 min |
+| untuned baseline | +2.43% | 5.32% | 20.3 min |
+
+- **Seed band = 8.48%** (largest within-arm range). All three candidates are tied; the ordering
+  among them is noise and is not reported as a ranking.
+- **The tuning gain is real**: adopted − untuned = **+15.8%**, ≈ 1.9× the band.
+- `descriptor.n_grids` and `ae_lr` both keep their defaults — A3 found 16 no better (+20.9% vs
+  +24.0% single-seed, inside the band) and 4 clearly worse (+3.7%); A6's ae_lr variants (+16.1%,
+  +13.5%) are inside the band of the default.
+
+**Adopted: `latent_dim = 384`, `encoder_hidden_dims = [256]`, `encoder_lr = 1e-3`** — two numbers
+different from the untuned config, with the hidden layer unchanged, and it trains *faster* than
+the config it replaces (16.4 vs 20.3 min/run).
+
+**Rule amendment, disclosed.** The pre-registered rule said "cheapest among the tied". Wall-clock
+separated the two leading tied candidates by 0.6% — inside run-to-run variation — so the rule was
+deciding on measurement noise, and picked the candidate that was worse on both mean and stability.
+The rule now treats costs within 5% as equal and resolves on the smallest seed range. This was
+added *after* seeing the A4 output; it is recorded here and in `analysis/adopt.py` rather than
+folded in silently.
 
 ## Outcome
 

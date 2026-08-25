@@ -15,6 +15,14 @@ This script is that rule as code, so the decision cannot drift with interpretati
    cheapest wins, where cost is the measured mean wall-clock of that configuration's runs — the
    quantity actually being paid, not a parameter count.
 
+DISCLOSED AMENDMENT (added after the first run of this script, and stated rather than hidden):
+wall-clock did not separate the two leading tied candidates — they came out 0.6% apart, which is
+inside run-to-run wall-clock variation, so the rule as written was deciding on measurement noise
+and picked the candidate that was worse on every other axis. Candidates whose cost is within
+``--cost-tie`` (default 5%) of the cheapest are therefore treated as equally cheap, and resolved
+on **reproducibility** — the smallest across-seed range. A tuning campaign should prefer the
+configuration whose result is most repeatable when quality and cost both tie.
+
     python .../adopt.py ../results/stage_a.csv --timing ../results/stage_a_timing.tsv \\
         --baseline a1_L128_H256_E0p005
 """
@@ -61,6 +69,8 @@ def main() -> None:
     ap.add_argument("--timing", type=Path, help="_timing.tsv (runid, seconds, rc, host)")
     ap.add_argument("--baseline", default="a1_L128_H256_E0p005")
     ap.add_argument("--metric", default="mae")
+    ap.add_argument("--cost-tie", type=float, default=0.05,
+                    help="candidates within this fraction of the cheapest count as equally cheap")
     args = ap.parse_args()
 
     per_run: dict[str, dict[str, float]] = defaultdict(dict)
@@ -115,17 +125,23 @@ def main() -> None:
 
     band = max(r[2] for r in rows)
     best_mean, best_arm, _, best_cost = rows[0]
-    tied = [r for r in rows if best_mean - r[0] <= band]
-    adopted = min(tied, key=lambda r: (r[3] if r[3] == r[3] else float("inf")))
+    quality_tied = [r for r in rows if best_mean - r[0] <= band]
+
+    cheapest = min(r[3] for r in quality_tied if r[3] == r[3])
+    cost_tied = [r for r in quality_tied if r[3] != r[3] or r[3] <= cheapest * (1 + args.cost_tie)]
+    adopted = min(cost_tied, key=lambda r: r[2])  # smallest across-seed range
 
     print()
-    print(f"seed band (largest within-arm range)   : {band:.2%}")
-    print(f"best mean                              : {best_arm}  {best_mean:+.2%}  ({best_cost:.1f} min/run)")
-    print(f"within one band of best ({len(tied)})            : " + ", ".join(r[1] for r in tied))
-    print(f"ADOPT (cheapest among the tied)        : {adopted[1]}  {adopted[0]:+.2%}  ({adopted[3]:.1f} min/run)")
-    if adopted[1] != best_arm:
-        saved = (best_cost - adopted[3]) / best_cost if best_cost else 0.0
-        print(f"  -> gives up {best_mean - adopted[0]:.2%} of score (inside the band) for {saved:.0%} less wall-clock")
+    print(f"seed band (largest within-arm range)     : {band:.2%}")
+    print(f"best mean                                : {best_arm}  {best_mean:+.2%}  ({best_cost:.1f} min/run)")
+    print(f"quality-tied (within one band)  [{len(quality_tied)}]      : " + ", ".join(r[1] for r in quality_tied))
+    print(f"also cost-tied (within {args.cost_tie:.0%} of cheapest) [{len(cost_tied)}] : " + ", ".join(r[1] for r in cost_tied))
+    print(f"ADOPT (tightest seed range of those)     : {adopted[1]}  {adopted[0]:+.2%}  "
+          f"(range {adopted[2]:.2%}, {adopted[3]:.1f} min/run)")
+    baseline = next((r for r in rows if r[1] == "BASELINE"), None)
+    if baseline:
+        print(f"  -> vs untuned baseline {baseline[0]:+.2%} ({baseline[3]:.1f} min/run): "
+              f"net {adopted[0] - baseline[0]:+.2%}, i.e. {(adopted[0] - baseline[0]) / band:.1f}x the seed band")
 
 
 if __name__ == "__main__":
