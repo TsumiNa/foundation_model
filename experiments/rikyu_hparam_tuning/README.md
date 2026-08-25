@@ -9,8 +9,8 @@ is the best backbone + head configuration to freeze as the base of every future 
 
 | Stage | What is tuned | Probe | Held fixed |
 |---|---|---|---|
-| **A** | encoder / shared trunk + its optimiser | single-task `formation_energy` | heads at baseline |
-| **B** | one grid per head family (regression · kernel-regression · classification) | single-task, per family | encoder = stage-A winner |
+| **A** | encoder / shared trunk + its optimiser | 3-task sequence, one per size group | heads at baseline |
+| **B** | one grid per head family (regression · kernel-regression · classification) | one multi-task probe per family | encoder = stage-A winner |
 | **C** | nothing — final 24-task run with hybrid replay + end-of-run consolidation | full sequence | everything from A+B |
 
 Stage C runs **two arms that differ only in the tuned knobs** (tuned vs. untuned baseline), so
@@ -21,69 +21,82 @@ container, the same seed and the same replay recipe.
 
 ## Stage A — encoder / shared trunk
 
-Probe: `fm pretrain` with `pretrain.task_sequence = ["formation_energy"]` (a length-1 sequence,
-so no replay is involved). Config: [`configs/single_task.toml`](configs/single_task.toml) — the
-same 24-task catalog, split seed and data handling as the final run, so a winner transfers
-verbatim.
+Probe: [`configs/probe3.toml`](configs/probe3.toml) — a **3-task replay sequence**, one task per
+REPORT_20260809 size group (that report reports deficit per group because replay and capacity
+requirements differ with task size):
+
+| group | task | N | single-task ceiling R² | dataset |
+|---|---|---:|---:|---|
+| big ≥20k | `formation_energy` | 23,180 | 0.995 | qc |
+| mid 3k–8.1k | `tc` | 7,207 | 0.799 | superconductor |
+| small ≤1.2k | `magnetization` | 1,160 | 0.746 | magnetic |
+
+**Why a sequence and not three single-task runs.** The encoder is shared, so the thing being
+tuned only exists under multi-task pressure. The probe therefore uses the *final* recipe —
+`resample = "epoch"`, `amount = max(1500, 0.3·N_t)`, patience 24, `max_epochs 150`, tasks
+introduced in descending size — making it a miniature of stage C. An encoder that wins here wins
+in the regime it will actually serve. All three probe tasks are plain regression by design: the
+kernel-regression and classification heads are stage B's subject, and including them here would
+confound head capacity with encoder capacity.
 
 | Sub-stage | Grid | Runs |
 |---|---|---|
-| **A1** | `latent_dim` {64, 128, 256} × `encoder_hidden_dims` {[256], [512,256], [1024,512,256]} × `encoder_lr` {1e-3, 5e-3} | 18 |
-| **A2** | A1 short list (top 3) × `batch_size` {512, 1024} | 6 |
+| **A1** | `latent_dim` {64,128,256,384} × `encoder_hidden_dims` {[256],[512],[512,256],[1024,512],[1024,512,256]} × `encoder_lr` {1e-3,2e-3,5e-3,1e-2} | 80 |
+| **A2** | A1 short list × `batch_size` {512, 1024} | 2·k |
 | **A3** | winner × `descriptor.n_grids` {4, 16} | 2 |
-| **A4** | winner and untuned baseline × seeds {2026, 2027} — the noise band | 4 |
-| **A5** | short list × {`volume`, `final_energy`} + baseline control — does the choice transfer? | 8 |
+| **A6** | winner × `ae_lr` {1e-3, 1e-2} — the AE head's gradients reach the shared trunk | 2 |
+| **A4** | short list **and** the untuned baseline × seeds {2026, 2027} — the noise band | 2·(k+1) |
 
-### The measurement problem, stated up front
+### Why the probe changed, with the measurement that forced it
 
-`formation_energy`'s single-task ceiling is **R² = 0.995** (from
-`experiments/rikyu_replay_sweep/results/warm_restart.csv`). At that level R² has no resolution
-left: the whole plausible spread between a good and a bad encoder is smaller than the ±0.02
-single-seed noise band measured in the replay campaign. Ranking 18 configs on it alone would
-rank noise.
+The campaign originally probed the encoder with single-task `formation_energy`. Two full-data
+runs settled it (archived under `probe_singletask/`):
 
-The instruction to tune the encoder on `formation_energy` is kept. What changes is *which
-statistic on that run is read*:
+| encoder | R² | MAE | epochs |
+|---|---:|---:|---:|
+| baseline — L128, [256], lr 5e-3 | 0.99323 | 0.05786 | 150 (cap) |
+| large — L256, [1024,512,256], lr 5e-3 | 0.99423 | **0.05018** | 145 |
 
-1. **Primary — `mae`** on the fixed test split (recorded alongside `r2` in every
-   `<task>_metrics.json`). MAE keeps its dynamic range where R² saturates.
-2. **Tie-break — `r2`**, reported but only trusted at the 3rd decimal when A4's seed repeats say
-   the gap exceeds noise.
-3. **Transfer gate — A5.** The short list is re-run on `volume` (ceiling 0.569) and
-   `final_energy` (0.687), two same-dataset big tasks with real headroom. A config that wins on
-   `formation_energy` but loses on both is not adopted; the A5 winner is.
+R² separates the two by 0.001 — inside the ±0.02 single-seed noise band from the replay
+campaign, i.e. not a measurement. MAE separates them by 13%. Ranking 80 configs on that R² would
+have ranked noise. The 3-task probe fixes this structurally (mid/small tasks have real R²
+headroom) and MAE remains the primary statistic on the big task.
 
-A4 is what makes any of this decidable: no configuration is declared better than another unless
-its margin exceeds the seed-to-seed spread measured there on the *same* probe.
+### Scoring
 
----
+Per-task MAE lives on different scales across the three tasks, so absolute deltas cannot be
+averaged — the big task would contribute almost nothing to the mean. Grid points are ranked on
+the **mean relative MAE improvement over the untuned baseline run of the same probe**, with
+per-task R² deltas reported alongside. A config is only preferred when its margin exceeds the
+seed-to-seed spread measured in A4.
 
 ## Stage B — task heads
 
-Encoder frozen at the stage-A winner; one grid per head family, each on tasks with headroom.
+Encoder pinned to the stage-A winner. Each head family keeps stage A's shape: its own multi-task
+probe config, one run per grid point, ranked on the mean over that probe's tasks.
 
-| Sub-stage | Grid | Probe tasks | Runs |
+| Sub-stage | Probe | Grid | Runs |
 |---|---|---|---|
-| **B-reg** | `head_hidden_dims` {[64], [128,64], [256,128,64]} × `head_lr` {1e-3, 5e-3, 1e-2} | `formation_energy`, `volume`, `final_energy` | 27 |
-| **B-kr** | `n_kernel` {15, 32, 64} × `kr_x_hidden_dims` {[128,64], [256,128,64]} × `kr_lr` {5e-4, 2e-3} | `seebeck`, `dos_density` | 24 |
-| **B-kr2** | conditioned on the B-kr winner: `kr_t_hidden_dims` {[16,8], [32,16], [64,32,16]} × `kr_weight_decay` {5e-5, 5e-4} | same | 10 |
-| **B-clf** | `head_hidden_dims` {[64], [128,64], [256,128]} × head LR {1e-3, 5e-3, 1e-2} | `material_type` | 9 |
+| **B-reg** | [`probe3.toml`](configs/probe3.toml) (as stage A) | `head_hidden_dims` {[64],[128,64],[256,128],[256,128,64],[512,256,128]} × `head_lr` {5e-4,1e-3,2e-3,5e-3,1e-2} | 25 |
+| **B-kr** | [`probe3_kr.toml`](configs/probe3_kr.toml) | `n_kernel` {15,32,64,128} × `kr_x_hidden_dims` {[128,64],[256,128,64]} × `kr_lr` {2e-4,5e-4,1e-3,2e-3} | 32 |
+| **B-kr2** | same | conditioned on the B-kr winner: `kr_t_hidden_dims` {[16,8],[32,16],[64,32,16]} × `kr_weight_decay` {5e-5,5e-4} | 5 |
+| **B-clf** | `single_task.toml` + `material_type` | `head_hidden_dims` {[64],[128,64],[256,128],[256,128,64]} × head LR {5e-4,1e-3,2e-3,5e-3,1e-2} | 20 |
 
-Selection: mean over the probe tasks of (metric − that task's single-task ceiling), so a config
-must win across tasks rather than exploit one.
+The kernel-regression probe spans a different axis than stage A's, and deliberately: **every** KR
+task in the catalog sits in the mid band (3.4k–8.1k labels), so there is no big/small axis to
+span. What varies instead is the meaning of the `t` coordinate the kernel is fitted over —
+`seebeck` (8,072, temperature), `dos_density` (7,009, DOS energy), `zt` (3,445, temperature).
 
-Two properties of the current code shape this stage and are worth stating plainly:
+Two code facts shape this stage:
 
 - **`[training].head_lr` is shared by regression and classification heads.** A per-task
-  `[[tasks]].lr` override exists and wins over it (`TaskCatalog.build_task_config`), so B-clf
-  tunes `material_type`'s LR independently — but the *adopted* value must be written into the
-  final config as a per-task override, not as a global `head_lr`.
-- **`material_type` accuracy is 0.984 at the ceiling** and the replay campaign found it
-  insensitive to replay settings (±0.005). B-clf is therefore ranked on **`macro_f1`**, not
-  accuracy — 5 imbalanced classes make macro-F1 the only statistic with resolution. Expect a
-  small or null result here and treat it as such.
-
----
+  `[[tasks]].lr` override exists and wins over it (`TaskCatalog.build_task_config`), so B-clf can
+  be tuned independently — but the adopted value must be written into the final config as a
+  per-task override, which is what [`scripts/make_tuned_config.py`](scripts/make_tuned_config.py)
+  `--task-lr` is for (`--set` cannot address `[[tasks]]` array entries).
+- **`material_type` is ranked on `macro_f1`, not accuracy.** The measured single-task probe hit
+  accuracy 0.989 with macro-F1 **0.551** — the head is near-perfect on the dominant class and
+  poor on the minority ones, so accuracy has no resolution while macro-F1 has a lot of headroom.
 
 ## Stage C — final model, two arms
 
@@ -140,9 +153,16 @@ behaviourally identical on every run here. The container is the code that execut
 - **2026-08-26** — RIKYU account `rku00225` (project `rkp00067`) prepared from scratch: repo
   cloned, 4 parquet inputs rsynced (271 MB), group workspace `/data1/rkp00067/rku00225/fm`
   created. Pre-existing container smoke (`job 46899`, GB200) confirmed PASS.
-- **2026-08-26** — chain smoke submitted at `--sample 400 --max-epochs 2`: single-task probe
-  (`47424`) and a 4-task replay sequence covering regression / kernel-regression /
-  classification (`47425`).
+- **2026-08-26** — chain smoke at `--sample 400 --max-epochs 2`: single-task pretrain (`47424`),
+  4-task replay sequence covering all three head kinds (`47425`), consolidation finetune
+  (`47426`) — all PASS.
+- **2026-08-26** — full-data timing probes (`47427`, `47428`). Single-task run ≈ 5 min on one
+  GB200 (302 s baseline encoder / 322 s largest / 288 s `material_type`), which is what allowed
+  A1 to be densified from 18 to 80 grid points. These runs also produced the R²-saturation
+  measurement that motivated replacing the stage-A probe. `probe_kr_seebeck` FAILED at 528 s —
+  operator error, its output directory was moved while the job was still writing; resubmitted as
+  `47462`. Outputs archived under `probe_singletask/`.
+- **2026-08-26** — **A1 launched**: job `47461`, 80 grid points on `probe3.toml`, 40 concurrent.
 
 ## Outcome
 

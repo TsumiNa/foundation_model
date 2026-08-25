@@ -43,8 +43,11 @@ BASE = {
 # REPORT_20260809 size group (formation_energy 23180 / tc 7207 / magnetization 1160). The task
 # sequence lives in that config, so stage-A grid points override architecture only.
 ENC_TASKS = ["formation_energy", "tc", "magnetization"]
-REG_TASKS = ["formation_energy", "volume", "final_energy"]
-KR_TASKS = ["seebeck", "dos_density"]
+# Stage B keeps the same shape: each head family is probed by a multi-task sequence carried by
+# its own config, so a grid point is ONE run and the ranking averages over that probe's tasks.
+#   B-reg  -> configs/probe3.toml     (the stage-A probe, three plain regression tasks)
+#   B-kr   -> configs/probe3_kr.toml  (seebeck / dos_density / zt)
+#   B-clf  -> configs/single_task.toml with material_type (the only classification task)
 CLF_TASK = "material_type"
 
 
@@ -196,32 +199,30 @@ CLF_LRS = [5e-4, 1e-3, 2e-3, 5e-3, 1e-2]
 
 
 def stage_b_reg(enc: dict) -> list[tuple[str, str]]:
+    """Regression head, on configs/probe3.toml (same probe as stage A)."""
     rows = []
     for hidden in HEAD_HIDDEN:
         for lr in HEAD_LRS:
-            for task in REG_TASKS:
-                runid = f"breg_H{tag(hidden)}_L{tag(lr)}_{task}"
-                ov = task_override(task) + " " + overrides(
-                    **enc, model__head_hidden_dims=hidden, training__head_lr=lr
-                )
-                rows.append((runid, ov))
+            runid = f"breg_H{tag(hidden)}_L{tag(lr)}"
+            ov = overrides(**enc, model__head_hidden_dims=hidden, training__head_lr=lr)
+            rows.append((runid, ov))
     return rows
 
 
 def stage_b_kr(enc: dict) -> list[tuple[str, str]]:
+    """Kernel-regression head, on configs/probe3_kr.toml."""
     rows = []
     for n_kernel in KR_N_KERNEL:
         for x_hidden in KR_X_HIDDEN:
             for lr in KR_LRS:
-                for task in KR_TASKS:
-                    runid = f"bkr_K{n_kernel}_X{tag(x_hidden)}_L{tag(lr)}_{task}"
-                    ov = task_override(task) + " " + overrides(
-                        **enc,
-                        model__n_kernel=n_kernel,
-                        model__kr_x_hidden_dims=x_hidden,
-                        training__kr_lr=lr,
-                    )
-                    rows.append((runid, ov))
+                runid = f"bkr_K{n_kernel}_X{tag(x_hidden)}_L{tag(lr)}"
+                ov = overrides(
+                    **enc,
+                    model__n_kernel=n_kernel,
+                    model__kr_x_hidden_dims=x_hidden,
+                    training__kr_lr=lr,
+                )
+                rows.append((runid, ov))
     return rows
 
 
@@ -232,17 +233,16 @@ def stage_b_kr2(enc: dict, n_kernel: int, x_hidden: list[int], kr_lr: float) -> 
         for wd in KR_WD:
             if t_hidden == BASE["model.kr_t_hidden_dims"] and wd == BASE["training.kr_weight_decay"]:
                 continue  # identical to the stage-B-KR winner, already measured
-            for task in KR_TASKS:
-                runid = f"bkr2_T{tag(t_hidden)}_W{tag(wd)}_{task}"
-                ov = task_override(task) + " " + overrides(
-                    **enc,
-                    model__n_kernel=n_kernel,
-                    model__kr_x_hidden_dims=x_hidden,
-                    model__kr_t_hidden_dims=t_hidden,
-                    training__kr_lr=kr_lr,
-                    training__kr_weight_decay=wd,
-                )
-                rows.append((runid, ov))
+            runid = f"bkr2_T{tag(t_hidden)}_W{tag(wd)}"
+            ov = overrides(
+                **enc,
+                model__n_kernel=n_kernel,
+                model__kr_x_hidden_dims=x_hidden,
+                model__kr_t_hidden_dims=t_hidden,
+                training__kr_lr=kr_lr,
+                training__kr_weight_decay=wd,
+            )
+            rows.append((runid, ov))
     return rows
 
 
