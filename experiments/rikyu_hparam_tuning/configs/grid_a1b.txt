@@ -1,0 +1,8 @@
+a1b_L256_H1024-512-256_E0p0002	--set model.latent_dim=256 --set 'model.encoder_hidden_dims=[1024,512,256]' --set training.encoder_lr=0.0002
+a1b_L256_H1024-512-256_E0p0005	--set model.latent_dim=256 --set 'model.encoder_hidden_dims=[1024,512,256]' --set training.encoder_lr=0.0005
+a1b_L256_H512_E0p0002	--set model.latent_dim=256 --set 'model.encoder_hidden_dims=[512]' --set training.encoder_lr=0.0002
+a1b_L256_H512_E0p0005	--set model.latent_dim=256 --set 'model.encoder_hidden_dims=[512]' --set training.encoder_lr=0.0005
+a1b_L384_H256_E0p0002	--set model.latent_dim=384 --set 'model.encoder_hidden_dims=[256]' --set training.encoder_lr=0.0002
+a1b_L384_H256_E0p0005	--set model.latent_dim=384 --set 'model.encoder_hidden_dims=[256]' --set training.encoder_lr=0.0005
+a1b_L128_H256_E0p0002	--set model.latent_dim=128 --set 'model.encoder_hidden_dims=[256]' --set training.encoder_lr=0.0002
+a1b_L128_H256_E0p0005	--set model.latent_dim=128 --set 'model.encoder_hidden_dims=[256]' --set training.encoder_lr=0.0005
