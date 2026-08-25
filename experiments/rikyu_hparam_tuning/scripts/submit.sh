@@ -36,7 +36,7 @@ done
 MODE=pretrain
 case "$STAGE" in
     a1|a1b|a2|a3|a4|a6) CONFIG=probe3.toml;    OUT=stage_a; DEFTIME=03:00:00 ;;
-    breg|bkr|bclf)    CONFIG=single_task.toml; OUT=stage_b; DEFTIME=02:00:00 ;;
+    breg|bkr|bclf|b4) CONFIG=single_task.toml; OUT=stage_b; DEFTIME=02:00:00 ;;
     bmtreg)           CONFIG=probe3.toml;      OUT=stage_b; DEFTIME=03:00:00 ;;
     bmtkr)            CONFIG=probe3_kr.toml;   OUT=stage_b; DEFTIME=03:00:00 ;;
     # Stage C: two arms x two phases. `fm pretrain --resume` is idempotent, so a walltime kill is

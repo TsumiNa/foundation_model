@@ -17,6 +17,7 @@ winning setting on the command line rather than hard-coding a guess.
 from __future__ import annotations
 
 import argparse
+import json
 import shlex
 from pathlib import Path
 
@@ -213,6 +214,15 @@ def stage_a6(winner: str, batch_size: int) -> list[tuple[str, str]]:
     return rows
 
 
+# Untuned head defaults, mirrored from analysis/pick_heads.py — the arm stage B4 compares against.
+BASE_REG = {"hidden_dims": BASE["model.head_hidden_dims"], "lr": BASE["training.head_lr"]}
+BASE_KR = {
+    "x_hidden_dims": BASE["model.kr_x_hidden_dims"],
+    "n_kernel": BASE["model.n_kernel"],
+    "lr": BASE["training.kr_lr"],
+}
+
+
 # --- stage B: task heads, one grid per task (encoder pinned to the stage-A winner) ---
 
 HEAD_HIDDEN = [[64], [128, 64], [256, 128], [256, 128, 64]]
@@ -315,11 +325,44 @@ def stage_b_clf(enc: dict) -> list[tuple[str, str]]:
     return rows
 
 
+def stage_b4(enc: dict, winners_path: Path, seeds: list[int]) -> list[tuple[str, str]]:
+    """Seed repeats for every task's WINNER and its untuned BASELINE head.
+
+    Stage B ranks each task on a single seed, and stage A showed how badly that misleads: its
+    single-seed leader lost 5.5 points once two more seeds were run. Without this, a task whose
+    tuned head beats the default by 1% cannot be told apart from one where the seed was lucky.
+    Two extra seeds per arm turn each per-task pick into a measurement with a range.
+    """
+    winners = json.loads(winners_path.read_text())
+    rows = []
+    for task in sorted(winners):
+        w = winners[task]
+        kind = w["kind"]
+        arms = {"win": w["full"], "base": BASE_KR if kind == "bkr" else BASE_REG}
+        for arm, head in arms.items():
+            if kind == "bkr":
+                head_ov = {
+                    "model__n_kernel": head["n_kernel"],
+                    "model__kr_x_hidden_dims": head["x_hidden_dims"],
+                    "training__kr_lr": head["lr"],
+                }
+            else:
+                head_ov = {
+                    "model__head_hidden_dims": head["hidden_dims"],
+                    "training__head_lr": head["lr"],
+                }
+            for seed in seeds:
+                runid = f"b4_{arm}_{task}_s{seed}"
+                ov = task_override(task) + " " + overrides(**enc, **head_ov)
+                rows.append((runid, ov + f" --seed {seed}"))
+    return rows
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "stage",
-        choices=["a1", "a1b", "a2", "a3", "a4", "a6", "breg", "bkr", "bclf", "bmtreg", "bmtkr"],
+        choices=["a1", "a1b", "a2", "a3", "a4", "a6", "breg", "bkr", "bclf", "b4", "bmtreg", "bmtkr"],
     )
     ap.add_argument("--winner", help="stage-A1 runid of the winning encoder (a1_L..._H..._E...)")
     ap.add_argument("--winners", nargs="+", help="stage-A1 short list (a2 / a5)")
@@ -330,6 +373,8 @@ def main() -> None:
     ap.add_argument("--kr-lr", type=float, default=BASE["training.kr_lr"])
     ap.add_argument("--lrs", type=float, nargs="+", default=[2e-4, 5e-4], help="a1b: extra encoder LRs")
     ap.add_argument("--ae-lr", type=float, default=None, help="stage B: adopted ae_lr, when A6 changed it")
+    ap.add_argument("--winners-json", type=Path, default=None, help="b4: head_winners.json")
+    ap.add_argument("--seeds", type=int, nargs="+", default=[2026, 2027], help="b4: extra seeds")
     args = ap.parse_args()
 
     def enc_settings() -> dict:
@@ -362,6 +407,10 @@ def main() -> None:
         write("bkr", stage_b_kr(enc_settings()))
     elif args.stage == "bclf":
         write("bclf", stage_b_clf(enc_settings()))
+    elif args.stage == "b4":
+        if not args.winners_json:
+            raise SystemExit("stage b4 needs --winners-json (from analysis/pick_heads.py)")
+        write("b4", stage_b4(enc_settings(), args.winners_json, args.seeds))
     elif args.stage == "bmtreg":
         write("bmtreg", stage_b_mt_reg(enc_settings()))
     elif args.stage == "bmtkr":
