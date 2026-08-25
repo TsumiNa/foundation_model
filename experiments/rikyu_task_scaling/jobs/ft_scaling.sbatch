@@ -3,14 +3,14 @@
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=1
 #SBATCH --time=12:00:00
-#SBATCH --output=/home/ea0094/jobs/task_scaling/%x_%j.out
-#SBATCH --error=/home/ea0094/jobs/task_scaling/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 
 # Task-scaling finetune worker for run ORD: for every pretrain step checkpoint k=1..21,
 # (a) frozen-encoder finetune of the 3 dielectric targets (epochs<=100 + early stopping),
 # (b) inverse design on the finetuned model. Skip-if-done per k; safe to resubmit.
 set -uo pipefail
-PROJ=/home/ea0094/projects/foundation_model
+PROJ=${PROJ:-$HOME/projects/foundation_model}
 CFG=$PROJ/experiments/rikyu_task_scaling/configs
 FM=$PROJ/.venv/bin/fm
 : "${ORD:?need ORD=0|1|2}"

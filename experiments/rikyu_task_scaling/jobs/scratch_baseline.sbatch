@@ -3,13 +3,13 @@
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=1
 #SBATCH --time=04:00:00
-#SBATCH --output=/home/ea0094/jobs/task_scaling/%x_%j.out
-#SBATCH --error=/home/ea0094/jobs/task_scaling/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 
 # k=0 baseline: train the 3 dielectric targets from scratch (no pretraining), 3 seeds.
 # No inverse stage — the scratch model has no formation_energy head.
 set -uo pipefail
-PROJ=/home/ea0094/projects/foundation_model
+PROJ=${PROJ:-$HOME/projects/foundation_model}
 CFG=$PROJ/experiments/rikyu_task_scaling/configs
 FM=$PROJ/.venv/bin/fm
 

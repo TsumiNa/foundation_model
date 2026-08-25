@@ -4,8 +4,8 @@
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=28
 #SBATCH --time=10:00:00
-#SBATCH --output=/home/users/u0001820/jobs/replay_epoch_p24/%x_%j.out
-#SBATCH --error=/home/users/u0001820/jobs/replay_epoch_p24/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 
 # Result 2 of the hybrid validation: ONE full-data joint retrain of all 24 heads on top of the
 # hybrid-replay final model (same mechanism as the baseline-B probe; cap 250, patience 24 —
@@ -15,7 +15,7 @@ source /etc/profile
 set -euo pipefail
 module load system/ai-h200-brc nvhpc
 
-PROJ=/home/users/u0001820/projects/foundation_model-x86-cuda
+PROJ=${PROJ:-$HOME/projects/foundation_model-x86-cuda}
 cd "$PROJ"
 flock .uv_sync.lock "$HOME/.local/bin/uv" sync --frozen --all-groups
 .venv/bin/python -c 'import torch; print(torch.cuda.get_device_name(), torch.version.cuda, torch.cuda.is_available())'

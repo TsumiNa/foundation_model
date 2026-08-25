@@ -3,8 +3,8 @@
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=1
 #SBATCH --time=06:00:00
-#SBATCH --output=/home/ea0094/jobs/task_scaling/%x_%j.out
-#SBATCH --error=/home/ea0094/jobs/task_scaling/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 
 # Rerun inverse design with the corrected 3-scenario objective (formation_energy down paired
 # with EACH dielectric target up separately) on every existing eval model of one
@@ -12,7 +12,7 @@
 # <model>/inverse/ are kept. Skip-if-done per k; missing models (e.g. ws tail still running)
 # are skipped with a warning and picked up by a later resubmission.
 set -uo pipefail
-PROJ=/home/ea0094/projects/foundation_model
+PROJ=${PROJ:-$HOME/projects/foundation_model}
 CFG=$PROJ/experiments/rikyu_task_scaling/configs
 FM=$PROJ/.venv/bin/fm
 : "${MODE:?need MODE=ws|ft}"

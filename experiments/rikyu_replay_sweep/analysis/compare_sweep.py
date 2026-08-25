@@ -9,7 +9,7 @@ RESULTS_DIR holds one long-format metrics_table.csv per run, named mt_<tag>.csv
 Rsync each run's
 <output_dir>/training/metrics_table.csv into RESULTS_DIR/mt_<tag>.csv first, e.g.:
 
-    rsync -avz rikyu-login:/home/ea0094/projects/foundation_model/artifacts/replay_sweep/replay_n100_rikyu/training/metrics_table.csv results/mt_n100.csv
+    rsync -avz rikyu-login:projects/foundation_model/artifacts/replay_sweep/replay_n100_rikyu/training/metrics_table.csv results/mt_n100.csv
 
 Long format columns: step,new_task,epochs_run,task,r2,mae,samples,primary,points,accuracy,macro_f1
 final metric per task = the row at the max step; primary = R2 (reg/kr) or accuracy (clf).

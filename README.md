@@ -74,6 +74,9 @@ uv sync --frozen --all-groups
 This installs all dependencies pinned by `uv.lock` (production + dev) for reproducibility.
 To add a new dependency: `uv add <pkg>` (runtime) or `uv add --dev <pkg>` (dev).
 
+See [docs/container.md](docs/container.md) for the default x86-64 CUDA 13 and RIKYU AArch64 images.
+RIKYU-specific Apptainer details are in [docs/rikyu_container.md](docs/rikyu_container.md).
+
 ## Usage
 
 Everything runs through a single console command, **`fm`**, with four subcommands. Each reads a

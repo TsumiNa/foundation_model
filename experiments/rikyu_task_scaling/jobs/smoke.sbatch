@@ -3,15 +3,15 @@
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=1
 #SBATCH --time=01:00:00
-#SBATCH --output=/home/ea0094/jobs/task_scaling/%x_%j.out
-#SBATCH --error=/home/ea0094/jobs/task_scaling/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 
 # GPU smoke of the full task-scaling chain on tiny compute: a 4-task mini pretrain
 # (formation_energy pinned first, one classification + one KR task to exercise every head kind)
 # -> warm-start + finetune from the step-2 checkpoint -> inverse on the warm-start output.
 # Ends with explicit artifact checks; the last line prints SMOKE_PASS or SMOKE_FAIL.
 set -uo pipefail
-PROJ=/home/ea0094/projects/foundation_model
+PROJ=${PROJ:-$HOME/projects/foundation_model}
 CFG=$PROJ/experiments/rikyu_task_scaling/configs
 FM=$PROJ/.venv/bin/fm
 B=$PROJ/artifacts/task_scaling/smoke

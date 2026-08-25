@@ -1,0 +1,102 @@
+name: RIKYU container
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/rikyu-container.yml"
+      - ".dockerignore"
+      - "Dockerfile.cuda13"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/**"
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/rikyu-container.yml"
+      - ".dockerignore"
+      - "Dockerfile.cuda13"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: rikyu-container-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # RIKYU is AArch64. A native runner avoids slow and less reliable QEMU builds
+    # of the large PyTorch CUDA environment.
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Derive image references from pyproject.toml
+        id: image
+        shell: bash
+        run: |
+          version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if [[ ! "$version" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
+            echo "Invalid OCI tag version from pyproject.toml: $version" >&2
+            exit 1
+          fi
+          repository="${GITHUB_REPOSITORY,,}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<EOF"
+            echo "ghcr.io/$repository:rikyu-sha-${GITHUB_SHA}"
+            if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/master" ]]; then
+              echo "ghcr.io/$repository:rikyu-${version,,}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and optionally publish image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.cuda13
+          platforms: linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.image.outputs.tags }}
+          build-args: |
+            IMAGE_VERSION=${{ steps.image.outputs.version }}
+            VCS_REF=${{ github.sha }}
+            SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
+            EXPECTED_ARCH=aarch64
+            IMAGE_TITLE=foundation-model for RIKYU
+            IMAGE_DESCRIPTION=AArch64 PyTorch CUDA 13 runtime for RIKEN R-CCS RIKYU
+          cache-from: type=gha
+          # The public native ARM runner has limited local disk; export only the
+          # final reusable cache rather than every intermediate build layer.
+          cache-to: type=gha,mode=min
+          provenance: mode=max
+          sbom: true
+
+      - name: Write published image to summary
+        if: github.event_name != 'pull_request'
+        run: |
+          echo '### Published RIKYU image' >> "$GITHUB_STEP_SUMMARY"
+          while IFS= read -r image; do
+            echo "- \`$image\`" >> "$GITHUB_STEP_SUMMARY"
+          done <<< '${{ steps.image.outputs.tags }}'
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo 'The GHCR package must be public so RIKYU can pull it anonymously.' >> "$GITHUB_STEP_SUMMARY"

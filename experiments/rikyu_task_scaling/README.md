@@ -49,7 +49,7 @@ Run `ORD ∈ {0,1,2}` uses `--seed 2025+ORD --set pretrain.task_order_seed=7501+
 - **k=0 baseline** (`scratch_s{2025,2026,2027}`): the 3 targets trained from scratch (no
   checkpoint, replay only among themselves). No inverse (no `formation_energy` head).
 
-### Jobs (all `1n1gpu`, GPU-only; logs in `/home/ea0094/jobs/task_scaling/`)
+### Jobs (all `1n1gpu`, GPU-only; logs should be submitted from `$HOME/jobs/task_scaling/`)
 
 | Job | Count | Depends on | Est. | Wall |
 |---|---|---|---|---|

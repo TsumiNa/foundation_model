@@ -4,17 +4,17 @@
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=1
 #SBATCH --time=10:00:00
-#SBATCH --output=/home/ea0094/jobs/rehearsal/full24_%j.out
-#SBATCH --error=/home/ea0094/jobs/rehearsal/full24_%j.err
+#SBATCH --output=full24_%j.out
+#SBATCH --error=full24_%j.err
 
 # Full 24-task continual-rehearsal reproduction on GB200. Full data, 100 epochs/step
 # (early stopping). Output to persistent Lustre for rsync-back.
 set -uo pipefail
-PROJ=/home/ea0094/projects/foundation_model
-CFG=/home/ea0094/jobs/rehearsal/pretrain_rehearsal_full24.toml
+PROJ=${PROJ:-$HOME/projects/foundation_model}
+CFG=${CFG:-$HOME/jobs/rehearsal/pretrain_rehearsal_full24.toml}
 OUT="$PROJ/artifacts/pretrain_rehearsal_full24_rikyu"
 
-module load nvhpc            # mandatory: GPU is not allocated without a loaded module
+module load nvhpc            # expose the NVIDIA CUDA runtime and tools
 cd "$PROJ"
 echo "== node =="; hostname; date
 echo "SLURM_JOB_ID=$SLURM_JOB_ID OUT=$OUT"

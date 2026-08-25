@@ -15,26 +15,14 @@ recreating job scripts rather than carrying them over.
 
 ## Access and current project layout
 
-- Official SSH host: `login.rikyu.r-ccs.riken.jp`.
-- SSH user: `ea0094`.
-- Existing key: `~/.ssh/rikyu_rccs` (verified to authenticate to Phase 2).
-- Local alias: `ssh rikyu-login`, after updating its `HostName` to the official Phase 2 host.
+- Log in only through the local alias: `ssh rikyu-login`.
+- Keep the host name, user name, identity file, and other credentials in the local `~/.ssh/config`;
+  never add them to this repository.
 - Phase 2 login node verified as `c000`, Ubuntu, AArch64.
-- Home: `/home/ea0094` on Lustre.
-- Repo clone: `/home/ea0094/projects/foundation_model`.
-- Job scripts/logs: `/home/ea0094/jobs`.
+- Home is available as `$HOME` on Lustre.
+- The conventional repo clone is `$HOME/projects/foundation_model`.
+- The conventional job/log directory is `$HOME/jobs`.
 - Scheduler: Slurm.
-
-The local SSH configuration should contain the equivalent of:
-
-```sshconfig
-Host rikyu-*
-    User ea0094
-    IdentityFile ~/.ssh/rikyu_rccs
-
-Host rikyu-login
-    HostName login.rikyu.r-ccs.riken.jp
-```
 
 Do not use the old Phase 1 hosts `login01.ai.r-ccs.riken.jp` or
 `ar08n01-m.ai.r-ccs.riken.jp`.
@@ -69,16 +57,9 @@ id
 ls -ld /data1/rkp*
 ```
 
-As of 2026-07-29, `ea0094` could log in to Phase 2 but had no Slurm association and no accessible
-`/data1/rkp*` group directory. Legal GPU requests were rejected with:
-
-```text
-Invalid account or account/partition combination specified
-```
-
-Do not attempt real jobs until the project representative adds the user to the Phase 2 project (or
-the association finishes synchronizing). After that is fixed, record the project account and group
-directory here.
+Do not record a personal or project account in the repository. Supply it when submitting, for
+example `sbatch --account="$RIKYU_ACCOUNT" job.sbatch`. Use `$RIKYU_GROUP_DIR` for the assigned
+group-storage path when a job needs `/data1`.
 
 ## System and job resources
 
@@ -179,8 +160,8 @@ the Phase 1 UCX/NCCL environment-variable block unless a Phase 2-specific test p
 ## Python, uv, and isolated project environment
 
 - Phase 2 system Python was 3.12.3 when checked.
-- `uv` is at `/home/ea0094/.local/bin/uv`.
-- The project venv is `/home/ea0094/projects/foundation_model/.venv`.
+- A user-installed `uv` is conventionally available as `$HOME/.local/bin/uv`.
+- The project venv is conventionally `$HOME/projects/foundation_model/.venv`.
 - The existing project venv was verified as Python 3.13.14 with
   `torch==2.12.1+cu130`, `torch.version.cuda == "13.0"`, and AArch64 wheels.
 - Never copy this `.venv` to an x86_64 machine.
@@ -188,7 +169,7 @@ the Phase 1 UCX/NCCL environment-variable block unless a Phase 2-specific test p
 Use the project environment explicitly:
 
 ```bash
-cd /home/ea0094/projects/foundation_model
+cd "$HOME/projects/foundation_model"
 uv sync --frozen --all-groups
 .venv/bin/python --version
 .venv/bin/python -c \
@@ -209,6 +190,10 @@ name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 ```
+
+RIKYU's system `containers/image` configuration routes `ghcr.io` through an internal mirror. If the
+mirror does not contain this repository, use `scripts/rikyu_pull_container.sh`; it temporarily
+bypasses the mirror without overwriting an existing user registry configuration.
 
 ## Storage
 
@@ -255,24 +240,21 @@ smoke test after the Slurm account association is fixed.
 
 ## Minimal Phase 2 batch template (1 GPU)
 
-This template follows the official Phase 2 resource model but has not yet completed an end-to-end
-job test because the current user lacks a Slurm account association.
+This template follows the official Phase 2 resource model.
 
 ```bash
 #!/bin/bash
 #SBATCH --job-name=fm-job
 #SBATCH --gpus=1
 #SBATCH --time=01:00:00
-#SBATCH --output=/home/ea0094/jobs/%x_%j.out
-#SBATCH --error=/home/ea0094/jobs/%x_%j.err
-# Add only after the project account is known:
-##SBATCH --account=PROJECT_NAME
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 set -euo pipefail
 
 module purge
 module load nvhpc
 
-PROJ=/home/ea0094/projects/foundation_model
+PROJ=${PROJ:-$HOME/projects/foundation_model}
 VENV_PY="$PROJ/.venv/bin/python"
 PERSISTENT_OUT="$PROJ/artifacts/<run-name>"
 
@@ -343,11 +325,11 @@ Because Phase 2 is billed per GPU-hour, do not introduce an unbounded self-resub
 Estimate the cost, bound the number of submissions, and check completion and exit status after each
 job.
 
-## Phase 2 execution validation still required
+## Phase 2 execution validation
 
-After the Slurm project association is fixed, run a short one-GPU smoke job and record:
+Run short one-GPU smoke jobs and record:
 
-- Project account and `/data1/rkpNNNNN` group.
+- Slurm project account and group-storage path, supplied outside the repository.
 - `SLURM_JOB_GPUS`, `CUDA_VISIBLE_DEVICES`, and other changed Phase 2 job variables.
 - PyTorch device count, name, memory, and CUDA version.
 - Actual `/tmp` quota for one GPU and cleanup after job completion.
