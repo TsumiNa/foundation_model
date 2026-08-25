@@ -207,18 +207,33 @@ for c in caps:
     xlabels.append(f"cap {c}" + (f"\nstop @{er}" if er < c else ""))
 for x, vals in enumerate(data):
     ax2.annotate(f"mean {np.mean(vals):.3f}", (x, 1.04), fontsize=8, ha="center", color="#374151")
+# healthy-strategy references, ascending: continual replay, hybrid, hybrid + end retrain
+extras = []
 if fixed[1000]:
-    ref = [v for t, v in fixed[1000].items() if t != "material_type" and v is not None]
-    styled_box(ax2, [ref], [len(caps)], "#fbdcc4", ORANGE, width=0.5)
-    ax2.annotate(f"mean {np.mean(ref):.3f}", (len(caps), 1.04), fontsize=8, ha="center", color=ORANGE)
-    xlabels.append("replay\nn1000-m150")
+    extras.append(("replay\nn1000", "#fbdcc4", ORANGE, ORANGE,
+                   [v for t, v in fixed[1000].items() if t != "material_type" and v is not None]))
+hyb_f = load_final(RES_E / "mt_hybrid_r03_f1500.csv")
+if hyb_f:
+    extras.append(("hybrid\nreplay", "#ffffff", "#1f2937", "#374151",
+                   [v for t, v in hyb_f.items() if t != "material_type" and v is not None]))
+hj_p = RES_E / "hybrid_joint_retrain.json"
+if hj_p.exists():
+    hj = json.loads(hj_p.read_text())
+    extras.append((f"hybrid →\njoint @{hj['epochs_run']}", "#FDE68A", "#1f2937", "#374151",
+                   [m["primary"] for t, m in hj["metrics_after"].items() if t != "material_type"]))
+for i, (label, face, edge, labcolor, vals) in enumerate(extras):
+    pos = len(caps) + i
+    styled_box(ax2, [vals], [pos], face, edge, width=0.5)
+    ax2.annotate(f"mean {np.mean(vals):.3f}", (pos, 1.04), fontsize=8, ha="center", color=labcolor)
+    xlabels.append(label)
+ax2.axvline(len(caps) - 0.5, color=GRID, lw=1.0, zorder=1)
 ax2.set_xticks(range(len(xlabels)))
-ax2.set_xticklabels(xlabels, fontsize=9)
+ax2.set_xticklabels(xlabels, fontsize=8.5)
 ax2.set_ylim(-0.2, 1.13)
 ax2.axhline(0, color=MUTED, lw=1.0, zorder=1)
-ax2.set_xlabel("no-replay model → joint retrain at the end  ·  rightmost: continual-replay reference")
+ax2.set_xlabel("left of divider: no-replay model → joint retrain at cap  ·  right: the healthy strategies")
 ax2.set_ylabel("final test R² per task (linear)")
-ax2.set_title("…and the end-of-run joint retrain converges (stop @214) with its whole\ndistribution shifted below the continual-replay reference",
+ax2.set_title("…the whole comparison in one frame: retrain-from-collapse converges (stop @214)\nbelow every healthy arm; hybrid replay + consolidation sits highest",
               fontsize=10.5)
 ax2.grid(True, which="major", color=GRID, lw=0.5, zorder=0)
 for ax in (ax1, ax2):

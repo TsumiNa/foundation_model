@@ -173,8 +173,8 @@ pic_slide("Why the hybrid allocation — fixed-count starves BIG tasks, ratio st
           AN / "replay_requirement_vs_size.png")
 pic_slide("Why replay must happen DURING training",
           "left: per-step boxplots of test R² — without replay the step-24 median falls to −23 (symlog axis) · "
-          "right: per-task distributions per retrain cap — converged (stop @214) with the whole box below the "
-          "continual-replay reference",
+          "right: retrain-from-collapse converges at 0.584, below the healthy trio — replay n1000 (0.643), "
+          "hybrid (0.652), hybrid + consolidation (0.658)",
           AN / "baseline_family.png")
 
 # 6 — ops

@@ -175,9 +175,9 @@ pic_slide("Ratio replay joins the same cost curve — no free lunch on the mean"
           AN / "ratio_cost_view.png")
 pic_slide("Baseline family — collapse without replay; end-of-run rehearsal converges below every replay arm",
           "left: per-step boxplots of test R² over the learned tasks (symlog below −1; white diamond = mean) — without "
-          "replay the whole distribution falls off the linear scale (step-24 medians: −23 vs 0.66) · right: per-task "
-          "distributions at each retrain cap vs the continual-replay reference — converged (stop @214, caps 250 ≡ 300) "
-          "with the whole box shifted lower",
+          "replay the whole distribution falls off the linear scale (step-24 medians: −23 vs 0.66) · right, one frame: "
+          "retrain-from-collapse at 4 caps (converged @214, 250 ≡ 300, mean 0.584) vs the healthy trio — replay n1000 "
+          "(0.643), hybrid (0.652), hybrid + consolidation (0.658, tightest box)",
           AN / "baseline_family.png")
 
 # 6f — hybrid validation (the 2×2 closes)
