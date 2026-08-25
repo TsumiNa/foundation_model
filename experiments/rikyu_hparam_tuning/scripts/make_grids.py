@@ -329,6 +329,7 @@ def main() -> None:
     ap.add_argument("--kr-x-hidden", type=int, nargs="+", default=BASE["model.kr_x_hidden_dims"])
     ap.add_argument("--kr-lr", type=float, default=BASE["training.kr_lr"])
     ap.add_argument("--lrs", type=float, nargs="+", default=[2e-4, 5e-4], help="a1b: extra encoder LRs")
+    ap.add_argument("--ae-lr", type=float, default=None, help="stage B: adopted ae_lr, when A6 changed it")
     args = ap.parse_args()
 
     def enc_settings() -> dict:
@@ -337,6 +338,10 @@ def main() -> None:
         settings = parse_a1(args.winner)
         settings["data__batch_size"] = args.batch_size
         settings["descriptor__n_grids"] = args.n_grids
+        # Stage B must inherit every knob stage A adopted, including the ones A3/A6 probed —
+        # otherwise the heads would be tuned on top of an encoder that is not the adopted one.
+        if args.ae_lr is not None:
+            settings["training__ae_lr"] = args.ae_lr
         return settings
 
     if args.stage == "a1":
