@@ -168,10 +168,12 @@ txt(s, 9.2, 1.6, 3.7, 5.2, [
 
 # 4-5 — evidence figures
 pic_slide("Why the hybrid allocation — fixed-count starves BIG tasks, ratio starves SMALL ones",
-          "deficit vs fraction of a task's own labels replayed; the black star (hybrid) sits in the green zone in every panel",
-          AN / "ratio_deficit_by_size.png")
+          "deficit to the single-task ceiling vs labels actually replayed per old task, every arm on one axis; "
+          "the black star (hybrid) is the only setting in/near the green zone in all three panels",
+          AN / "replay_requirement_vs_size.png")
 pic_slide("Why replay must happen DURING training",
-          "left: without replay only 4% of learned tasks still work by step 24 · right: end-of-run retraining converges (214 ep) at 0.584 — below every continual-replay arm",
+          "left: per-step boxplots of test R² — without replay the step-24 median falls to −23 (symlog axis) · "
+          "right: end-of-run retraining converges (214 ep) at 0.584 — below every continual-replay arm",
           AN / "baseline_family.png")
 
 # 6 — ops

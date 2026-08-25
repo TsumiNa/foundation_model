@@ -3,14 +3,12 @@
 m150 recipe, plus the no-replay / joint-retrain baseline family.
 
 Figures (all skip-tolerant while runs are still landing):
-  ratio_cost_view.png       mean final R² (23 tasks) vs TOTAL labels replayed per step —
-                            do ratio and fixed-n land on the same cost curve?
-  ratio_deficit_by_size.png deficit to the single-task ceiling vs fraction of OWN data
-                            replayed, by task-size group — where each parameterization
-                            starves which tasks. Joint-retrain plotted at fraction 1.0.
-  baseline_family.png       (a) no-replay collapse trajectory (median over learned R² tasks)
-                            vs n1000-m150; (b) joint-retrain recovery vs epoch cap, against
-                            the replay-arm band.
+  ratio_cost_view.png   mean final R² (23 tasks) vs TOTAL labels replayed per step —
+                        do ratio and fixed-n land on the same cost curve?
+  baseline_family.png   (a) per-step BOXPLOTS of test R² over the learned tasks, no-replay vs
+                        n1000-m150, symlog below −1 (the full distribution, not a threshold
+                        count); (b) joint-retrain recovery vs epoch cap vs the replay-arm band.
+(The per-size-group deficit view lives in replay_requirement_vs_size.py — every arm one axis.)
 
 Metric convention: mean/median final test R² over the 23 R² tasks (material_type excluded).
 Single-task ceiling & at-intro reference as in replay_requirement_vs_size.py.
@@ -145,92 +143,58 @@ fig.tight_layout()
 fig.savefig(HERE / "ratio_cost_view.png", bbox_inches="tight")
 print("saved ratio_cost_view.png")
 
-# ------------------------------------------------------- fig 2: deficit by size group
-fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.6), dpi=150, sharey=True)
-for ax, (glabel, tasks) in zip(axes, GROUPS):
-    intro_cost = float(np.mean([SINGLE[t] - INTRO_REF[t] for t in tasks]))
-    ax.axhline(0, color=MUTED, lw=1.6, zorder=2)
-    ax.axhline(intro_cost, color=MUTED, ls="--", lw=1.4, zorder=2)
-    ax.axhspan(0, intro_cost, color="#f0fdf4", zorder=0)
-    xs, ys = [], []
-    for n in COUNTS:
-        if fixed[n]:
-            xs.append(float(np.mean([min(n, DEFICIT_TASKS[t]) / DEFICIT_TASKS[t] for t in tasks])))
-            ys.append(float(np.mean([SINGLE[t] - fixed[n][t] for t in tasks if fixed[n].get(t) is not None])))
-    ax.plot(xs, ys, color=ORANGE, lw=2.2, marker="^", ms=6, mec="white", label="fixed-count (epoch-m150)", zorder=3)
-    ax.annotate("n2500", (xs[-1], ys[-1]), textcoords="offset points", xytext=(0, -13),
-                fontsize=7.5, color=ORANGE, ha="center")
-    xs, ys = [], []
-    for r, _ in RATIOS:
-        if ratio[r]:
-            xs.append(r)
-            ys.append(float(np.mean([SINGLE[t] - ratio[r][t] for t in tasks if ratio[r].get(t) is not None])))
-    ax.plot(xs, ys, color=PURPLE, lw=2.2, marker="o", ms=6, mec="white", label="ratio (epoch-m150)", zorder=3)
-    ax.annotate(f"r={xs[-1]:g}", (xs[-1], ys[-1]), textcoords="offset points", xytext=(0, 7),
-                fontsize=7.5, color=PURPLE, ha="center")
-    if 300 in joint:
-        yj = float(np.mean([SINGLE[t] - joint[300]["after"][t] for t in tasks]))
-        ax.plot([1.0], [yj], marker="D", ms=7, color=MUTED, mec="white", zorder=3)
-        ax.annotate("joint retrain\n@ end (full data)", (1.0, yj), textcoords="offset points",
-                    xytext=(-4, 6), fontsize=7.5, color=MUTED, ha="right")
-    hyb = load_final(RES_E / "mt_hybrid_r03_f1500.csv")
-    if hyb:
-        fr = float(np.mean([min(max(1500, 0.3 * DEFICIT_TASKS[t]), DEFICIT_TASKS[t]) / DEFICIT_TASKS[t]
-                            for t in tasks]))
-        yh = float(np.mean([SINGLE[t] - hyb[t] for t in tasks if hyb.get(t) is not None]))
-        ax.plot([fr], [yh], marker="*", ms=15, color="#1f2937", mec="white", ls="none",
-                label="hybrid max(1500, 0.3·N)" if ax is axes[0] else None, zorder=4)
-    ax.set_xscale("log")
-    ax.set_xlim(2e-3, 1.6)
-    ax.set_title(glabel, fontsize=11)
-    ax.grid(True, which="major", color=GRID, lw=0.5, zorder=1)
-    for s in ("top", "right"):
-        ax.spines[s].set_visible(False)
-axes[0].set_ylabel("deficit to the single-task ceiling:  single − final")
-axes[0].annotate("single-task ceiling", (2.5e-3, 0), textcoords="offset points",
-                 xytext=(0, -11), fontsize=8.5, color=MUTED)
-axes[0].annotate("at-intro level (green zone = ends above own introduction)",
-                 (2.5e-3, axes[0].get_ylim()[1]), fontsize=8.5, color=MUTED, va="top",
-                 xytext=(0, -2), textcoords="offset points")
-handles, labels = axes[0].get_legend_handles_labels()
-fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False, fontsize=10, bbox_to_anchor=(0.5, 0.98))
-fig.suptitle("Who gets starved: fixed-count caps BIG tasks, ratio caps SMALL tasks", fontsize=13, y=1.04)
-fig.supxlabel("fraction of a task's own training labels replayed per step (log)", fontsize=11)
-fig.tight_layout(rect=(0, 0.02, 1, 0.95))
-fig.savefig(HERE / "ratio_deficit_by_size.png", bbox_inches="tight")
-print("saved ratio_deficit_by_size.png")
 
 # ------------------------------------------------------------ fig 3: baseline family
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13.2, 5.2), dpi=150)
 
-def retention_traj(rows):
-    """Per step: share of the R²-tasks learned so far that still beat a constant predictor."""
+def step_dists(rows):
+    """Per step: the test R² of every R²-task learned so far (full distribution, no threshold)."""
     steps = sorted({int(r["step"]) for r in rows})
-    frac = []
+    out = []
     for s in steps:
         vals = [fnum(r["primary"]) for r in rows if int(r["step"]) == s and r["task"] != "material_type"]
-        vals = [v for v in vals if v is not None]
-        frac.append(sum(v > 0 for v in vals) / len(vals))
-    return steps, frac
+        out.append((s, [v for v in vals if v is not None]))
+    return out
 
-s_nr, f_nr = retention_traj(noreplay_rows)
-ax1.plot(s_nr, f_nr, color="#555555", lw=2.2, marker="o", ms=4.5, mec="white", label="no replay", zorder=3)
+
+def styled_box(data, positions, face, edge):
+    ax1.boxplot(
+        data, positions=positions, widths=0.34, patch_artist=True, manage_ticks=False,
+        boxprops={"facecolor": face, "edgecolor": edge, "lw": 1.0},
+        whiskerprops={"color": edge, "lw": 1.0}, capprops={"color": edge, "lw": 1.0},
+        medianprops={"color": edge, "lw": 1.6},
+        flierprops={"marker": ".", "ms": 3, "mfc": edge, "mec": edge, "alpha": 0.6},
+    )
+
+
+nr = step_dists(noreplay_rows)
+styled_box([v for _, v in nr], [s - 0.21 for s, _ in nr], "#d7d9dd", "#555555")
+med_nr = float(np.median(nr[-1][1]))
 n1000 = RES_E / "mt_n1000_epoch_m150.csv"
+med_rp = float("nan")
 if n1000.exists():
-    s_ref, f_ref = retention_traj(list(csv.DictReader(open(n1000))))
-    ax1.plot(s_ref, f_ref, color=ORANGE, lw=2.2, marker="^", ms=4.5, mec="white",
-             label="replay n1000 (epoch-m150)", zorder=3)
-ax1.set_ylim(0, 1.05)
-ax1.annotate(f"step 24: {f_nr[-1]:.0%} of tasks still usable\n(mean R² −33 — collapsed tasks go deeply negative)",
-             (s_nr[-1], f_nr[-1]), textcoords="offset points", xytext=(-8, 30), fontsize=8.5,
-             color="#374151", ha="right")
-ax1.yaxis.set_major_formatter(lambda v, _: f"{v:.0%}")
+    rp = step_dists(list(csv.DictReader(open(n1000))))
+    styled_box([v for _, v in rp], [s + 0.21 for s, _ in rp], "#fbdcc4", ORANGE)
+    med_rp = float(np.median(rp[-1][1]))
+ax1.set_yscale("symlog", linthresh=1)
+ax1.set_ylim(-4000, 1.9)
+ax1.set_yticks([1, 0, -1, -10, -100, -1000])
+ax1.set_yticklabels(["1", "0", "−1", "−10", "−100", "−1000"])
+ax1.axhline(0, color=MUTED, lw=1.2, zorder=1)
+ax1.text(24.5, 0.06, "R² = 0 — constant-mean predictor", fontsize=8.5, color=MUTED, ha="right")
+ax1.set_xlim(0.2, 24.8)
+ax1.set_xticks([1, 4, 8, 12, 16, 20, 24])
 ax1.set_xlabel("training step (task introductions)")
-ax1.set_ylabel("share of learned tasks with R² > 0")
-ax1.set_title("Without replay, most learned tasks stop working within steps\n(R² > 0 = still beats a constant predictor)",
+ax1.set_ylabel("test R² per learned task (symlog below −1)")
+ax1.set_title(f"Per-step distribution of test R² over the learned tasks\n"
+              f"(step-24 medians: no replay {med_nr:.0f} vs replay {med_rp:.2f}; axis is linear in [−1, 1])",
               fontsize=10.5)
-ax1.legend(loc="center right", frameon=False, fontsize=9)
-ax1.grid(True, which="major", color=GRID, lw=0.5, zorder=1)
+from matplotlib.patches import Patch
+
+ax1.legend(handles=[Patch(facecolor="#d7d9dd", edgecolor="#555555", label="no replay"),
+                    Patch(facecolor="#fbdcc4", edgecolor=ORANGE, label="replay n1000 (epoch-m150)")],
+           loc="lower left", frameon=False, fontsize=9)
+ax1.grid(True, which="major", color=GRID, lw=0.5, zorder=0)
 
 caps = [c for c in JOINT_CAPS if c in joint]
 ys = [float(np.mean([v for t, v in joint[c]["after"].items() if t != "material_type"])) for c in caps]

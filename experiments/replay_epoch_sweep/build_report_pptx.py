@@ -156,15 +156,16 @@ pic_slide("Forgetting stays event-driven — but small-n collapses are suppresse
           AN / "replay_trajectories_compare.png")
 
 # 6b — replay requirement vs task size (both baselines, all budgets)
-s = pic_slide("Distance to the single-task ceiling — every budget, every arm, by task size",
-              "y = single-task baseline − final; solid 0-line = single-task ceiling, dashed = at-intro level "
-              "(multi-task cost); green zone = run ends ABOVE its own introduction level",
+s = pic_slide("Distance to the single-task ceiling — EVERY arm on one axis, by task size",
+              "x = labels actually replayed per old task (group mean of min(amount, N), log) — ratio, hybrid and the "
+              "end-of-run joint retrain join the four count arms in one frame; two dashed refs: at-intro of the "
+              "p24/150 arms (anchors the green zone) vs the p8 arms (introductions early-stop lower)",
               AN / "replay_requirement_vs_size.png", top=1.5, bottom=1.0)
-txt(s, 0.5, 6.65, 12.4, 0.75, [
-    "big (≥20k): frozen replay never reaches at-intro even at n2500 (11% of own data); epoch+full-epochs recovers to "
-    "at-intro from n≈500–1000 and plateaus there — the residual ~0.045 is multi-task cost, not forgetting. "
-    "mid (3k–8k): epoch-p24/m150 reach the single-task ceiling itself (deficit ≤0.02 from n≥500) — the historical "
-    "\"never past at-intro\" boundary is broken. Requirement scales with task size ⇒ next phase: ratio × epoch resampling.",
+txt(s, 0.5, 6.7, 12.4, 0.7, [
+    "big (≥20k): the count arms plateau at ~0.045; ratio r0.3/0.5 and the hybrid cut it to 0.025–0.031 — half the old "
+    "\"multi-task cost\" was recoverable forgetting. small (≤1.2k): the mirror image — ratio starves them (r0.5: 0.085) "
+    "while 100%-coverage settings (n≥1500, the hybrid floor) sit at ≤0.01. The grey diamond (no-replay → end retrain) "
+    "is worst in every group; the hybrid star is the only setting in or at the green zone in all three panels.",
 ], size=11, color=MUT)
 
 # 6c-6e — ratio family + baselines
@@ -172,13 +173,9 @@ pic_slide("Ratio replay joins the same cost curve — no free lunch on the mean"
           "mean final R² (23 tasks) vs TOTAL labels replayed per step; both families under the m150 recipe; "
           "references: converged end-of-run joint retrain (0.584) and the best frozen-subset arm (0.600)",
           AN / "ratio_cost_view.png")
-pic_slide("…but allocation decides who pays: fixed-count starves BIG tasks, ratio starves SMALL ones",
-          "deficit to the single-task ceiling vs fraction of a task's OWN labels replayed per step; "
-          "grey diamond = joint retrain at the end (full data, fraction 1.0) — worst in every group ⇒ "
-          "hybrid amount = max(floor, r·N) via replay.per_task",
-          AN / "ratio_deficit_by_size.png")
 pic_slide("Baseline family — collapse without replay; end-of-run rehearsal converges below every replay arm",
-          "left: share of learned tasks still beating a constant predictor (no replay: 4% by step 24, mean R² −33) · "
+          "left: per-step BOXPLOTS of test R² over the learned tasks (symlog below −1) — without replay the whole "
+          "distribution falls off the linear scale (step-24 medians: −23 vs 0.66 with replay n1000) · "
           "right: joint retrain vs epoch cap — early-stops at 214, caps 250/300 identical (deterministic replicate)",
           AN / "baseline_family.png")
 
