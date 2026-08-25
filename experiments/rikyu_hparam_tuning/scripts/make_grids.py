@@ -165,6 +165,20 @@ def stage_a4(winner: str, batch_size: int) -> list[tuple[str, str]]:
     return rows
 
 
+def stage_a6(winner: str, batch_size: int) -> list[tuple[str, str]]:
+    """The autoencoder head always trains and its gradients reach the shared trunk, so its LR is
+    an encoder-side knob. 1-D scan on the winner (5e-3 already measured)."""
+    rows = []
+    enc = parse_a1(winner)
+    for ae_lr in (1e-3, 1e-2):
+        runid = f"a6_{winner[3:]}_B{batch_size}_A{tag(ae_lr)}"
+        ov = task_override(ENC_TASK) + " " + overrides(
+            **enc, data__batch_size=batch_size, training__ae_lr=ae_lr
+        )
+        rows.append((runid, ov))
+    return rows
+
+
 def stage_a5(winners: list[str], batch_size: int) -> list[tuple[str, str]]:
     """Does the encoder choice transfer off formation_energy? Short list x harder tasks."""
     rows = []
@@ -261,7 +275,7 @@ def stage_b_clf(enc: dict) -> list[tuple[str, str]]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("stage", choices=["a1", "a2", "a3", "a4", "a5", "breg", "bkr", "bkr2", "bclf"])
+    ap.add_argument("stage", choices=["a1", "a2", "a3", "a4", "a5", "a6", "breg", "bkr", "bkr2", "bclf"])
     ap.add_argument("--winner", help="stage-A1 runid of the winning encoder (a1_L..._H..._E...)")
     ap.add_argument("--winners", nargs="+", help="stage-A1 short list (a2 / a5)")
     ap.add_argument("--batch-size", type=int, default=BASE["data.batch_size"])
@@ -289,6 +303,8 @@ def main() -> None:
         write("a4", stage_a4(args.winner, args.batch_size))
     elif args.stage == "a5":
         write("a5", stage_a5(args.winners or [], args.batch_size))
+    elif args.stage == "a6":
+        write("a6", stage_a6(args.winner, args.batch_size))
     elif args.stage == "breg":
         write("breg", stage_b_reg(enc_settings()))
     elif args.stage == "bkr":
