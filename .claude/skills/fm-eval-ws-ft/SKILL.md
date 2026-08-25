@@ -5,6 +5,9 @@ description: Evaluate pretrained checkpoints on new target tasks via warm-start 
 
 # Checkpoint evaluation: warm-start vs finetune
 
+Machine-independent skill: pick the execution target and preflight it per the hpc-training-env
+skill (default local; RIKYU/R-CCS prefer the container); lay files out per experiment-layout.
+
 Two complementary probes per checkpoint — always report both, they answer different questions:
 
 | mode | command | what it measures |

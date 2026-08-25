@@ -5,6 +5,9 @@ description: Configure and run fm inverse — user-specified multi-target invers
 
 # Inverse design with `fm inverse`
 
+Machine-independent skill: pick the execution target and preflight it per the hpc-training-env
+skill (default local; RIKYU/R-CCS prefer the container); lay files out per experiment-layout.
+
 `fm inverse --config inv.toml --checkpoint <final_model.pt> [--output-dir D] [--steps N]
 [--scenario NAME]`. Reference config: `experiments/rikyu_task_scaling/make_configs.py`
 (`inv.toml`). The objective is fully user-specified — there is no built-in target.

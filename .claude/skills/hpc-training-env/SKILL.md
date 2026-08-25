@@ -1,13 +1,32 @@
 ---
 name: hpc-training-env
-description: Deploy the fm training environment on a Slurm supercomputer and run/babysit experiment fleets there (setup, data transfer, job patterns, monitoring, result recovery). Use when asked to set up a cluster environment or manage cluster jobs.
+description: Decide WHERE a workload runs (local/remote/container selection protocol + mandatory preflight), deploy the fm environment on machines and Slurm clusters, and run/babysit experiment fleets (setup, data transfer, job patterns, monitoring, result recovery). Use when picking an execution target, setting up an environment, or managing cluster jobs.
 ---
 
-# Training environment on a Slurm cluster
+# Execution targets & the training environment
 
-Cluster-specific facts (login alias, partitions, module names, current account state) live in
-`.github/instructions/rikyu-supercomputer.instructions.md` — read it first and **update it in
-place** when the cluster changes (never delete it; it survives machine migrations).
+This skill owns everything machine-specific — the workflow skills (fm-pretrain, fm-eval-ws-ft,
+fm-inverse) stay machine-independent and defer here. Machine-specific facts (login alias,
+partitions, module names, quotas, account state) live in `.github/instructions/
+{rikyu,riken-rccs,ism-gpu-a100}-*.instructions.md` — read the relevant one first and **update
+it in place** when a machine changes (never delete; they survive migrations).
+
+## Choosing where to run (protocol)
+
+1. An **explicit user instruction** for this task wins.
+2. Else follow the **preference order in AGENTS.md / .github/instructions** (RIKYU is the
+   preferred compute platform when available).
+3. Else **default to the LOCAL machine**.
+
+- On **RIKYU and RIKEN R-CCS, prefer the project container** over a bare uv env: the GHCR image
+  built by `.github/workflows/rikyu-container.yml` (tags `ghcr.io/<owner>/<repo>:rikyu-*`);
+  fall back to `uv sync --frozen` only where the container runtime is unavailable.
+- **Preflight EVERY chosen target before committing work — local included.** Minimum checks:
+  reachable; repo at the intended commit; env resolves (container pulls / `uv sync --frozen`
+  exits clean); GPU visible (`python -c "import torch; print(torch.cuda.is_available())"` or MPS
+  locally); required `data/` files present; disk headroom; for Slurm also partition state
+  (`sinfo`) and quota headroom. If the env is new or changed, run the standard `--sample 400`
+  smoke of the full intended chain as a real job before any long run.
 
 ## Environment setup (new machine / new account)
 
