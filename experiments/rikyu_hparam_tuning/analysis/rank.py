@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Rank a stage's grid points against the in-campaign untuned control.
 
-Every stage-A/B run is a single-task probe, so a grid point's quality is read as its improvement
-over the SAME probe run at the untuned baseline architecture — not against the historical
-single-task ceilings, which were measured on different hardware with a different container. The
-historical ceiling is printed as context only.
+A grid point's quality is its improvement over the SAME probe at the untuned baseline
+architecture — never against the historical single-task ceilings, which were measured on other
+hardware with a different container. The ceilings are printed as headroom context only.
 
-A grid point that spans several probe tasks (stage A5, all of stage B) is scored by the mean of
-its per-task deltas, so a config has to win across tasks rather than exploit one.
+Every grid point is scored by the MEAN of its per-task deltas, so a config has to win across the
+probe's tasks rather than exploit one. Stage A's probe is a 3-task sequence (one task per size
+group); stage B's grids span 2-3 tasks per head family.
 
-    python .../rank.py <collected.csv> --metric mae --baseline a1_L128_H256_E0p005
-    python .../rank.py <collected.csv> --metric r2 --group-suffix-tasks formation_energy volume
+    python .../rank.py stage_a.csv --metric mae --baseline a1_L128_H256_E0p005
+    python .../rank.py stage_a.csv --metric r2 --score absolute --knobs model.latent_dim
 """
 
 from __future__ import annotations
@@ -45,13 +45,12 @@ def fnum(value):
 
 
 def load(path: Path) -> list[dict]:
-    rows = []
-    for r in csv.DictReader(open(path)):
-        # A single-task probe evaluates exactly one head; guard against stray rows.
-        if r.get("new_task") and r["task"] != r["new_task"]:
-            continue
-        rows.append(r)
-    return rows
+    """Every row of the collected CSV — collect.py already restricts to the final step.
+
+    The stage-A probe is a 3-task sequence, so its final step carries one row per task (the
+    newest plus the replayed older ones); all of them are the measurement.
+    """
+    return list(csv.DictReader(open(path)))
 
 
 def config_key(runid: str, tasks: list[str]) -> str:
@@ -69,6 +68,12 @@ def main() -> None:
     ap.add_argument("--baseline", required=True, help="runid (or config key) of the untuned control")
     ap.add_argument("--knobs", nargs="*", default=[], help="resolved-config columns to show")
     ap.add_argument("--top", type=int, default=0, help="print only the top N (0 = all)")
+    ap.add_argument(
+        "--score",
+        choices=["auto", "absolute", "relative"],
+        default="auto",
+        help="how per-task deltas are combined; auto = relative when the probe spans >1 task",
+    )
     args = ap.parse_args()
 
     rows = load(args.csv)
@@ -95,21 +100,33 @@ def main() -> None:
         raise SystemExit(f"baseline {args.baseline!r} (key {base_key!r}) not in {sorted(metric)}")
     base = metric[base_key]
 
+    # Absolute deltas cannot be averaged across tasks whose metric lives on different scales
+    # (formation_energy MAE ~0.06 vs a small task's ~0.4 — the big task would contribute almost
+    # nothing to the mean). Relative improvement is scale-free, so it is the default whenever a
+    # grid point spans more than one probe task.
     sign = -1.0 if args.metric in LOWER_IS_BETTER else 1.0
+    relative = args.score == "relative" or (args.score == "auto" and len(tasks) > 1)
+
+    def delta(value: float, ref: float) -> float:
+        if relative:
+            return sign * (value - ref) / abs(ref) if ref else 0.0
+        return sign * (value - ref)
+
     scored = []
     for key, per_task in metric.items():
         shared = [t for t in per_task if t in base]
         if not shared:
             continue
-        deltas = {t: sign * (per_task[t] - base[t]) for t in shared}
+        deltas = {t: delta(per_task[t], base[t]) for t in shared}
         scored.append((statistics.fmean(deltas.values()), key, per_task, deltas, shared))
     scored.sort(reverse=True)
 
-    print(f"# {args.csv.name} — metric={args.metric} (baseline {base_key}), {len(scored)} configs")
+    unit = "rel" if relative else "abs"
+    print(f"# {args.csv.name} — metric={args.metric} [{unit}] vs {base_key}, {len(scored)} configs")
     labels = [f"{t} (ceiling R2 {CEILING[t]:.3f})" if t in CEILING else t for t in tasks]
     print(f"# probe tasks: {', '.join(labels)}")
-    header = ["rank", "config", f"mean Δ{args.metric}"] + [f"{t}" for t in tasks] + ["epochs"] + args.knobs
-    widths = [4, max(len(k) for _, k, *_ in scored) + 1, 13] + [max(11, len(t) + 1) for t in tasks] + [7]
+    header = ["rank", "config", f"mean Δ{args.metric}({unit})"] + [f"{t}" for t in tasks] + ["epochs"] + args.knobs
+    widths = [4, max(len(k) for _, k, *_ in scored) + 1, 16] + [max(18, len(t) + 1) for t in tasks] + [7]
     widths += [max(10, len(k) + 1) for k in args.knobs]
     print("  ".join(h.ljust(w) for h, w in zip(header, widths)))
     print("  ".join("-" * w for w in widths))
@@ -117,9 +134,13 @@ def main() -> None:
     for i, (mean_delta, key, per_task, deltas, _) in enumerate(scored, 1):
         if args.top and i > args.top:
             break
-        cells = [str(i), key, f"{mean_delta:+.4f}"]
+        cells = [str(i), key, (f"{mean_delta:+7.2%}" if relative else f"{mean_delta:+.4f}")]
         for t in tasks:
-            cells.append(f"{per_task[t]:.4f}({deltas[t]:+.3f})" if t in deltas else "-")
+            if t not in deltas:
+                cells.append("-")
+            else:
+                d = f"{deltas[t]:+.1%}" if relative else f"{deltas[t]:+.3f}"
+                cells.append(f"{per_task[t]:.4f}({d})")
         cells.append(str(max(epochs[key]) if epochs[key] else "-"))
         cells += [str(knobs[key].get(k, "")) for k in args.knobs]
         print("  ".join(c.ljust(w) for c, w in zip(cells, widths)))
