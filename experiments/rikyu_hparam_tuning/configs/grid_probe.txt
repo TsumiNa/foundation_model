@@ -1,0 +1,2 @@
+probe_kr_seebeck	--set 'pretrain.task_sequence=["seebeck"]'
+probe_clf_material	--set 'pretrain.task_sequence=["material_type"]'
