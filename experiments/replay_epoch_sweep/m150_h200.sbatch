@@ -4,8 +4,8 @@
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=28
 #SBATCH --time=22:00:00
-#SBATCH --output=/home/users/u0001820/jobs/replay_epoch_p24/%x_%j.out
-#SBATCH --error=/home/users/u0001820/jobs/replay_epoch_p24/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 
 # Variant worker: epoch resampling + patience 24 + max_epochs 150 (the p24 sweep showed 100%
 # of steps hit the 100-epoch cap, so max_epochs — not patience — is the binding lever).
@@ -14,7 +14,7 @@ source /etc/profile
 set -euo pipefail
 module load system/ai-h200-brc nvhpc
 
-PROJ=/home/users/u0001820/projects/foundation_model-x86-cuda
+PROJ=${PROJ:-$HOME/projects/foundation_model-x86-cuda}
 cd "$PROJ"
 flock .uv_sync.lock "$HOME/.local/bin/uv" sync --frozen --all-groups
 .venv/bin/python -c 'import torch; print(torch.cuda.get_device_name(), torch.version.cuda, torch.cuda.is_available())'

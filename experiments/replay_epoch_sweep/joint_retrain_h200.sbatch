@@ -4,8 +4,8 @@
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=28
 #SBATCH --time=24:00:00
-#SBATCH --output=/home/users/u0001820/jobs/replay_epoch_p24/%x_%j.out
-#SBATCH --error=/home/users/u0001820/jobs/replay_epoch_p24/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 
 # Baseline arm B: full-data JOINT retrain of all 24 tasks (fm finetune, freeze_encoder=false),
 # warm-started from arm A's final model. EP (--export) sets the epoch cap; each cap is an
@@ -17,7 +17,7 @@ source /etc/profile
 set -euo pipefail
 module load system/ai-h200-brc nvhpc
 
-PROJ=/home/users/u0001820/projects/foundation_model-x86-cuda
+PROJ=${PROJ:-$HOME/projects/foundation_model-x86-cuda}
 cd "$PROJ"
 flock .uv_sync.lock "$HOME/.local/bin/uv" sync --frozen --all-groups
 .venv/bin/python -c 'import torch; print(torch.cuda.get_device_name(), torch.version.cuda, torch.cuda.is_available())'

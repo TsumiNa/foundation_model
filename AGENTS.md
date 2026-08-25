@@ -15,7 +15,7 @@ A multi-task PyTorch Lightning model (`FlexibleMultiTaskModel`) for predicting m
 
 ## Build, Test, and Development Commands
 
-Environment is managed with **uv** (Python 3.11–3.13).
+Environment is managed with **uv** (Python 3.12–3.14).
 
 ```bash
 uv sync --frozen --all-groups   # install runtime + dev deps from uv.lock

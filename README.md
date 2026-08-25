@@ -74,6 +74,9 @@ uv sync --frozen --all-groups
 This installs all dependencies pinned by `uv.lock` (production + dev) for reproducibility.
 To add a new dependency: `uv add <pkg>` (runtime) or `uv add --dev <pkg>` (dev).
 
+For the versioned AArch64/CUDA 13 container published to GHCR and its Apptainer workflow on RIKEN
+R-CCS RIKYU, see [docs/rikyu_container.md](docs/rikyu_container.md).
+
 ## Usage
 
 Everything runs through a single console command, **`fm`**, with four subcommands. Each reads a

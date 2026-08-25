@@ -3,8 +3,8 @@
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=1
 #SBATCH --time=04:00:00
-#SBATCH --output=/home/ea0094/jobs/task_scaling/%x_%j.out
-#SBATCH --error=/home/ea0094/jobs/task_scaling/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 
 # Warm-restart control for the replay sweep's above-ceiling puzzle: same model structure, same
 # FIXED full training data, single task, NO other tasks — retrain 10 times in a chain where each
@@ -14,7 +14,7 @@
 # above-ceiling finals in the sweep.
 #   it00 = single-task pretrain (the at-intro analogue); it01..it10 = warm restarts.
 set -uo pipefail
-PROJ=/home/ea0094/projects/foundation_model
+PROJ=${PROJ:-$HOME/projects/foundation_model}
 CFG=$PROJ/experiments/rikyu_task_scaling/configs
 FM=$PROJ/.venv/bin/fm
 : "${TASK:?need TASK=<task name>}"

@@ -4,11 +4,11 @@
 # If a pretrain job fails, its dependents go DependencyNeverSatisfied: resubmit the pretrain
 # (all workers are skip-if-done + --resume idempotent), then resubmit the two eval jobs.
 set -euo pipefail
-PROJ=/home/ea0094/projects/foundation_model
+PROJ=${PROJ:-$HOME/projects/foundation_model}
 JOBS=$PROJ/experiments/rikyu_task_scaling/jobs
 N=${1:-1000}   # replay branch: bash submit_all.sh [1000|1500]
 TAG=""; [ "$N" != "1000" ] && TAG="_n${N}"
-mkdir -p /home/ea0094/jobs/task_scaling
+mkdir -p "$HOME/jobs/task_scaling"
 
 for ORD in 0 1 2; do
     pre=$(sbatch --parsable --job-name=ts_pre${TAG}_o${ORD} --export=ALL,ORD=$ORD,N=$N "$JOBS/pretrain_scaling.sbatch")

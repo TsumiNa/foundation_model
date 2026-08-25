@@ -42,27 +42,23 @@ services, and personal use.
 ## Access & layout
 
 - SSH: `ssh riken-login` (already configured).
-- User: `u0001820`.
-- Login host: `login1.cloud.r-ccs.riken.jp`.
-- Home: `/home/users/u0001820`, physically mounted at `/hs/work0/home/users/u0001820`.
+- Keep the login host, user, and identity file in local SSH configuration, not in this repository.
+- Home is available as `$HOME`.
 - No `foundation_model` clone was present when these instructions were written. Use separate clones
   for incompatible execution environments:
-  - GH200: `/home/users/u0001820/projects/foundation_model-gh200`
-  - H200/H100/A100: `/home/users/u0001820/projects/foundation_model-x86-cuda`
-  - MI300A: `/home/users/u0001820/projects/foundation_model-mi300a`
-- Group: `agis-fmms` (project ID `11036`).
-- Shared group storage: `/lvs0/agis-fmms`.
+  - GH200: `$HOME/projects/foundation_model-gh200`
+  - H200/H100/A100: `$HOME/projects/foundation_model-x86-cuda`
+  - MI300A: `$HOME/projects/foundation_model-mi300a`
+- Keep the project ID and shared group-storage path in local environment variables.
 - Scheduler: **Slurm 24.05** (`sbatch`, `srun`, `squeue`, `sinfo`, `sacct`, `scancel`).
-- `uv`: `/home/users/u0001820/.local/bin/uv`.
+- `uv`: `$HOME/.local/bin/uv`.
 - Login-node system Python is 3.9 and is too old for this project; use the project `.venv`.
 
-The home quota is 1 TB. Although the manual's generic group-directory default is 5 TB and
-10,000,000 files, `agis-fmms` was live-verified at **50 TB and 20,000,000 files** in 2026-07 and was
-already close to both limits. Check quotas before a large run:
+The home quota is 1 TB. Group quotas are allocation-specific; check them before a large run:
 
 ```bash
 lfs quota -h -u "$(whoami)" /hs/work0
-lfs quota -hp 11036 /lvs0
+lfs quota -hp "$RCCS_PROJECT_ID" /lvs0
 ```
 
 ## Non-interactive SSH and modules
@@ -172,7 +168,7 @@ Slurm job `262883` has an `afterany` dependency on all three tests and will writ
 `Submit`, `Eligible`, `Start`, `End`, state, requested resources, and allocated resources to:
 
 ```text
-/home/users/u0001820/jobs/instructions-smoke/queue_wait_2026-07-29.psv
+$HOME/jobs/instructions-smoke/queue_wait_2026-07-29.psv
 ```
 
 Replace the estimates above with actual `Start - Submit` durations after the recorder completes.
@@ -202,7 +198,7 @@ normal environment for the NVIDIA partitions (`qc-gh200`, `ai-h200-brc`, `ai-h10
 `qc-a100`) on both AArch64 and x86_64:
 
 ```bash
-cd /home/users/u0001820/projects/<foundation_model-gh200-or-foundation_model-x86-cuda>
+cd "$HOME/projects/<foundation_model-gh200-or-foundation_model-x86-cuda>"
 uv sync --frozen --all-groups
 .venv/bin/python -c \
   'import platform, torch; print(platform.machine(), torch.__version__, torch.version.cuda, torch.cuda.is_available())'
@@ -241,14 +237,14 @@ starting real work.
 #SBATCH --partition=qc-gh200
 #SBATCH --nodes=1
 #SBATCH --time=01:00:00
-#SBATCH --output=/home/users/u0001820/jobs/%x_%j.out
-#SBATCH --error=/home/users/u0001820/jobs/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 
 source /etc/profile
 set -euo pipefail
 module load system/qc-gh200 nvhpc
 
-PROJ=/home/users/u0001820/projects/foundation_model-gh200
+PROJ=${PROJ:-$HOME/projects/foundation_model-gh200}
 cd "$PROJ"
 
 .venv/bin/python -c \
@@ -265,14 +261,14 @@ cd "$PROJ"
 #SBATCH --nodes=1
 #SBATCH --gpus=1
 #SBATCH --time=01:00:00
-#SBATCH --output=/home/users/u0001820/jobs/%x_%j.out
-#SBATCH --error=/home/users/u0001820/jobs/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 
 source /etc/profile
 set -euo pipefail
 module load system/ai-h200-brc nvhpc
 
-PROJ=/home/users/u0001820/projects/foundation_model-x86-cuda
+PROJ=${PROJ:-$HOME/projects/foundation_model-x86-cuda}
 cd "$PROJ"
 
 .venv/bin/python -c \
@@ -285,8 +281,8 @@ For `qc-a100`, change the partition and module to `qc-a100` and `system/qc-a100 
 For `ai-h100l-pu`, change the partition/module to `ai-h100l-pu` and `system/ai-h100l nvhpc`, remove
 `--gpus`, and set `--time` to no more than `00:30:00`.
 
-Create `/home/users/u0001820/jobs` before the first submission. Keep outputs and checkpoints under
-home or `/lvs0/agis-fmms`; do not rely on node-local paths surviving job completion.
+Create `$HOME/jobs` before the first submission. Keep outputs and checkpoints under home or the
+configured group-storage directory; do not rely on node-local paths surviving job completion.
 
 ## Submitting and controlling jobs
 

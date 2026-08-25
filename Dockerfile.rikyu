@@ -1,0 +1,52 @@
+# syntax=docker/dockerfile:1
+
+ARG PYTHON_VERSION=3.14
+
+FROM python:${PYTHON_VERSION}-slim-bookworm
+
+COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /uvx /bin/
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PATH="/opt/foundation-model/.venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /opt/foundation-model
+
+# Keep dependency installation cacheable independently of source changes.
+COPY pyproject.toml uv.lock README.md ./
+
+# quadprog, pymatgen, and spglib currently build from source on CPython 3.14
+# / Linux AArch64. Install the toolchain and remove it within the same layer so
+# it is not retained in the runtime image.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    apt-get update \
+    && apt-get install --yes --no-install-recommends build-essential libgomp1 \
+    && uv sync --frozen --no-dev --no-install-project \
+    && apt-get purge --yes --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY src ./src
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable
+
+ARG IMAGE_VERSION
+ARG VCS_REF
+ARG SOURCE_URL=https://github.com/TsumiNa/foundation_model
+
+LABEL org.opencontainers.image.title="foundation-model for RIKYU" \
+      org.opencontainers.image.description="AArch64 PyTorch CUDA 13 runtime for RIKEN R-CCS RIKYU" \
+      org.opencontainers.image.source="${SOURCE_URL}" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}"
+
+WORKDIR /workspace
+
+# Fail the image build if the locked environment is not the RIKYU-compatible
+# AArch64 / CUDA 13 variant or if the installed CLI cannot start.
+RUN python -c "import platform, torch; assert platform.machine() in {'aarch64', 'arm64'}; assert torch.version.cuda == '13.0', torch.version.cuda" \
+    && fm --help >/dev/null
+
+ENTRYPOINT ["fm"]
+CMD ["--help"]

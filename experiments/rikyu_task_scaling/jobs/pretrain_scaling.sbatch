@@ -3,15 +3,15 @@
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=1
 #SBATCH --time=24:00:00
-#SBATCH --output=/home/ea0094/jobs/task_scaling/%x_%j.out
-#SBATCH --error=/home/ea0094/jobs/task_scaling/%x_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 
 # Task-scaling pretrain worker: 21 tasks, replay n=1000, random order per ORD (0/1/2).
 # --seed/--set replicate exactly what pretrain.n_runs=3 would produce for run index ORD,
 # but as parallel Slurm jobs. --resume makes resubmission after a walltime kill safe
 # (the seeded shuffle keeps the task order stable across resubmits).
 set -uo pipefail
-PROJ=/home/ea0094/projects/foundation_model
+PROJ=${PROJ:-$HOME/projects/foundation_model}
 CFG=$PROJ/experiments/rikyu_task_scaling/configs
 : "${ORD:?need ORD=0|1|2}"
 N=${N:-1000}                 # replay amount branch; 1000 keeps the original (untagged) dirs
