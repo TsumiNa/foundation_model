@@ -24,19 +24,19 @@ treat them as hard constraints unless the user says otherwise.
    `resize`. Plain fixed-attribute canvases look blurry on retina — this was an explicit user
    complaint.
 4. **Layout: two columns, left 2/3, right 1/3** (flex; canvases sized from the container).
-   - Left top: elements × candidates heatmap (animated over optimisation steps; ▲ marks the
-     best-final candidate; click a column to select; hover tooltip shows cell values).
-   - Left below: selected candidate's per-target progress curves (3/4 width; 0 = seed,
-     1 = target with a dashed line; vertical current-step marker) + its composition as
-     **weight-sorted** bars (1/4 width, zero-weight elements hidden).
-   - Left bottom: the pretraining task-order timeline for the selected order, **linked to k**
-     (first k tasks highlighted, k-th marked as latest; read the realized order from the run's
-     own metrics table, don't hardcode).
-   - Right top: seeds → final list (fixed height ~400px, scroll, `scrollIntoView` on selection);
-     the **selected row expands** to an inline detail line with predicted values at seed and
-     final. No hover-tooltips for dense values — the user rejected them.
-   - Right bottom: "How to use" + "Experiment" notes so the file is self-explanatory to someone
-     with no context (objective incl. the z-score definition, seed strategy, paths, step count).
+    - Left top: elements × candidates heatmap (animated over optimisation steps; ▲ marks the
+      best-final candidate; click a column to select; hover tooltip shows cell values).
+    - Left below: selected candidate's per-target progress curves (3/4 width; 0 = seed,
+      1 = target with a dashed line; vertical current-step marker) + its composition as
+      **weight-sorted** bars (1/4 width, zero-weight elements hidden).
+    - Left bottom: the pretraining task-order timeline for the selected order, **linked to k**
+      (first k tasks highlighted, k-th marked as latest; read the realized order from the run's
+      own metrics table, don't hardcode).
+    - Right top: seeds → final list (fixed height ~400px, scroll, `scrollIntoView` on selection);
+      the **selected row expands** to an inline detail line with predicted values at seed and
+      final. No hover-tooltips for dense values — the user rejected them.
+    - Right bottom: "How to use" + "Experiment" notes so the file is self-explanatory to someone
+      with no context (objective incl. the z-score definition, seed strategy, paths, step count).
 5. **Controls row:** dropdowns covering the full selection matrix (refresh dependent menus,
    preserve compatible selections), a frame slider (**1 frame per 5 optimisation steps** plus the
    final step), a numeric **jump-to-step** box (+ Enter key), ▶ play/pause, and **raw-data
@@ -64,6 +64,7 @@ node -e "…extract <script>…; new Function(...)(…)"      # JS syntax check
 node -e "…zlib.gunzipSync(base64 payload)…"             # payload decompresses; spot-check dims
 grep -c 'class="det"' viewer.html                        # feature markers present
 ```
+
 Also visually confirm one build via the Read tool or a browser screenshot when feasible, and
 report the file size (warn if it grew unexpectedly — trim frame rate or thresholds, not features).
 
