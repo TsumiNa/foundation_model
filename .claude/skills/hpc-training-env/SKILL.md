@@ -18,9 +18,14 @@ it in place** when a machine changes (never delete; they survive migrations).
    preferred compute platform when available).
 3. Else **default to the LOCAL machine**.
 
-- On **RIKYU and RIKEN R-CCS, prefer the project container** over a bare uv env: the GHCR image
-  built by `.github/workflows/rikyu-container.yml` (tags `ghcr.io/<owner>/<repo>:rikyu-*`);
-  fall back to `uv sync --frozen` only where the container runtime is unavailable.
+- On **RIKYU and RIKEN R-CCS, prefer the project container** over a bare uv env — and match the
+  image to the node ARCH (both are CUDA 13 + Python 3.14 + locked deps; authoritative doc:
+  `docs/container.md`):
+  `ghcr.io/tsumina/foundation_model:<version>|latest|sha-<sha>` (linux/amd64 — x86 nodes incl.
+  R-CCS ai-h200-brc, converted to SIF there) · `:rikyu-<version>|rikyu-sha-<sha>` (linux/arm64 —
+  RIKYU Grace/GB200 ONLY; its ghcr mirror caveat + `scripts/rikyu_pull_container.sh` are in the
+  RIKYU instructions). Never run the `rikyu-*` image on x86. Fall back to `uv sync --frozen`
+  only where no container runtime or no matching-arch image exists.
 - **Preflight EVERY chosen target before committing work — local included.** Minimum checks:
   reachable; repo at the intended commit; env resolves (container pulls / `uv sync --frozen`
   exits clean); GPU visible (`python -c "import torch; print(torch.cuda.is_available())"` or MPS
