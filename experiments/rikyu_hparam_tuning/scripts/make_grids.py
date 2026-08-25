@@ -239,6 +239,51 @@ def stage_b_kr(enc: dict) -> list[tuple[str, str]]:
     return rows
 
 
+# --- stage B-mt: the joint-tuning control arm --------------------------------------------------
+#
+# Stage B tunes each task's head alone. That buys a real tuning step at a schedule that fits, but
+# it cannot show what it costs. B-mt tunes ONE SHARED head config jointly on a multi-task probe,
+# so the two strategies can be read off the same probe:
+#
+#   mt_base     untuned shared head                       (already a grid point)
+#   mt_joint    best shared head from the B-mt grid       (already a grid point)
+#   mt_pertask  each task's own stage-B winner, applied   (needs a generated config)
+#
+# The probes' task combinations are NOT new choices: the regression triple is the size-group
+# sampling already fixed in stage A (big/mid/small), and the kernel triple spans t semantics
+# because every kernel task in the catalog is mid-sized. Nothing here needs a fresh justification,
+# which is exactly why joint tuning is scoped to a control rather than to the main grid — over 24
+# tasks the combinations are neither affordable nor explicable.
+
+
+def stage_b_mt_reg(enc: dict) -> list[tuple[str, str]]:
+    """One shared regression head, tuned jointly on configs/probe3.toml."""
+    rows = []
+    for hidden in HEAD_HIDDEN:
+        for lr in HEAD_LRS:
+            runid = f"bmtreg_H{tag(hidden)}_L{tag(lr)}"
+            ov = overrides(**enc, model__head_hidden_dims=hidden, training__head_lr=lr)
+            rows.append((runid, ov))
+    return rows
+
+
+def stage_b_mt_kr(enc: dict) -> list[tuple[str, str]]:
+    """One shared kernel head, tuned jointly on configs/probe3_kr.toml."""
+    rows = []
+    for n_kernel in KR_N_KERNEL:
+        for x_hidden in KR_X_HIDDEN:
+            for lr in KR_LRS:
+                runid = f"bmtkr_K{n_kernel}_X{tag(x_hidden)}_L{tag(lr)}"
+                ov = overrides(
+                    **enc,
+                    model__n_kernel=n_kernel,
+                    model__kr_x_hidden_dims=x_hidden,
+                    training__kr_lr=lr,
+                )
+                rows.append((runid, ov))
+    return rows
+
+
 def stage_b_clf(enc: dict) -> list[tuple[str, str]]:
     """material_type, the only classification task. Ranked on macro_f1: the measured single-task
     probe hit accuracy 0.989 with macro-F1 0.551, so accuracy has no resolution here."""
@@ -256,7 +301,10 @@ def stage_b_clf(enc: dict) -> list[tuple[str, str]]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("stage", choices=["a1", "a2", "a3", "a4", "a6", "breg", "bkr", "bclf"])
+    ap.add_argument(
+        "stage",
+        choices=["a1", "a2", "a3", "a4", "a6", "breg", "bkr", "bclf", "bmtreg", "bmtkr"],
+    )
     ap.add_argument("--winner", help="stage-A1 runid of the winning encoder (a1_L..._H..._E...)")
     ap.add_argument("--winners", nargs="+", help="stage-A1 short list (a2 / a5)")
     ap.add_argument("--batch-size", type=int, default=BASE["data.batch_size"])
@@ -290,6 +338,10 @@ def main() -> None:
         write("bkr", stage_b_kr(enc_settings()))
     elif args.stage == "bclf":
         write("bclf", stage_b_clf(enc_settings()))
+    elif args.stage == "bmtreg":
+        write("bmtreg", stage_b_mt_reg(enc_settings()))
+    elif args.stage == "bmtkr":
+        write("bmtkr", stage_b_mt_kr(enc_settings()))
 
 
 if __name__ == "__main__":

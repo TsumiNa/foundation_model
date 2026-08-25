@@ -89,6 +89,35 @@ the best head under 24-task continual training. The campaign takes this trade de
 buys a real, per-task tuning step at a cost that fits the schedule, and stage C is where the
 combination is actually measured end-to-end against the untuned control.
 
+### Stage B-mt — the joint-tuning control arm
+
+Per-task tuning is a deliberate trade, and this arm is where it gets priced instead of assumed.
+One **shared** head config is tuned jointly on a multi-task probe, and three arms are then read
+off that same probe:
+
+| arm | head configuration |
+|---|---|
+| `mt_base` | untuned shared head (a grid point) |
+| `mt_joint` | best shared head from the joint grid (a grid point) |
+| `mt_pertask` | each task's own stage-B winner, applied as `[[tasks]]` overrides |
+
+| Probe | Grid | Runs |
+|---|---|---|
+| **B-mt-reg** — [`probe3.toml`](configs/probe3.toml) | shared `head_hidden_dims` × head LR (4×4) | 16 |
+| **B-mt-kr** — [`probe3_kr.toml`](configs/probe3_kr.toml) — `seebeck` / `dos_density` / `zt` | shared `n_kernel` × `kr_x_hidden_dims` × `kr_lr` (3×2×3) | 18 |
+| **mt_pertask** | generated configs, one per probe | 2 |
+
+Why joint tuning is a *control* and not the main method: over 24 tasks the task-subset
+combinations are neither affordable nor explicable — any particular grouping would need its own
+justification, and there is no principled one. Scoping it to two probes avoids that entirely,
+because both probes' compositions are inherited rules rather than fresh choices: the regression
+triple is stage A's big/mid/small size sampling, and the kernel triple spans `t` semantics
+(temperature vs DOS energy) since every kernel task in the catalog is mid-sized.
+
+[`analysis/pertask_vs_joint.py`](analysis/pertask_vs_joint.py) prints the resulting per-task
+table and the mean advantage — the campaign's own statement of what tuning heads in isolation
+gained or cost.
+
 ### Which metric ranks which task
 
 The 24 tasks do not share a regime, so
