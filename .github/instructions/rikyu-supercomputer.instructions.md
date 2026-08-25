@@ -191,6 +191,10 @@ url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 ```
 
+RIKYU's system `containers/image` configuration routes `ghcr.io` through an internal mirror. If the
+mirror does not contain this repository, use `scripts/rikyu_pull_container.sh`; it temporarily
+bypasses the mirror without overwriting an existing user registry configuration.
+
 ## Storage
 
 Phase 2 has three storage areas:

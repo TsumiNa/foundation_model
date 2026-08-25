@@ -31,17 +31,14 @@ On the RIKYU login node, update the clone and convert the versioned OCI image to
 ```bash
 cd "$HOME/projects/foundation_model"
 git pull --ff-only
-
-VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
-mkdir -p "$HOME/containers"
-apptainer pull --force "$HOME/containers/foundation-model_rikyu-$VERSION.sif" \
-  "docker://ghcr.io/tsumina/foundation_model:rikyu-$VERSION"
+bash scripts/rikyu_pull_container.sh
 ```
 
-RIKYU's documented registry mirror explicitly lists Docker Hub, NVIDIA NGC, and Quay rather than
-GHCR. Direct HTTPS access to GHCR was verified from the RIKYU login node on 2026-08-25. If site
-network policy changes, transfer the already-built SIF to RIKYU instead of rebuilding dependencies
-on the cluster.
+RIKYU configures an internal `ghcr.io` mirror. In testing on 2026-08-26, that mirror returned
+`NAME_UNKNOWN` for this repository even though direct anonymous HTTPS access to the public GHCR
+image worked. The helper temporarily installs a user-level `containers/image` configuration that
+uses GHCR directly, removes it on exit, and refuses to overwrite an existing user configuration.
+If site network policy changes, transfer an already-built SIF to RIKYU instead.
 
 ## GPU smoke test
 
