@@ -39,6 +39,11 @@ case "$STAGE" in
     breg|bkr|bclf|b4) CONFIG=single_task.toml; OUT=stage_b; DEFTIME=02:00:00 ;;
     bmtreg)           CONFIG=probe3.toml;      OUT=stage_b; DEFTIME=03:00:00 ;;
     bmtkr)            CONFIG=probe3_kr.toml;   OUT=stage_b; DEFTIME=03:00:00 ;;
+    # The control's third arm: stage-B's RAW per-task winners applied to the same probe. Raw, not
+    # confirmed, because this arm asks about the tuning STRATEGY, i.e. what per-task tuning
+    # produced — the confirmed set is a separate question that stage C deploys.
+    bmtreg_pertask)   CONFIG=probe3_pertask.toml;    OUT=stage_b; DEFTIME=03:00:00 ;;
+    bmtkr_pertask)    CONFIG=probe3_kr_pertask.toml; OUT=stage_b; DEFTIME=03:00:00 ;;
     # Stage C: two arms x two phases. `fm pretrain --resume` is idempotent, so a walltime kill is
     # recovered by resubmitting the identical command; `fm finetune` has no resume and gets its
     # budget in one go.
