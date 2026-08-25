@@ -119,6 +119,10 @@ minimax winner among all 12 replay settings (small-task starvation fixed as desi
 optional polish, not a rescue. Deck slide "Validation — the hybrid rule works"; results in
 `results/mt_hybrid_r03_f1500.csv` + `results/hybrid_joint_retrain.json`.
 
+**Standalone recipe deliverables** (the working baseline for the next phase):
+[HYBRID_RECIPE.md](HYBRID_RECIPE.md) — the recipe, its evidence, and ops notes;
+`results/RECIPE_20260812.pptx` (`build_recipe_pptx.py`) — 7-slide companion deck.
+
 ## Outcome — extension (2026-08-09)
 
 All 9 extension runs complete (ratio 0p10/0p20/0p30/0p50 + no-replay + joint retrain ×4 caps).
