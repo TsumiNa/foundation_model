@@ -7,8 +7,9 @@ ghcr.io/tsumina/foundation_model:rikyu-<project.version>
 ```
 
 The version is read from `pyproject.toml`; for example, project version `0.2.1` produces
-`rikyu-0.2.1`. Pull requests build the image without publishing it. Pushes to `master` and manual
-workflow runs publish it.
+`rikyu-0.2.1`. Every published build also has an immutable `rikyu-sha-<commit>` tag. Pull requests
+build the image without publishing it. Pushes to `master` publish both tags, while manual workflow
+runs publish only the SHA tag and do not replace the version tag.
 
 ## Compatibility choices
 
