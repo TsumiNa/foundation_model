@@ -33,6 +33,8 @@
 - Use **uv** with Python 3.12–3.14.
 - Install: `uv sync --frozen --all-groups`
 - Add dependency: `uv add <pkg>` or `uv add --dev <pkg>`
+- Install the commit hook once per clone: `uv run pre-commit install`; it runs `ruff format` on staged
+  Python files and intentionally does not run Mypy.
 
 ## File-Scoped Commands
 

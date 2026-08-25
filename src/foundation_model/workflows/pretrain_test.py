@@ -16,6 +16,7 @@ import torch
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 
+import foundation_model.workflows.pretrain as pretrain_module
 from foundation_model.workflows._engine import build_trainer_extras
 from foundation_model.workflows._sections import (
     CheckpointConfig,
@@ -375,9 +376,7 @@ def test_warm_start_continues_sequence(smoke_dir, tmp_path) -> None:
     assert (out2 / "training" / "step02_b" / "a_metrics.json").exists()
 
 
-def test_no_replay_interval_disables_learned_kr_head(smoke_dir, tmp_path) -> None:
-    """interval > n_steps ⇒ replay never fires: a later single-task step must not crash on the
-    learned kernel-regression head, whose forward needs a t-sequence only active tasks provide."""
+def _no_replay_kr_config(smoke_dir, output_dir):
     kr = pd.DataFrame(
         {
             "composition": _FORMULAS,
@@ -431,8 +430,14 @@ task_sequence = ["dos", "a"]
 interval = 999
 amount = 0.5
 """
+    return build_pretrain_config(tomllib.loads(toml), output_dir=str(output_dir))
+
+
+def test_no_replay_interval_disables_learned_kr_head(smoke_dir, tmp_path) -> None:
+    """interval > n_steps ⇒ replay never fires: a later single-task step must not crash on the
+    learned kernel-regression head, whose forward needs a t-sequence only active tasks provide."""
     out = tmp_path / "noreplay"
-    _run_pretrain(build_pretrain_config(tomllib.loads(toml), output_dir=str(out)), out)
+    _run_pretrain(_no_replay_kr_config(smoke_dir, out), out)
 
     final = torch.load(out / "training" / "final_model.pt", weights_only=True)
     heads = {k.split(".", 2)[1] for k in final["model"] if k.startswith("task_heads.")}
@@ -440,6 +445,31 @@ amount = 0.5
     assert not any(k.startswith("disabled_task_heads.") for k in final["model"])
     # the sat-out head is still evaluated at the no-replay step
     assert (out / "training" / "step02_a" / "dos_metrics.json").exists()
+
+
+def test_no_replay_interval_reenables_kr_head_when_fit_raises(smoke_dir, tmp_path, monkeypatch) -> None:
+    out = tmp_path / "failed_fit"
+    original_fit = pretrain_module.Trainer.fit
+    calls = 0
+    failed_model = None
+
+    def fail_second_fit(self, model, *, datamodule):
+        nonlocal calls, failed_model
+        calls += 1
+        if calls == 2:
+            failed_model = model
+            assert "dos" in model.disabled_task_heads
+            raise RuntimeError("fit failed")
+        return original_fit(self, model, datamodule=datamodule)
+
+    monkeypatch.setattr(pretrain_module.Trainer, "fit", fail_second_fit)
+
+    with pytest.raises(RuntimeError, match="fit failed"):
+        _run_pretrain(_no_replay_kr_config(smoke_dir, out), out)
+
+    assert failed_model is not None
+    assert "dos" in failed_model.task_heads
+    assert "dos" not in failed_model.disabled_task_heads
 
 
 def test_replay_epoch_resample_fires_each_epoch(smoke_dir, tmp_path, monkeypatch) -> None:
