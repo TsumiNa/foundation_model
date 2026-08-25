@@ -32,15 +32,24 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# stage -> probe config | output root | default walltime
+# stage -> probe config | output root | default walltime | fm subcommand
+MODE=pretrain
 case "$STAGE" in
     a1|a1b|a2|a3|a4|a6) CONFIG=probe3.toml;    OUT=stage_a; DEFTIME=03:00:00 ;;
     breg|bkr|bclf)    CONFIG=single_task.toml; OUT=stage_b; DEFTIME=02:00:00 ;;
     bmtreg)           CONFIG=probe3.toml;      OUT=stage_b; DEFTIME=03:00:00 ;;
     bmtkr)            CONFIG=probe3_kr.toml;   OUT=stage_b; DEFTIME=03:00:00 ;;
+    # Stage C: two arms x two phases. `fm pretrain --resume` is idempotent, so a walltime kill is
+    # recovered by resubmitting the identical command; `fm finetune` has no resume and gets its
+    # budget in one go.
+    cpre_base)   CONFIG=final_hybrid.toml;            OUT=stage_c; DEFTIME=48:00:00 ;;
+    cpre_tuned)  CONFIG=final_hybrid_tuned.toml;      OUT=stage_c; DEFTIME=48:00:00 ;;
+    ccon_base)   CONFIG=final_consolidate.toml;       OUT=stage_c; DEFTIME=10:00:00; MODE=finetune ;;
+    ccon_tuned)  CONFIG=final_consolidate_tuned.toml; OUT=stage_c; DEFTIME=10:00:00; MODE=finetune ;;
     *) echo "unknown stage '$STAGE'" >&2; exit 2 ;;
 esac
 TIME=${TIME:-$DEFTIME}
+test -r "$EXP/configs/$CONFIG" || { echo "missing $EXP/configs/$CONFIG" >&2; exit 2; }
 
 GRID="$EXP/configs/grid_$STAGE.txt"
 test -r "$GRID" || { echo "missing $GRID — generate it with scripts/make_grids.py $STAGE" >&2; exit 2; }
@@ -53,10 +62,10 @@ JID=$(sbatch --parsable \
     --job-name="$STAGE" \
     --time="$TIME" \
     --array="0-$((N - 1))%$THROTTLE" \
-    --export=ALL,GRID="$GRID",CONFIG="experiments/rikyu_hparam_tuning/configs/$CONFIG",OUTROOT="$OUTBASE/$OUT",MODE=pretrain,PROJ="$PROJ" \
+    --export=ALL,GRID="$GRID",CONFIG="experiments/rikyu_hparam_tuning/configs/$CONFIG",OUTROOT="$OUTBASE/$OUT",MODE="$MODE",PROJ="$PROJ" \
     "${EXTRA_SBATCH[@]}" \
     "$EXP/scripts/fm_array.sbatch")
 
 DONE_ALREADY=$(cut -f1 "$GRID" | while read -r r; do [ -f "$OUTBASE/$OUT/$r/DONE" ] && echo x; done | grep -c . || true)
-echo "stage=$STAGE job=$JID points=$N already_done=$DONE_ALREADY config=$CONFIG out=$OUTBASE/$OUT time=$TIME throttle=$THROTTLE"
+echo "stage=$STAGE job=$JID points=$N already_done=$DONE_ALREADY mode=$MODE config=$CONFIG out=$OUTBASE/$OUT time=$TIME throttle=$THROTTLE"
 echo "commit=$(git -C "$PROJ" rev-parse --short HEAD)"
