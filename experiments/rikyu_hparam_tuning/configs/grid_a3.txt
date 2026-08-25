@@ -1,0 +1,2 @@
+a3_L256_H1024-512-256_E0p001_B256_G4	--set model.latent_dim=256 --set 'model.encoder_hidden_dims=[1024,512,256]' --set training.encoder_lr=0.001 --set data.batch_size=256 --set descriptor.n_grids=4
+a3_L256_H1024-512-256_E0p001_B256_G16	--set model.latent_dim=256 --set 'model.encoder_hidden_dims=[1024,512,256]' --set training.encoder_lr=0.001 --set data.batch_size=256 --set descriptor.n_grids=16

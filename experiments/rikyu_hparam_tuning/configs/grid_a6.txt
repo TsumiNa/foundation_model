@@ -1,0 +1,2 @@
+a6_L256_H1024-512-256_E0p001_B256_A0p001	--set model.latent_dim=256 --set 'model.encoder_hidden_dims=[1024,512,256]' --set training.encoder_lr=0.001 --set data.batch_size=256 --set training.ae_lr=0.001
+a6_L256_H1024-512-256_E0p001_B256_A0p01	--set model.latent_dim=256 --set 'model.encoder_hidden_dims=[1024,512,256]' --set training.encoder_lr=0.001 --set data.batch_size=256 --set training.ae_lr=0.01
