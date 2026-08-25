@@ -1,0 +1,1 @@
+smoke_single	--sample 400 --max-epochs 2 --set 'pretrain.task_sequence=["formation_energy"]'

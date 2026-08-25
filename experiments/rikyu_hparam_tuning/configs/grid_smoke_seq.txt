@@ -1,0 +1,1 @@
+smoke_seq	--sample 400 --max-epochs 2 --set 'pretrain.task_sequence=["density","seebeck","magnetization","material_type"]'

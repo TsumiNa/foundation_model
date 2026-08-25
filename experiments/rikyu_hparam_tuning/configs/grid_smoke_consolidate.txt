@@ -1,0 +1,1 @@
+smoke_consolidate	--sample 400 --set 'finetune.tasks=["density","seebeck","magnetization","material_type"]' --set finetune.epochs=2
