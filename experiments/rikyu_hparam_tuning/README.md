@@ -216,7 +216,41 @@ behaviourally identical on every run here. The container is the code that execut
   measurement that motivated replacing the stage-A probe. `probe_kr_seebeck` FAILED at 528 s —
   operator error, its output directory was moved while the job was still writing; resubmitted as
   `47462`. Outputs archived under `probe_singletask/`.
-- **2026-08-26** — **A1 launched**: job `47461`, 80 grid points on `probe3.toml`, 40 concurrent.
+- **2026-08-26** — **A1 launched**: job `47461`, 80 grid points on `probe3.toml`, 40 concurrent
+  (raised to 80 mid-flight). **80/80 completed**, no failures; 27.0 GPU-h, mean 17.8 min/run.
+- **2026-08-26** — kernel-regression cost measured: `seebeck` single-task ran 23.8 min and used the
+  full 150-epoch cap (R² 0.663). KR heads are budget-limited, and B-kr is the campaign's most
+  expensive stage.
+- **2026-08-26** — **A1 result** (see "Stage A outcome" below). Wave 2 submitted: A1b (`47578`,
+  8 points, LR edge) and A2 (`47579`, 6 points, batch size).
+
+## Stage A outcome (A1, 80 points, single seed 2025)
+
+**`encoder_lr` dominates, and the untuned value was the problem.** Marginal means over the whole
+grid, as relative MAE improvement against the untuned baseline run:
+
+| `encoder_lr` | mean Δ MAE | note |
+|---|---:|---|
+| 0.001 | **+14.8%** | smallest value in the grid — still improving, hence A1b |
+| 0.002 | +11.8% | |
+| 0.005 | +6.0% | **the untuned value** |
+| 0.010 | −8.6% | diverges on deep encoders (worst cell −45.6%) |
+
+`latent_dim` is a weak effect (384 +9.5% · 256 +6.5% · 64 +5.8% · 128 +2.7%) and
+`encoder_hidden_dims` is nearly flat (+7…+9%) except the deepest `[1024,512,256]`, whose mean
+falls to +1% because it carries every divergence.
+
+- **Best point: `L256 / [1024,512,256] / lr 1e-3`, +23.9% mean relative MAE** (also #2 on R²,
+  +0.025 absolute). The R²-ranked leader is `L256 / [512] / lr 1e-3` (+0.027), #8 on MAE — the two
+  metrics agree on the region, not on the single cell.
+- **Learning rate alone recovers about two thirds of the gain.** Holding the untuned architecture
+  `L128 / [256]` and changing only the LR to 2e-3 gives +15.2%, against +23.9% for the full winner.
+- **The optimum is a plateau, not a peak.** At lr 1e-3 every cell is positive (worst +4.6%) and the
+  whole `latent_dim` 384 row sits at +15…+21%. The final choice does not need to be a precise one.
+- **The LR optimum interacts with width**: `L128` prefers 2e-3, `L256`/`L384` prefer 1e-3 — which is
+  why A1b extends the LR axis per architecture rather than globally.
+
+Not yet established: whether these margins exceed seed noise. Nothing is adopted before A4.
 
 ## Outcome
 
