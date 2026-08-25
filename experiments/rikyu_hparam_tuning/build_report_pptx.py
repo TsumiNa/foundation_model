@@ -251,9 +251,38 @@ def main() -> None:
          "That is what the B-mt control measures, and what stage C tests end-to-end."],
         size=13)
 
-    # 8/9 — stage B figures
-    pic_slide("Stage B — what per-task head tuning bought",
-              "relative gain of each task's own tuned head over the untuned head",
+    # 8 — B4: what survived
+    winners = json.loads(need(args.winners).read_text())
+    scored = sorted(
+        ((w["confirmed_gain"] / w["band"], t, w) for t, w in winners.items() if w.get("band")),
+        reverse=True,
+    )
+    kept = [(r, t, w) for r, t, w in scored if w.get("confirmed")]
+    negative = [t for _r, t, w in scored if w.get("confirmed_gain", 0) < 0]
+    ratios = sorted(r for r, _t, _w in scored)
+    median = ratios[len(ratios) // 2]
+
+    s = prs.slides.add_slide(BLANK)
+    title_bar(s, "Stage B — B4: what survived seed repetition",
+              "each task's winner AND its untuned baseline re-run at 3 seeds; keep only if the gain exceeds that task's own band")
+    table(s, 0.6, 1.5, 12.1,
+          ["task", "metric", "gain", "seed band", "gain / band", "verdict"],
+          [[t, w["metric"], f"{w['confirmed_gain']:+.4f}", f"{w['band']:.4f}", f"{r:.2f}", "KEEP"]
+           for r, t, w in kept]
+          + [["… the other " + str(len(scored) - len(kept)), "", "", "", f"median {median:.2f}", "revert"]],
+          col_w=[3.2, 1.7, 1.8, 1.9, 1.9, 1.6], size=12)
+    txt(s, 0.6, 1.5 + 0.32 * (len(kept) + 2) + 0.3, 12.1, 2.8,
+        [f"The grid produced a different head for 23 of 24 tasks. Only {len(kept)} survive repetition.",
+         f"The median gain is {median:.2f}x the task's own noise — a typical 'improvement' is a quarter of the band.",
+         f"{len(negative)} tasks' single-seed winners were WORSE than the default once re-measured: "
+         + ", ".join(negative) + ".",
+         "",
+         "Without B4 this report would have claimed 23 improved tasks, five of which had in fact regressed."],
+        size=13)
+
+    # 9 — stage B figure
+    pic_slide("Stage B — per-task head tuning, measured against its own noise",
+              "gain ÷ that task's seed band; the rule is the vertical line at 1.0",
               AN / "stage_b_gains.png")
     for suffix, label in (("_reg", "regression probe"), ("_kr", "kernel-regression probe")):
         fig = AN / f"stage_b_pertask_vs_joint{suffix}.png"
@@ -261,7 +290,7 @@ def main() -> None:
             pic_slide(f"Stage B control — per-task vs joint tuning ({label})",
                       "all three arms on the same multi-task probe; 'untuned' is the common reference", fig)
 
-    # 10 — stage C
+    # 11 — stage C
     if args.stage_c.exists():
         payload = json.loads(args.stage_c.read_text())
         s = prs.slides.add_slide(BLANK)
@@ -272,7 +301,30 @@ def main() -> None:
                 for a in payload["arms"]]
         table(s, 0.6, 1.6, 12.1, headers, rows, col_w=[4.3, 2.3, 1.9, 1.8, 1.8], size=12)
         txt(s, 0.6, 1.6 + 0.32 * (len(rows) + 1) + 0.3, 12.1, 2.2,
-            payload.get("notes", []), size=13)
+            payload.get("notes", []), size=12, color=MUT)
+
+    # 12 — conclusions
+    s = prs.slides.add_slide(BLANK)
+    title_bar(s, "What the campaign establishes",
+              "two stages, two opposite answers — which is the useful result")
+    txt(s, 0.6, 1.5, 12.1, 5.4,
+        ["1.  Backbone tuning pays, and cheaply.",
+         f"     latent_dim 128 -> 384 and encoder_lr 5e-3 -> 1e-3, hidden layer unchanged: {winner_gain:+.1%} at the "
+         "single-seed best,",
+         "     +15.8% over three seeds — about 1.9x the measured seed band — and the new backbone trains FASTER",
+         "     than the one it replaces (16.4 vs 20.3 min/run). Learning rate alone is two thirds of it.",
+         "",
+         "2.  Per-task head tuning, done on single-task probes, does not.",
+         f"     {len(kept)}/24 gains survive seed repetition; the median is {median:.2f}x noise; "
+         f"{len(negative)} tasks regressed when re-measured.",
+         "",
+         "3.  The two are not in conflict — tuning has to happen in the regime being deployed.",
+         "     The B-mt control tunes ONE shared head jointly on the multi-task probe and it does help,",
+         "     while the per-task winners do not transfer into that same multi-task setting.",
+         "",
+         "Next: the seed band is the binding constraint on every claim here. Three seeds bound it to ~8%;",
+         "publication-grade per-task statements need more, or a probe with less run-to-run variance."],
+        size=13)
 
     out = RES / f"REPORT_{args.date}.pptx"
     out.parent.mkdir(parents=True, exist_ok=True)
