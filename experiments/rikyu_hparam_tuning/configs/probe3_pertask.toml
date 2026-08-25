@@ -28,7 +28,8 @@
 #   [[tasks]] magnetic_moment.lr: (unset) -> 0.01
 #   [[tasks]] magnetic_susceptibility.lr: (unset) -> 0.002
 #   [[tasks]] magnetic_susceptibility.x_hidden_dims: (unset) -> [256, 128, 64]
-#   [[tasks]] magnetization.lr: (unset) -> 0.01
+#   [[tasks]] magnetization.hidden_dims: (unset) -> [128, 64]
+#   [[tasks]] magnetization.lr: (unset) -> 0.001
 #   [[tasks]] material_type.hidden_dims: (unset) -> [256, 128, 64]
 #   [[tasks]] material_type.lr: (unset) -> 0.001
 #   [[tasks]] neel.hidden_dims: (unset) -> [128, 64]
@@ -171,7 +172,8 @@ name = "magnetization"
 kind = "regression"
 dataset = "magnetic"
 column = "Magnetization (normalized)"
-lr = 0.01
+hidden_dims = [128, 64]
+lr = 0.001
 
 [[tasks]]
 name = "curie"
