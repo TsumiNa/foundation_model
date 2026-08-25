@@ -5,8 +5,8 @@ read from `pyproject.toml`.
 
 | Target | Platform | Tags |
 |---|---|---|
-| Default NVIDIA CUDA 13 | `linux/amd64` | `<project.version>`, plus `latest` on publishing runs |
-| RIKEN R-CCS RIKYU | `linux/arm64` | `rikyu-<project.version>` |
+| Default NVIDIA CUDA 13 | `linux/amd64` | `sha-<git-sha>`; `<project.version>` and `latest` from `master` |
+| RIKEN R-CCS RIKYU | `linux/arm64` | `rikyu-sha-<git-sha>`; `rikyu-<project.version>` from `master` |
 
 For example, version `0.2.1` publishes:
 
@@ -15,6 +15,10 @@ ghcr.io/tsumina/foundation_model:0.2.1
 ghcr.io/tsumina/foundation_model:latest
 ghcr.io/tsumina/foundation_model:rikyu-0.2.1
 ```
+
+Every published build also receives an immutable commit-SHA tag. Version and `latest` tags are
+updated only by a push to `master`, so a manual workflow run from a feature branch cannot replace
+a released image.
 
 Both images use Python 3.14, PyTorch's CUDA 13.0 wheel, and the same locked application
 dependencies. The default image is suitable for x86-64 NVIDIA data-center GPUs whose host driver

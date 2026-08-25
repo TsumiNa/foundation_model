@@ -8,7 +8,9 @@ PROJ=${PROJ:-$HOME/projects/foundation_model}
 JOBS=$PROJ/experiments/rikyu_task_scaling/jobs
 N=${1:-1000}   # replay branch: bash submit_all.sh [1000|1500]
 TAG=""; [ "$N" != "1000" ] && TAG="_n${N}"
-mkdir -p "$HOME/jobs/task_scaling"
+LOG_DIR=${LOG_DIR:-$HOME/jobs/task_scaling}
+mkdir -p "$LOG_DIR"
+cd "$LOG_DIR"
 
 for ORD in 0 1 2; do
     pre=$(sbatch --parsable --job-name=ts_pre${TAG}_o${ORD} --export=ALL,ORD=$ORD,N=$N "$JOBS/pretrain_scaling.sbatch")

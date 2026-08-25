@@ -18,7 +18,7 @@ N=${N:-1000}                 # replay amount branch; 1000 keeps the original (un
 DIRTAG=""; [ "$N" != "1000" ] && DIRTAG="_n${N}"
 OUT=$PROJ/artifacts/task_scaling/pre${DIRTAG}_o${ORD}
 
-module load nvhpc            # mandatory: GPU is not allocated without a loaded module
+module load nvhpc            # expose the NVIDIA CUDA runtime and tools
 cd "$PROJ"
 echo "== $(hostname) $(date) ord=$ORD n=$N seed=$((2025 + ORD)) task_order_seed=$((7501 + ORD)) =="
 nvidia-smi --query-gpu=name --format=csv,noheader

@@ -49,8 +49,9 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           {
             echo "tags<<EOF"
-            echo "ghcr.io/$repository:${version,,}"
-            if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
+            echo "ghcr.io/$repository:sha-${GITHUB_SHA}"
+            if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/master" ]]; then
+              echo "ghcr.io/$repository:${version,,}"
               echo "ghcr.io/$repository:latest"
             fi
             echo "EOF"

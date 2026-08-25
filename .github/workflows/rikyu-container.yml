@@ -38,7 +38,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Derive image reference from pyproject.toml
+      - name: Derive image references from pyproject.toml
         id: image
         shell: bash
         run: |
@@ -49,7 +49,14 @@ jobs:
           fi
           repository="${GITHUB_REPOSITORY,,}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "ref=ghcr.io/$repository:rikyu-${version,,}" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<EOF"
+            echo "ghcr.io/$repository:rikyu-sha-${GITHUB_SHA}"
+            if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/master" ]]; then
+              echo "ghcr.io/$repository:rikyu-${version,,}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -69,7 +76,7 @@ jobs:
           file: Dockerfile.cuda13
           platforms: linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.image.outputs.ref }}
+          tags: ${{ steps.image.outputs.tags }}
           build-args: |
             IMAGE_VERSION=${{ steps.image.outputs.version }}
             VCS_REF=${{ github.sha }}
@@ -88,6 +95,8 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           echo '### Published RIKYU image' >> "$GITHUB_STEP_SUMMARY"
-          echo '`${{ steps.image.outputs.ref }}`' >> "$GITHUB_STEP_SUMMARY"
+          while IFS= read -r image; do
+            echo "- \`$image\`" >> "$GITHUB_STEP_SUMMARY"
+          done <<< '${{ steps.image.outputs.tags }}'
           echo '' >> "$GITHUB_STEP_SUMMARY"
           echo 'The GHCR package must be public so RIKYU can pull it anonymously.' >> "$GITHUB_STEP_SUMMARY"

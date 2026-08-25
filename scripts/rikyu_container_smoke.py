@@ -35,7 +35,7 @@ def main() -> None:
     predictions = model(inputs)["smoke"]
     loss = predictions.square().mean()
     loss.backward()
-    if not torch.isfinite(loss):
+    if not torch.isfinite(loss).item():
         raise RuntimeError(f"Non-finite smoke loss: {loss.item()}")
     if device.type == "cuda":
         torch.cuda.synchronize()

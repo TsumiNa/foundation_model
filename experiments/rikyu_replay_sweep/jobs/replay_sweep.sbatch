@@ -12,7 +12,7 @@ set -uo pipefail
 PROJ=${PROJ:-$HOME/projects/foundation_model}
 CFG=${CFG:-$HOME/jobs/rehearsal/sweep/${SWEEP_CFG}}
 
-module load nvhpc            # mandatory: GPU is not allocated without a loaded module
+module load nvhpc            # expose the NVIDIA CUDA runtime and tools
 cd "$PROJ"
 echo "== $(hostname) $(date) =="
 echo "cfg=$CFG"

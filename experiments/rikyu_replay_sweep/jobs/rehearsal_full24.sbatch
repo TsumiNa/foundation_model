@@ -14,7 +14,7 @@ PROJ=${PROJ:-$HOME/projects/foundation_model}
 CFG=${CFG:-$HOME/jobs/rehearsal/pretrain_rehearsal_full24.toml}
 OUT="$PROJ/artifacts/pretrain_rehearsal_full24_rikyu"
 
-module load nvhpc            # mandatory: GPU is not allocated without a loaded module
+module load nvhpc            # expose the NVIDIA CUDA runtime and tools
 cd "$PROJ"
 echo "== node =="; hostname; date
 echo "SLURM_JOB_ID=$SLURM_JOB_ID OUT=$OUT"
