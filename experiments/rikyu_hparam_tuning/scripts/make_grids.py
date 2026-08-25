@@ -135,13 +135,29 @@ def stage_a1() -> list[tuple[str, str]]:
 
 
 def parse_a1(runid: str) -> dict:
-    """Recover the encoder settings a stage-A1 runid encodes."""
+    """Recover the encoder settings a stage-A1/A1b runid encodes."""
     _, latent, hidden, lr = runid.split("_", 3)
     return {
         "model__latent_dim": int(latent[1:]),
         "model__encoder_hidden_dims": [int(v) for v in hidden[1:].split("-")],
         "training__encoder_lr": float(lr[1:].replace("p", ".")),
     }
+
+
+def stage_a1b(winners: list[str], lrs: list[float]) -> list[tuple[str, str]]:
+    """Extend the encoder_lr axis downward for the A1 short list.
+
+    A1's optimum landing on the smallest LR it tested would be an edge-of-grid result, which is not
+    an optimum — it is the grid running out. This re-opens that edge so the reported choice is an
+    interior one (or is honestly reported as still edge-bound)."""
+    rows = []
+    for w in winners:
+        enc = parse_a1(w)
+        for lr in lrs:
+            enc_lr = dict(enc, training__encoder_lr=lr)
+            runid = f"a1b_L{enc['model__latent_dim']}_H{tag(enc['model__encoder_hidden_dims'])}_E{tag(lr)}"
+            rows.append((runid, overrides(**enc_lr)))
+    return rows
 
 
 def stage_a2(winners: list[str]) -> list[tuple[str, str]]:
@@ -303,7 +319,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "stage",
-        choices=["a1", "a2", "a3", "a4", "a6", "breg", "bkr", "bclf", "bmtreg", "bmtkr"],
+        choices=["a1", "a1b", "a2", "a3", "a4", "a6", "breg", "bkr", "bclf", "bmtreg", "bmtkr"],
     )
     ap.add_argument("--winner", help="stage-A1 runid of the winning encoder (a1_L..._H..._E...)")
     ap.add_argument("--winners", nargs="+", help="stage-A1 short list (a2 / a5)")
@@ -312,6 +328,7 @@ def main() -> None:
     ap.add_argument("--n-kernel", type=int, default=BASE["model.n_kernel"])
     ap.add_argument("--kr-x-hidden", type=int, nargs="+", default=BASE["model.kr_x_hidden_dims"])
     ap.add_argument("--kr-lr", type=float, default=BASE["training.kr_lr"])
+    ap.add_argument("--lrs", type=float, nargs="+", default=[2e-4, 5e-4], help="a1b: extra encoder LRs")
     args = ap.parse_args()
 
     def enc_settings() -> dict:
@@ -324,6 +341,8 @@ def main() -> None:
 
     if args.stage == "a1":
         write("a1", stage_a1())
+    elif args.stage == "a1b":
+        write("a1b", stage_a1b(args.winners or [], args.lrs))
     elif args.stage == "a2":
         write("a2", stage_a2(args.winners or []))
     elif args.stage == "a3":
