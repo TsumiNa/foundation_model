@@ -1,9 +1,9 @@
-name: RIKYU container
+name: Default CUDA 13 container
 
 on:
   pull_request:
     paths:
-      - ".github/workflows/rikyu-container.yml"
+      - ".github/workflows/container.yml"
       - ".dockerignore"
       - "Dockerfile.cuda13"
       - "pyproject.toml"
@@ -12,7 +12,7 @@ on:
   push:
     branches: [master]
     paths:
-      - ".github/workflows/rikyu-container.yml"
+      - ".github/workflows/container.yml"
       - ".dockerignore"
       - "Dockerfile.cuda13"
       - "pyproject.toml"
@@ -25,20 +25,18 @@ permissions:
   packages: write
 
 concurrency:
-  group: rikyu-container-${{ github.ref }}
+  group: default-cuda13-container-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    # RIKYU is AArch64. A native runner avoids slow and less reliable QEMU builds
-    # of the large PyTorch CUDA environment.
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Derive image reference from pyproject.toml
+      - name: Derive image references from pyproject.toml
         id: image
         shell: bash
         run: |
@@ -49,7 +47,14 @@ jobs:
           fi
           repository="${GITHUB_REPOSITORY,,}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "ref=ghcr.io/$repository:rikyu-${version,,}" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<EOF"
+            echo "ghcr.io/$repository:${version,,}"
+            if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
+              echo "ghcr.io/$repository:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -67,27 +72,25 @@ jobs:
         with:
           context: .
           file: Dockerfile.cuda13
-          platforms: linux/arm64
+          platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.image.outputs.ref }}
+          tags: ${{ steps.image.outputs.tags }}
           build-args: |
             IMAGE_VERSION=${{ steps.image.outputs.version }}
             VCS_REF=${{ github.sha }}
             SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
-            EXPECTED_ARCH=aarch64
-            IMAGE_TITLE=foundation-model for RIKYU
-            IMAGE_DESCRIPTION=AArch64 PyTorch CUDA 13 runtime for RIKEN R-CCS RIKYU
+            EXPECTED_ARCH=x86_64
+            IMAGE_TITLE=foundation-model CUDA 13
+            IMAGE_DESCRIPTION=x86-64 PyTorch CUDA 13 runtime for NVIDIA data-center GPUs
           cache-from: type=gha
-          # The public native ARM runner has limited local disk; export only the
-          # final reusable cache rather than every intermediate build layer.
           cache-to: type=gha,mode=min
           provenance: mode=max
           sbom: true
 
-      - name: Write published image to summary
+      - name: Write published images to summary
         if: github.event_name != 'pull_request'
         run: |
-          echo '### Published RIKYU image' >> "$GITHUB_STEP_SUMMARY"
-          echo '`${{ steps.image.outputs.ref }}`' >> "$GITHUB_STEP_SUMMARY"
-          echo '' >> "$GITHUB_STEP_SUMMARY"
-          echo 'The GHCR package must be public so RIKYU can pull it anonymously.' >> "$GITHUB_STEP_SUMMARY"
+          echo '### Published default CUDA 13 image' >> "$GITHUB_STEP_SUMMARY"
+          while IFS= read -r image; do
+            echo "- \`$image\`" >> "$GITHUB_STEP_SUMMARY"
+          done <<< '${{ steps.image.outputs.tags }}'

@@ -1,0 +1,60 @@
+# syntax=docker/dockerfile:1
+
+ARG PYTHON_VERSION=3.14
+
+FROM python:${PYTHON_VERSION}-slim-bookworm
+
+COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /uvx /bin/
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PATH="/opt/foundation-model/.venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /opt/foundation-model
+
+# Keep dependency installation cacheable independently of source changes.
+COPY pyproject.toml uv.lock ./
+
+# Some scientific dependencies still build from source on CPython 3.14 Linux.
+# Install the toolchain and remove it within the same layer so it is not
+# retained in the runtime image.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    apt-get update \
+    && apt-get install --yes --no-install-recommends build-essential libgomp1 \
+    && uv sync --frozen --no-dev --no-install-project \
+    && apt-get purge --yes --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Hatchling needs README.md to populate project metadata. Bind the README and
+# source tree only while building/installing the wheel so the raw repository
+# files are not retained in an image layer.
+RUN --mount=type=bind,source=README.md,target=/opt/foundation-model/README.md \
+    --mount=type=bind,source=src,target=/opt/foundation-model/src \
+    --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable
+
+ARG EXPECTED_ARCH=x86_64
+ARG IMAGE_TITLE="foundation-model CUDA 13"
+ARG IMAGE_DESCRIPTION="PyTorch CUDA 13 runtime for foundation-model"
+ARG IMAGE_VERSION
+ARG VCS_REF
+ARG SOURCE_URL=https://github.com/TsumiNa/foundation_model
+
+LABEL org.opencontainers.image.title="${IMAGE_TITLE}" \
+      org.opencontainers.image.description="${IMAGE_DESCRIPTION}" \
+      org.opencontainers.image.source="${SOURCE_URL}" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}"
+
+WORKDIR /workspace
+
+# Fail the build if uv selected the wrong platform or CUDA wheel, or if the
+# installed CLI cannot start.
+RUN EXPECTED_ARCH="${EXPECTED_ARCH}" python -c \
+    "import os, platform, torch; assert platform.machine() == os.environ['EXPECTED_ARCH']; assert torch.version.cuda == '13.0', torch.version.cuda" \
+    && fm --help >/dev/null
+
+ENTRYPOINT ["fm"]
+CMD ["--help"]
