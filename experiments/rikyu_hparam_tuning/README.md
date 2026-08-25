@@ -309,6 +309,21 @@ The rule now treats costs within 5% as equal and resolves on the smallest seed r
 added *after* seeing the A4 output; it is recorded here and in `analysis/adopt.py` rather than
 folded in silently.
 
+## Defects found and fixed during the campaign
+
+Recorded because each was silent — none announced itself as an error, and each would have shipped
+a wrong number into the report.
+
+| What | How it surfaced | Fix |
+|---|---|---|
+| Per-task winners could be selected from a *different probe*. `stage_b/` holds the per-task grids, the B-mt control's multi-task probes and the B4 repeats side by side, and their rows carry the same task names; `pick_heads.py` grouped by task alone, so `magnetization`'s winner was taken from a `bmtreg` 3-task run. | a `KeyError: 'bmtreg'` while rendering the stage-B figure — the numbers themselves looked entirely normal | whitelist `breg_`/`bkr_`/`bclf_` prefixes and print how many rows were ignored (48 here) |
+| The A4 baseline arm would have been credited with one fewer seed than every other arm: its seed-2025 run is the A1 grid point, while A4 writes the other two as `a4_base_s*`. That narrows the measured band, which biases the rule toward declaring differences significant. | reading `adopt.py`'s arm mapping before trusting its output | pass the baseline runid into `arm_of()` |
+| Stage B would have tuned heads on top of an encoder that was not the adopted one, had A3/A6 changed `n_grids`/`ae_lr` — the grid generator had no channel to pass an adopted `ae_lr` through. | auditing what stage B inherits from stage A | `--ae-lr` added to `make_grids.py` |
+
+One operator error, not a code defect: the `seebeck` kernel-regression timing probe was killed
+because its output directory was moved while the job was still writing (`probe_kr_seebeck`, rc 1).
+Re-run clean.
+
 ## Outcome
 
 _pending_
