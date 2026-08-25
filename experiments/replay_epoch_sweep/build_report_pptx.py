@@ -174,9 +174,10 @@ pic_slide("Ratio replay joins the same cost curve — no free lunch on the mean"
           "references: converged end-of-run joint retrain (0.584) and the best frozen-subset arm (0.600)",
           AN / "ratio_cost_view.png")
 pic_slide("Baseline family — collapse without replay; end-of-run rehearsal converges below every replay arm",
-          "left: per-step BOXPLOTS of test R² over the learned tasks (symlog below −1) — without replay the whole "
-          "distribution falls off the linear scale (step-24 medians: −23 vs 0.66 with replay n1000) · "
-          "right: joint retrain vs epoch cap — early-stops at 214, caps 250/300 identical (deterministic replicate)",
+          "left: per-step boxplots of test R² over the learned tasks (symlog below −1; white diamond = mean) — without "
+          "replay the whole distribution falls off the linear scale (step-24 medians: −23 vs 0.66) · right: per-task "
+          "distributions at each retrain cap vs the continual-replay reference — converged (stop @214, caps 250 ≡ 300) "
+          "with the whole box shifted lower",
           AN / "baseline_family.png")
 
 # 6f — hybrid validation (the 2×2 closes)

@@ -157,24 +157,26 @@ def step_dists(rows):
     return out
 
 
-def styled_box(data, positions, face, edge):
-    ax1.boxplot(
-        data, positions=positions, widths=0.34, patch_artist=True, manage_ticks=False,
+def styled_box(ax, data, positions, face, edge, width=0.34):
+    ax.boxplot(
+        data, positions=positions, widths=width, patch_artist=True, manage_ticks=False,
+        showmeans=True,
         boxprops={"facecolor": face, "edgecolor": edge, "lw": 1.0},
         whiskerprops={"color": edge, "lw": 1.0}, capprops={"color": edge, "lw": 1.0},
         medianprops={"color": edge, "lw": 1.6},
+        meanprops={"marker": "D", "ms": 3.5, "mfc": "white", "mec": edge, "mew": 0.9},
         flierprops={"marker": ".", "ms": 3, "mfc": edge, "mec": edge, "alpha": 0.6},
     )
 
 
 nr = step_dists(noreplay_rows)
-styled_box([v for _, v in nr], [s - 0.21 for s, _ in nr], "#d7d9dd", "#555555")
+styled_box(ax1, [v for _, v in nr], [s - 0.21 for s, _ in nr], "#d7d9dd", "#555555")
 med_nr = float(np.median(nr[-1][1]))
 n1000 = RES_E / "mt_n1000_epoch_m150.csv"
 med_rp = float("nan")
 if n1000.exists():
     rp = step_dists(list(csv.DictReader(open(n1000))))
-    styled_box([v for _, v in rp], [s + 0.21 for s, _ in rp], "#fbdcc4", ORANGE)
+    styled_box(ax1, [v for _, v in rp], [s + 0.21 for s, _ in rp], "#fbdcc4", ORANGE)
     med_rp = float(np.median(rp[-1][1]))
 ax1.set_yscale("symlog", linthresh=1)
 ax1.set_ylim(-4000, 1.9)
@@ -197,22 +199,28 @@ ax1.legend(handles=[Patch(facecolor="#d7d9dd", edgecolor="#555555", label="no re
 ax1.grid(True, which="major", color=GRID, lw=0.5, zorder=0)
 
 caps = [c for c in JOINT_CAPS if c in joint]
-ys = [float(np.mean([v for t, v in joint[c]["after"].items() if t != "material_type"])) for c in caps]
-ax2.plot(caps, ys, color="#555555", lw=2.2, marker="D", ms=7, mec="white", zorder=3)
-for c, y in zip(caps, ys):
+data = [[v for t, v in joint[c]["after"].items() if t != "material_type"] for c in caps]
+styled_box(ax2, data, list(range(len(caps))), "#d7d9dd", "#555555", width=0.5)
+xlabels = []
+for c in caps:
     er = joint[c]["epochs_run"]
-    tag = f"{y:.3f}" + (f"\n(stopped @{er})" if er < c else "")
-    ax2.annotate(tag, (c, y), textcoords="offset points", xytext=(0, 9), fontsize=8, ha="center", color="#374151")
-band_lo, band_hi = 0.639, 0.663
-ax2.axhspan(band_lo, band_hi, color=ORANGE, alpha=0.15, zorder=0)
-ax2.annotate("continual replay arms (m150 recipe), n100…n2500 & r0.1…0.5",
-             (min(caps) - 2, band_hi - 0.003), fontsize=8.5, color=ORANGE, va="top")
-ax2.set_xticks(JOINT_CAPS)
-ax2.set_xlabel("joint-retrain epoch cap")
-ax2.set_ylabel("mean final R² (23 tasks)")
-ax2.set_title("…and one full-data joint retrain at the end converges BELOW\nevery continual-replay arm (early stop at 214 epochs)",
+    xlabels.append(f"cap {c}" + (f"\nstop @{er}" if er < c else ""))
+for x, vals in enumerate(data):
+    ax2.annotate(f"mean {np.mean(vals):.3f}", (x, 1.04), fontsize=8, ha="center", color="#374151")
+if fixed[1000]:
+    ref = [v for t, v in fixed[1000].items() if t != "material_type" and v is not None]
+    styled_box(ax2, [ref], [len(caps)], "#fbdcc4", ORANGE, width=0.5)
+    ax2.annotate(f"mean {np.mean(ref):.3f}", (len(caps), 1.04), fontsize=8, ha="center", color=ORANGE)
+    xlabels.append("replay\nn1000-m150")
+ax2.set_xticks(range(len(xlabels)))
+ax2.set_xticklabels(xlabels, fontsize=9)
+ax2.set_ylim(-0.2, 1.13)
+ax2.axhline(0, color=MUTED, lw=1.0, zorder=1)
+ax2.set_xlabel("no-replay model → joint retrain at the end  ·  rightmost: continual-replay reference")
+ax2.set_ylabel("final test R² per task (linear)")
+ax2.set_title("…and the end-of-run joint retrain converges (stop @214) with its whole\ndistribution shifted below the continual-replay reference",
               fontsize=10.5)
-ax2.grid(True, which="major", color=GRID, lw=0.5, zorder=1)
+ax2.grid(True, which="major", color=GRID, lw=0.5, zorder=0)
 for ax in (ax1, ax2):
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
