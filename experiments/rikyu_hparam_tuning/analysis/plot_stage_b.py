@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Stage-B figures: what per-task head tuning bought, and what tuning in isolation cost.
 
-* ``stage_b_gains.png`` — one bar per task, the relative gain of that task's own tuned head over
-  the untuned head. Sorted by gain, coloured by head family, each bar labelled with the metric it
-  was ranked on (tasks differ: saturated ones fall back from R² to MAE, classification uses
-  macro-F1), because a mixed-unit axis would otherwise be unreadable. Gains are relative for the
-  same reason — the tasks' metrics do not share a scale.
+* ``stage_b_gains.png`` — one bar per task: its measured gain divided by its own seed band, so
+  the confirmation rule is a single vertical line at 1.0 and 24 incompatible metric scales become
+  one comparable axis. Bars below the line are faded — those gains are not supported by repetition.
 * ``stage_b_pertask_vs_joint.png`` — the control arm. Per-task tuning against one jointly tuned
   shared head on the same multi-task probe, with the untuned head as the common reference.
 
@@ -48,35 +46,38 @@ def fnum(value):
 
 
 def gains_figure(winners: dict, out: Path) -> None:
+    """Per-task gain expressed in units of that task's own seed band.
+
+    Plotting gain and band as two absolute quantities does not work here: the tasks' metrics live
+    on wildly different scales, and one degenerate task (magnetic_susceptibility, 58 labels, mean
+    R² ≈ 0.05) has a relative band above 1000%, which flattens every other task to a hairline.
+    The ratio gain/band is the quantity the decision actually uses, it is dimensionless, and the
+    rule becomes one vertical line: a task keeps its tuned head iff its bar crosses 1.0.
+    """
     rows = []
     for task, w in winners.items():
-        base, best = w.get("baseline_value"), w.get("value")
-        if base in (None, 0) or best is None:
+        band, gain = w.get("band"), w.get("confirmed_gain")
+        if band is None or gain is None or not band:
             continue
-        sign = -1.0 if w["metric"] == "mae" else 1.0
-        rows.append((sign * (best - base) / abs(base), task, w["kind"], w["metric"], bool(w["override"])))
+        rows.append((gain / band, task, w["kind"], w["metric"], bool(w["confirmed"]),
+                     gain, band, w.get("mean_base")))
     if not rows:
-        raise SystemExit("no tasks with a baseline grid point")
+        raise SystemExit("winners JSON has no confirmation fields — run analysis/confirm_heads.py")
     rows.sort()
 
-    fig, ax = plt.subplots(figsize=(9.0, 0.30 * len(rows) + 1.9), constrained_layout=True)
-    y = np.arange(len(rows))
-    ax.barh(
-        y, [r[0] for r in rows], height=0.66,
-        color=[KIND_COLOR[r[2]] for r in rows], zorder=3,
-    )
-    ax.set_yticks(y, [r[1] for r in rows], fontsize=8)
-    # Labels always start just right of zero (or of a positive bar's end) — a negative bar is
-    # short, and left-hand labels would run straight into the task names.
-    for i, (gain, _, _, metric, changed) in enumerate(rows):
-        ax.text(
-            max(gain, 0.0) + 0.004, i, f"{gain:+.1%}  ({metric}{'' if changed else ', kept default'})",
-            va="center", ha="left", fontsize=7.5, color=INK,
-        )
+    fig, ax = plt.subplots(figsize=(9.8, 0.32 * len(rows) + 2.1), constrained_layout=True)
+    for i, (ratio, _task, kind, _metric, ok, *_rest) in enumerate(rows):
+        ax.barh(i, ratio, height=0.62, color=KIND_COLOR[kind], alpha=1.0 if ok else 0.35, zorder=3)
+    ax.set_yticks(range(len(rows)), [r[1] for r in rows], fontsize=8)
+    for i, (ratio, _t, _k, metric, ok, gain, band, base) in enumerate(rows):
+        scale = f"{gain:+.4f} vs {band:.4f}" if base is None else f"{gain:+.4f} vs band {band:.4f}"
+        ax.text(max(ratio, 0) + 0.04, i, f"{scale}  ({metric})" + ("   KEEP" if ok else ""),
+                va="center", ha="left", fontsize=7.5, color=INK, fontweight="bold" if ok else "normal")
     ax.axvline(0, color=INK, lw=1.0)
-    ax.set_xlabel("relative gain of the task's own tuned head over the untuned head")
-    ax.xaxis.set_major_formatter(lambda v, _: f"{v:+.0%}")
-    ax.set_xlim(min(0.0, min(r[0] for r in rows)) * 1.35 - 0.005, max(r[0] for r in rows) * 1.55 + 0.01)
+    ax.axvline(1.0, color=RED, lw=1.6, ls="--", zorder=5)
+    ax.text(1.0, len(rows) - 0.2, "  confirmation threshold: gain = band", color=RED, fontsize=8, va="top")
+    ax.set_xlabel("measured gain of the tuned head ÷ that task's own seed band  (3 seeds per arm)")
+    ax.set_xlim(min(0.0, min(r[0] for r in rows)) * 1.25 - 0.05, max(1.35, max(r[0] for r in rows) * 1.05) + 1.35)
     ax.grid(axis="x", color=GRID, lw=0.6)
     ax.set_axisbelow(True)
     for side in ("top", "right", "left"):
@@ -84,14 +85,15 @@ def gains_figure(winners: dict, out: Path) -> None:
     ax.tick_params(length=0)
 
     handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in KIND_COLOR.values()]
-    ax.legend(handles, KIND_LABEL.values(), loc="lower right", frameon=False, fontsize=8)
-    fig.suptitle("Stage B · what per-task head tuning bought", fontsize=11.5, color=INK, x=0.008, y=0.99, ha="left")
-    fig.text(
-        0.008, 0.955,
-        "each task tuned on its own single-task probe; the ranking metric is chosen per task and printed on the bar",
-        fontsize=8, color=MUTED, ha="left",
-    )
-    fig.get_layout_engine().set(rect=(0, 0, 1, 0.94))
+    ax.legend(handles, list(KIND_LABEL.values()), loc="lower right", frameon=False, fontsize=8)
+    kept = sum(1 for r in rows if r[4])
+    fig.suptitle("Stage B · per-task head tuning, measured against its own noise",
+                 fontsize=11.5, color=INK, x=0.008, y=0.99, ha="left")
+    fig.text(0.008, 0.958,
+             f"winner and untuned baseline each re-run at 3 seeds; only {kept}/{len(rows)} gains "
+             "exceed the task's seed band (solid bars). Labels give the raw gain and band.",
+             fontsize=8, color=MUTED, ha="left")
+    fig.get_layout_engine().set(rect=(0, 0, 1, 0.945))
     fig.savefig(out, dpi=200, facecolor=SURFACE)
     plt.close(fig)
     print(out)
@@ -143,7 +145,7 @@ def control_figure(csv_path: Path, base: str, joint: str, pertask: str, metric: 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("winners", type=Path, help="JSON from analysis/pick_heads.py")
+    ap.add_argument("winners", type=Path, help="JSON from analysis/confirm_heads.py")
     ap.add_argument("--mt", type=Path, help="collected CSV covering the three control arms")
     ap.add_argument("--base"), ap.add_argument("--joint"), ap.add_argument("--pertask")
     ap.add_argument("--metric", default="r2")
