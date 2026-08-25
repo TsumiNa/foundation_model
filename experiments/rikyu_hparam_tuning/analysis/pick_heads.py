@@ -33,6 +33,12 @@ BASE_KR = {"x_hidden_dims": [128, 64], "n_kernel": 15, "lr": 5e-4}
 
 LOWER_IS_BETTER = {"mae"}
 
+# Only these runid prefixes are per-task head grids. The stage-B output directory also holds the
+# B-mt control (multi-task probes) and the B4 seed repeats, whose rows carry the SAME task names —
+# without this filter a task's winner can be picked from a different probe entirely, which is not
+# a comparison at all. (This happened: magnetization's winner was once taken from a bmtreg run.)
+PER_TASK_PREFIXES = ("breg_", "bkr_", "bclf_")
+
 
 def fnum(value):
     try:
@@ -74,10 +80,16 @@ def main() -> None:
 
     # rows[task][runid] = row
     rows: dict[str, dict[str, dict]] = defaultdict(dict)
+    skipped = 0
     for r in csv.DictReader(open(args.csv)):
+        if not r["runid"].startswith(PER_TASK_PREFIXES):
+            skipped += 1
+            continue
         rows[r["task"]][r["runid"]] = r
     if not rows:
-        raise SystemExit(f"{args.csv}: no rows")
+        raise SystemExit(f"{args.csv}: no per-task rows (prefixes {PER_TASK_PREFIXES})")
+    if skipped:
+        print(f"# ignored {skipped} row(s) from other probes (B-mt control / B4 repeats)")
 
     winners: dict[str, dict] = {}
     report: list[str] = []
