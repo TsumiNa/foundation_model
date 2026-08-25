@@ -42,6 +42,7 @@ confound head capacity with encoder capacity.
 | Sub-stage | Grid | Runs |
 |---|---|---|
 | **A1** | `latent_dim` {64,128,256,384} × `encoder_hidden_dims` {[256],[512],[512,256],[1024,512],[1024,512,256]} × `encoder_lr` {1e-3,2e-3,5e-3,1e-2} | 80 |
+| **A1b** | short list × `encoder_lr` {5e-4, 2e-4} — re-opens the LR edge (see below) | 2·k |
 | **A2** | A1 short list × `batch_size` {512, 1024} | 2·k |
 | **A3** | winner × `descriptor.n_grids` {4, 16} | 2 |
 | **A6** | winner × `ae_lr` {1e-3, 1e-2} — the AE head's gradients reach the shared trunk | 2 |
@@ -61,6 +62,20 @@ R² separates the two by 0.001 — inside the ±0.02 single-seed noise band from
 campaign, i.e. not a measurement. MAE separates them by 13%. Ranking 80 configs on that R² would
 have ranked noise. The 3-task probe fixes this structurally (mid/small tasks have real R²
 headroom) and MAE remains the primary statistic on the big task.
+
+### Two things the ranking is not
+
+**The optimum must not sit on the grid boundary.** A1's leaders all landed at `encoder_lr` 1e-3,
+the smallest value the grid contained — which is the grid running out, not an optimum. A1b extends
+that axis downward for the short list, so the adopted LR is either interior or is reported as
+still edge-bound.
+
+**Configs are compared at a fixed budget, not at their own convergence.** Every grid point gets
+`max_epochs 150` with patience 24, and they use that budget very differently — the A1 leader
+early-stops around 50 epochs while some competitive points run to 149. This is the intended
+comparison, because stage C spends exactly the same budget, so the deployment budget is the right
+one to rank under; but it is *not* a statement about which encoder would win given unlimited
+epochs, and the report says so.
 
 ### Scoring
 
