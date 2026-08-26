@@ -100,44 +100,53 @@ def gains_figure(winners: dict, out: Path) -> None:
 
 
 def control_figure(csv_path: Path, base: str, joint: str, pertask: str, metric: str, out: Path) -> None:
+    """Both tuning strategies as a difference from the untuned arm.
+
+    Plotting the three arms' raw values shares one y-axis across tasks whose levels differ by
+    0.25 (formation_energy sits at 0.991, magnetization at 0.75), which visually flattens the very
+    differences the control exists to show. Differencing against the untuned arm puts every task on
+    a common, meaningful zero and makes each strategy's purchase directly readable.
+    """
     value: dict[str, dict[str, float]] = defaultdict(dict)
     for r in csv.DictReader(open(csv_path)):
         v = fnum(r.get(metric))
         if v is not None:
             value[r["runid"]][r["task"]] = v
-    arms = [("untuned", base), ("joint", joint), ("per-task", pertask)]
-    missing = [label for label, runid in arms if runid not in value]
+    arms = [("joint", joint), ("per-task", pertask)]
+    missing = [label for label, runid in [("untuned", base), *arms] if runid not in value]
     if missing:
         raise SystemExit(f"missing arm(s) {missing} in {csv_path}")
-    tasks = sorted(set.intersection(*(set(value[r]) for _, r in arms)))
+    tasks = sorted(set(value[base]) & set(value[joint]) & set(value[pertask]))
 
-    fig, ax = plt.subplots(figsize=(1.9 * len(tasks) + 3.2, 3.9), constrained_layout=True)
-    width = 0.26
+    fig, ax = plt.subplots(figsize=(1.85 * len(tasks) + 3.4, 4.2), constrained_layout=True)
+    width = 0.3
     x = np.arange(len(tasks))
     for k, (label, runid) in enumerate(arms):
-        offs = (k - 1) * (width + 0.02)
-        vals = [value[runid][t] for t in tasks]
-        ax.bar(x + offs, vals, width, label=label, color=ARM_COLOR[label], zorder=3)
-        for xi, v in zip(x + offs, vals):
-            ax.text(xi, v, f"{v:.3f}", ha="center", va="bottom", fontsize=7.5, color=INK)
+        offs = (k - 0.5) * (width + 0.03)
+        deltas = [value[runid][t] - value[base][t] for t in tasks]
+        ax.bar(x + offs, deltas, width, label=label, color=ARM_COLOR[label], zorder=3)
+        for xi, d in zip(x + offs, deltas):
+            ax.text(xi, d, f"{d:+.4f}", ha="center", va="bottom" if d >= 0 else "top",
+                    fontsize=8, color=INK)
+    ax.axhline(0, color=INK, lw=1.2)
     ax.set_xticks(x, tasks)
-    ax.set_ylabel(metric)
-    ax.set_ylim(bottom=min(min(value[r][t] for t in tasks) for _, r in arms) * 0.95)
+    ax.set_ylabel(f"Δ {metric} vs the untuned shared head")
+    ax.margins(y=0.22)
     ax.grid(axis="y", color=GRID, lw=0.6)
     ax.set_axisbelow(True)
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
-    ax.legend(frameon=False, fontsize=8, ncols=3, loc="upper center")
-    fig.suptitle(
-        "Stage B control · per-task tuning vs one jointly tuned shared head",
-        fontsize=11.5, color=INK, x=0.008, y=0.99, ha="left",
-    )
-    fig.text(
-        0.008, 0.945,
-        "all three arms measured on the same multi-task probe; 'untuned' is the common reference",
-        fontsize=8, color=MUTED, ha="left",
-    )
-    fig.get_layout_engine().set(rect=(0, 0, 1, 0.90))
+    ax.legend(frameon=False, fontsize=9, ncols=2, loc="upper right")
+
+    mj = np.mean([value[joint][t] - value[base][t] for t in tasks])
+    mp = np.mean([value[pertask][t] - value[base][t] for t in tasks])
+    fig.suptitle("Stage B control · per-task tuning vs one jointly tuned shared head",
+                 fontsize=11.5, color=INK, x=0.008, y=0.985, ha="left")
+    fig.text(0.008, 0.925,
+             f"same multi-task probe, zero = the untuned shared head  ·  mean Δ: joint {mj:+.4f}, "
+             f"per-task {mp:+.4f}  ·  single seed, so read the sign, not the magnitude",
+             fontsize=8, color=MUTED, ha="left")
+    fig.get_layout_engine().set(rect=(0, 0, 1, 0.88))
     fig.savefig(out, dpi=200, facecolor=SURFACE)
     plt.close(fig)
     print(out)
