@@ -270,6 +270,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.test_r2_metrics = nn.ModuleDict()
         self._metrics_updated: dict[str, set[str]] = {"val": set(), "test": set()}
         self._stage_index_trackers: dict[str, dict[str, Any] | None] = {"val": None, "test": None}
+        # Rebuilt by configure_optimizers; defined here so on_train_epoch_end and
+        # on_save_checkpoint never depend on that having run (e.g. a hook called directly).
+        self._scheduler_monitors: list[str] = []
+        self._scheduler_group_keys: list[str] = []
         self._init_stage_metrics()
 
         logger.info("Initializing FlexibleMultiTaskModel...")
@@ -857,377 +861,293 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     # Lightning step hooks delegate to helper implementations for readability.
 
-    def training_step(self, batch, batch_idx):
-        """Training step implementation for supervised multi-task learning."""
+    # --- shared per-batch pipeline ------------------------------------------------------------
+    #
+    # training/validation/test_step were near-duplicates of ~110 lines each. They drifted: one
+    # logged floats where the others logged tensors, one kept a vestigial zero accumulator, and a
+    # metric-update loop once scored every task against the last task's tensors. The three stages
+    # now share these helpers and differ only in what they are *supposed* to differ in — whether
+    # gradients are kept, whether duplicate eval rows are masked out, and whether R² is updated.
+
+    def _resolve_target_and_mask(
+        self,
+        *,
+        name: str,
+        head: nn.Module,
+        x: torch.Tensor,
+        y_dict_batch: dict[str, Any],
+        task_masks_batch: dict[str, Any],
+    ) -> tuple[torch.Tensor | list[torch.Tensor], torch.Tensor | list[torch.Tensor] | None] | None:
+        """This head's target and raw mask, or ``None`` when it does not participate in the batch.
+
+        The autoencoder reconstructs the input itself, so it never appears in ``y_dict_batch`` and
+        is always active.
+        """
+        if isinstance(head, AutoEncoderHead):
+            return x, torch.ones_like(x, dtype=torch.bool, device=x.device)
+        if name not in y_dict_batch or not self.task_configs_map[name].enabled:
+            return None
+        return y_dict_batch[name], task_masks_batch.get(name)
+
+    def _finalize_mask(
+        self,
+        *,
+        name: str,
+        stage: str,
+        is_sequence: bool,
+        target: torch.Tensor | list[torch.Tensor],
+        mask: torch.Tensor | list[torch.Tensor] | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Flatten a kernel-regression sequence and guarantee a boolean mask of the target's shape."""
+        if is_sequence and isinstance(target, list):
+            target = torch.cat(target, dim=0)
+        if not isinstance(target, torch.Tensor):
+            raise TypeError(f"Task '{name}': expected a tensor target, got {type(target).__name__}.")
+
+        if isinstance(mask, list):
+            mask = torch.cat(mask, dim=0)
+        elif mask is None:
+            kind = "KernelRegression task" if is_sequence else "task"
+            self._log_warning(f"Mask not found for {kind} {name} in {stage}_step. Assuming all valid.")
+            mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+        return target, mask
+
+    def _collect_batch_losses(
+        self,
+        *,
+        stage: str,
+        x: torch.Tensor,
+        preds: dict[str, torch.Tensor],
+        y_dict_batch: dict[str, Any],
+        task_masks_batch: dict[str, Any],
+        logs: dict[str, torch.Tensor],
+        stage_valid: tuple[torch.Tensor | None, list[bool] | None] | None = None,
+    ) -> dict[str, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
+        """Raw loss per participating head, as ``{name: (raw_loss, pred, target, mask)}``.
+
+        Each task's own tensors are returned rather than left in loop variables, because the
+        callers iterate a second time to weight and score them — reading the loop variables there
+        is how every task once got scored against whichever task happened to be processed last.
+        """
+        collected: dict[str, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = {}
+        raw_sum = torch.zeros((), device=x.device)
+
+        for name, pred_tensor in preds.items():
+            head = self.task_heads[name]
+            resolved = self._resolve_target_and_mask(
+                name=name, head=head, x=x, y_dict_batch=y_dict_batch, task_masks_batch=task_masks_batch
+            )
+            if resolved is None:
+                continue
+            target, mask = resolved
+
+            if stage_valid is not None:
+                batch_valid_mask, batch_valid_list = stage_valid
+                mask = self._apply_stage_valid_mask(
+                    sample_mask=mask,
+                    target=target,
+                    batch_valid_mask=batch_valid_mask,
+                    batch_valid_list=batch_valid_list,
+                    is_sequence=isinstance(head, KernelRegressionHead),
+                )
+
+            target, mask = self._finalize_mask(
+                name=name,
+                stage=stage,
+                is_sequence=isinstance(head, KernelRegressionHead),
+                target=target,
+                mask=mask,
+            )
+
+            raw_loss = head.compute_loss(pred_tensor, target, mask)
+            if raw_loss is None:
+                if not self.allow_all_missing_in_batch:
+                    raise ValueError(
+                        f"Task '{name}' has no valid samples in this batch and allow_all_missing_in_batch is False."
+                    )
+                self._log_debug(f"Task '{name}' has no valid samples in this batch. Skipping loss calculation.")
+                logs[f"{stage}_{name}_all_missing"] = torch.tensor(1.0, device=x.device)
+                continue
+
+            collected[name] = (raw_loss, pred_tensor, target, mask)
+            raw_sum = raw_sum + raw_loss.detach()
+            logs[f"{stage}_{name}_raw_loss"] = raw_loss.detach()
+            logs[f"{stage}_{name}_all_missing"] = torch.tensor(0.0, device=x.device)
+
+        logs[f"{stage}_sum_supervised_raw_loss"] = raw_sum
+        return collected
+
+    def _weighted_total_loss(
+        self,
+        *,
+        stage: str,
+        raw_losses: dict[str, torch.Tensor],
+        logs: dict[str, torch.Tensor],
+        device: torch.device,
+        keep_graph: bool,
+    ) -> torch.Tensor:
+        """Combine raw losses into the objective: static weights, then the optional balancer.
+
+        ``keep_graph`` is the only difference between training and evaluation here — evaluation
+        detaches each contribution as it accumulates so no graph is retained.
+        """
+        total = torch.zeros((), device=device)
+        for name, raw_loss in raw_losses.items():
+            static_weight = self._get_task_static_weight(name)
+            if self.enable_learnable_loss_balancer and name in self.task_log_sigmas:
+                log_sigma = self.task_log_sigmas[name]
+                precision = torch.exp(-2 * log_sigma)
+                contribution = (static_weight * 0.5 * precision * raw_loss) + log_sigma
+                logs[f"{stage}_{name}_sigma_t"] = torch.exp(log_sigma).detach()
+            else:
+                contribution = static_weight * raw_loss
+            total = total + (contribution if keep_graph else contribution.detach())
+            logs[f"{stage}_{name}_final_loss_contrib"] = contribution.detach()
+            logs[f"{stage}_{name}_static_weight"] = torch.tensor(static_weight, device=device)
+        return total
+
+    def _eval_step(self, batch: Any, *, stage: str) -> None:
+        """Shared body of ``validation_step`` / ``test_step``.
+
+        The two differed only in their metric namespace and their stage tracker, so they are one
+        implementation now; anything that must differ goes through ``stage``.
+        """
+        x, y_dict_batch, task_masks_batch, task_sequence_data_batch = batch
+        if not isinstance(x, torch.Tensor):
+            raise TypeError(f"Expected tensor inputs in {stage}_step, received {type(x)}")
+
+        logs: dict[str, torch.Tensor] = {}
+        preds = self(x, task_sequence_data_batch)
+        stage_valid = self._get_batch_valid_mask(stage=stage, batch_size=x.shape[0], device=x.device) or (None, None)
+
+        collected = self._collect_batch_losses(
+            stage=stage,
+            x=x,
+            preds=preds,
+            y_dict_batch=y_dict_batch,
+            task_masks_batch=task_masks_batch,
+            logs=logs,
+            stage_valid=stage_valid,
+        )
+        total = self._weighted_total_loss(
+            stage=stage,
+            raw_losses={name: item[0] for name, item in collected.items()},
+            logs=logs,
+            device=x.device,
+            keep_graph=False,
+        )
+        for name, (_raw, pred_tensor, target, mask) in collected.items():
+            self._update_r2_metric(stage=stage, task_name=name, preds=pred_tensor, targets=target, sample_mask=mask)
+
+        logs[f"{stage}_final_supervised_loss"] = total.detach()
+        self.log_dict(logs, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
+        self.log(f"{stage}_final_loss", total.detach(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        return None
+
+    # --- Lightning hooks ----------------------------------------------------------------------
+
+    def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
+        """Supervised multi-task training step (manual optimization)."""
         optimizers = self.optimizers()
         if not isinstance(optimizers, list):
             optimizers = [optimizers]
         for opt in optimizers:
             opt.zero_grad(set_to_none=True)
 
-        lr_schedulers = self.lr_schedulers()
-        if not isinstance(lr_schedulers, list):
-            lr_schedulers = [lr_schedulers]
-
         x, y_dict_batch, task_masks_batch, task_sequence_data_batch = batch
         if not isinstance(x, torch.Tensor):
             raise TypeError(f"Expected tensor inputs in training_step, received {type(x)}")
 
-        train_logs: dict[str, torch.Tensor] = {}
-        supervised_loss_contribution = torch.zeros((), device=x.device)
-
+        logs: dict[str, torch.Tensor] = {}
         preds = self(x, task_sequence_data_batch)
+        collected = self._collect_batch_losses(
+            stage="train",
+            x=x,
+            preds=preds,
+            y_dict_batch=y_dict_batch,
+            task_masks_batch=task_masks_batch,
+            logs=logs,
+        )
+        total_loss = self._weighted_total_loss(
+            stage="train",
+            raw_losses={name: item[0] for name, item in collected.items()},
+            logs=logs,
+            device=x.device,
+            keep_graph=True,
+        )
 
-        raw_supervised_losses = {}
-        for name, pred_tensor in preds.items():
-            head = self.task_heads[name]
-
-            if isinstance(head, AutoEncoderHead):
-                target = x
-                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
-            elif name not in y_dict_batch or not self.task_configs_map[name].enabled:
-                continue
-            else:
-                target = y_dict_batch[name]
-                sample_mask = task_masks_batch.get(name)
-
-            if isinstance(head, KernelRegressionHead):
-                if isinstance(target, list):
-                    target = torch.cat(target, dim=0)
-                if sample_mask is not None and isinstance(sample_mask, list):
-                    sample_mask = torch.cat(sample_mask, dim=0)
-                elif sample_mask is None:
-                    self._log_warning(
-                        f"Mask not found for KernelRegression task {name} in training_step. Assuming all valid."
-                    )
-                    sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
-            else:
-                if sample_mask is None:
-                    self._log_warning(f"Mask not found for task {name} in training_step. Assuming all valid.")
-                    sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
-
-            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
-
-            if raw_loss_t is None:
-                if self.allow_all_missing_in_batch:
-                    self._log_debug(f"Task '{name}' has no valid samples in this batch. Skipping loss calculation.")
-                    train_logs[f"train_{name}_all_missing"] = 1.0
-                    continue
-                raise ValueError(
-                    f"Task '{name}' has no valid samples in this batch and allow_all_missing_in_batch is False."
-                )
-
-            raw_supervised_losses[name] = raw_loss_t
-            train_logs[f"train_{name}_raw_loss"] = raw_loss_t.detach()
-            train_logs[f"train_{name}_all_missing"] = 0.0
-
-        for name, raw_loss_t in raw_supervised_losses.items():
-            static_weight = self._get_task_static_weight(name)
-            if self.enable_learnable_loss_balancer and name in self.task_log_sigmas:
-                current_log_sigma_t = self.task_log_sigmas[name]
-                precision_factor_t = torch.exp(-2 * current_log_sigma_t)
-                final_task_loss_component = (
-                    static_weight * 0.5 * precision_factor_t * raw_loss_t
-                ) + current_log_sigma_t
-
-                supervised_loss_contribution += final_task_loss_component
-                train_logs[f"train_{name}_sigma_t"] = torch.exp(current_log_sigma_t).detach()
-                train_logs[f"train_{name}_final_loss_contrib"] = final_task_loss_component.detach()
-            else:
-                final_task_loss_component = static_weight * raw_loss_t
-                supervised_loss_contribution += final_task_loss_component
-                train_logs[f"train_{name}_final_loss_contrib"] = final_task_loss_component.detach()
-            train_logs[f"train_{name}_static_weight"] = torch.tensor(static_weight, device=x.device)
-
-        train_logs["train_final_supervised_loss"] = supervised_loss_contribution.detach()
-
-        total_loss = supervised_loss_contribution
-
-        self.log_dict(train_logs, prog_bar=False, on_step=True, on_epoch=True, sync_dist=True)
+        logs["train_final_supervised_loss"] = total_loss.detach()
+        self.log_dict(logs, prog_bar=False, on_step=True, on_epoch=True, sync_dist=True)
         self.log("train_final_loss", total_loss.detach(), prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
 
         if total_loss.requires_grad:
             self.manual_backward(total_loss)
             for opt in optimizers:
                 opt.step()
-
-            for scheduler in lr_schedulers:
-                if scheduler is not None:
-                    if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                        scheduler.step(total_loss.detach())
-                    else:
-                        scheduler.step()
+            # Schedulers are stepped once per epoch in on_train_epoch_end, not here: stepping a
+            # ReduceLROnPlateau per batch makes its `patience` count batches.
         else:
+            # No opt.step() in this branch. It used to call it on every optimizer right after
+            # logging that it was skipping the optimizer step — a no-op only because
+            # zero_grad(set_to_none=True) leaves every p.grad as None and AdamW skips gradientless
+            # params. With set_to_none=False the same line applies AdamW's decoupled weight decay
+            # to the whole model on a batch that carried no signal.
             self._log_warning(
                 f"total_loss does not require grad and has no grad_fn at batch_idx {batch_idx}. "
                 "Skipping backward pass and optimizer step. "
                 "This might indicate all parameters are frozen, loss contributions are zero, "
                 "or an issue with the computation graph.",
             )
-            for opt in optimizers:
-                opt.step()
 
         return total_loss
 
-    def validation_step(self, batch, batch_idx):
-        """
-        Validation step implementation mirroring training_step without gradient updates.
+    def validation_step(self, batch: Any, batch_idx: int) -> None:
+        """Validation step — the training objective without gradients, plus R² metrics."""
+        return self._eval_step(batch, stage="val")
 
-        Parameters
-        ----------
-        batch : tuple
-            A tuple containing (x, y_dict_batch, task_masks_batch, task_sequence_data_batch)
-        batch_idx : int
-            Index of the current batch
-
-        Returns
-        -------
-        None
-            This method logs metrics using self.log_dict() and does not return a value.
-        """
-        x, y_dict_batch, task_masks_batch, task_sequence_data_batch = batch
-        if not isinstance(x, torch.Tensor):
-            raise TypeError(f"Expected tensor inputs in validation_step, received {type(x)}")
-
-        val_logs: dict[str, torch.Tensor] = {}
-        final_val_loss = torch.zeros((), device=x.device)
-        val_supervised_loss_contribution = torch.zeros_like(final_val_loss)
-        val_sum_supervised_raw_loss = torch.zeros_like(final_val_loss)
-
-        preds = self(x, task_sequence_data_batch)
-        valid_mask_info = self._get_batch_valid_mask(stage="val", batch_size=x.shape[0], device=x.device)
-        if valid_mask_info is None:
-            batch_valid_mask = None
-            batch_valid_list: list[bool] | None = None
-        else:
-            batch_valid_mask, batch_valid_list = valid_mask_info
-
-        raw_val_supervised_losses = {}
-        val_metric_inputs: dict[str, tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]] = {}
-        for name, pred_tensor in preds.items():
-            head = self.task_heads[name]
-
-            if isinstance(head, AutoEncoderHead):
-                target = x
-                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
-            elif name not in y_dict_batch or not self.task_configs_map[name].enabled:
-                continue
-            else:
-                target = y_dict_batch[name]
-                sample_mask = task_masks_batch.get(name)
-
-            sample_mask = self._apply_stage_valid_mask(
-                sample_mask=sample_mask,
-                target=target,
-                batch_valid_mask=batch_valid_mask,
-                batch_valid_list=batch_valid_list,
-                is_sequence=isinstance(head, KernelRegressionHead),
-            )
-
-            if isinstance(head, KernelRegressionHead):
-                if isinstance(target, list):
-                    target = torch.cat(target, dim=0)
-                if sample_mask is not None and isinstance(sample_mask, list):
-                    sample_mask = torch.cat(sample_mask, dim=0)
-                elif sample_mask is None:
-                    self._log_warning(
-                        f"Mask not found for KernelRegression task {name} in validation_step. Assuming all valid."
-                    )
-                    sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
-            else:
-                if sample_mask is None:
-                    self._log_warning(f"Mask not found for task {name} in validation_step. Assuming all valid.")
-                    sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
-
-            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
-
-            if raw_loss_t is None:
-                if self.allow_all_missing_in_batch:
-                    self._log_debug(f"Task '{name}' has no valid samples in this batch. Skipping loss calculation.")
-                    val_logs[f"val_{name}_all_missing"] = torch.tensor(1.0, device=x.device)
-                    continue
-                raise ValueError(
-                    f"Task '{name}' has no valid samples in this batch and allow_all_missing_in_batch is False."
-                )
-
-            raw_val_supervised_losses[name] = raw_loss_t
-            # Keep this task's own tensors: the R2 update below runs in a second loop, and
-            # reading the loop variables there would score every task against whichever task
-            # happened to be processed last.
-            val_metric_inputs[name] = (pred_tensor, target, sample_mask)
-            val_sum_supervised_raw_loss += raw_loss_t.detach()
-            val_logs[f"val_{name}_raw_loss"] = raw_loss_t.detach()
-            val_logs[f"val_{name}_all_missing"] = torch.tensor(0.0, device=x.device)
-
-        val_logs["val_sum_supervised_raw_loss"] = val_sum_supervised_raw_loss
-
-        for name, raw_loss_t in raw_val_supervised_losses.items():
-            static_weight = self._get_task_static_weight(name)
-            if self.enable_learnable_loss_balancer and name in self.task_log_sigmas:
-                current_log_sigma_t = self.task_log_sigmas[name]
-                precision_factor_t = torch.exp(-2 * current_log_sigma_t)
-                final_task_loss_component = (
-                    static_weight * 0.5 * precision_factor_t * raw_loss_t
-                ) + current_log_sigma_t
-
-                val_supervised_loss_contribution += final_task_loss_component.detach()
-                val_logs[f"val_{name}_sigma_t"] = torch.exp(current_log_sigma_t).detach()
-                val_logs[f"val_{name}_final_loss_contrib"] = final_task_loss_component.detach()
-            else:
-                final_task_loss_component = static_weight * raw_loss_t
-                val_supervised_loss_contribution += final_task_loss_component.detach()
-                val_logs[f"val_{name}_final_loss_contrib"] = final_task_loss_component.detach()
-            val_logs[f"val_{name}_static_weight"] = torch.tensor(static_weight, device=x.device)
-
-            metric_preds, metric_targets, metric_mask = val_metric_inputs[name]
-            self._update_r2_metric(
-                stage="val",
-                task_name=name,
-                preds=metric_preds,
-                targets=metric_targets,
-                sample_mask=metric_mask,
-            )
-
-        val_logs["val_final_supervised_loss"] = val_supervised_loss_contribution.detach()
-        final_val_loss = final_val_loss + val_supervised_loss_contribution
-
-        self.log_dict(val_logs, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val_final_loss", final_val_loss.detach(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
-
-        return None
-
-    def test_step(self, batch, batch_idx):
-        """
-        Test step implementation mirroring validation_step but logging to the test namespace.
-
-        Parameters
-        ----------
-        batch : tuple
-            A tuple containing (x, y_dict_batch, task_masks_batch, task_sequence_data_batch)
-        batch_idx : int
-            Index of the current batch
-
-        Returns
-        -------
-        None
-        """
-        x, y_dict_batch, task_masks_batch, task_sequence_data_batch = batch
-        if not isinstance(x, torch.Tensor):
-            raise TypeError(f"Expected tensor inputs in test_step, received {type(x)}")
-
-        test_logs: dict[str, torch.Tensor] = {}
-        final_test_loss = torch.zeros((), device=x.device)
-        test_supervised_loss_contribution = torch.zeros_like(final_test_loss)
-        test_sum_supervised_raw_loss = torch.zeros_like(final_test_loss)
-
-        preds = self(x, task_sequence_data_batch)
-        valid_mask_info = self._get_batch_valid_mask(stage="test", batch_size=x.shape[0], device=x.device)
-        if valid_mask_info is None:
-            batch_valid_mask = None
-            batch_valid_list: list[bool] | None = None
-        else:
-            batch_valid_mask, batch_valid_list = valid_mask_info
-
-        raw_test_supervised_losses = {}
-        test_metric_inputs: dict[str, tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]] = {}
-        for name, pred_tensor in preds.items():
-            head = self.task_heads[name]
-
-            if isinstance(head, AutoEncoderHead):
-                target = x
-                sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
-            elif name not in y_dict_batch or not self.task_configs_map[name].enabled:
-                continue
-            else:
-                target = y_dict_batch[name]
-                sample_mask = task_masks_batch.get(name)
-
-            sample_mask = self._apply_stage_valid_mask(
-                sample_mask=sample_mask,
-                target=target,
-                batch_valid_mask=batch_valid_mask,
-                batch_valid_list=batch_valid_list,
-                is_sequence=isinstance(head, KernelRegressionHead),
-            )
-
-            if isinstance(head, KernelRegressionHead):
-                if isinstance(target, list):
-                    target = torch.cat(target, dim=0)
-                if sample_mask is not None and isinstance(sample_mask, list):
-                    sample_mask = torch.cat(sample_mask, dim=0)
-                elif sample_mask is None:
-                    self._log_warning(
-                        f"Mask not found for KernelRegression task {name} in test_step. Assuming all valid."
-                    )
-                    sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
-            else:
-                if sample_mask is None:
-                    self._log_warning(f"Mask not found for task {name} in test_step. Assuming all valid.")
-                    sample_mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
-
-            raw_loss_t = head.compute_loss(pred_tensor, target, sample_mask)
-
-            if raw_loss_t is None:
-                if self.allow_all_missing_in_batch:
-                    self._log_debug(f"Task '{name}' has no valid samples in this batch. Skipping loss calculation.")
-                    test_logs[f"test_{name}_all_missing"] = torch.tensor(1.0, device=x.device)
-                    continue
-                raise ValueError(
-                    f"Task '{name}' has no valid samples in this batch and allow_all_missing_in_batch is False."
-                )
-
-            raw_test_supervised_losses[name] = raw_loss_t
-            # Keep this task's own tensors: the R2 update below runs in a second loop, and
-            # reading the loop variables there would score every task against whichever task
-            # happened to be processed last.
-            test_metric_inputs[name] = (pred_tensor, target, sample_mask)
-            test_sum_supervised_raw_loss += raw_loss_t.detach()
-            test_logs[f"test_{name}_raw_loss"] = raw_loss_t.detach()
-            test_logs[f"test_{name}_all_missing"] = torch.tensor(0.0, device=x.device)
-
-        test_logs["test_sum_supervised_raw_loss"] = test_sum_supervised_raw_loss
-
-        for name, raw_loss_t in raw_test_supervised_losses.items():
-            static_weight = self._get_task_static_weight(name)
-            if self.enable_learnable_loss_balancer and name in self.task_log_sigmas:
-                current_log_sigma_t = self.task_log_sigmas[name]
-                precision_factor_t = torch.exp(-2 * current_log_sigma_t)
-                final_task_loss_component = (
-                    static_weight * 0.5 * precision_factor_t * raw_loss_t
-                ) + current_log_sigma_t
-
-                test_supervised_loss_contribution += final_task_loss_component.detach()
-                test_logs[f"test_{name}_sigma_t"] = torch.exp(current_log_sigma_t).detach()
-                test_logs[f"test_{name}_final_loss_contrib"] = final_task_loss_component.detach()
-            else:
-                final_task_loss_component = static_weight * raw_loss_t
-                test_supervised_loss_contribution += final_task_loss_component.detach()
-                test_logs[f"test_{name}_final_loss_contrib"] = final_task_loss_component.detach()
-            test_logs[f"test_{name}_static_weight"] = torch.tensor(static_weight, device=x.device)
-
-            metric_preds, metric_targets, metric_mask = test_metric_inputs[name]
-            self._update_r2_metric(
-                stage="test",
-                task_name=name,
-                preds=metric_preds,
-                targets=metric_targets,
-                sample_mask=metric_mask,
-            )
-
-        test_logs["test_final_supervised_loss"] = test_supervised_loss_contribution.detach()
-        final_test_loss = final_test_loss + test_supervised_loss_contribution
-
-        self.log_dict(test_logs, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
-        self.log(
-            "test_final_loss", final_test_loss.detach(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True
-        )
-
-        return None
+    def test_step(self, batch: Any, batch_idx: int) -> None:
+        """Test step — identical to validation, logged under the ``test`` namespace."""
+        return self._eval_step(batch, stage="test")
 
     def on_validation_epoch_start(self) -> None:
         super().on_validation_epoch_start()
         self._reset_stage_metrics("val")
         self._init_stage_index_tracker("val")
+
+    def on_train_epoch_end(self) -> None:
+        """Step every ``ReduceLROnPlateau`` once, on the epoch-aggregated monitored metric.
+
+        Under manual optimization Lightning does not drive schedulers, so the model must. Doing it
+        here rather than in ``training_step`` is what makes ``patience`` count **epochs** — the
+        unit every ReduceLROnPlateau tutorial assumes, and the one the config documents.
+
+        The monitored value is read from ``trainer.callback_metrics``, so ``monitor`` selects a real
+        metric instead of the current batch's loss. A missing key raises rather than silently
+        skipping the step: a scheduler that never anneals is invisible in logs. The default,
+        ``train_final_loss_epoch``, is the epoch aggregate of the ``train_final_loss`` that
+        ``training_step`` logs with ``on_epoch=True``.
+        """
+        schedulers = self.lr_schedulers()
+        if schedulers is None:
+            return
+        if not isinstance(schedulers, list):
+            schedulers = [schedulers]
+
+        metrics = self.trainer.callback_metrics if self.trainer is not None else {}
+        for scheduler, monitor in zip(schedulers, self._scheduler_monitors):
+            if scheduler is None:
+                continue
+            if not isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step()
+                continue
+            if monitor not in metrics:
+                raise ValueError(
+                    f"LR scheduler monitor {monitor!r} is not among the logged metrics at the end "
+                    f"of the training epoch. Available: {sorted(metrics)}. Set "
+                    "[training.scheduler].monitor to a metric logged with on_epoch=True during "
+                    "training (the default is 'train_final_loss_epoch')."
+                )
+            scheduler.step(metrics[monitor])
 
     def on_validation_epoch_end(self) -> None:
         super().on_validation_epoch_end()
@@ -1372,6 +1292,12 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """Configure optimizers for all parameter groups."""
 
         optimizers_and_schedulers: list[Any] = []
+        # Parallel to the schedulers Lightning hands back from self.lr_schedulers(), so
+        # on_train_epoch_end can feed each one the metric its own group configured, and
+        # on_save_checkpoint can name its group. Reset on every call, because configure_optimizers
+        # can run more than once per model.
+        self._scheduler_monitors = []
+        self._scheduler_group_keys = []
 
         # 1. Main parameters (Encoder + optionally task_log_sigmas)
         main_params_to_optimize = list(self.encoder.parameters())
@@ -1396,6 +1322,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
             encoder_sched = self._create_scheduler(encoder_opt, self.shared_block_optimizer)
 
             if encoder_sched:
+                self._scheduler_monitors.append(self.shared_block_optimizer.monitor)
+                self._scheduler_group_keys.append("shared_encoder")
                 optimizers_and_schedulers.append(
                     {
                         "optimizer": encoder_opt,
@@ -1408,7 +1336,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     }
                 )
             else:
-                optimizers_and_schedulers.append(encoder_opt)
+                # Always a dict, never a bare Optimizer: Lightning rejects a list that mixes the
+                # two, which happens as soon as one group disables its scheduler and another
+                # does not (e.g. the inference placeholder in build_model_for_checkpoint).
+                optimizers_and_schedulers.append({"optimizer": encoder_opt})
         else:
             logger.info(
                 "No parameters requiring gradients for the main optimizer (encoder/log_sigmas). Skipping its creation."
@@ -1428,6 +1359,8 @@ class FlexibleMultiTaskModel(L.LightningModule):
             task_sched = self._create_scheduler(task_opt, task_optimizer_config)
 
             if task_sched:
+                self._scheduler_monitors.append(task_optimizer_config.monitor)
+                self._scheduler_group_keys.append(f"task_{name}")
                 optimizers_and_schedulers.append(
                     {
                         "optimizer": task_opt,
@@ -1440,7 +1373,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     }
                 )
             else:
-                optimizers_and_schedulers.append(task_opt)
+                optimizers_and_schedulers.append({"optimizer": task_opt})
 
         if not optimizers_and_schedulers:
             logger.warning(
@@ -1642,8 +1575,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         main_params_trainable = [p for p in main_params if p.requires_grad]
         if main_params_trainable and optimizer_index < len(optimizer_states_list):
             optimizer_states_dict["shared_encoder"] = optimizer_states_list[optimizer_index]
-            if optimizer_index < len(lr_schedulers_list):
-                lr_schedulers_dict["shared_encoder"] = lr_schedulers_list[optimizer_index]
             optimizer_index += 1
 
         # 2. Task head optimizers
@@ -1651,9 +1582,24 @@ class FlexibleMultiTaskModel(L.LightningModule):
             head_params_trainable = [p for p in head.parameters() if p.requires_grad]
             if head_params_trainable and optimizer_index < len(optimizer_states_list):
                 optimizer_states_dict[f"task_{name}"] = optimizer_states_list[optimizer_index]
-                if optimizer_index < len(lr_schedulers_list):
-                    lr_schedulers_dict[f"task_{name}"] = lr_schedulers_list[optimizer_index]
                 optimizer_index += 1
+
+        # 3. Schedulers, by the group that owns them.
+        #
+        # checkpoint["lr_schedulers"] is COMPACT — one entry per scheduler, not per optimizer — so
+        # indexing it by optimizer position silently misfiles every entry as soon as one group has
+        # no scheduler and another does. With an unscheduled encoder and a scheduled head, the
+        # head's scheduler was stored under "shared_encoder" and the head lost its LR, best value
+        # and patience on resume. _scheduler_group_keys is built in the same order Lightning
+        # returns them, so the two zip exactly.
+        for group_key, scheduler_state in zip(self._scheduler_group_keys, lr_schedulers_list):
+            lr_schedulers_dict[group_key] = scheduler_state
+        if len(self._scheduler_group_keys) != len(lr_schedulers_list):
+            logger.warning(
+                f"Scheduler bookkeeping mismatch: {len(self._scheduler_group_keys)} known group(s) "
+                f"vs {len(lr_schedulers_list)} saved scheduler state(s); some LR state may not be "
+                "restored on resume."
+            )
 
         # Store both formats for compatibility
         checkpoint["optimizer_states_dict"] = optimizer_states_dict

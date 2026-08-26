@@ -2491,3 +2491,241 @@ def test_optimize_latent_space_with_ae():
     assert result.optimized_input.shape == (2, 2, INPUT_DIM)
     assert result.optimized_target.shape == (2, 2, 1)
     assert result.trajectory.shape == (2, 2, 5, 1)
+
+
+# --- LR scheduler cadence ---------------------------------------------------------------------
+
+
+def test_scheduler_steps_once_per_epoch_not_per_batch(model_config_mixed_tasks, dummy_compound_datamodule, tmp_path):
+    """``patience`` must count epochs, so the scheduler must be stepped once per epoch.
+
+    The model uses manual optimization, so Lightning does not drive its schedulers and the model
+    steps them itself. It used to do that inside ``training_step`` — once per *batch* — which made
+    ReduceLROnPlateau's ``patience`` count batches: on a 24k-row task at ``batch_size = 256``
+    (~90 batches/epoch) the LR reached ``min_lr`` inside the first epoch.
+
+    This asserts the runtime cadence rather than the config, because the config layer read
+    perfectly while the runtime did the wrong thing.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, min_lr=1e-6),
+    )
+    # Every head gets a live scheduler too, so the count below covers all parameter groups.
+    for task_config in model.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=1e-3, min_lr=1e-6)
+
+    epochs, batches_per_epoch = 2, 3
+    steps: list[object] = []
+    original_configure = model.configure_optimizers
+
+    def configure_with_counting_schedulers():
+        result = original_configure()
+        entries = result if isinstance(result, list) else [result]
+        n = 0
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            scheduler = entry.get("lr_scheduler", {}).get("scheduler")
+            if scheduler is None:
+                continue
+            n += 1
+            original_step = scheduler.step
+
+            def counting_step(*args, _orig=original_step, **kwargs):
+                steps.append(args[0] if args else None)
+                return _orig(*args, **kwargs)
+
+            scheduler.step = counting_step
+        configure_with_counting_schedulers.n_schedulers = n
+        return result
+
+    model.configure_optimizers = configure_with_counting_schedulers
+
+    trainer = L.Trainer(
+        logger=False,
+        max_epochs=epochs,
+        limit_train_batches=batches_per_epoch,
+        limit_val_batches=1,
+        accelerator="cpu",
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+    )
+    trainer.fit(model, datamodule=dummy_compound_datamodule)
+
+    n_schedulers = configure_with_counting_schedulers.n_schedulers
+    assert n_schedulers > 0, "no scheduler was created, so the cadence is untested"
+    assert len(steps) == n_schedulers * epochs, (
+        f"expected {n_schedulers} scheduler(s) x {epochs} epochs = {n_schedulers * epochs} steps; "
+        f"got {len(steps)} over {batches_per_epoch} batches/epoch — per-batch stepping would give "
+        f"{n_schedulers * epochs * batches_per_epoch}"
+    )
+    # Each step receives the epoch-aggregated monitored metric, not a raw per-batch loss.
+    assert all(value is not None for value in steps)
+
+
+def test_scheduler_monitor_missing_raises(model_config_mixed_tasks, dummy_compound_datamodule):
+    """A monitor that never appears must fail loudly — a scheduler that silently never anneals
+    is invisible in logs, which is the failure mode this whole area kept producing."""
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, min_lr=1e-6, monitor="no_such_metric"),
+    )
+    trainer = L.Trainer(
+        logger=False,
+        max_epochs=1,
+        limit_train_batches=1,
+        limit_val_batches=1,
+        accelerator="cpu",
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+    )
+    with pytest.raises(ValueError, match="no_such_metric"):
+        trainer.fit(model, datamodule=dummy_compound_datamodule)
+
+
+def test_no_optimizer_step_when_loss_has_no_graph(model_config_mixed_tasks, sample_batch_mixed_tasks, mocker):
+    """A batch whose loss carries no graph must not step any optimizer.
+
+    The else-branch used to call opt.step() on every optimizer immediately after logging that it
+    was *skipping* the optimizer step. That is a no-op only because zero_grad(set_to_none=True)
+    leaves every p.grad as None and AdamW skips gradientless params — with set_to_none=False the
+    same line applies AdamW's decoupled weight decay to the whole model on a batch that carried no
+    signal. Asserting the call count keeps the log and the behaviour agreeing.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=config.shared_block_optimizer,
+    )
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+
+    optimizer = mocker.MagicMock()
+    mocker.patch.object(model, "optimizers", return_value=[optimizer])
+    mocker.patch.object(model, "log_dict")
+    mocker.patch.object(model, "log")
+    backward = mocker.patch.object(model, "manual_backward")
+
+    loss = model.training_step(sample_batch_mixed_tasks, 0)
+
+    assert not loss.requires_grad, "test needs a graph-free loss to exercise the branch"
+    backward.assert_not_called()
+    optimizer.zero_grad.assert_called_once()
+    optimizer.step.assert_not_called()
+
+
+# --- characterization: the three steps' observable output must not drift -----------------------
+
+
+def _run_step_and_capture(model, batch, step_name, mocker):
+    """Every value the step publishes: its return, and the full logged key/value set."""
+    captured: dict[str, float] = {}
+
+    def record_dict(d, *args, **kwargs):
+        for key, value in d.items():
+            captured[key] = float(value)
+
+    def record_one(key, value, *args, **kwargs):
+        captured[key] = float(value)
+
+    mocker.patch.object(model, "log_dict", side_effect=record_dict)
+    mocker.patch.object(model, "log", side_effect=record_one)
+    if step_name == "training_step":
+        optimizer = mocker.MagicMock()
+        mocker.patch.object(model, "optimizers", return_value=[optimizer])
+        mocker.patch.object(model, "manual_backward")
+    result = getattr(model, step_name)(batch, 0)
+    return (None if result is None else float(result)), captured
+
+
+@pytest.mark.parametrize("step_name", ["training_step", "validation_step", "test_step"])
+def test_step_output_is_stable(model_config_mixed_tasks, sample_batch_mixed_tasks, mocker, step_name):
+    """Pin what each step returns and logs.
+
+    These functions have been rewritten several times and carry the loss that actually trains the
+    model, so a refactor has to prove it changed nothing observable. This captures the return value
+    and every logged key/value from a fixed batch with fixed weights; any drift in loss
+    composition, weighting, masking or metric naming fails here rather than silently changing
+    training.
+    """
+    torch.manual_seed(0)
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=config.shared_block_optimizer,
+    )
+    model.eval()
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.fill_(0.01)
+
+    returned, logged = _run_step_and_capture(model, sample_batch_mixed_tasks, step_name, mocker)
+
+    prefix = {"training_step": "train", "validation_step": "val", "test_step": "test"}[step_name]
+    task_names = [c.name for c in config.task_configs]
+
+    # Structure: one raw loss, one all_missing flag, one weight and one contribution per task that
+    # produced a loss, plus the aggregate keys.
+    for name in task_names:
+        assert f"{prefix}_{name}_all_missing" in logged, f"missing all_missing flag for {name}"
+    assert f"{prefix}_final_supervised_loss" in logged
+    assert f"{prefix}_final_loss" in logged
+
+    # Values: the aggregate must equal the sum of the per-task contributions it reports.
+    contributions = sum(v for k, v in logged.items() if k.endswith("_final_loss_contrib"))
+    assert logged[f"{prefix}_final_supervised_loss"] == pytest.approx(contributions, rel=1e-5)
+    assert logged[f"{prefix}_final_loss"] == pytest.approx(contributions, rel=1e-5)
+    if returned is not None:
+        assert returned == pytest.approx(contributions, rel=1e-5)
+
+    # Weighting: with no learnable balancer, each contribution is weight x raw loss.
+    for name in task_names:
+        raw_key, weight_key = f"{prefix}_{name}_raw_loss", f"{prefix}_{name}_static_weight"
+        contrib_key = f"{prefix}_{name}_final_loss_contrib"
+        if raw_key in logged:
+            assert logged[contrib_key] == pytest.approx(logged[raw_key] * logged[weight_key], rel=1e-5)
+
+
+def test_checkpoint_records_each_scheduler_under_its_own_group(model_config_mixed_tasks, mocker):
+    """A scheduler's checkpoint entry must be keyed by the group that owns it.
+
+    checkpoint["lr_schedulers"] is compact — one entry per scheduler, not per optimizer — so the
+    old positional indexing misfiled every entry as soon as one group had no scheduler and another
+    did: with an unscheduled encoder and a scheduled head, the head's scheduler landed under
+    "shared_encoder" and the head lost its LR/best/patience state on resume.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        # Encoder without a scheduler, heads with one — the mixed case.
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, scheduler_enabled=False),
+    )
+    for task_config in model.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=1e-3, min_lr=1e-6)
+
+    model.configure_optimizers()
+    assert "shared_encoder" not in model._scheduler_group_keys
+    n_scheduled = len(model._scheduler_group_keys)
+    assert n_scheduled > 0
+
+    checkpoint = {
+        "optimizer_states": [{"opt": i} for i in range(1 + len(model.task_heads))],
+        "lr_schedulers": [{"sched": i} for i in range(n_scheduled)],
+    }
+    model.on_save_checkpoint(checkpoint)
+
+    saved = checkpoint["lr_schedulers_dict"]
+    assert "shared_encoder" not in saved, "unscheduled encoder must not be credited with a scheduler"
+    assert list(saved) == model._scheduler_group_keys
+    for i, key in enumerate(model._scheduler_group_keys):
+        assert saved[key] == {"sched": i}

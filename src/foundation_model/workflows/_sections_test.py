@@ -101,14 +101,25 @@ def test_scheduler_subsection_validation(raw, message):
 
 
 def test_inert_lightning_scheduler_keys_are_not_exposed():
-    """monitor / interval / frequency cannot take effect under manual optimization.
+    """interval / frequency cannot take effect, so they must not be accepted as config.
 
-    The model steps the scheduler itself once per batch, so Lightning never acts on its
-    lr_scheduler dict. Accepting these as config would advertise settings that do nothing.
+    The model steps its schedulers itself in on_train_epoch_end — once per epoch by construction —
+    so Lightning's cadence settings never apply. `monitor` IS honoured (looked up in
+    trainer.callback_metrics) and is exposed; these two are not.
     """
-    for key, value in (("monitor", "val_final_loss"), ("interval", "step"), ("frequency", 2)):
+    for key, value in (("interval", "step"), ("frequency", 2)):
         with pytest.raises(ValueError, match=rf"training\.scheduler.*{key}"):
             build_training_section({"scheduler": {key: value}})
+
+
+def test_scheduler_monitor_is_exposed_and_reaches_the_optimizer_config():
+    training = build_training_section({"scheduler": {"monitor": "val_final_loss"}})
+    assert training.optimizer_config(lr=1e-3, weight_decay=0.0).monitor == "val_final_loss"
+
+
+def test_scheduler_monitor_must_be_non_empty():
+    with pytest.raises(ValueError, match="monitor must be a non-empty"):
+        build_training_section({"scheduler": {"monitor": ""}})
 
 
 def test_unknown_keys_are_named_in_the_error():
