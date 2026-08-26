@@ -251,12 +251,14 @@ column = "density"
         _build(toml)
 
 
-@pytest.mark.parametrize(
-    ("replay", "ok"),
-    [(0.1, True), (500, True), (0.0, False), (-1, False), (1.0, False)],
-)
-def test_replay_validation(replay: float, ok: bool) -> None:
-    toml = f"""
+def test_per_task_replay_key_is_rejected() -> None:
+    """``[[tasks]].replay`` was never read by any workflow — it must not silently do nothing.
+
+    Introduced by the fm-CLI refactor's PR1 for PR2 to consume; PR2 shipped
+    ``[pretrain.replay].per_task`` instead and the field was left orphaned. Removing it turns a
+    silent no-op into a config error that names the real key.
+    """
+    toml = """
 [datasets.qc]
 path = "data/qc.parquet"
 
@@ -265,13 +267,10 @@ name = "density"
 kind = "regression"
 dataset = "qc"
 column = "density"
-replay = {replay!r}
+replay = 0.1
 """
-    if ok:
-        assert _build(toml).tasks[0].replay == replay
-    else:
-        with pytest.raises(ValueError, match="replay"):
-            _build(toml)
+    with pytest.raises(ValueError, match=r"tasks\.density.*unknown key\(s\) \['replay'\]"):
+        _build(toml)
 
 
 def test_unsupported_extension_raises() -> None:
