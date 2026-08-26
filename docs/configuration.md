@@ -186,18 +186,22 @@ key could reach; they were removed in `0.3.0` rather than left as untested dead 
 | `enabled` | bool | `true` | | `false` = constant learning rate; no scheduler is constructed. |
 | `mode` | str | `"min"` | `min` \| `max` | Whether a lower or higher monitored value is better. |
 | `factor` | float | `0.5` | `(0, 1)` | Multiplier applied to the LR on plateau. |
-| `patience` | int | `5` | `>= 0` | **Batches** without improvement before reducing — see the warning below. |
+| `patience` | int | `5` | `>= 0` | Epochs without improvement before reducing. |
 | `min_lr` | float | `0.0001` | `>= 0`; `< lr` when `enabled = true` | **Floor** for the reduced LR — see the warning below. |
+| `monitor` | str | `"train_final_loss_epoch"` | non-empty; must exist at epoch end | Metric the plateau is measured on. Must be logged with `on_epoch=True` during **training**; a missing key raises at the end of the first epoch rather than silently skipping the LR step. |
 
 `ReduceLROnPlateau` is the only scheduler; `StepLR` and the `"None"` selector were removed in
 `0.3.0`, the latter replaced by `enabled`.
 
-> **`patience` counts batches, not epochs.** The model sets `automatic_optimization = False` and
-> steps the scheduler itself inside `training_step`, which Lightning runs once per batch. At
-> `patience = 5` on a 24k-row task with `batch_size = 256` (~90 batches/epoch), the LR can reach
-> `min_lr` inside the first epoch. Lightning's `monitor` / `interval` / `frequency` are not exposed
-> for the same reason: under manual optimization Lightning does not act on them, and the scheduler
-> receives the current batch's total loss.
+The model uses manual optimization, so Lightning does not drive its schedulers; it steps them
+itself in `on_train_epoch_end` — **once per epoch**, on the epoch-aggregated `monitor` metric.
+`interval` / `frequency` are therefore not exposed: the cadence is per-epoch by construction.
+
+> **Changed in 0.3.1.** Schedulers previously stepped inside `training_step`, i.e. once per
+> *batch*, which made `patience` count batches — on a 24k-row task at `batch_size = 256`
+> (~90 batches/epoch) the LR reached `min_lr` inside the first epoch. `monitor` was ignored
+> entirely, and its old default `train_total_loss` named a metric that does not exist. Runs before
+> 0.3.1 annealed far faster than their config implies.
 
 > **`min_lr` interacts with every learning rate.** It is a floor, so a low LR plus the default
 > `1e-4` floor leaves almost no room to anneal: at `lr = 2e-4` the scheduler can halve once and

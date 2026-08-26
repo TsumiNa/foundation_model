@@ -865,10 +865,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         for opt in optimizers:
             opt.zero_grad(set_to_none=True)
 
-        lr_schedulers = self.lr_schedulers()
-        if not isinstance(lr_schedulers, list):
-            lr_schedulers = [lr_schedulers]
-
         x, y_dict_batch, task_masks_batch, task_sequence_data_batch = batch
         if not isinstance(x, torch.Tensor):
             raise TypeError(f"Expected tensor inputs in training_step, received {type(x)}")
@@ -950,13 +946,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
             self.manual_backward(total_loss)
             for opt in optimizers:
                 opt.step()
-
-            for scheduler in lr_schedulers:
-                if scheduler is not None:
-                    if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                        scheduler.step(total_loss.detach())
-                    else:
-                        scheduler.step()
+            # Schedulers are NOT stepped here — see on_train_epoch_end. Stepping a
+            # ReduceLROnPlateau once per batch makes its `patience` count batches, which on a
+            # 24k-row task at batch_size 256 (~90 batches/epoch) drives the LR to `min_lr` inside
+            # the first epoch.
         else:
             self._log_warning(
                 f"total_loss does not require grad and has no grad_fn at batch_idx {batch_idx}. "
@@ -1229,6 +1222,40 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self._reset_stage_metrics("val")
         self._init_stage_index_tracker("val")
 
+    def on_train_epoch_end(self) -> None:
+        """Step every ``ReduceLROnPlateau`` once, on the epoch-aggregated monitored metric.
+
+        Under manual optimization Lightning does not drive schedulers, so the model must. Doing it
+        here rather than in ``training_step`` is what makes ``patience`` count **epochs** — the
+        unit every ReduceLROnPlateau tutorial assumes, and the one the config documents.
+
+        The monitored value is read from ``trainer.callback_metrics``, so ``monitor`` selects a real
+        metric instead of the current batch's loss. A missing key raises rather than silently
+        skipping the step: a scheduler that never anneals is invisible in logs, and the default
+        ``train_total_loss`` is logged with ``on_epoch=True`` in ``training_step``.
+        """
+        schedulers = self.lr_schedulers()
+        if schedulers is None:
+            return
+        if not isinstance(schedulers, list):
+            schedulers = [schedulers]
+
+        metrics = self.trainer.callback_metrics if self.trainer is not None else {}
+        for scheduler, monitor in zip(schedulers, self._scheduler_monitors):
+            if scheduler is None:
+                continue
+            if not isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step()
+                continue
+            if monitor not in metrics:
+                raise ValueError(
+                    f"LR scheduler monitor {monitor!r} is not among the logged metrics at the end "
+                    f"of the training epoch. Available: {sorted(metrics)}. Set "
+                    "[training.scheduler].monitor to a metric logged with on_epoch=True during "
+                    "training (the default is 'train_total_loss')."
+                )
+            scheduler.step(metrics[monitor])
+
     def on_validation_epoch_end(self) -> None:
         super().on_validation_epoch_end()
         self._log_stage_r2_metrics("val")
@@ -1372,6 +1399,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         """Configure optimizers for all parameter groups."""
 
         optimizers_and_schedulers: list[Any] = []
+        # Parallel to the schedulers Lightning hands back from self.lr_schedulers(), so
+        # on_train_epoch_end can feed each one the metric its own group configured.
+        self._scheduler_monitors: list[str] = []
 
         # 1. Main parameters (Encoder + optionally task_log_sigmas)
         main_params_to_optimize = list(self.encoder.parameters())
@@ -1396,6 +1426,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             encoder_sched = self._create_scheduler(encoder_opt, self.shared_block_optimizer)
 
             if encoder_sched:
+                self._scheduler_monitors.append(self.shared_block_optimizer.monitor)
                 optimizers_and_schedulers.append(
                     {
                         "optimizer": encoder_opt,
@@ -1408,7 +1439,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     }
                 )
             else:
-                optimizers_and_schedulers.append(encoder_opt)
+                # Always a dict, never a bare Optimizer: Lightning rejects a list that mixes the
+                # two, which happens as soon as one group disables its scheduler and another
+                # does not (e.g. the inference placeholder in build_model_for_checkpoint).
+                optimizers_and_schedulers.append({"optimizer": encoder_opt})
         else:
             logger.info(
                 "No parameters requiring gradients for the main optimizer (encoder/log_sigmas). Skipping its creation."
@@ -1428,6 +1462,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             task_sched = self._create_scheduler(task_opt, task_optimizer_config)
 
             if task_sched:
+                self._scheduler_monitors.append(task_optimizer_config.monitor)
                 optimizers_and_schedulers.append(
                     {
                         "optimizer": task_opt,
@@ -1440,7 +1475,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     }
                 )
             else:
-                optimizers_and_schedulers.append(task_opt)
+                optimizers_and_schedulers.append({"optimizer": task_opt})
 
         if not optimizers_and_schedulers:
             logger.warning(

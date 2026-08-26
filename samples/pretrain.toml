@@ -96,11 +96,11 @@ eps = 1e-6
 # ReduceLROnPlateau, shared by every parameter group. It is the only scheduler; set
 # enabled = false for a constant learning rate.
 #
-# CAUTION 1: patience counts BATCHES, not epochs. The model uses manual optimization and steps the
-# scheduler inside training_step, which runs once per batch — at patience = 5 on a 24k-row task
-# with batch_size = 256 (~90 batches/epoch) the LR can reach min_lr inside the first epoch.
+# patience counts EPOCHS: the model steps its schedulers in on_train_epoch_end, once per epoch,
+# on the epoch-aggregated `monitor` metric. (Before 0.3.1 it stepped per batch, which made this
+# knob count batches and drove the LR to min_lr inside the first epoch.)
 #
-# CAUTION 2: min_lr is a FLOOR on the reduced LR, so it interacts with every learning rate above.
+# CAUTION: min_lr is a FLOOR on the reduced LR, so it interacts with every learning rate above.
 # At this default, an lr of 2e-4 can only be halved once before hitting the floor. A config with
 # min_lr >= lr is rejected outright, because there the scheduler would run without ever changing
 # the LR. Lower min_lr alongside any learning rate you take below ~1e-3.
@@ -110,6 +110,7 @@ mode = "min"
 factor = 0.5
 patience = 5
 min_lr = 1e-4
+monitor = "train_final_loss_epoch"   # must be logged with on_epoch=True during training
 
 # Lightning EarlyStopping (a subset of its args; enabled by default).
 [training.early_stopping]

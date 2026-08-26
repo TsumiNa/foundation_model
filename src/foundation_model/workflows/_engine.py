@@ -104,17 +104,20 @@ def build_model_for_checkpoint(
         shared_block_optimizer=OptimizerConfig(lr=lr, weight_decay=1e-2, scheduler_enabled=False),
     )
     for name in task_names:
-        built.add_task(
-            catalog.build_task_config(
-                name,
-                latent_dim=model.latent_dim,
-                head_hidden_dims=model.head_hidden_dims,
-                kr_x_hidden_dims=model.kr_x_hidden_dims,
-                kr_t_hidden_dims=model.kr_t_hidden_dims,
-                n_kernel=model.n_kernel,
-                lr=lr,
-            )
+        head = catalog.build_task_config(
+            name,
+            latent_dim=model.latent_dim,
+            head_hidden_dims=model.head_hidden_dims,
+            kr_x_hidden_dims=model.kr_x_hidden_dims,
+            kr_t_hidden_dims=model.kr_t_hidden_dims,
+            n_kernel=model.n_kernel,
+            lr=lr,
         )
+        # Match the encoder placeholder: no scheduler on an inference-only model, so every
+        # parameter group is consistent and no group is subject to scheduler validation.
+        if head.optimizer is not None:
+            head.optimizer.scheduler_enabled = False
+        built.add_task(head)
     return built
 
 
