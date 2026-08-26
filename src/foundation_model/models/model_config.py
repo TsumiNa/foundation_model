@@ -122,8 +122,11 @@ def build_encoder_config(config: BaseEncoderConfig | Mapping[str, Any]) -> Encod
         return config
 
     if not isinstance(config, Mapping):
+        # Naming BaseEncoderConfig here was misleading: the check above accepts only the concrete
+        # EncoderConfig union, so a legitimate BaseEncoderConfig subclass was told it must be one.
         raise TypeError(
-            f"encoder_config must be a BaseEncoderConfig, mapping, or None; received {type(config).__name__}"
+            "encoder_config must be an MLPEncoderConfig, a TransformerEncoderConfig, a mapping, or "
+            f"None; received {type(config).__name__}"
         )
 
     config_dict = dict(config)

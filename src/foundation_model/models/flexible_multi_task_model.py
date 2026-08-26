@@ -54,6 +54,7 @@ from .model_config import (
     build_encoder_config,
 )
 from .task_head.autoencoder import AutoEncoderHead
+from .task_head.base import BaseTaskHead
 from .task_head.classification import ClassificationHead
 from .task_head.kernel_regression import KernelRegressionHead
 from .task_head.regression import RegressionHead
@@ -137,6 +138,15 @@ def _reduce_pred(pred: torch.Tensor) -> torch.Tensor:
     return pred.mean(dim=tuple(range(1, pred.ndim)))
 
 
+#: One task's predictions as the heads actually produce them: NumPy, one array per prediction
+#: channel. Kernel-regression heads reshape theirs to one array per sample, because their sequences
+#: have different lengths — the same asymmetry the collate function has on the input side.
+#:
+#: ``predict_step`` was annotated ``dict[str, torch.Tensor]``, which described neither. The
+#: mismatch was invisible while a ``# type: ignore`` on ``head.predict`` erased the type at source.
+TaskPredictions = dict[str, "np.ndarray | list[np.ndarray]"]
+
+
 class FlexibleMultiTaskModel(L.LightningModule):
     """
     Foundation model with flexible task heads.
@@ -213,10 +223,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         if encoder_config is None:
             raise ValueError("encoder_config must be provided")
-        if isinstance(encoder_config, BaseEncoderConfig):
-            self.encoder_config = encoder_config
-        else:
-            self.encoder_config = build_encoder_config(encoder_config)
+        # build_encoder_config already returns a passed-in config unchanged, so branching here
+        # only duplicated it — and did so against the abstract BaseEncoderConfig rather than the
+        # concrete EncoderConfig union, so a third subclass would pass this check and then fail
+        # inside FoundationEncoder with a worse message. One call, one place that decides.
+        self.encoder_config = build_encoder_config(encoder_config)
         # Dimension of latent representation (input to task heads after Tanh activation)
         self.latent_dim = self.encoder_config.latent_dim
         self.task_configs: list = list(task_configs)
@@ -583,6 +594,20 @@ class FlexibleMultiTaskModel(L.LightningModule):
             if config.enabled:
                 self._activate_task(config)
 
+    def _head(self, name: str) -> BaseTaskHead:
+        """The head registered under ``name``, typed.
+
+        ``ModuleDict.__getitem__`` is annotated to return ``Module``, and ``Module.__getattr__``
+        resolves to ``Tensor | Module``, so *every* method reached through ``self.task_heads[name]``
+        is unresolvable to a type checker — which is why a ``# type: ignore`` had accumulated on
+        one of the call sites. Every value in this dict is a ``BaseTaskHead`` by construction
+        (``_activate_task`` is the only writer), so state that once here rather than at each use.
+
+        A ``cast`` rather than an ``assert``: this is called once per task per batch from the
+        training loop, and the invariant is enforced where the dict is written.
+        """
+        return cast(BaseTaskHead, self.task_heads[name])
+
     def _activate_task(self, task_config: TaskConfigType) -> nn.Module:
         """Activate (or re-activate) a task by ensuring its head and auxiliary state are registered."""
         name = task_config.name
@@ -933,7 +958,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         raw_sum = torch.zeros((), device=x.device)
 
         for name, pred_tensor in preds.items():
-            head = self.task_heads[name]
+            head = self._head(name)
             resolved = self._resolve_target_and_mask(
                 name=name, head=head, x=x, y_dict_batch=y_dict_batch, task_masks_batch=task_masks_batch
             )
@@ -1168,7 +1193,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         batch_idx,
         dataloader_idx: int = 0,
         tasks_to_predict: Optional[List[str]] = None,
-    ) -> dict[str, torch.Tensor]:
+    ) -> TaskPredictions:
         """
         Prediction step that forwards inputs through the model and post-processes the outputs.
 
@@ -1186,8 +1211,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         Returns
         -------
-        dict[str, torch.Tensor]
-            Flat dictionary containing head-specific prediction outputs.
+        TaskPredictions
+            Flat dictionary of head-specific prediction outputs. Values are NumPy arrays — one per
+            prediction channel — except for kernel-regression heads, whose predictions are reshaped
+            to one array per sample because their sequences have different lengths.
         """
         del dataloader_idx  # unused but kept for signature parity
 
@@ -1211,7 +1238,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         raw_preds = self(x_formula, task_sequence_data_batch)
 
-        final_predictions: dict[str, torch.Tensor] = {}
+        final_predictions: TaskPredictions = {}
 
         if tasks_to_predict is None:
             tasks_to_iterate = [(name, tensor) for name, tensor in raw_preds.items() if name in self.task_heads]
@@ -1231,14 +1258,21 @@ class FlexibleMultiTaskModel(L.LightningModule):
                 tasks_to_iterate.append((task_name, raw_preds[task_name]))
 
         for task_name, raw_pred_tensor in tasks_to_iterate:
-            head = self.task_heads[task_name]
-            processed_pred_dict = head.predict(raw_pred_tensor)  # type: ignore
+            head = self._head(task_name)
+            predictions = head.predict(raw_pred_tensor)
 
+            # Reusing one variable for both shapes is what made this untypeable: `predict` returns
+            # one array per channel, while the kernel-regression reshape returns one array per
+            # sample. Keeping them separate lets each keep its own precise type, and confines the
+            # union to the accumulator, which is the only thing that genuinely holds both.
             if isinstance(head, KernelRegressionHead) and task_name in kernel_regression_sequence_lengths:
-                sequence_lengths = kernel_regression_sequence_lengths[task_name]
-                processed_pred_dict = self._reshape_kernel_regression_predictions(processed_pred_dict, sequence_lengths)
-
-            final_predictions.update(processed_pred_dict)
+                final_predictions.update(
+                    self._reshape_kernel_regression_predictions(
+                        predictions, kernel_regression_sequence_lengths[task_name]
+                    )
+                )
+            else:
+                final_predictions.update(predictions)
 
         return final_predictions
 
@@ -1862,7 +1896,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         channel_cols: list[torch.Tensor] = []
         loss_cols: list[torch.Tensor] = []
         for tgt in prepared:
-            head = self.task_heads[tgt.task]
+            head = self._head(tgt.task)
             if tgt.kind == "curve":
                 assert tgt.t is not None and tgt.y is not None
                 k = tgt.t.shape[0]
