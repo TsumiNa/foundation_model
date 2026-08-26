@@ -391,6 +391,45 @@ def test_resolve_splits_ignores_tasks_without_split_column():
 
 
 @pytest.mark.parametrize("build", ["lookup", "precomputed"])
+@pytest.mark.parametrize("source_normalizes", [True, False], ids=["src-normalizes", "src-raw"])
+@pytest.mark.parametrize("request_style", ["raw", "canonical"])
+def test_descriptor_fn_resolves_any_spelling_combination(build, source_normalizes, request_style, tmp_path):
+    """All four (frame spelling x request spelling) combinations must resolve.
+
+    The frame's spelling is chosen by this source's ``composition_normalizer``; the request's is
+    chosen by the DataModule's own, separate setting. Nothing makes the two agree, so every
+    combination occurs in practice, and matching on one spelling alone silently drops every row.
+
+    Regression: a raw-indexed source queried with canonical keys resolved 0 rows and failed
+    DataModule setup outright. It previously "worked" only because the DataModule reached in and
+    overwrote this source's normalizer with its own — which also meant an explicitly passed
+    ``composition_normalizer=None`` was quietly ignored.
+    """
+    features = pd.DataFrame({"d0": [1.0, 2.0]}, index=pd.Index(["Fe2O3", "NaCl"], name="composition"))
+    normalizer = normalize_composition if source_normalizes else None
+    if build == "lookup":
+        fn: Callable[[Sequence[str]], pd.DataFrame] = lookup_descriptor_fn(features, composition_normalizer=normalizer)
+    else:
+        path = tmp_path / "desc.parquet"
+        features.to_parquet(path)
+        fn = PrecomputedDescriptorSource(str(path), composition_column="composition", composition_normalizer=normalizer)
+
+    raw = ["Fe2O3", "NaCl"]
+    requested = raw if request_style == "raw" else [canonical_key(c, normalize_composition) for c in raw]
+    frame, dropped = DescriptorCache(fn).resolve(requested)
+
+    assert dropped == [], f"{build}/{request_style}: dropped {dropped} instead of matching"
+    assert list(frame.index) == requested, "rows must be keyed by the request, not by the match"
+    assert frame["d0"].tolist() == [1.0, 2.0], "re-keying must not scramble row order"
+
+
+def test_descriptor_frames_keep_the_composition_index_name():
+    """Re-indexing must not strip the index name, or the frames diverge from load_task_frame's."""
+    features = pd.DataFrame({"d0": [1.0]}, index=pd.Index(["Fe2O3"], name="composition"))
+    assert lookup_descriptor_fn(features)(["Fe2O3"]).index.name == "composition"
+
+
+@pytest.mark.parametrize("build", ["lookup", "precomputed"])
 def test_descriptor_fn_returns_rows_under_the_requested_keys(build, tmp_path):
     """The rows must come back keyed by what the caller asked for, whatever the frame is indexed by.
 

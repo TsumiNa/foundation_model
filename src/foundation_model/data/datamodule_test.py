@@ -218,6 +218,31 @@ def test_datamodule_disable_normalizer_keeps_raw_keys(descriptors_df, reg_cls_co
     assert set(dm.master_index) == set(COMPOSITIONS)
 
 
+def test_datamodule_default_normalizer_works_against_a_raw_source(descriptors_df, reg_cls_configs, tmp_path):
+    """The mirror case: the source keeps raw keys while the DataModule normalizes its own.
+
+    The DataModule canonicalizes task keys, so it asks for 'Fe2 O3' while the source's index still
+    says 'Fe2O3'. This must resolve. It regressed once: removing the constructor's private-attribute
+    sync left nothing able to bridge the two spellings, and setup failed with "descriptor_fn
+    produced no valid descriptors for any composition" on a config that had worked.
+    """
+    path = tmp_path / "desc.parquet"
+    descriptors_df.rename_axis("composition").to_parquet(path)
+    source = PrecomputedDescriptorSource(
+        str(path),
+        composition_column="composition",
+        composition_normalizer=None,  # raw index
+    )
+    dm = CompoundDataModule(
+        task_configs=reg_cls_configs,
+        descriptor_fn=source,
+        task_frames=_reg_cls_frames(),
+        # ... and the DataModule keeps its default normalizer
+    )
+    dm.setup(stage="fit")
+    assert set(dm.master_index) == set(COMPOSITIONS)
+
+
 def test_datamodule_opt_out_works_against_a_normalizing_source(descriptors_df, reg_cls_configs, tmp_path):
     """``composition_normalizer=None`` must resolve rows even from a source that normalizes.
 
