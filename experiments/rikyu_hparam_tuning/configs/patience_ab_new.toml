@@ -1,0 +1,256 @@
+# fm pretrain — NEW-IMAGE arm of the patience A/B (see analysis/patience_ab.py).
+#
+# Identical to probe3.toml except for the four weight-decay terms below. That difference is what
+# makes the A/B a test of ONE thing.
+#
+# The comparison is image 0.2.1 (probe3.toml) vs image 0.3.2 (this file). Three training-relevant
+# changes land in that window:
+#
+#   #42  optimizer/scheduler knobs exposed, AND new PER-GROUP weight-decay defaults:
+#          before: one global weight_decay = 1e-3 for every group
+#          after:  encoder 1e-2 (10x higher), head 1e-5 (100x lower), ae 1e-3, kr 5e-5
+#   #45  the subject of this experiment: ReduceLROnPlateau is stepped once per EPOCH
+#        (on_train_epoch_end, on the epoch-aggregated monitor) instead of once per BATCH
+#        (training_step, on the raw batch loss). At ~90 batches/epoch the old cadence drove the
+#        LR to the min_lr floor inside epoch 1, so `patience` never behaved as documented.
+#   #48  mypy refactor of the model — intended behaviour-preserving.
+#
+# Left alone, #42's weight-decay change would be inseparable from #45's cadence change: a 10x
+# encoder decay shift moves training on its own. Pinning all four back to 0.2.1's effective
+# values removes that confound, leaving the scheduler cadence as the only deliberate difference.
+#
+# Everything else — architecture, LRs, replay recipe, early stopping, splits, seed handling —
+# is inherited unchanged from probe3.toml.
+#
+[data]
+composition_column = "composition"
+val_split = 0.1
+test_split = 0.1
+split_random_seed = 42
+batch_size = 256
+num_workers = 0
+
+[descriptor]
+kind = "kmd"
+n_grids = 8
+
+[datasets.qc]
+path = "data/qc_ac_te_mp_dos_reformat_20260515.pd.parquet"
+
+[datasets.magnetic]
+path = "data/NEMAD_magnetic_20260419_norm.parquet"
+
+[datasets.superconductor]
+path = "data/NEMAD_superconductor_20260425_norm.parquet"
+
+[datasets.phonix]
+path = "data/phonix-db-filtered_20260425_norm.parquet"
+
+# ---- qc regression (9) ----
+[[tasks]]
+name = "density"
+kind = "regression"
+dataset = "qc"
+column = "Density (normalized)"
+
+[[tasks]]
+name = "efermi"
+kind = "regression"
+dataset = "qc"
+column = "Efermi (normalized)"
+
+[[tasks]]
+name = "final_energy"
+kind = "regression"
+dataset = "qc"
+column = "Final energy per atom (normalized)"
+
+[[tasks]]
+name = "total_magnetization"
+kind = "regression"
+dataset = "qc"
+column = "Total magnetization (normalized)"
+
+[[tasks]]
+name = "volume"
+kind = "regression"
+dataset = "qc"
+column = "Volume (normalized)"
+
+[[tasks]]
+name = "dielectric_total"
+kind = "regression"
+dataset = "qc"
+column = "Dielectric total (normalized)"
+
+[[tasks]]
+name = "dielectric_ionic"
+kind = "regression"
+dataset = "qc"
+column = "Dielectric ionic (normalized)"
+
+[[tasks]]
+name = "dielectric_electronic"
+kind = "regression"
+dataset = "qc"
+column = "Dielectric electronic (normalized)"
+
+[[tasks]]
+name = "formation_energy"
+kind = "regression"
+dataset = "qc"
+column = "Formation energy per atom (normalized)"
+
+# ---- NEMAD magnetic regression (4) ----
+[[tasks]]
+name = "magnetization"
+kind = "regression"
+dataset = "magnetic"
+column = "Magnetization (normalized)"
+
+[[tasks]]
+name = "curie"
+kind = "regression"
+dataset = "magnetic"
+column = "Curie temperature (normalized)"
+
+[[tasks]]
+name = "neel"
+kind = "regression"
+dataset = "magnetic"
+column = "Neel temperature (normalized)"
+
+[[tasks]]
+name = "magnetic_moment"
+kind = "regression"
+dataset = "magnetic"
+column = "Magnetic moment (normalized)"
+
+# ---- NEMAD superconductor regression (1) ----
+[[tasks]]
+name = "tc"
+kind = "regression"
+dataset = "superconductor"
+column = "Transition temperature (normalized)"
+
+# ---- phonix regression (2) ----
+[[tasks]]
+name = "kp"
+kind = "regression"
+dataset = "phonix"
+column = "kp (normalized)"
+
+[[tasks]]
+name = "klat"
+kind = "regression"
+dataset = "phonix"
+column = "klat (normalized)"
+
+# ---- qc kernel regression (7) ----
+[[tasks]]
+name = "magnetic_susceptibility"
+kind = "kernel_regression"
+dataset = "qc"
+column = "Magnetic susceptibility (normalized)"
+t_column = "Magnetic susceptibility (T/K)"
+
+[[tasks]]
+name = "zt"
+kind = "kernel_regression"
+dataset = "qc"
+column = "ZT (normalized)"
+t_column = "ZT (T/K)"
+
+[[tasks]]
+name = "power_factor"
+kind = "kernel_regression"
+dataset = "qc"
+column = "Power factor (normalized)"
+t_column = "Power factor (T/K)"
+
+[[tasks]]
+name = "thermal_conductivity"
+kind = "kernel_regression"
+dataset = "qc"
+column = "Thermal conductivity (normalized)"
+t_column = "Thermal conductivity (T/K)"
+
+[[tasks]]
+name = "electrical_resistivity"
+kind = "kernel_regression"
+dataset = "qc"
+column = "Electrical resistivity (normalized)"
+t_column = "Electrical resistivity (T/K)"
+
+[[tasks]]
+name = "dos_density"
+kind = "kernel_regression"
+dataset = "qc"
+column = "DOS density (normalized)"
+t_column = "DOS energy"
+
+[[tasks]]
+name = "seebeck"
+kind = "kernel_regression"
+dataset = "qc"
+column = "Seebeck coefficient (normalized)"
+t_column = "Seebeck coefficient (T/K)"
+
+# ---- qc classification (1) ----
+[[tasks]]
+name = "material_type"
+kind = "classification"
+dataset = "qc"
+column = "Material type (label)"
+num_classes = 5
+
+[model]
+latent_dim = 128
+encoder_hidden_dims = [256]
+head_hidden_dims = [64]
+kr_x_hidden_dims = [128, 64]
+kr_t_hidden_dims = [16, 8]
+n_kernel = 15
+
+[training]
+max_epochs = 150
+encoder_lr = 5e-3
+head_lr = 5e-3
+kr_lr = 5e-4
+ae_lr = 5e-3
+# Pinned to 0.2.1's single global weight_decay = 1e-3 (kr kept at its own 5e-5, which 0.2.1 also
+# had). Without these four lines the new image would silently use #42's defaults and the A/B
+# would measure weight decay + cadence together.
+encoder_weight_decay = 1e-3
+head_weight_decay = 1e-3
+ae_weight_decay = 1e-3
+kr_weight_decay = 5e-5
+accelerator = "gpu"
+devices = 1
+seed = 2025
+
+[training.early_stopping]
+enabled = true
+monitor = "val_final_loss"
+mode = "min"
+patience = 24
+min_delta = 1e-4
+
+[training.logging]
+csv = true
+
+[pretrain]
+task_sequence = ["formation_energy", "tc", "magnetization"]
+n_runs = 1
+task_order = "fixed"
+
+[pretrain.replay]
+interval = 1
+amount = 0.30
+resample = "epoch"
+# floor rule amount_t = max(1500, 0.3*N_t): only magnetization has N < 5000 (the engine clamps
+# 1500 down to its 1160 labels, i.e. full coverage).
+per_task = { magnetization = 1500 }
+
+[output]
+dir = "artifacts/rikyu_hparam_tuning/patience_ab"
