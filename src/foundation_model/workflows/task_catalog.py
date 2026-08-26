@@ -93,21 +93,6 @@ def _coerce_task_kind(value: Any) -> TaskKind:
         ) from exc
 
 
-def _validate_replay(value: float | int | None, *, where: str) -> None:
-    if value is None:
-        return
-    if isinstance(value, bool):  # bool is an int subclass — reject it explicitly
-        raise ValueError(f"{where}: replay must be a number, got bool {value!r}.")
-    if isinstance(value, float):
-        if not 0.0 < value < 1.0:
-            raise ValueError(f"{where}: replay float must be in (0, 1) (fraction of labels), got {value}.")
-    elif isinstance(value, int):
-        if value < 1:
-            raise ValueError(f"{where}: replay int must be >= 1 (label count), got {value}.")
-    else:
-        raise ValueError(f"{where}: replay must be a float in (0, 1) or an int >= 1, got {value!r}.")
-
-
 @dataclass(kw_only=True)
 class ScalerSpec:
     """Points at a fitted scaler used to inverse-transform a task's predictions for reporting."""
@@ -155,7 +140,6 @@ class TaskSpec:
     t_column: str | None = None  # required iff kind == KERNEL_REGRESSION
     num_classes: int | None = None  # required iff kind == CLASSIFICATION
     lr: float | None = None  # per-task LR override
-    replay: float | int | None = None  # per-task replay override (fraction or count)
     scaler: ScalerSpec | None = None
     # Per-head architecture overrides (fall back to [model] defaults when None).
     hidden_dims: list[int] | None = None  # reg/clf hidden widths
@@ -176,7 +160,6 @@ class TaskSpec:
                 raise ValueError(f"Task '{self.name}': num_classes must be >= 2, got {self.num_classes}.")
         elif self.num_classes is not None:
             raise ValueError(f"Task '{self.name}': 'num_classes' is only valid for classification.")
-        _validate_replay(self.replay, where=f"Task '{self.name}'")
         self._validate_arch_overrides()
 
     def _validate_arch_overrides(self) -> None:

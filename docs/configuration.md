@@ -94,7 +94,6 @@ One entry per prediction head. At least one is required; names must be unique.
 | `t_column` | str | `None` | required iff `kind = kernel_regression`; forbidden otherwise | The sequence x-axis column (e.g. energies for DOS, temperatures for ZT). |
 | `num_classes` | int | `None` | required iff `kind = classification`, `>= 2`; forbidden otherwise | Number of classes. |
 | `lr` | float | `None` | | Per-task learning-rate override (else the section LR for its kind). |
-| `replay` | float \| int | `None` | float in `(0,1)` or int `>= 1` | **Accepted and validated, but currently has no effect** — no workflow reads it. Per-task replay amounts come from `[pretrain.replay].per_task`. |
 | `hidden_dims` | list[int] | `None` | positive ints; reg/clf only | Override `[model].head_hidden_dims` for this head. |
 | `x_hidden_dims` | list[int] | `None` | positive ints; KR only | Override `[model].kr_x_hidden_dims` (value branch). |
 | `t_hidden_dims` | list[int] | `None` | positive ints; KR only | Override `[model].kr_t_hidden_dims` (coordinate branch). |
