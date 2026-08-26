@@ -115,19 +115,11 @@ max-complexity = 10
 [tool.mypy]
 # Without this, mypy does not look inside any function that lacks annotations — which is most of
 # the training loop. PR #45 shipped a float into a dict[str, Tensor] and an opt.step() the branch
-# logged that it would skip, both in functions `uv run mypy` reported as clean.
+# logged that it would skip, both in functions `uv run mypy` reported as clean. Enforced per
+# commit by the mypy hook in .pre-commit-config.yaml.
 check_untyped_defs = true
 
 [[tool.mypy.overrides]]
 # joblib ships neither stubs nor a py.typed marker; a test writes fixtures with it.
 module = ["joblib", "joblib.*"]
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-# Backlog for enabling check_untyped_defs everywhere — plan in
-# docs/refactor_check_untyped_defs/. 26 errors in these 5 modules; the other 50 files
-# are already clean, and the flag above is what keeps them that way. This list only ever shrinks:
-# each planned PR removes its own entries. Do NOT add to it.
-module = [
-]
-check_untyped_defs = false
