@@ -11,6 +11,10 @@ from types import SimpleNamespace
 import lightning as L
 import numpy as np
 import pandas as pd
+from typing import Any, cast
+
+from torchmetrics import R2Score
+
 import pytest
 from dataclasses import dataclass
 import torch
@@ -21,6 +25,7 @@ from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel, OptimizationTarget
 from foundation_model.models.task_head.base import BaseTaskHead
 from foundation_model.models.model_config import (
+    TaskConfigType,
     BaseEncoderConfig,
     ClassificationTaskConfig,
     EncoderType,
@@ -123,7 +128,7 @@ def sample_batch_mixed_tasks(model_config_mixed_tasks):
         y_dict_batch[task_cfg.name] = y_task
 
     # temps_batch is an empty dict as no sequence tasks are included
-    temps_batch = {}
+    temps_batch: dict[str, list[torch.Tensor]] = {}
     return (x_formula, y_dict_batch, task_masks_batch, temps_batch)
 
 
@@ -309,9 +314,10 @@ def test_model_validation_step(model_config_mixed_tasks, sample_batch_mixed_task
     mock_log_dict = mocker.patch.object(model, "log_dict")
     mock_log = mocker.patch.object(model, "log")
 
-    # validation_step now returns None and logs metrics via self.log_dict
-    result = model.validation_step(sample_batch_mixed_tasks, batch_idx=0)
-    assert result is None, "validation_step should return None"
+    # validation_step logs metrics via self.log_dict and returns nothing; the `-> None`
+    # annotation is what enforces that now, so asserting on the value is both redundant and
+    # rejected by the type checker.
+    model.validation_step(sample_batch_mixed_tasks, batch_idx=0)
 
     mock_log_dict.assert_called()
     logged_metrics = mock_log_dict.call_args[0][0]
@@ -365,9 +371,8 @@ def test_model_predict_step_all_tasks(model_config_mixed_tasks, sample_batch_mix
             assert isinstance(task_cfg, RegressionTaskConfig)
             expected_key_value = f"{task_name_snake}_value"
             assert expected_key_value in output, f"Predict output should contain key '{expected_key_value}'"
-            pred_value = output[expected_key_value]
-            if not isinstance(pred_value, torch.Tensor):
-                pred_value = torch.as_tensor(pred_value)
+            raw_value = output[expected_key_value]
+            pred_value = raw_value if isinstance(raw_value, torch.Tensor) else torch.as_tensor(raw_value)
             expected_shape = (x_formula.shape[0], task_cfg.dims[-1])
             assert pred_value.shape == expected_shape, (
                 f"Shape mismatch for {expected_key_value}. Expected {expected_shape}, got {pred_value.shape}"
@@ -379,18 +384,22 @@ def test_model_predict_step_all_tasks(model_config_mixed_tasks, sample_batch_mix
             expected_key_label = f"{task_name_snake}_label"
 
             assert expected_key_proba in output, f"Predict output should contain key '{expected_key_proba}'"
-            proba_value = output[expected_key_proba]
-            if not isinstance(proba_value, torch.Tensor):
-                proba_value = torch.as_tensor(proba_value)
+            raw_proba_value = output[expected_key_proba]
+
+            proba_value = (
+                raw_proba_value if isinstance(raw_proba_value, torch.Tensor) else torch.as_tensor(raw_proba_value)
+            )
             expected_proba_shape = (x_formula.shape[0], task_cfg.num_classes)
             assert proba_value.shape == expected_proba_shape, (
                 f"Shape mismatch for {expected_key_proba}. Expected {expected_proba_shape}, got {proba_value.shape}"
             )
 
             assert expected_key_label in output, f"Predict output should contain key '{expected_key_label}'"
-            label_value = output[expected_key_label]
-            if not isinstance(label_value, torch.Tensor):
-                label_value = torch.as_tensor(label_value)
+            raw_label_value = output[expected_key_label]
+
+            label_value = (
+                raw_label_value if isinstance(raw_label_value, torch.Tensor) else torch.as_tensor(raw_label_value)
+            )
             expected_label_shape = (x_formula.shape[0],)
             assert label_value.shape == expected_label_shape, (
                 f"Shape mismatch for {expected_key_label}. Expected {expected_label_shape}, got {label_value.shape}"
@@ -415,7 +424,7 @@ def test_model_configure_optimizers(model_config_mixed_tasks):
     encoder_opt_found = False
     task_head_opts_found_count = 0
 
-    all_optimized_param_ids = set()
+    all_optimized_param_ids: set[int] = set()
     enabled_tasks_in_config = [tc for tc in config.task_configs if tc.enabled]
 
     for item in optimizers_and_schedulers:
@@ -499,7 +508,9 @@ def dummy_compound_datamodule(model_config_mixed_tasks, tmp_path):
 
     # Create dummy attributes DataFrame
     # It needs columns for each task's target and a 'split' column.
-    attributes_data = {}
+    # One column per task, of whatever dtype that task needs — float arrays, int label arrays,
+    # lists of lists for multi-output regression. Inference would fix it to the first one.
+    attributes_data: dict[str, Any] = {}
     sample_indices = formula_df.index
 
     for task_cfg in config.task_configs:
@@ -799,7 +810,7 @@ def test_r2_metric_updates_respect_masks(model_config_mixed_tasks):
     )
 
     assert "regr_task_1" in model._metrics_updated["val"]
-    computed = model.val_r2_metrics["regr_task_1"].compute()
+    computed = cast(R2Score, model.val_r2_metrics["regr_task_1"]).compute()
     assert torch.isclose(computed, torch.tensor(1.0))
 
 
@@ -968,7 +979,7 @@ def test_optimize_latent_space_requires_ae():
 
 def _make_reg_clf_model():
     enc = MLPEncoderConfig(hidden_dims=[INPUT_DIM, 16, LATENT_DIM])
-    tasks = [
+    tasks: list[TaskConfigType] = [
         RegressionTaskConfig(name="prop", data_column="prop", dims=[LATENT_DIM, 8, 1]),
         ClassificationTaskConfig(name="cls", data_column="cls", num_classes=3, dims=[LATENT_DIM, 8, 3]),
     ]
@@ -1133,7 +1144,7 @@ def test_optimize_latent_restores_requires_grad_after_call():
 def _make_full_model():
     """Regression + classification + kernel-regression heads (AE on) for target-kind tests."""
     enc = MLPEncoderConfig(hidden_dims=[INPUT_DIM, 16, LATENT_DIM])
-    tasks = [
+    tasks: list[TaskConfigType] = [
         RegressionTaskConfig(name="prop", data_column="prop", dims=[LATENT_DIM, 8, 1]),
         ClassificationTaskConfig(name="cls", data_column="cls", num_classes=3, dims=[LATENT_DIM, 8, 3]),
         KernelRegressionTaskConfig(
@@ -1417,7 +1428,7 @@ def _build_aligned_model_and_kernel():
 
     n_components = len(DEFAULT_ELEMENTS)
     enc = MLPEncoderConfig(hidden_dims=[INPUT_DIM, 16, LATENT_DIM])
-    tasks = [
+    tasks: list[TaskConfigType] = [
         RegressionTaskConfig(name="prop", data_column="prop", dims=[LATENT_DIM, 8, 1]),
         ClassificationTaskConfig(name="cls", data_column="cls", num_classes=3, dims=[LATENT_DIM, 8, 3]),
     ]
@@ -2500,7 +2511,40 @@ def test_optimize_latent_space_with_ae():
 # --- LR scheduler cadence ---------------------------------------------------------------------
 
 
-def test_scheduler_steps_once_per_epoch_not_per_batch(model_config_mixed_tasks, dummy_compound_datamodule, tmp_path):
+class _SchedulerStepCounter(FlexibleMultiTaskModel):
+    """Records every scheduler ``step()`` call so a test can assert the cadence.
+
+    A subclass rather than patching the bound method: Lightning checks that
+    ``configure_optimizers`` is *defined* on the model, and a MagicMock does not satisfy that
+    check, so patching it makes the Trainer refuse to run.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.step_calls: list[object] = []
+        self.n_schedulers = 0
+
+    def configure_optimizers(self):
+        result = super().configure_optimizers()
+        entries = result if isinstance(result, list) else [result]
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            scheduler = entry.get("lr_scheduler", {}).get("scheduler")
+            if scheduler is None:
+                continue
+            self.n_schedulers += 1
+            original_step = scheduler.step
+
+            def counting_step(*args, _orig=original_step, **kwargs):
+                self.step_calls.append(args[0] if args else None)
+                return _orig(*args, **kwargs)
+
+            scheduler.step = counting_step
+        return result
+
+
+def test_scheduler_steps_once_per_epoch_not_per_batch(model_config_mixed_tasks, dummy_compound_datamodule):
     """``patience`` must count epochs, so the scheduler must be stepped once per epoch.
 
     The model uses manual optimization, so Lightning does not drive its schedulers and the model
@@ -2512,7 +2556,7 @@ def test_scheduler_steps_once_per_epoch_not_per_batch(model_config_mixed_tasks, 
     perfectly while the runtime did the wrong thing.
     """
     config = model_config_mixed_tasks
-    model = FlexibleMultiTaskModel(
+    model = _SchedulerStepCounter(
         task_configs=config.task_configs,
         encoder_config=config.encoder_config,
         shared_block_optimizer=OptimizerConfig(lr=1e-3, min_lr=1e-6),
@@ -2522,32 +2566,6 @@ def test_scheduler_steps_once_per_epoch_not_per_batch(model_config_mixed_tasks, 
         task_config.optimizer = OptimizerConfig(lr=1e-3, min_lr=1e-6)
 
     epochs, batches_per_epoch = 2, 3
-    steps: list[object] = []
-    original_configure = model.configure_optimizers
-
-    def configure_with_counting_schedulers():
-        result = original_configure()
-        entries = result if isinstance(result, list) else [result]
-        n = 0
-        for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            scheduler = entry.get("lr_scheduler", {}).get("scheduler")
-            if scheduler is None:
-                continue
-            n += 1
-            original_step = scheduler.step
-
-            def counting_step(*args, _orig=original_step, **kwargs):
-                steps.append(args[0] if args else None)
-                return _orig(*args, **kwargs)
-
-            scheduler.step = counting_step
-        configure_with_counting_schedulers.n_schedulers = n
-        return result
-
-    model.configure_optimizers = configure_with_counting_schedulers
-
     trainer = L.Trainer(
         logger=False,
         max_epochs=epochs,
@@ -2560,15 +2578,15 @@ def test_scheduler_steps_once_per_epoch_not_per_batch(model_config_mixed_tasks, 
     )
     trainer.fit(model, datamodule=dummy_compound_datamodule)
 
-    n_schedulers = configure_with_counting_schedulers.n_schedulers
-    assert n_schedulers > 0, "no scheduler was created, so the cadence is untested"
-    assert len(steps) == n_schedulers * epochs, (
-        f"expected {n_schedulers} scheduler(s) x {epochs} epochs = {n_schedulers * epochs} steps; "
-        f"got {len(steps)} over {batches_per_epoch} batches/epoch — per-batch stepping would give "
-        f"{n_schedulers * epochs * batches_per_epoch}"
+    assert model.n_schedulers > 0, "no scheduler was created, so the cadence is untested"
+    assert len(model.step_calls) == model.n_schedulers * epochs, (
+        f"expected {model.n_schedulers} scheduler(s) x {epochs} epochs = "
+        f"{model.n_schedulers * epochs} steps; got {len(model.step_calls)} over "
+        f"{batches_per_epoch} batches/epoch — per-batch stepping would give "
+        f"{model.n_schedulers * epochs * batches_per_epoch}"
     )
     # Each step receives the epoch-aggregated monitored metric, not a raw per-batch loss.
-    assert all(value is not None for value in steps)
+    assert all(value is not None for value in model.step_calls)
 
 
 def test_scheduler_monitor_missing_raises(model_config_mixed_tasks, dummy_compound_datamodule):
@@ -2722,7 +2740,9 @@ def test_checkpoint_records_each_scheduler_under_its_own_group(model_config_mixe
     n_scheduled = len(model._scheduler_group_keys)
     assert n_scheduled > 0
 
-    checkpoint = {
+    # on_save_checkpoint adds lr_schedulers_dict / optimizer_states_dict alongside the lists, so
+    # this holds both shapes by design.
+    checkpoint: dict[str, Any] = {
         "optimizer_states": [{"opt": i} for i in range(1 + len(model.task_heads))],
         "lr_schedulers": [{"sched": i} for i in range(n_scheduled)],
     }

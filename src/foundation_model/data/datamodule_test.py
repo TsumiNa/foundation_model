@@ -14,6 +14,7 @@ from torch.utils.data.distributed import DistributedSampler
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.model_config import (
+    TaskConfigType,
     ClassificationTaskConfig,
     RegressionTaskConfig,
     _AEConfig,
@@ -164,7 +165,7 @@ def test_default_data_files_shared_across_tasks(tmp_path, descriptors_df):
     shared = pd.DataFrame({"composition": list(COMPOSITIONS), "task1": np.arange(20.0), "task2": np.arange(20.0)})
     path = tmp_path / "shared.parquet"
     shared.to_parquet(path)
-    configs = [
+    configs: list[TaskConfigType] = [
         RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1]),
         RegressionTaskConfig(name="task2", data_column="task2", dims=[2, 16, 1]),
     ]
@@ -192,7 +193,7 @@ def test_datamodule_normalizes_heterogeneous_compositions():
         # Same two compositions, spelled with float amounts / reversed order.
         "task_cls": pd.DataFrame({"task_cls": [0, 1]}, index=pd.Index(["O3.0Fe2.0", "H2.0O1.0"])),
     }
-    configs = [
+    configs: list[TaskConfigType] = [
         RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 8, 1]),
         ClassificationTaskConfig(name="task_cls", data_column="task_cls", num_classes=2, dims=[2, 8, 2]),
     ]

@@ -203,7 +203,11 @@ def test_task_frame_missing_compositions_are_masked(sample_compositions, sample_
         task_configs=configs,
         dataset_name="test_partial_frame",
     )
-    mask = dataset.task_masks_dict["task_reg"].squeeze()
+    # Masks are per-sample tensors for a regression task; only kernel-regression tasks store
+    # a list, and this fixture has none.
+    raw_mask = dataset.task_masks_dict["task_reg"]
+    assert isinstance(raw_mask, torch.Tensor)
+    mask = raw_mask.squeeze()
     # id_0, id_1 valid; id_2..id_4 absent from frame -> masked False.
     assert mask.tolist() == [True, True, False, False, False]
     # y for absent compositions is the 0.0 placeholder.
