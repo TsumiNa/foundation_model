@@ -12,6 +12,7 @@ import torch
 from loguru import logger
 from torch.utils.data.distributed import DistributedSampler
 
+from foundation_model.data.composition_sources import PrecomputedDescriptorSource
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.model_config import (
     TaskConfigType,
@@ -217,13 +218,55 @@ def test_datamodule_disable_normalizer_keeps_raw_keys(descriptors_df, reg_cls_co
     assert set(dm.master_index) == set(COMPOSITIONS)
 
 
-def test_datamodule_syncs_normalizer_into_precomputed_source(reg_cls_configs):
-    """The DataModule's opt-out propagates into a PrecomputedDescriptorSource (single source of truth)."""
-    from foundation_model.data.composition_sources import PrecomputedDescriptorSource
+def test_datamodule_default_normalizer_works_against_a_raw_source(descriptors_df, reg_cls_configs, tmp_path):
+    """The mirror case: the source keeps raw keys while the DataModule normalizes its own.
 
-    source = PrecomputedDescriptorSource("unused.parquet")  # defaults to normalization ON
-    CompoundDataModule(task_configs=reg_cls_configs, descriptor_fn=source, composition_normalizer=None)
-    assert source._composition_normalizer is None
+    The DataModule canonicalizes task keys, so it asks for 'Fe2 O3' while the source's index still
+    says 'Fe2O3'. This must resolve. It regressed once: removing the constructor's private-attribute
+    sync left nothing able to bridge the two spellings, and setup failed with "descriptor_fn
+    produced no valid descriptors for any composition" on a config that had worked.
+    """
+    path = tmp_path / "desc.parquet"
+    descriptors_df.rename_axis("composition").to_parquet(path)
+    source = PrecomputedDescriptorSource(
+        str(path),
+        composition_column="composition",
+        composition_normalizer=None,  # raw index
+    )
+    dm = CompoundDataModule(
+        task_configs=reg_cls_configs,
+        descriptor_fn=source,
+        task_frames=_reg_cls_frames(),
+        # ... and the DataModule keeps its default normalizer
+    )
+    dm.setup(stage="fit")
+    assert set(dm.master_index) == set(COMPOSITIONS)
+
+
+def test_datamodule_opt_out_works_against_a_normalizing_source(descriptors_df, reg_cls_configs, tmp_path):
+    """``composition_normalizer=None`` must resolve rows even from a source that normalizes.
+
+    This used to be arranged by assigning ``descriptor_fn._composition_normalizer`` from the
+    DataModule's constructor — reaching into the private attribute of one of the three descriptor
+    kinds. A ``lookup_descriptor_fn`` closure had no such attribute, so opting out there dropped
+    every composition with nothing but a warning. Descriptor sources now key their result by the
+    compositions they were handed, so the two normalization policies never have to agree.
+
+    Asserting on resolved rows rather than on that attribute is the point: the attribute was the
+    mechanism, the rows are the property.
+    """
+    path = tmp_path / "desc.parquet"
+    descriptors_df.rename_axis("composition").to_parquet(path)
+    source = PrecomputedDescriptorSource(str(path), composition_column="composition")  # normalizes
+
+    dm = CompoundDataModule(
+        task_configs=reg_cls_configs,
+        descriptor_fn=source,
+        task_frames=_reg_cls_frames(),
+        composition_normalizer=None,  # ... and the DataModule does not
+    )
+    dm.setup(stage="fit")
+    assert set(dm.master_index) == set(COMPOSITIONS)
 
 
 def test_split_column_resolution(descriptors_df, reg_cls_configs):
