@@ -6,6 +6,8 @@
 import joblib
 import numpy as np
 import pandas as pd
+from typing import Any
+
 import pytest
 from loguru import logger
 
@@ -22,6 +24,18 @@ from foundation_model.data.composition_sources import (
 
 
 # --- normalize_composition --------------------------------------------------
+
+
+def _key(formula: str) -> str:
+    """The canonical key for a formula the test knows is parseable.
+
+    ``normalize_composition`` returns ``None`` for input it cannot parse, which pandas indexers
+    reject. Every formula in these fixtures is valid, so assert it once here instead of narrowing
+    at each call site.
+    """
+    key = normalize_composition(formula)
+    assert key is not None, f"fixture formula {formula!r} should be parseable"
+    return key
 
 
 def test_normalize_composition_formula_and_order_invariant():
@@ -186,7 +200,7 @@ def _make_counting_fn(calls):
 
 
 def test_descriptor_cache_computes_each_composition_once():
-    calls = []
+    calls: list[list[str]] = []
     cache = DescriptorCache(_make_counting_fn(calls))
     first = cache.compute(["a", "bb"])
     second = cache.compute(["bb", "ccc"])
@@ -286,8 +300,8 @@ def test_lookup_descriptor_fn_aligns_heterogeneous_spellings():
     features = pd.DataFrame({"d0": [1.0, 2.0]}, index=pd.Index(["Fe2O3", "NaCl"]))
     fn = lookup_descriptor_fn(features)
     # Descriptor frame spelled "Fe2O3"; query spelled with float amounts -> still matches.
-    out = fn([normalize_composition("Fe2.0O3.0"), "missing"])
-    assert list(out.index) == [normalize_composition("Fe2O3")]
+    out = fn([_key("Fe2.0O3.0"), "missing"])
+    assert list(out.index) == [_key("Fe2O3")]
     assert out.iloc[0]["d0"] == 1.0
 
 
@@ -296,9 +310,9 @@ def test_lookup_descriptor_fn_dedupes_colliding_labels(loguru_warnings):
     # length-matched re-index; they collapse keep-first with a warning (Codex P1 regression).
     features = pd.DataFrame({"d0": [1.0, 9.0, 2.0]}, index=pd.Index(["Fe2O3", "Fe2.0O3.0", "NaCl"]))
     fn = lookup_descriptor_fn(features)
-    out = fn([normalize_composition("Fe2O3"), normalize_composition("NaCl")])
-    assert list(out.index) == [normalize_composition("Fe2O3"), normalize_composition("NaCl")]
-    assert out.loc[normalize_composition("Fe2O3"), "d0"] == 1.0  # first occurrence kept
+    out = fn([_key("Fe2O3"), _key("NaCl")])
+    assert list(out.index) == [_key("Fe2O3"), _key("NaCl")]
+    assert out.loc[_key("Fe2O3"), "d0"] == 1.0  # first occurrence kept
     assert any("collapsed to a duplicate" in m for m in loguru_warnings)
 
 
@@ -334,7 +348,8 @@ def test_resolve_splits_invalid_label_raises():
 def test_resolve_splits_random_fallback_is_deterministic():
     comps = [f"c{i}" for i in range(10)]
     frames = {"t1": pd.DataFrame({"y": range(10)}, index=pd.Index(comps, name="composition"))}
-    kwargs = dict(val_split=0.2, test_split=0.2, random_seed=42)
+    # Heterogeneous by signature (float / int | None / bool), so it cannot infer to dict[str, float].
+    kwargs: dict[str, Any] = dict(val_split=0.2, test_split=0.2, random_seed=42)
     out1 = resolve_splits(frames, comps, {"t1": "split"}, **kwargs)
     out2 = resolve_splits(frames, comps, {"t1": "split"}, **kwargs)
     assert out1.equals(out2)

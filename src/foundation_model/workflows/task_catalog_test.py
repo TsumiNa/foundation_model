@@ -587,7 +587,7 @@ def test_build_datamodule(catalog_dir) -> None:
 
 
 def test_per_task_lr_and_weight_decay_override_the_group_defaults():
-    spec = TaskSpec(name="t", kind="regression", dataset="d", column="c", lr=1e-4, weight_decay=0.25)
+    spec = TaskSpec(name="t", kind=TaskKind.REGRESSION, dataset="d", column="c", lr=1e-4, weight_decay=0.25)
     assert (spec.lr, spec.weight_decay) == (1e-4, 0.25)
 
 
@@ -601,4 +601,4 @@ def test_per_task_lr_and_weight_decay_override_the_group_defaults():
 )
 def test_per_task_optimizer_overrides_are_validated(kwargs, message):
     with pytest.raises(ValueError, match=message):
-        TaskSpec(name="t", kind="regression", dataset="d", column="c", **kwargs)
+        TaskSpec(name="t", kind=TaskKind.REGRESSION, dataset="d", column="c", **kwargs)

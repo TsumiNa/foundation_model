@@ -129,10 +129,5 @@ ignore_missing_imports = true
 # are already clean, and the flag above is what keeps them that way. This list only ever shrinks:
 # each planned PR removes its own entries. Do NOT add to it.
 module = [
-    "foundation_model.data.composition_sources_test",        # PR3 — 9 errors
-    "foundation_model.data.datamodule_test",                 # PR3 — 1 error
-    "foundation_model.data.dataset_test",                    # PR3 — 1 error
-    "foundation_model.models.flexible_multi_task_model_test",  # PR3 — 13 errors
-    "foundation_model.workflows.task_catalog_test",          # PR3 — 2 errors
 ]
 check_untyped_defs = false
