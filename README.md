@@ -220,19 +220,9 @@ column = "DOS density"
 t_column = "DOS energy"
 ```
 
-**Python-layer field names differ from the TOML keys.** `BaseTaskConfig` is what the model
-consumes; the config layer builds it from `[datasets.*]` + `[[tasks]]`. When reading the source,
-this is the mapping:
-
-| `BaseTaskConfig` field | TOML equivalent | Notes |
-|---|---|---|
-| `data_files` | `[datasets.<name>].path`, selected by `[[tasks]].dataset` | TOML groups tasks under named datasets instead of repeating a path per task |
-| `data_column` | `[[tasks]].column` | |
-| `t_column` | `[[tasks]].t_column` | Kernel regression only |
-| `composition_column` | `[data].composition_column` | Global in TOML; the per-task override is Python-only |
-| `split_column` | — | Honoured inside the data file (a `split` column); not a TOML key |
-| `task_masking_ratio` | — | **Not exposed**; every workflow call site passes `1.0` (see Example 4) |
-| `predict_idx` | — | Python-only; the CLI predicts the configured subset |
+The `BaseTaskConfig` dataclass the model consumes uses different field names than these TOML
+keys; [`docs/configuration.md`](docs/configuration.md#python-layer-fields-vs-toml-keys) maps the
+two for anyone reading the source.
 
 **Splitting.** A single composition-level train/val/test split is derived by overlaying every
 task file's `split` column (precedence `test > val > train`; conflicts warn). Compositions
@@ -317,14 +307,15 @@ loss (gradients reach all tokens through self-attention).
 
 ### Example 4 — Scaling-law experiments
 
-`BaseTaskConfig.task_masking_ratio` controls the fraction of a task's valid training samples used
-(`1.0` = all, `0.5` = half), and drives the scaling-law signal: as the ratio drops, that task's
-validation loss rises while the others are unaffected.
+`task_masking_ratio` controls the fraction of a task's valid training samples used (`1.0` = all,
+`0.5` = half), and drives the scaling-law signal: as the ratio drops, that task's validation loss
+rises while the others are unaffected.
 
-**It is not exposed on `[[tasks]]`.** Every workflow call site passes `masking_ratio=1.0`, so a
-TOML config cannot vary it; it is settable only when building task configs in Python. From the
-CLI the available data-size knob is `[datasets.<name>].sample` (or `--sample`), which caps rows
-for a whole dataset rather than for one task.
+**There is no `[[tasks]]` key that sets it directly.** During continual pretraining it is set for
+you: each step gives the newly introduced task `1.0` and every replaying task the ratio resolved
+from `[pretrain.replay].amount` / `[pretrain.replay].per_task`, so those keys vary it — but as a
+replay budget, not as a per-task scaling-law dial. To sweep training-set size from the CLI, use
+`[datasets.<name>].sample` (or `--sample`), which caps rows for a whole dataset.
 
 A worked scaling-law study driven entirely from the CLI lives in
 [`experiments/rikyu_task_scaling/`](experiments/rikyu_task_scaling/).
