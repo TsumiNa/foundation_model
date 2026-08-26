@@ -8,3 +8,17 @@ repos:
         entry: uv run ruff format
         language: system
         types_or: [python, pyi, jupyter]
+      - id: mypy
+        name: Mypy (src/)
+        entry: uv run mypy src/
+        language: system
+        # mypy is not a per-file linter: inference crosses module boundaries, so checking only the
+        # staged files gives different answers than checking the package. Run it once over src/ and
+        # ignore the filenames pre-commit would pass.
+        pass_filenames: false
+        # always_run, not a `types_or` filter: with a filter, a commit that only DELETES .py files
+        # leaves no matching path, so pre-commit skips the hook — exactly the commit most likely to
+        # break an import somewhere else in the package. Verified: `pre-commit run mypy --files
+        # <deleted>.py` reports "(no files to check) Skipped".
+        always_run: true
+        require_serial: true

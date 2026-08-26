@@ -34,7 +34,9 @@
 - Install: `uv sync --frozen --all-groups`
 - Add dependency: `uv add <pkg>` or `uv add --dev <pkg>`
 - Install the commit hook once per clone: `uv run pre-commit install`; it runs `ruff format` on staged
-  Python files and intentionally does not run Mypy.
+  Python files and `mypy src/` over the whole package. Mypy runs package-wide rather than on the
+  staged files because its inference crosses module boundaries, so per-file answers differ from
+  package answers.
 
 ## File-Scoped Commands
 
