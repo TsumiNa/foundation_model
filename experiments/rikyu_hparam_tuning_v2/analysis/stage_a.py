@@ -76,13 +76,22 @@ def boundary_report(points: dict[str, dict], short_list: list[str]) -> dict:
         lo, hi = searched[0], searched[-1]
         at_lo = [c for c in short_list if points[c].get(key) == lo]
         at_hi = [c for c in short_list if points[c].get(key) == hi]
+        # An edge only means "the grid ran out" when there was an interior to lose to. On a
+        # two-level axis every value IS an edge, so calling that edge-bound would demand an
+        # extension round for what is really just a preference between two options. Only axes
+        # with an interior can be edge-bound; the two-level axes still report which side won.
+        can_be_edge_bound = len(searched) >= 3
         report[name] = {
             "searched_min": lo,
             "searched_max": hi,
             "n_values": len(searched),
             "short_list_at_min": at_lo,
             "short_list_at_max": at_hi,
-            "edge_bound": bool(at_lo or at_hi),
+            "edge_bound": bool(at_lo or at_hi) and can_be_edge_bound,
+            "has_interior": can_be_edge_bound,
+            "preference": (
+                "min" if at_lo and not at_hi else "max" if at_hi and not at_lo else "mixed"
+            ),
             "best_value": top_values[0],
         }
     return report

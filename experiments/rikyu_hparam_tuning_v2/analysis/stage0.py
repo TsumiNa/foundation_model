@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics
 from pathlib import Path
 
@@ -147,14 +148,42 @@ def main() -> None:
             continue
         delta = arm["score"]["mean"] - base_band["mean"]
         outside, multiple = exceeds_band(delta, base_band)
+        # TWO tests, deliberately, because they answer different questions and v1 only ever had
+        # the first one.
+        #
+        # The band multiple asks "is this bigger than run-to-run scatter?" — a conservative screen
+        # that is right for a grid where each point carries few seeds and the maximum over many
+        # points is biased upward. It is v1's convention and is reported for continuity.
+        #
+        # But the range is the spread of SINGLE RUNS, while what is being compared here are two
+        # nine-seed MEANS, whose uncertainty is smaller by roughly sqrt(n). Judging a difference
+        # of means against a single-run range understates a well-powered comparison — it would
+        # report a difference three times larger than its own resolution as "inside the noise".
+        # So the verdict follows the standard error of the DIFFERENCE, and the band multiple rides
+        # along as context rather than as the ruling.
+        se = math.sqrt(
+            (base_band.get("sigma", 0.0) ** 2) / max(base_band.get("n", 1), 1)
+            + (arm["score"].get("sigma", 0.0) ** 2) / max(arm["score"].get("n", 1), 1)
+        )
+        separated = bool(se) and abs(delta) > 2 * se
         comparisons.append({
             "from": "s0_base",
             "to": label,
             "delta_score": delta,
-            "band_width": base_band.get("range"),
+            "se_of_difference": se,
+            "resolvable_at_this_n": 2 * se,
+            "separated": separated,
+            "band_width_single_run_range": base_band.get("range"),
             "vs_band": multiple,
             "exceeds_band": outside,
-            "verdict": "outside the seed band" if outside else "INSIDE the seed band — not a result",
+            "verdict": (
+                "separated (difference exceeds 2 SE of the difference)"
+                if separated else "NOT separated — the seeds cannot tell these apart"
+            ),
+            "note": (
+                "vs_band is v1's single-run-range screen, kept for continuity; the verdict uses "
+                "the standard error of the difference, which is the right test for two means."
+            ),
         })
 
     sigma = base_band.get("sigma") or 0.0

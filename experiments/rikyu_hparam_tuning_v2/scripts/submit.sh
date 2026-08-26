@@ -53,11 +53,17 @@ case "$STAGE" in
     smoke)      CONFIG=probe6.toml; OUT=smoke;    DEFTIME=00:40:00; FLAGS="--sample 400 --max-epochs 1" ;;
     # Stage 0: the anchor. Untuned defaults on 0.3.2, plus v1's adopted config, on probe6.
     # Without this point the v2 tuning gain cannot be separated from PR #45's gain.
-    s0)         CONFIG=probe6.toml; OUT=stage0;   DEFTIME=03:00:00 ;;
-    # Stage A': encoder x LR x scheduler, jointly.
-    a1|a1r|a1b|a2|a3) CONFIG=probe6.toml; OUT=stage_a; DEFTIME=03:00:00 ;;
-    # Stage B': multi-task joint head tuning on the A' base.
-    breg|bkr|b3)      CONFIG=probe6.toml; OUT=stage_b; DEFTIME=03:00:00 ;;
+    s0)         CONFIG=probe6.toml; OUT=stage0;   DEFTIME=06:00:00 ;;
+    # Stage A' (encoder x LR x scheduler, jointly) and stage B' (joint head tuning on A's base).
+    #
+    # Six hours, not the three a probe6 run needs. Probe grid lines carry no `--resume` — probe
+    # runs are short enough that resuming is not worth the partial-metrics_table.csv complication
+    # it introduces — so a walltime kill throws the whole run away and it re-runs from zero.
+    # Measured on stage 0: steps run 45-75 epochs each and get more expensive as replay
+    # accumulates, putting a run at 1.0-1.5h. That is close enough to three hours that a slow
+    # configuration could cross it, and with 217 idle nodes the over-request costs nothing.
+    a1|a1r|a1b|a2|a3) CONFIG=probe6.toml; OUT=stage_a; DEFTIME=06:00:00 ;;
+    b|b3)             CONFIG=probe6.toml; OUT=stage_b; DEFTIME=06:00:00 ;;
     # Stage C': 24 tasks, 4 arms. `fm pretrain --resume` is idempotent, so a walltime kill is
     # recovered by resubmitting the identical command; `fm finetune` has NO resume and gets its
     # whole budget in one go.
