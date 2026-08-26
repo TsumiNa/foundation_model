@@ -6,6 +6,7 @@
 import joblib
 import numpy as np
 import pandas as pd
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import pytest
@@ -287,14 +288,18 @@ def test_precomputed_descriptor_source_column_file(tmp_path):
 
 
 def test_precomputed_descriptor_source_normalizes_by_default(tmp_path):
-    """By default the index is canonicalized, so heterogeneous spellings of a query still hit."""
+    """Heterogeneous spellings of a query still hit — and come back under the spelling asked for.
+
+    Canonicalization is how the match is *found*; it is not how the result is labelled. Returning
+    the canonical key instead would break the caller, which looks the rows up again by its own key.
+    """
     df = pd.DataFrame({"d0": [1.0, 2.0]}, index=pd.Index(["Fe2O3", "H2O"], name="composition"))
     path = tmp_path / "desc.parquet"
     df.to_parquet(path)
     source = PrecomputedDescriptorSource(str(path), composition_column="composition")
     # Queried with a different spelling of Fe2O3 (decimal amounts, reversed order).
     out = source(["O3.0Fe2.0", "missing"])
-    assert list(out.index) == [normalize_composition("Fe2O3")]
+    assert list(out.index) == ["O3.0Fe2.0"], "the match is canonical; the label is the caller's"
     assert out.iloc[0]["d0"] == 1.0
 
 
@@ -380,3 +385,46 @@ def test_resolve_splits_ignores_tasks_without_split_column():
     out = resolve_splits(frames, ["a", "b"], {"t1": "split"}, val_split=0.5, test_split=0.0, random_seed=1)
     assert set(out.unique()) <= {"train", "val", "test"}
     assert len(out) == 2
+
+
+# --- descriptor_fn key contract ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("build", ["lookup", "precomputed"])
+def test_descriptor_fn_returns_rows_under_the_requested_keys(build, tmp_path):
+    """The rows must come back keyed by what the caller asked for, whatever the frame is indexed by.
+
+    ``DescriptorCache.compute`` matches the caller's own keys against the returned index, so a
+    source that re-keys its output to a canonicalized spelling has every row silently reported as
+    "dropped" instead. That is a total, warning-only data loss, and it is what happened when a
+    DataModule opted out of normalization while its descriptor source had not.
+    """
+    features = pd.DataFrame({"d0": [1.0, 2.0]}, index=pd.Index(["Fe2O3", "NaCl"]))
+    fn: Callable[[Sequence[str]], pd.DataFrame]
+    if build == "lookup":
+        fn = lookup_descriptor_fn(features)
+    else:
+        path = tmp_path / "desc.parquet"
+        features.rename_axis("composition").to_parquet(path)
+        fn = PrecomputedDescriptorSource(str(path), composition_column="composition")
+
+    # Raw spellings: the frame index is canonicalised, the request is not.
+    raw = ["Fe2O3", "NaCl"]
+    frame, dropped = DescriptorCache(fn).resolve(raw)
+    assert dropped == [], f"{build}: raw keys were dropped instead of matched"
+    assert list(frame.index) == raw, f"{build}: rows must be keyed by the request, not the match"
+
+    # Canonical spellings must still resolve, keyed as asked. canonical_key is what the source
+    # itself uses to canonicalize, so this asks for exactly the frame's own index labels.
+    canonical = [canonical_key(c, normalize_composition) for c in raw]
+    frame2, dropped2 = DescriptorCache(fn).resolve(canonical)
+    assert dropped2 == []
+    assert list(frame2.index) == canonical
+
+
+def test_descriptor_fn_still_drops_genuinely_absent_compositions():
+    """Re-keying must not turn a real miss into a spurious row."""
+    features = pd.DataFrame({"d0": [1.0]}, index=pd.Index(["Fe2O3"]))
+    frame, dropped = DescriptorCache(lookup_descriptor_fn(features)).resolve(["Fe2O3", "not_a_formula_xyz"])
+    assert list(frame.index) == ["Fe2O3"]
+    assert dropped == ["not_a_formula_xyz"]

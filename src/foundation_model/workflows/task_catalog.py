@@ -24,7 +24,7 @@ not the default.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -36,6 +36,7 @@ import pandas as pd
 from loguru import logger
 
 from foundation_model.data.composition_sources import (
+    DescriptorFn,
     PrecomputedDescriptorSource,
     canonical_key,
     normalize_composition,
@@ -497,14 +498,19 @@ class TaskCatalog:
             out[name] = self._task_frames[name]
         return out
 
-    def descriptor_fn(self) -> Callable[[list[str]], pd.DataFrame]:
-        """Return a ``Callable[[list[str]], pd.DataFrame]`` producing composition descriptors."""
+    def descriptor_fn(self) -> DescriptorFn:
+        """Return the composition-descriptor source for this catalog.
+
+        Per the :data:`DescriptorFn` contract the returned rows are indexed by the composition
+        strings it was handed, not by any canonicalized spelling of them.
+        """
 
         if self._descriptor_source is not None:
-            source = self._descriptor_source
-            return lambda compositions: source(list(compositions))
+            # Already a DescriptorFn; it used to be wrapped in a lambda only to re-package the
+            # argument as a list for the narrower alias.
+            return self._descriptor_source
 
-        def _kmd_descriptor(compositions: list[str]) -> pd.DataFrame:
+        def _kmd_descriptor(compositions: Sequence[str]) -> pd.DataFrame:
             uncached = [c for c in dict.fromkeys(compositions) if c not in self._desc_cache]
             if uncached:
                 weights = np.zeros((len(uncached), len(DEFAULT_ELEMENTS)), dtype=float)

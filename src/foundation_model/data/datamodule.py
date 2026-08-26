@@ -22,7 +22,6 @@ from .composition_sources import (
     CompositionNormalizer,
     DescriptorCache,
     DescriptorFn,
-    PrecomputedDescriptorSource,
     build_composition_universe,
     canonical_key,
     load_task_frame,
@@ -168,7 +167,7 @@ class CompoundDataModule(L.LightningDataModule):
     task_configs : Sequence[TaskConfig]
         Task configurations. Per-task ``data_files`` / ``composition_column`` / ``split_column``
         / ``task_masking_ratio`` / ``predict_idx`` drive data loading.
-    descriptor_fn : Callable[[list[str]], pd.DataFrame]
+    descriptor_fn : DescriptorFn
         Maps composition keys to a composition-indexed descriptor frame.
     task_frames : Mapping[str, pd.DataFrame] | None, optional
         In-memory per-task frames (indexed by composition or carrying the composition column),
@@ -275,10 +274,12 @@ class CompoundDataModule(L.LightningDataModule):
             self.default_data_files = tuple(str(p) for p in default_data_files)
         self.composition_column = composition_column
         self.composition_normalizer = composition_normalizer
-        # The DataModule owns the normalization policy; keep a recognized descriptor source in
-        # sync so the opt-out (composition_normalizer=None) only has to be set in one place.
-        if isinstance(descriptor_fn, PrecomputedDescriptorSource):
-            descriptor_fn._composition_normalizer = composition_normalizer
+        # No syncing into the descriptor source. It used to assign
+        # descriptor_fn._composition_normalizer so the opt-out "only had to be set in one place",
+        # but that reached into a private attribute of ONE of the three descriptor kinds; a
+        # closure built by lookup_descriptor_fn had nothing to assign to, and opting out there
+        # silently dropped every composition. Descriptor sources now return rows under the keys
+        # they were handed, so their own normalization never has to agree with this one.
         self.random_seed = random_seed
         self.val_split = val_split
         self.test_split = test_split

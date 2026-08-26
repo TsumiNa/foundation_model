@@ -29,7 +29,9 @@ from loguru import logger
 
 from .splitter import MultiTaskSplitter
 
-DescriptorFn = Callable[[list[str]], pd.DataFrame]
+# Sequence, not list: every implementation here accepts any sequence, and declaring the
+# narrower list[str] made them fail to satisfy their own alias (parameters are contravariant).
+DescriptorFn = Callable[[Sequence[str]], pd.DataFrame]
 
 # Split labels, ordered by precedence (later wins on conflict).
 _SPLIT_PRECEDENCE: dict[str, int] = {"train": 1, "val": 2, "test": 3}
@@ -125,15 +127,41 @@ def lookup_descriptor_fn(
     """
     frame = _reindex_by_canonical(features, composition_normalizer, source="lookup_descriptor_fn")
 
-    index = frame.index
-
     def descriptor_fn(compositions: Sequence[str]) -> pd.DataFrame:
-        # Keys are usually already canonical (the DataModule normalized them), so try a direct
-        # hit first and only pay for canonicalization on a miss.
-        present = [c if c in index else canonical_key(c, composition_normalizer) for c in compositions]
-        return frame.loc[[k for k in present if k in index]]
+        return _lookup_by_canonical_key(frame, compositions, composition_normalizer)
 
     return descriptor_fn
+
+
+def _lookup_by_canonical_key(
+    frame: pd.DataFrame,
+    compositions: Sequence[str],
+    normalizer: CompositionNormalizer | None,
+) -> pd.DataFrame:
+    """Rows of ``frame`` for ``compositions``, **indexed by the keys that were asked for**.
+
+    That re-keying is the contract every ``descriptor_fn`` owes :class:`DescriptorCache`, which
+    matches the caller's own keys against whatever index comes back
+    (``present = [c for c in requested if c in self._cache.index]``). Returning the *matched*
+    key instead silently drops every composition whenever the caller's spelling and the frame's
+    canonical spelling differ — which is what happened when a DataModule opted out of
+    normalization while its descriptor source had not: 0 rows resolved, every composition
+    reported as "dropped", no error.
+
+    Normalization stays on this side of the boundary. The caller passes plain strings and gets
+    rows back under those same strings; only here does the ``str | None`` that
+    ``normalize_composition`` can return get resolved, by ``canonical_key``.
+    """
+    index = frame.index
+    # Keys are usually already canonical (the DataModule normalizes task frames the same way), so
+    # try a direct hit first and only pay for canonicalization on a miss.
+    matched = {c: (c if c in index else canonical_key(c, normalizer)) for c in compositions}
+    found = {requested: key for requested, key in matched.items() if key in index}
+    if not found:
+        return frame.iloc[:0]
+    out = frame.loc[list(found.values())].copy(deep=False)
+    out.index = pd.Index(list(found))
+    return out
 
 
 def _reindex_by_canonical(
@@ -353,25 +381,26 @@ class PrecomputedDescriptorSource:
         return self._frame
 
     def __call__(self, compositions: Sequence[str]) -> pd.DataFrame:
-        frame = self._load()
-        index = frame.index
-        # Keys are usually already canonical (the DataModule normalized them); try a direct hit
-        # first and only canonicalize on a miss, so we don't re-normalize every query at scale.
-        present = [c if c in index else canonical_key(c, self._composition_normalizer) for c in compositions]
-        return frame.loc[[k for k in present if k in index]]
+        return _lookup_by_canonical_key(self._load(), compositions, self._composition_normalizer)
 
 
 class DescriptorCache:
     """Apply a user descriptor function once per unique composition.
 
-    The descriptor function maps a list of composition strings to a DataFrame indexed by
-    composition. Results are cached; subsequent calls only compute compositions not seen
-    before. Compositions the function fails to produce (or returns as all-NaN rows) are
-    reported as "dropped" by :meth:`resolve`.
+    The descriptor function maps a list of composition strings to a DataFrame **indexed by the
+    strings it was given**. That is a contract, not a convention: :meth:`compute` matches the
+    caller's own keys against the returned index, so a function that re-keys its output — for
+    instance to a canonicalized spelling — has every row silently reported as "dropped" instead.
+    :func:`lookup_descriptor_fn` and :class:`PrecomputedDescriptorSource` satisfy it via
+    :func:`_lookup_by_canonical_key`.
+
+    Results are cached; subsequent calls only compute compositions not seen before. Compositions
+    the function fails to produce (or returns as all-NaN rows) are reported as "dropped" by
+    :meth:`resolve`.
 
     Parameters
     ----------
-    descriptor_fn : Callable[[list[str]], pd.DataFrame]
+    descriptor_fn : DescriptorFn
         Function returning a composition-indexed descriptor frame.
     """
 
