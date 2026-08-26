@@ -2588,3 +2588,35 @@ def test_scheduler_monitor_missing_raises(model_config_mixed_tasks, dummy_compou
     )
     with pytest.raises(ValueError, match="no_such_metric"):
         trainer.fit(model, datamodule=dummy_compound_datamodule)
+
+
+def test_no_optimizer_step_when_loss_has_no_graph(model_config_mixed_tasks, sample_batch_mixed_tasks, mocker):
+    """A batch whose loss carries no graph must not step any optimizer.
+
+    The else-branch used to call opt.step() on every optimizer immediately after logging that it
+    was *skipping* the optimizer step. That is a no-op only because zero_grad(set_to_none=True)
+    leaves every p.grad as None and AdamW skips gradientless params — with set_to_none=False the
+    same line applies AdamW's decoupled weight decay to the whole model on a batch that carried no
+    signal. Asserting the call count keeps the log and the behaviour agreeing.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=config.shared_block_optimizer,
+    )
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+
+    optimizer = mocker.MagicMock()
+    mocker.patch.object(model, "optimizers", return_value=[optimizer])
+    mocker.patch.object(model, "log_dict")
+    mocker.patch.object(model, "log")
+    backward = mocker.patch.object(model, "manual_backward")
+
+    loss = model.training_step(sample_batch_mixed_tasks, 0)
+
+    assert not loss.requires_grad, "test needs a graph-free loss to exercise the branch"
+    backward.assert_not_called()
+    optimizer.zero_grad.assert_called_once()
+    optimizer.step.assert_not_called()

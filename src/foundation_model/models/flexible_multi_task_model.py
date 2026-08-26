@@ -270,6 +270,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.test_r2_metrics = nn.ModuleDict()
         self._metrics_updated: dict[str, set[str]] = {"val": set(), "test": set()}
         self._stage_index_trackers: dict[str, dict[str, Any] | None] = {"val": None, "test": None}
+        # Rebuilt by configure_optimizers; defined here so on_train_epoch_end never depends on
+        # that having run (e.g. a hook invoked directly in a test).
+        self._scheduler_monitors: list[str] = []
         self._init_stage_metrics()
 
         logger.info("Initializing FlexibleMultiTaskModel...")
@@ -857,7 +860,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
     # Lightning step hooks delegate to helper implementations for readability.
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
         """Training step implementation for supervised multi-task learning."""
         optimizers = self.optimizers()
         if not isinstance(optimizers, list):
@@ -907,7 +910,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
             if raw_loss_t is None:
                 if self.allow_all_missing_in_batch:
                     self._log_debug(f"Task '{name}' has no valid samples in this batch. Skipping loss calculation.")
-                    train_logs[f"train_{name}_all_missing"] = 1.0
+                    train_logs[f"train_{name}_all_missing"] = torch.tensor(1.0, device=x.device)
                     continue
                 raise ValueError(
                     f"Task '{name}' has no valid samples in this batch and allow_all_missing_in_batch is False."
@@ -915,7 +918,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
             raw_supervised_losses[name] = raw_loss_t
             train_logs[f"train_{name}_raw_loss"] = raw_loss_t.detach()
-            train_logs[f"train_{name}_all_missing"] = 0.0
+            train_logs[f"train_{name}_all_missing"] = torch.tensor(0.0, device=x.device)
 
         for name, raw_loss_t in raw_supervised_losses.items():
             static_weight = self._get_task_static_weight(name)
@@ -951,18 +954,21 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # 24k-row task at batch_size 256 (~90 batches/epoch) drives the LR to `min_lr` inside
             # the first epoch.
         else:
+            # No opt.step() here. The branch used to call it on every optimizer immediately after
+            # logging that it was skipping the optimizer step. That is a no-op only because
+            # zero_grad(set_to_none=True) above leaves every p.grad as None and AdamW skips
+            # gradientless params — flip that flag to False and the same line applies AdamW's
+            # decoupled weight decay to the whole model on a batch that carried no signal.
             self._log_warning(
                 f"total_loss does not require grad and has no grad_fn at batch_idx {batch_idx}. "
                 "Skipping backward pass and optimizer step. "
                 "This might indicate all parameters are frozen, loss contributions are zero, "
                 "or an issue with the computation graph.",
             )
-            for opt in optimizers:
-                opt.step()
 
         return total_loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch: Any, batch_idx: int) -> None:
         """
         Validation step implementation mirroring training_step without gradient updates.
 
@@ -997,6 +1003,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         raw_val_supervised_losses = {}
         val_metric_inputs: dict[str, tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]] = {}
+        sample_mask: torch.Tensor | list[torch.Tensor] | None
         for name, pred_tensor in preds.items():
             head = self.task_heads[name]
 
@@ -1047,6 +1054,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # Keep this task's own tensors: the R2 update below runs in a second loop, and
             # reading the loop variables there would score every task against whichever task
             # happened to be processed last.
+            #
+            # The mask is a Tensor by now in every path: the kernel branch concatenates a list
+            # one, the non-sequence branch fills in a missing one, and _apply_stage_valid_mask
+            # raises rather than return a list for a non-sequence task.
+            assert isinstance(sample_mask, torch.Tensor)
             val_metric_inputs[name] = (pred_tensor, target, sample_mask)
             val_sum_supervised_raw_loss += raw_loss_t.detach()
             val_logs[f"val_{name}_raw_loss"] = raw_loss_t.detach()
@@ -1400,8 +1412,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         optimizers_and_schedulers: list[Any] = []
         # Parallel to the schedulers Lightning hands back from self.lr_schedulers(), so
-        # on_train_epoch_end can feed each one the metric its own group configured.
-        self._scheduler_monitors: list[str] = []
+        # on_train_epoch_end can feed each one the metric its own group configured. Reset on every
+        # call, because configure_optimizers can run more than once per model.
+        self._scheduler_monitors = []
 
         # 1. Main parameters (Encoder + optionally task_log_sigmas)
         main_params_to_optimize = list(self.encoder.parameters())
