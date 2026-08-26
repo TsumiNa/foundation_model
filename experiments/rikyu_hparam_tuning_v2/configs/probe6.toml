@@ -1,0 +1,267 @@
+# fm pretrain — 6-TASK encoder probe for the v2 hyper-parameter campaign.
+#
+# TWO tasks per size group of REPORT_20260809, of which two are kernel regressions:
+#
+#   big    >=20k    volume             N=23678  ceiling R2 0.569  [qc]   reg
+#   big    >=20k    formation_energy   N=23180  ceiling R2 0.995  [qc]   reg
+#   mid    3k-8.1k  seebeck            N= 8072  ceiling R2 0.603  [qc]   KERNEL REGRESSION
+#   mid    3k-8.1k  zt                 N= 3445  ceiling R2 0.653  [qc]   KERNEL REGRESSION
+#   small  <=1.2k   magnetization      N= 1160  ceiling R2 0.746  [magnetic]  reg
+#   small  <=1.2k   magnetic_moment    N=  851  ceiling R2 0.641  [magnetic]  reg
+#
+# Why a SEQUENCE rather than separate single-task runs: the encoder is shared, so the thing being
+# tuned only exists under multi-task pressure. This probe is a miniature of the stage-C' run —
+# same replay recipe (resample "epoch", amount = max(1500, 0.3*N), patience 24, max_epochs 150),
+# tasks introduced in descending size — so an encoder that wins here wins in the regime it is
+# going to be deployed in.
+#
+# Why SIX tasks and not v1's three (PLAN v2 §7.2). Three buys three things at once:
+#   1. more tasks averaged -> the seed band narrows, and v1's band (8.48%) was wide enough to
+#      overturn its own single-seed leader;
+#   2. closer to the 24-task deployment regime -> conclusions are likelier to transfer;
+#   3. the encoder is tuned under KR-head pressure for the FIRST time. v1 tuned its encoder on
+#      three plain regressions, then deployed it with seven KR heads attached — and v1's own
+#      stage B is the evidence that tuning in the wrong regime does not transfer.
+#
+# Task choices are picked for RESOLUTION, not just for size. Within "big", volume has the most
+# headroom (ceiling 0.569) so the group can actually be ranked; formation_energy is kept for
+# continuity with v1's probe3 but is SATURATED (0.995) and falls back to MAE under the per-task
+# metric rule (PLAN §6.3). Deliberately excluded: electrical_resistivity (ceiling 0.162) and
+# magnetic_susceptibility (58 labels, degenerate single-task baseline) — both would add variance
+# without adding resolution.
+#
+# [model] / [training] below are the UNTUNED baseline, on 0.3.2 defaults. [training.scheduler] is
+# deliberately ABSENT: 0.3.2's defaults (factor 0.5, patience 5, min_lr 1e-4, monitor
+# train_final_loss_epoch) ARE the untuned anchor. Grid points override them via
+# `--set training.scheduler.<knob>=...`, which is the axis that first became real in PR #45.
+#
+[data]
+composition_column = "composition"
+val_split = 0.1
+test_split = 0.1
+split_random_seed = 42
+batch_size = 256
+num_workers = 0
+
+[descriptor]
+kind = "kmd"
+n_grids = 8
+
+[datasets.qc]
+path = "data/qc_ac_te_mp_dos_reformat_20260515.pd.parquet"
+
+[datasets.magnetic]
+path = "data/NEMAD_magnetic_20260419_norm.parquet"
+
+[datasets.superconductor]
+path = "data/NEMAD_superconductor_20260425_norm.parquet"
+
+[datasets.phonix]
+path = "data/phonix-db-filtered_20260425_norm.parquet"
+
+# ---- qc regression (9) ----
+[[tasks]]
+name = "density"
+kind = "regression"
+dataset = "qc"
+column = "Density (normalized)"
+
+[[tasks]]
+name = "efermi"
+kind = "regression"
+dataset = "qc"
+column = "Efermi (normalized)"
+
+[[tasks]]
+name = "final_energy"
+kind = "regression"
+dataset = "qc"
+column = "Final energy per atom (normalized)"
+
+[[tasks]]
+name = "total_magnetization"
+kind = "regression"
+dataset = "qc"
+column = "Total magnetization (normalized)"
+
+[[tasks]]
+name = "volume"
+kind = "regression"
+dataset = "qc"
+column = "Volume (normalized)"
+
+[[tasks]]
+name = "dielectric_total"
+kind = "regression"
+dataset = "qc"
+column = "Dielectric total (normalized)"
+
+[[tasks]]
+name = "dielectric_ionic"
+kind = "regression"
+dataset = "qc"
+column = "Dielectric ionic (normalized)"
+
+[[tasks]]
+name = "dielectric_electronic"
+kind = "regression"
+dataset = "qc"
+column = "Dielectric electronic (normalized)"
+
+[[tasks]]
+name = "formation_energy"
+kind = "regression"
+dataset = "qc"
+column = "Formation energy per atom (normalized)"
+
+# ---- NEMAD magnetic regression (4) ----
+[[tasks]]
+name = "magnetization"
+kind = "regression"
+dataset = "magnetic"
+column = "Magnetization (normalized)"
+
+[[tasks]]
+name = "curie"
+kind = "regression"
+dataset = "magnetic"
+column = "Curie temperature (normalized)"
+
+[[tasks]]
+name = "neel"
+kind = "regression"
+dataset = "magnetic"
+column = "Neel temperature (normalized)"
+
+[[tasks]]
+name = "magnetic_moment"
+kind = "regression"
+dataset = "magnetic"
+column = "Magnetic moment (normalized)"
+
+# ---- NEMAD superconductor regression (1) ----
+[[tasks]]
+name = "tc"
+kind = "regression"
+dataset = "superconductor"
+column = "Transition temperature (normalized)"
+
+# ---- phonix regression (2) ----
+[[tasks]]
+name = "kp"
+kind = "regression"
+dataset = "phonix"
+column = "kp (normalized)"
+
+[[tasks]]
+name = "klat"
+kind = "regression"
+dataset = "phonix"
+column = "klat (normalized)"
+
+# ---- qc kernel regression (7) ----
+[[tasks]]
+name = "magnetic_susceptibility"
+kind = "kernel_regression"
+dataset = "qc"
+column = "Magnetic susceptibility (normalized)"
+t_column = "Magnetic susceptibility (T/K)"
+
+[[tasks]]
+name = "zt"
+kind = "kernel_regression"
+dataset = "qc"
+column = "ZT (normalized)"
+t_column = "ZT (T/K)"
+
+[[tasks]]
+name = "power_factor"
+kind = "kernel_regression"
+dataset = "qc"
+column = "Power factor (normalized)"
+t_column = "Power factor (T/K)"
+
+[[tasks]]
+name = "thermal_conductivity"
+kind = "kernel_regression"
+dataset = "qc"
+column = "Thermal conductivity (normalized)"
+t_column = "Thermal conductivity (T/K)"
+
+[[tasks]]
+name = "electrical_resistivity"
+kind = "kernel_regression"
+dataset = "qc"
+column = "Electrical resistivity (normalized)"
+t_column = "Electrical resistivity (T/K)"
+
+[[tasks]]
+name = "dos_density"
+kind = "kernel_regression"
+dataset = "qc"
+column = "DOS density (normalized)"
+t_column = "DOS energy"
+
+[[tasks]]
+name = "seebeck"
+kind = "kernel_regression"
+dataset = "qc"
+column = "Seebeck coefficient (normalized)"
+t_column = "Seebeck coefficient (T/K)"
+
+# ---- qc classification (1) ----
+[[tasks]]
+name = "material_type"
+kind = "classification"
+dataset = "qc"
+column = "Material type (label)"
+num_classes = 5
+
+[model]
+latent_dim = 128
+encoder_hidden_dims = [256]
+head_hidden_dims = [64]
+kr_x_hidden_dims = [128, 64]
+kr_t_hidden_dims = [16, 8]
+n_kernel = 15
+
+[training]
+max_epochs = 150
+encoder_lr = 5e-3
+head_lr = 5e-3
+kr_lr = 5e-4
+kr_weight_decay = 5e-5
+ae_lr = 5e-3
+accelerator = "gpu"
+devices = 1
+seed = 2025
+
+[training.early_stopping]
+enabled = true
+monitor = "val_final_loss"
+mode = "min"
+patience = 24
+min_delta = 1e-4
+
+[training.logging]
+csv = true
+
+[pretrain]
+# Descending size, matching the stage-C' introduction order.
+task_sequence = ["volume", "formation_energy", "seebeck", "zt", "magnetization", "magnetic_moment"]
+n_runs = 1
+task_order = "fixed"
+
+[pretrain.replay]
+interval = 1
+amount = 0.30
+resample = "epoch"
+# Floor rule amount_t = max(1500, 0.3*N_t) from HYBRID_RECIPE.md, held CONSTANT for the whole
+# campaign: the recipe was tuned by a previous campaign, and changing it alongside the
+# hyper-parameters would make neither attributable (PLAN §7.6).
+# N < 5000 here: zt 3445, magnetization 1160, magnetic_moment 851. The engine clamps 1500 down to
+# the task's own label count, so the two small tasks get full coverage.
+per_task = { zt = 1500, magnetization = 1500, magnetic_moment = 1500 }
+
+[output]
+dir = "artifacts/rikyu_hparam_tuning_v2/probe6"

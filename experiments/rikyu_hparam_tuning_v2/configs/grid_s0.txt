@@ -1,0 +1,18 @@
+s0_base_s2025	 --seed 2025
+s0_base_s2026	 --seed 2026
+s0_base_s2027	 --seed 2027
+s0_base_s2028	 --seed 2028
+s0_base_s2029	 --seed 2029
+s0_base_s2030	 --seed 2030
+s0_base_s2031	 --seed 2031
+s0_base_s2032	 --seed 2032
+s0_base_s2033	 --seed 2033
+s0_v1enc_s2025	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2025
+s0_v1enc_s2026	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2026
+s0_v1enc_s2027	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2027
+s0_v1enc_s2028	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2028
+s0_v1enc_s2029	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2029
+s0_v1enc_s2030	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2030
+s0_v1enc_s2031	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2031
+s0_v1enc_s2032	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2032
+s0_v1enc_s2033	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2033
