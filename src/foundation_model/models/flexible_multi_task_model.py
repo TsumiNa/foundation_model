@@ -1344,7 +1344,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         return pd.DataFrame(task_info)
 
     def _create_optimizer(self, params: list[torch.nn.Parameter], config: OptimizerConfig) -> torch.optim.Optimizer:
-        """Create an optimizer based on the configuration."""
+        """``AdamW`` over ``params`` with this group's hyper-parameters."""
         params = list(filter(lambda p: p.requires_grad, params))
         if not params:  # If no parameters require gradients, return a dummy optimizer or handle appropriately
             # This path should ideally not be hit if checks are done before calling _create_optimizer
@@ -1354,35 +1354,19 @@ class FlexibleMultiTaskModel(L.LightningModule):
             # or ensure this function is not called with empty grad-requiring params.
             pass
 
-        if config.optimizer_type == "AdamW":
-            return optim.AdamW(
-                params, lr=config.lr, betas=config.betas, eps=config.eps, weight_decay=config.weight_decay
-            )
-        elif config.optimizer_type == "Adam":
-            return optim.Adam(
-                params, lr=config.lr, betas=config.betas, eps=config.eps, weight_decay=config.weight_decay
-            )
-        elif config.optimizer_type == "SGD":
-            return optim.SGD(params, lr=config.lr, momentum=0.9, weight_decay=config.weight_decay)
-        else:
-            raise ValueError(f"Unsupported optimizer type: {config.optimizer_type}")
+        return optim.AdamW(params, lr=config.lr, betas=config.betas, eps=config.eps, weight_decay=config.weight_decay)
 
     def _create_scheduler(self, optimizer: torch.optim.Optimizer, config: OptimizerConfig) -> LRScheduler | None:
-        """Create a learning rate scheduler based on the configuration."""
-        if config.scheduler_type == "ReduceLROnPlateau":
-            return optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer,
-                mode=config.mode,
-                factor=config.factor,
-                patience=config.patience,
-                min_lr=config.min_lr,
-            )
-        elif config.scheduler_type == "StepLR":
-            return optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=config.factor)
-        elif config.scheduler_type == "None":
+        """``ReduceLROnPlateau`` for this parameter group, or ``None`` when the scheduler is off."""
+        if not config.scheduler_enabled:
             return None
-        else:
-            raise ValueError(f"Unsupported scheduler type: {config.scheduler_type}")
+        return optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode=config.mode,
+            factor=config.factor,
+            patience=config.patience,
+            min_lr=config.min_lr,
+        )
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         """Configure optimizers for all parameter groups."""

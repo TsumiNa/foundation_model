@@ -55,13 +55,18 @@ encoder_hidden_dims = [256]
 head_hidden_dims = [64]
 n_kernel = 15
 
+# Only the head and autoencoder groups train here (the encoder is frozen by default), so those
+# are the two lr/weight-decay pairs that matter. [training.optimizer] and [training.scheduler]
+# are available exactly as in samples/pretrain.toml; omitted here to keep the example short.
 [training]
 max_epochs = 100
 accelerator = "auto"
 devices = "auto"
 seed = 2025
 head_lr = 5e-3
+head_weight_decay = 1e-5
 ae_lr = 5e-3
+ae_weight_decay = 1e-3
 
 [training.early_stopping]
 patience = 8

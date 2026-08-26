@@ -7,7 +7,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from foundation_model.models.model_config import OptimizerConfig
 
 _MODES = {"min", "max"}
 
@@ -134,6 +137,65 @@ class CheckpointConfig:
 
 
 @dataclass(kw_only=True)
+class OptimizerSectionConfig:
+    """``[training.optimizer]`` — AdamW numerics shared by every parameter group.
+
+    Per-group learning rates and weight decays stay on ``[training]`` next to each other
+    (``encoder_lr`` / ``encoder_weight_decay`` …); only the terms that are genuinely global live
+    here.
+    """
+
+    betas: list[float] = field(default_factory=lambda: [0.9, 0.999])
+    eps: float = 1e-6
+
+    def __post_init__(self) -> None:
+        if len(self.betas) != 2 or any(not isinstance(b, (int, float)) or not 0.0 <= b < 1.0 for b in self.betas):
+            raise ValueError(f"training.optimizer.betas must be two numbers in [0, 1), got {self.betas!r}.")
+        if self.eps <= 0:
+            raise ValueError(f"training.optimizer.eps must be > 0, got {self.eps}.")
+
+
+@dataclass(kw_only=True)
+class SchedulerSectionConfig:
+    """``[training.scheduler]`` — ``ReduceLROnPlateau``, applied to every parameter group.
+
+    **``patience`` counts BATCHES, not epochs.** ``FlexibleMultiTaskModel`` sets
+    ``automatic_optimization = False`` and steps the scheduler itself inside ``training_step``,
+    which Lightning runs once per batch. At the default ``patience = 5`` and a 24k-row task at
+    ``batch_size = 256`` (~90 batches/epoch) the LR can reach ``min_lr`` within the first epoch,
+    so this knob is far more aggressive than its name suggests.
+
+    That same manual stepping is why Lightning's ``monitor`` / ``interval`` / ``frequency`` are
+    **not** exposed here. ``configure_optimizers`` still returns them in its ``lr_scheduler``
+    dict, but Lightning honours that dict only under automatic optimization; with manual
+    optimization the model passes the current batch's total loss to ``scheduler.step()`` directly.
+    Surfacing them as config would advertise three settings that cannot take effect — see the
+    ``[[tasks]].replay`` removal for the same failure mode. Honouring them means moving scheduling
+    back under Lightning, which is a training-behaviour change, not a config change.
+
+    ``min_lr`` is a FLOOR on the reduced learning rate. A low configured LR plus this floor leaves
+    the scheduler almost no room to anneal — at the default ``1e-4``, an ``lr`` of ``2e-4`` can only
+    be halved once. ``OptimizerConfig`` rejects the degenerate case (``min_lr >= lr``) outright.
+    """
+
+    enabled: bool = True
+    mode: Literal["min", "max"] = "min"
+    factor: float = 0.5
+    patience: int = 5  # in BATCHES — see the class docstring
+    min_lr: float = 1e-4
+
+    def __post_init__(self) -> None:
+        if self.mode not in _MODES:
+            raise ValueError(f"training.scheduler.mode must be 'min' or 'max', got {self.mode!r}.")
+        if not 0.0 < self.factor < 1.0:
+            raise ValueError(f"training.scheduler.factor must be in (0, 1), got {self.factor}.")
+        if self.patience < 0:
+            raise ValueError(f"training.scheduler.patience must be >= 0, got {self.patience}.")
+        if self.min_lr < 0:
+            raise ValueError(f"training.scheduler.min_lr must be >= 0, got {self.min_lr}.")
+
+
+@dataclass(kw_only=True)
 class LoggingConfig:
     """``[training.logging]`` — enable Lightning's ``CSVLogger`` / ``TensorBoardLogger``."""
 
@@ -143,14 +205,24 @@ class LoggingConfig:
 
 @dataclass(kw_only=True)
 class TrainingSectionConfig:
-    """``[training]`` — epochs, learning rates, accelerator + Lightning callbacks/loggers."""
+    """``[training]`` — epochs, per-group optimizer settings, accelerator + Lightning callbacks.
+
+    There are four parameter groups (shared encoder, regression/classification heads,
+    kernel-regression heads, the always-on autoencoder head) and each gets its own AdamW instance.
+    Every group's learning rate AND weight decay is configurable here; before this section grew
+    them, three of the four weight decays were hard-coded at call sites spanning three orders of
+    magnitude (1e-2 encoder / 1e-3 AE / 1e-5 reg+clf), which made them invisible to tuning.
+    """
 
     max_epochs: int = 100
     encoder_lr: float = 5e-3
+    encoder_weight_decay: float = 1e-2
     head_lr: float = 5e-3
+    head_weight_decay: float = 1e-5
     kr_lr: float = 5e-4
     kr_weight_decay: float = 5e-5
     ae_lr: float = 5e-3
+    ae_weight_decay: float = 1e-3
     accelerator: str = "auto"
     # Passed straight to Lightning's Trainer(devices=...): "auto" (all devices for the accelerator),
     # an int count (-1 = all), a list of device indices ([1, 3]), or a string ("1,3" / "0-3").
@@ -159,11 +231,41 @@ class TrainingSectionConfig:
     early_stopping: EarlyStoppingConfig = field(default_factory=EarlyStoppingConfig)
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    optimizer: OptimizerSectionConfig = field(default_factory=OptimizerSectionConfig)
+    scheduler: SchedulerSectionConfig = field(default_factory=SchedulerSectionConfig)
 
     def __post_init__(self) -> None:
         if self.max_epochs < 1:
             raise ValueError(f"training.max_epochs must be >= 1, got {self.max_epochs}.")
         validate_devices(self.devices)
+        for group in ("encoder", "head", "kr", "ae"):
+            lr = getattr(self, f"{group}_lr")
+            if lr <= 0:
+                raise ValueError(f"training.{group}_lr must be > 0, got {lr}.")
+            if getattr(self, f"{group}_weight_decay") < 0:
+                raise ValueError(
+                    f"training.{group}_weight_decay must be >= 0, got {getattr(self, f'{group}_weight_decay')}."
+                )
+
+    def optimizer_config(self, *, lr: float, weight_decay: float) -> "OptimizerConfig":
+        """One parameter group's :class:`OptimizerConfig`, built from this section.
+
+        Single place where ``[training]`` becomes an optimizer, so the four groups cannot drift
+        apart on anything except the lr/weight-decay pair that distinguishes them.
+        """
+        from foundation_model.models.model_config import OptimizerConfig
+
+        return OptimizerConfig(
+            lr=lr,
+            weight_decay=weight_decay,
+            eps=self.optimizer.eps,
+            betas=(self.optimizer.betas[0], self.optimizer.betas[1]),
+            scheduler_enabled=self.scheduler.enabled,
+            mode=self.scheduler.mode,
+            factor=self.scheduler.factor,
+            patience=self.scheduler.patience,
+            min_lr=self.scheduler.min_lr,
+        )
 
 
 def build_model_section(raw: Mapping[str, Any]) -> ModelSectionConfig:
@@ -182,10 +284,16 @@ def build_training_section(raw: Mapping[str, Any]) -> TrainingSectionConfig:
     reject_unknown("training.checkpoint", ckpt_raw, set(CheckpointConfig.__dataclass_fields__))
     log_raw = dict(data.pop("logging", {}))
     reject_unknown("training.logging", log_raw, set(LoggingConfig.__dataclass_fields__))
+    opt_raw = dict(data.pop("optimizer", {}))
+    reject_unknown("training.optimizer", opt_raw, set(OptimizerSectionConfig.__dataclass_fields__))
+    sched_raw = dict(data.pop("scheduler", {}))
+    reject_unknown("training.scheduler", sched_raw, set(SchedulerSectionConfig.__dataclass_fields__))
 
     return TrainingSectionConfig(
         **data,
         early_stopping=EarlyStoppingConfig(**es_raw),
         checkpoint=CheckpointConfig(**ckpt_raw),
         logging=LoggingConfig(**log_raw),
+        optimizer=OptimizerSectionConfig(**opt_raw),
+        scheduler=SchedulerSectionConfig(**sched_raw),
     )

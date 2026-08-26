@@ -34,8 +34,6 @@ from .task_catalog import TaskCatalog, TaskConfig, TaskKind
 
 # Reserved built-in autoencoder head name (see FlexibleMultiTaskModel).
 AE_NAME = "__reconstruction__"
-# Legacy weight decay for regression / classification heads (kernel heads use kr_weight_decay).
-_HEAD_WEIGHT_DECAY = 1e-5
 
 
 def task_names_from_state(state_dict: Mapping[str, Any]) -> list[str]:
@@ -77,10 +75,14 @@ def build_empty_model(
         task_configs=[],
         encoder_config=build_encoder_config(model, catalog.descriptor_dim),
         enable_autoencoder=True,
-        shared_block_optimizer=OptimizerConfig(lr=training.encoder_lr, weight_decay=1e-2),
+        shared_block_optimizer=training.optimizer_config(
+            lr=training.encoder_lr, weight_decay=training.encoder_weight_decay
+        ),
     )
     if AE_NAME in built.task_configs_map:
-        built.task_configs_map[AE_NAME].optimizer = OptimizerConfig(lr=training.ae_lr)
+        built.task_configs_map[AE_NAME].optimizer = training.optimizer_config(
+            lr=training.ae_lr, weight_decay=training.ae_weight_decay
+        )
     return built
 
 
@@ -96,7 +98,10 @@ def build_model_for_checkpoint(
         task_configs=[],
         encoder_config=build_encoder_config(model, catalog.descriptor_dim),
         enable_autoencoder=True,
-        shared_block_optimizer=OptimizerConfig(lr=lr, weight_decay=1e-2),
+        # Placeholder optimizer: predict/inverse never optimize, they only need the
+        # architecture to match the checkpoint. scheduler_enabled=False keeps the min_lr < lr
+        # rule from rejecting a small caller-supplied lr on an inference-only path.
+        shared_block_optimizer=OptimizerConfig(lr=lr, weight_decay=1e-2, scheduler_enabled=False),
     )
     for name in task_names:
         built.add_task(
@@ -160,7 +165,7 @@ def build_head_config(
     if spec.kind is TaskKind.KERNEL_REGRESSION:
         lr, weight_decay = training.kr_lr, training.kr_weight_decay
     else:
-        lr, weight_decay = training.head_lr, _HEAD_WEIGHT_DECAY
+        lr, weight_decay = training.head_lr, training.head_weight_decay
     return catalog.build_task_config(
         name,
         latent_dim=model.latent_dim,
@@ -172,6 +177,7 @@ def build_head_config(
         weight_decay=weight_decay,
         masking_ratio=masking_ratio,
         init_from_data=init_from_data,
+        optimizer_template=training,
     )
 
 

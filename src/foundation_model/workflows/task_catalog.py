@@ -140,6 +140,7 @@ class TaskSpec:
     t_column: str | None = None  # required iff kind == KERNEL_REGRESSION
     num_classes: int | None = None  # required iff kind == CLASSIFICATION
     lr: float | None = None  # per-task LR override
+    weight_decay: float | None = None  # per-task weight-decay override
     scaler: ScalerSpec | None = None
     # Per-head architecture overrides (fall back to [model] defaults when None).
     hidden_dims: list[int] | None = None  # reg/clf hidden widths
@@ -160,6 +161,13 @@ class TaskSpec:
                 raise ValueError(f"Task '{self.name}': num_classes must be >= 2, got {self.num_classes}.")
         elif self.num_classes is not None:
             raise ValueError(f"Task '{self.name}': 'num_classes' is only valid for classification.")
+        # Per-task optimizer overrides are the only way to give one task a different learning rate
+        # or weight decay, so a nonsensical value here silently trains that head badly rather than
+        # failing — validate at config time.
+        if self.lr is not None and self.lr <= 0:
+            raise ValueError(f"Task '{self.name}': lr must be > 0, got {self.lr}.")
+        if self.weight_decay is not None and self.weight_decay < 0:
+            raise ValueError(f"Task '{self.name}': weight_decay must be >= 0, got {self.weight_decay}.")
         self._validate_arch_overrides()
 
     def _validate_arch_overrides(self) -> None:
@@ -562,6 +570,7 @@ class TaskCatalog:
         weight_decay: float = 0.0,
         masking_ratio: float = 1.0,
         init_from_data: bool = True,
+        optimizer_template: Any = None,
     ) -> TaskConfig:
         """Build the model-side task config for ``name``.
 
@@ -572,7 +581,13 @@ class TaskCatalog:
 
         spec = self.task_spec(name)
         head_lr = spec.lr if spec.lr is not None else lr
-        optimizer = OptimizerConfig(lr=head_lr, weight_decay=weight_decay)
+        head_wd = spec.weight_decay if spec.weight_decay is not None else weight_decay
+        # optimizer_template is the [training] section: it carries the shared AdamW/scheduler
+        # numerics so a per-task head differs only in the lr/weight-decay pair.
+        if optimizer_template is not None:
+            optimizer = optimizer_template.optimizer_config(lr=head_lr, weight_decay=head_wd)
+        else:
+            optimizer = OptimizerConfig(lr=head_lr, weight_decay=head_wd)
 
         if spec.kind is TaskKind.REGRESSION:
             head_hidden = spec.hidden_dims if spec.hidden_dims is not None else head_hidden_dims
