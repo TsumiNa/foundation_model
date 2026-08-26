@@ -279,6 +279,22 @@ falls to +1% because it carries every divergence.
 - **The LR optimum interacts with width**: `L128` prefers 2e-3, `L256`/`L384` prefer 1e-3 — which is
   why A1b extends the LR axis per architecture rather than globally.
 
+### The gain is metric-dependent (report both)
+
+同一份 A4 数据换成 R² 口径，结论会变：
+
+| 口径 | 采纳配置 | 未调基线 | 净收益 | 噪声带 | 收益/带 |
+|---|---|---|---|---|---|
+| MAE（相对） | +18.24% | +2.43% | +15.8% | 8.48% | **1.9× 确认** |
+| R²（相对） | +2.80% | −0.43% | +3.23% | 3.74% | **0.86× 未确认** |
+
+绝对 R² 上，三任务平均约 **+0.023**。差异来自 `formation_energy`：它的 MAE 可以改善 25%，但 R²
+只能从 0.984 挪到 0.991 —— MAE 口径放大了这个饱和任务的贡献。
+
+因此本报告的表述是：**encoder 调参在 MAE 上确认有效，在 R² 上落在噪声带内**。只报 MAE 那一半会
+高估结论强度。放进参照系：replay 配方本身值 +0.068 mean R²，末端固化 +0.006 —— 本次调参约 +0.023
+介于两者之间。
+
 ### Stage A adopted configuration (A4 seed band applied)
 
 The A1 single-seed leader did **not** survive seed repeats: `L256/[1024,512,256]/1e-3` scored
