@@ -147,7 +147,10 @@ def main() -> None:
     ap.add_argument("--date", default="20260826")
     ap.add_argument("--stage-a", type=Path, default=RES / "stage_a.csv")
     ap.add_argument("--a-baseline", default="a1_L128_H256_E0p005")
-    ap.add_argument("--winners", type=Path, default=RES / "head_winners.json")
+    # head_winners_confirmed.json, NOT head_winners.json: only the confirmed file carries the
+    # per-task seed band and confirmed_gain this slide is about. The plain file has neither,
+    # so pointing here at it produced an empty ranking and an IndexError three slides later.
+    ap.add_argument("--winners", type=Path, default=RES / "head_winners_confirmed.json")
     ap.add_argument("--stage-c", type=Path, default=RES / "stage_c.json")
     args = ap.parse_args()
 
@@ -260,6 +263,12 @@ def main() -> None:
     kept = [(r, t, w) for r, t, w in scored if w.get("confirmed")]
     negative = [t for _r, t, w in scored if w.get("confirmed_gain", 0) < 0]
     ratios = sorted(r for r, _t, _w in scored)
+    if not ratios:
+        raise SystemExit(
+            f"{args.winners}: no task carries a seed 'band', so B4 cannot be scored. "
+            "This slide needs head_winners_confirmed.json (written by confirm_heads.py); "
+            "head_winners.json holds the single-seed picks only."
+        )
     median = ratios[len(ratios) // 2]
 
     s = prs.slides.add_slide(BLANK)
