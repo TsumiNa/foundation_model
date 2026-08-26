@@ -94,7 +94,7 @@ One entry per prediction head. At least one is required; names must be unique.
 | `t_column` | str | `None` | required iff `kind = kernel_regression`; forbidden otherwise | The sequence x-axis column (e.g. energies for DOS, temperatures for ZT). |
 | `num_classes` | int | `None` | required iff `kind = classification`, `>= 2`; forbidden otherwise | Number of classes. |
 | `lr` | float | `None` | | Per-task learning-rate override (else the section LR for its kind). |
-| `replay` | float \| int | `None` | float in `(0,1)` or int `>= 1` | Per-task replay amount (pretrain); overrides `[pretrain.replay]`. |
+| `replay` | float \| int | `None` | float in `(0,1)` or int `>= 1` | **Accepted and validated, but currently has no effect** — no workflow reads it. Per-task replay amounts come from `[pretrain.replay].per_task`. |
 | `hidden_dims` | list[int] | `None` | positive ints; reg/clf only | Override `[model].head_hidden_dims` for this head. |
 | `x_hidden_dims` | list[int] | `None` | positive ints; KR only | Override `[model].kr_x_hidden_dims` (value branch). |
 | `t_hidden_dims` | list[int] | `None` | positive ints; KR only | Override `[model].kr_t_hidden_dims` (coordinate branch). |
@@ -108,6 +108,22 @@ A nested table on a task. Used only to inverse-transform predictions to human-re
 |---|---|---|---|---|
 | `path` | str (path) | — | required | Fitted scaler (joblib). |
 | `key` | str | `None` | | Key inside a dict-of-scalers pickle; `None` = the whole object is the scaler. |
+
+## Python-layer fields vs TOML keys
+
+`BaseTaskConfig` is what the model consumes; the config layer builds it from `[datasets.*]` +
+`[[tasks]]`, and the names differ. When reading the source, this is the mapping:
+
+| `BaseTaskConfig` field | TOML equivalent | Notes |
+|---|---|---|
+| `data_files` | `[datasets.<name>].path`, selected by `[[tasks]].dataset` | TOML groups tasks under named datasets instead of repeating a path per task. |
+| `data_column` | `[[tasks]].column` | |
+| `t_column` | `[[tasks]].t_column` | Kernel regression only. |
+| `composition_column` | `[data].composition_column` | Global in TOML; the per-task override is Python-only. |
+| `split_column` | — | Honoured inside the data file (a `split` column); not a TOML key. |
+| `task_masking_ratio` | no direct key; set by the pretrain loop | Each step sets `1.0` for the newly introduced task and the ratio resolved from `[pretrain.replay].amount` / `.per_task` for every replaying task. Not settable per task for a scaling-law sweep — use `[datasets.<name>].sample`. |
+| `predict_idx` | `[predict].split` / `[predict].compositions` | Set for every task at once by `fm predict`, not per task. |
+| `optimizer` | `[training]` group settings + `[[tasks]].lr` / `.weight_decay` | See [`[training]`](#training--optimization-pretrain--finetune-only). |
 
 ## `[model]` — network architecture
 
