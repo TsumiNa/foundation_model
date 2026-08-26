@@ -12,14 +12,18 @@ import lightning as L
 import numpy as np
 import pandas as pd
 import pytest
+from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from lightning.pytorch.loggers import CSVLogger
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel, OptimizationTarget
+from foundation_model.models.task_head.base import BaseTaskHead
 from foundation_model.models.model_config import (
+    BaseEncoderConfig,
     ClassificationTaskConfig,
+    EncoderType,
     KernelRegressionTaskConfig,
     MLPEncoderConfig,
     OptimizerConfig,
@@ -2729,3 +2733,74 @@ def test_checkpoint_records_each_scheduler_under_its_own_group(model_config_mixe
     assert list(saved) == model._scheduler_group_keys
     for i, key in enumerate(model._scheduler_group_keys):
         assert saved[key] == {"sched": i}
+
+
+# --- encoder-config normalisation and the typed head accessor ---------------------------------
+
+
+def test_encoder_config_accepts_a_concrete_config_unchanged():
+    """A ready-made config must reach the encoder as-is.
+
+    __init__ used to branch on isinstance(..., BaseEncoderConfig) to skip build_encoder_config;
+    that branch is gone because build_encoder_config already passes such a config through. This
+    pins the behaviour the removed branch used to provide.
+    """
+    encoder_config = MLPEncoderConfig(hidden_dims=[5, 8, 4])
+    model = FlexibleMultiTaskModel(
+        task_configs=[RegressionTaskConfig(name="t", data_column="c", dims=[4, 3, 1])],
+        encoder_config=encoder_config,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3),
+    )
+    assert model.encoder_config is encoder_config
+    assert model.latent_dim == 4
+
+
+def test_encoder_config_accepts_a_mapping():
+    """A mapping is normalised into a dataclass by the same single call."""
+    model = FlexibleMultiTaskModel(
+        task_configs=[RegressionTaskConfig(name="t", data_column="c", dims=[4, 3, 1])],
+        encoder_config={"hidden_dims": [5, 8, 4]},
+        shared_block_optimizer=OptimizerConfig(lr=1e-3),
+    )
+    assert isinstance(model.encoder_config, MLPEncoderConfig)
+    assert model.latent_dim == 4
+
+
+def test_encoder_config_rejects_a_subclass_the_encoder_cannot_use():
+    """The removed branch tested the ABSTRACT base, so a third subclass passed it and then failed
+    deeper in FoundationEncoder. Routing through build_encoder_config rejects it at construction."""
+
+    @dataclass(kw_only=True)
+    class _ThirdKind(BaseEncoderConfig):
+        type: EncoderType = EncoderType.MLP
+
+        @property
+        def latent_dim(self) -> int:
+            return 4
+
+    with pytest.raises(TypeError, match="MLPEncoderConfig"):
+        FlexibleMultiTaskModel(
+            task_configs=[RegressionTaskConfig(name="t", data_column="c", dims=[4, 3, 1])],
+            encoder_config=_ThirdKind(),
+            shared_block_optimizer=OptimizerConfig(lr=1e-3),
+        )
+
+
+def test_head_accessor_returns_the_registered_head_for_every_kind(model_config_mixed_tasks):
+    """_head must resolve to the registered instance for each supported head type.
+
+    It replaces 13 raw ModuleDict lookups whose type a checker could not resolve, so it is the one
+    place the "every value here is a BaseTaskHead" invariant is stated.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=config.shared_block_optimizer,
+    )
+    assert model.task_heads, "fixture must register at least one head"
+    for name in model.task_heads:
+        head = model._head(name)
+        assert head is model.task_heads[name]
+        assert isinstance(head, BaseTaskHead)
+        assert callable(head.compute_loss)

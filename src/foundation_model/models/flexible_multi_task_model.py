@@ -224,7 +224,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
         if encoder_config is None:
             raise ValueError("encoder_config must be provided")
         # build_encoder_config already returns a passed-in config unchanged, so branching here
-        # only duplicated it — and did so against the abstract BaseTaskConfig rather than the
+        # only duplicated it — and did so against the abstract BaseEncoderConfig rather than the
         # concrete EncoderConfig union, so a third subclass would pass this check and then fail
         # inside FoundationEncoder with a worse message. One call, one place that decides.
         self.encoder_config = build_encoder_config(encoder_config)
@@ -1211,8 +1211,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         Returns
         -------
-        dict[str, torch.Tensor]
-            Flat dictionary containing head-specific prediction outputs.
+        TaskPredictions
+            Flat dictionary of head-specific prediction outputs. Values are NumPy arrays — one per
+            prediction channel — except for kernel-regression heads, whose predictions are reshaped
+            to one array per sample because their sequences have different lengths.
         """
         del dataloader_idx  # unused but kept for signature parity
 
