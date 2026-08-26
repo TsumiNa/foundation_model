@@ -1,7 +1,7 @@
 # Copyright 2026 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Dict, List, Mapping, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 import lightning as L
 import numpy as np
@@ -31,6 +31,19 @@ from .composition_sources import (
 )
 from .dataset import CompoundDataset
 
+# A task's batched target or mask. Ordinary heads get one stacked tensor; kernel-regression heads
+# keep one tensor per sample, because their sequences have different lengths and cannot be stacked.
+# That split is the same distinction the model's steps branch on, so naming it here lets both sides
+# say the same thing instead of each re-deriving it from `key in kernel_regression_tasks`.
+BatchedTaskValue = torch.Tensor | list[torch.Tensor]
+
+#: ``{task_name: value}`` for targets and for masks.
+TaskBatch = dict[str, BatchedTaskValue]
+
+#: What the collate function returns and every ``*_step`` unpacks:
+#: ``(descriptors, targets, masks, t-sequences)``.
+CollatedBatch = tuple[torch.Tensor, TaskBatch, TaskBatch, dict[str, list[torch.Tensor]]]
+
 TaskConfig = RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
 
 
@@ -54,28 +67,30 @@ class CollateFnWithTaskInfo:
             cfg.name for cfg in task_configs if cfg.type == TaskType.KERNEL_REGRESSION and cfg.enabled
         }
 
-    def __call__(self, batch):
-        """
-        Custom collate function for batching data.
+    def __call__(self, batch: Sequence[tuple[Any, ...]]) -> CollatedBatch:
+        """Collate one batch.
 
         Parameters
         ----------
-        batch : List[Tuple]
-            List of (model_input_x, sample_y_dict, sample_task_masks_dict, sample_t_sequences_dict)
+        batch : Sequence[tuple]
+            One ``(model_input_x, sample_y_dict, sample_task_masks_dict, sample_t_sequences_dict)``
+            per sample.
 
         Returns
         -------
-        Tuple
-            (batched_input, batched_y_dict, batched_mask_dict, batched_t_sequences_dict)
+        CollatedBatch
+            ``(batched_input, batched_y_dict, batched_mask_dict, batched_t_sequences_dict)``.
         """
         model_inputs, y_dicts, mask_dicts, t_sequences_dicts = zip(*batch)
 
         # Handle model inputs (formula features only)
         batched_input = torch.stack(model_inputs)
 
-        # Handle targets and masks based on task type
-        batched_y_dict = {}
-        batched_mask_dict = {}
+        # Handle targets and masks based on task type. Both dicts hold BatchedTaskValue: a stacked
+        # tensor for ordinary heads, a per-sample list for kernel-regression ones. Inference would
+        # otherwise fix them to whichever branch the first task happened to take.
+        batched_y_dict: TaskBatch = {}
+        batched_mask_dict: TaskBatch = {}
 
         for key in y_dicts[0].keys():
             if key in self.kernel_regression_tasks:
@@ -88,7 +103,7 @@ class CollateFnWithTaskInfo:
                 batched_mask_dict[key] = torch.stack([d[key] for d in mask_dicts])
 
         # Handle sequence data (t-parameters) - always List[Tensor] format
-        batched_t_sequences_dict = {}
+        batched_t_sequences_dict: dict[str, list[torch.Tensor]] = {}
         for key in t_sequences_dicts[0].keys():
             batched_t_sequences_dict[key] = [d[key] for d in t_sequences_dicts]
 
@@ -531,11 +546,18 @@ class CompoundDataModule(L.LightningDataModule):
 
     # ------------------------------------------------------------------ lightning
 
-    def on_train_epoch_start(self):
+    def on_train_epoch_start(self) -> None:
         """Update the DistributedSampler epoch so shuffling differs across epochs."""
-        if getattr(self, "_train_sampler", None) is not None and hasattr(self._train_sampler, "set_epoch"):
-            if getattr(self, "trainer", None) is not None:
-                self._train_sampler.set_epoch(self.trainer.current_epoch)
+        # `_train_sampler` is initialised in __init__ and `DistributedSampler` always defines
+        # set_epoch, so the old getattr/hasattr guards around them tested conditions that cannot
+        # occur. `trainer` is different: Lightning injects it on attach and it is genuinely absent
+        # on a standalone datamodule, so that lookup stays defensive — bound to a typed local so
+        # the check narrows instead of hiding the type behind Any.
+        trainer: L.Trainer | None = getattr(self, "trainer", None)
+        sampler = self._train_sampler
+        if sampler is None or trainer is None:
+            return
+        sampler.set_epoch(trainer.current_epoch)
 
     def setup(self, stage: str | None = None):
         """Prepare datasets for the requested stage (fit, test, predict)."""
