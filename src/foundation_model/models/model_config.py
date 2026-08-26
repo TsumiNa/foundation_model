@@ -184,11 +184,16 @@ class OptimizerConfig:
     scheduler_enabled: bool = True  # False = constant LR (no scheduler is constructed)
     mode: Literal["min", "max"] = "min"  # Whether a lower or higher monitored value is better
     factor: float = 0.5  # LR multiplier applied on plateau
-    patience: int = 5  # Epochs without improvement before reducing
+    patience: int = 5  # BATCHES without improvement before reducing (manual per-batch stepping)
     min_lr: float = 1e-4  # Floor for the reduced LR — see the note below
-    monitor: str = "train_total_loss"  # Metric the plateau is measured on
-    interval: str = "epoch"  # Lightning scheduler interval
-    frequency: int = 1  # Lightning scheduler frequency
+    # The three below are returned in configure_optimizers' lr_scheduler dict, which Lightning
+    # honours ONLY under automatic optimization. FlexibleMultiTaskModel sets
+    # automatic_optimization = False and steps the scheduler itself once per batch with the batch
+    # loss, so today they are inert — kept so the dict stays valid if scheduling ever moves back
+    # under Lightning, and deliberately NOT exposed in [training.scheduler].
+    monitor: str = "train_total_loss"  # inert under manual optimization
+    interval: str = "epoch"  # inert under manual optimization
+    frequency: int = 1  # inert under manual optimization
 
     def __post_init__(self) -> None:
         if self.lr <= 0:

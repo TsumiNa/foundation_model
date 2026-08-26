@@ -98,8 +98,11 @@ def build_model_for_checkpoint(
         task_configs=[],
         encoder_config=build_encoder_config(model, catalog.descriptor_dim),
         enable_autoencoder=True,
-        shared_block_optimizer=OptimizerConfig(lr=lr, weight_decay=1e-2),
-    )  # placeholder optimizer: predict/inverse only need the architecture to match the checkpoint
+        # Placeholder optimizer: predict/inverse never optimize, they only need the
+        # architecture to match the checkpoint. scheduler_enabled=False keeps the min_lr < lr
+        # rule from rejecting a small caller-supplied lr on an inference-only path.
+        shared_block_optimizer=OptimizerConfig(lr=lr, weight_decay=1e-2, scheduler_enabled=False),
+    )
     for name in task_names:
         built.add_task(
             catalog.build_task_config(

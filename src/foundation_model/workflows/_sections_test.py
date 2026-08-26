@@ -31,7 +31,7 @@ def test_optimizer_config_carries_shared_numerics_to_every_group():
             "encoder_lr": 1e-3,
             "encoder_weight_decay": 0.02,
             "optimizer": {"betas": [0.8, 0.95], "eps": 1e-8},
-            "scheduler": {"factor": 0.3, "patience": 2, "min_lr": 1e-6, "monitor": "val_final_loss"},
+            "scheduler": {"factor": 0.3, "patience": 2, "min_lr": 1e-6},
         }
     )
     cfg = training.optimizer_config(lr=training.encoder_lr, weight_decay=training.encoder_weight_decay)
@@ -39,7 +39,6 @@ def test_optimizer_config_carries_shared_numerics_to_every_group():
     assert cfg.betas == (0.8, 0.95)
     assert cfg.eps == 1e-8
     assert (cfg.factor, cfg.patience, cfg.min_lr) == (0.3, 2, 1e-6)
-    assert cfg.monitor == "val_final_loss"
     assert cfg.scheduler_enabled is True
 
 
@@ -94,13 +93,22 @@ def test_optimizer_subsection_validation(raw, message):
         ({"factor": 0.0}, r"factor must be in \(0, 1\)"),
         ({"patience": -1}, "patience must be >= 0"),
         ({"min_lr": -1e-6}, "min_lr must be >= 0"),
-        ({"interval": "batch"}, "must be 'epoch' or 'step'"),
-        ({"frequency": 0}, "frequency must be >= 1"),
     ],
 )
 def test_scheduler_subsection_validation(raw, message):
     with pytest.raises(ValueError, match=message):
         SchedulerSectionConfig(**raw)
+
+
+def test_inert_lightning_scheduler_keys_are_not_exposed():
+    """monitor / interval / frequency cannot take effect under manual optimization.
+
+    The model steps the scheduler itself once per batch, so Lightning never acts on its
+    lr_scheduler dict. Accepting these as config would advertise settings that do nothing.
+    """
+    for key, value in (("monitor", "val_final_loss"), ("interval", "step"), ("frequency", 2)):
+        with pytest.raises(ValueError, match=rf"training\.scheduler.*{key}"):
+            build_training_section({"scheduler": {key: value}})
 
 
 def test_unknown_keys_are_named_in_the_error():

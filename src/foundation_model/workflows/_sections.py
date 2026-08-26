@@ -159,21 +159,30 @@ class OptimizerSectionConfig:
 class SchedulerSectionConfig:
     """``[training.scheduler]`` — ``ReduceLROnPlateau``, applied to every parameter group.
 
-    ``min_lr`` is a FLOOR on the reduced learning rate. It is easy to miss that a low configured
-    LR plus this floor leaves the scheduler almost no room to anneal — at the default `1e-4`, an
-    `lr` of `2e-4` can only be halved once. ``OptimizerConfig`` rejects the degenerate case
-    (`min_lr >= lr`) outright; the near-degenerate ones are the config author's call, which is why
-    the floor is exposed here at all.
+    **``patience`` counts BATCHES, not epochs.** ``FlexibleMultiTaskModel`` sets
+    ``automatic_optimization = False`` and steps the scheduler itself inside ``training_step``,
+    which Lightning runs once per batch. At the default ``patience = 5`` and a 24k-row task at
+    ``batch_size = 256`` (~90 batches/epoch) the LR can reach ``min_lr`` within the first epoch,
+    so this knob is far more aggressive than its name suggests.
+
+    That same manual stepping is why Lightning's ``monitor`` / ``interval`` / ``frequency`` are
+    **not** exposed here. ``configure_optimizers`` still returns them in its ``lr_scheduler``
+    dict, but Lightning honours that dict only under automatic optimization; with manual
+    optimization the model passes the current batch's total loss to ``scheduler.step()`` directly.
+    Surfacing them as config would advertise three settings that cannot take effect — see the
+    ``[[tasks]].replay`` removal for the same failure mode. Honouring them means moving scheduling
+    back under Lightning, which is a training-behaviour change, not a config change.
+
+    ``min_lr`` is a FLOOR on the reduced learning rate. A low configured LR plus this floor leaves
+    the scheduler almost no room to anneal — at the default ``1e-4``, an ``lr`` of ``2e-4`` can only
+    be halved once. ``OptimizerConfig`` rejects the degenerate case (``min_lr >= lr``) outright.
     """
 
     enabled: bool = True
     mode: Literal["min", "max"] = "min"
     factor: float = 0.5
-    patience: int = 5
+    patience: int = 5  # in BATCHES — see the class docstring
     min_lr: float = 1e-4
-    monitor: str = "train_total_loss"
-    interval: str = "epoch"
-    frequency: int = 1
 
     def __post_init__(self) -> None:
         if self.mode not in _MODES:
@@ -184,10 +193,6 @@ class SchedulerSectionConfig:
             raise ValueError(f"training.scheduler.patience must be >= 0, got {self.patience}.")
         if self.min_lr < 0:
             raise ValueError(f"training.scheduler.min_lr must be >= 0, got {self.min_lr}.")
-        if self.interval not in ("epoch", "step"):
-            raise ValueError(f"training.scheduler.interval must be 'epoch' or 'step', got {self.interval!r}.")
-        if self.frequency < 1:
-            raise ValueError(f"training.scheduler.frequency must be >= 1, got {self.frequency}.")
 
 
 @dataclass(kw_only=True)
@@ -260,9 +265,6 @@ class TrainingSectionConfig:
             factor=self.scheduler.factor,
             patience=self.scheduler.patience,
             min_lr=self.scheduler.min_lr,
-            monitor=self.scheduler.monitor,
-            interval=self.scheduler.interval,
-            frequency=self.scheduler.frequency,
         )
 
 

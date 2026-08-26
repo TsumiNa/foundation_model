@@ -186,14 +186,18 @@ key could reach; they were removed in `0.3.0` rather than left as untested dead 
 | `enabled` | bool | `true` | | `false` = constant learning rate; no scheduler is constructed. |
 | `mode` | str | `"min"` | `min` \| `max` | Whether a lower or higher monitored value is better. |
 | `factor` | float | `0.5` | `(0, 1)` | Multiplier applied to the LR on plateau. |
-| `patience` | int | `5` | `>= 0` | Epochs without improvement before reducing. |
-| `min_lr` | float | `0.0001` | `>= 0`, `< lr` | **Floor** for the reduced LR — see the warning below. |
-| `monitor` | str | `"train_total_loss"` | | Metric the plateau is measured on. Note this is a *training* loss, while `[training.early_stopping]` watches `val_final_loss` by default. |
-| `interval` | str | `"epoch"` | `epoch` \| `step` | Lightning scheduler interval. |
-| `frequency` | int | `1` | `>= 1` | Lightning scheduler frequency. |
+| `patience` | int | `5` | `>= 0` | **Batches** without improvement before reducing — see the warning below. |
+| `min_lr` | float | `0.0001` | `>= 0`; `< lr` when `enabled = true` | **Floor** for the reduced LR — see the warning below. |
 
 `ReduceLROnPlateau` is the only scheduler; `StepLR` and the `"None"` selector were removed in
 `0.3.0`, the latter replaced by `enabled`.
+
+> **`patience` counts batches, not epochs.** The model sets `automatic_optimization = False` and
+> steps the scheduler itself inside `training_step`, which Lightning runs once per batch. At
+> `patience = 5` on a 24k-row task with `batch_size = 256` (~90 batches/epoch), the LR can reach
+> `min_lr` inside the first epoch. Lightning's `monitor` / `interval` / `frequency` are not exposed
+> for the same reason: under manual optimization Lightning does not act on them, and the scheduler
+> receives the current batch's total loss.
 
 > **`min_lr` interacts with every learning rate.** It is a floor, so a low LR plus the default
 > `1e-4` floor leaves almost no room to anneal: at `lr = 2e-4` the scheduler can halve once and
