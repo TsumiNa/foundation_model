@@ -4,33 +4,34 @@
 The question: did #45 — stepping ReduceLROnPlateau once per EPOCH instead of once per BATCH —
 change training performance?
 
-Three arms, three seeds each, all on the probe3 3-task sequence:
+Three arms, three seeds each, on the probe3 3-task sequence:
 
-    pab_old_*   image 0.2.1 + probe3.toml           per-BATCH cadence, one global weight_decay 1e-3
-    pab_new_*   image 0.3.2 + patience_ab_new.toml  per-EPOCH cadence, weight decays PINNED to
-                                                    0.2.1's values
-    pab_asis_*  image 0.3.2 + probe3.toml           per-EPOCH cadence AND #42's new per-group
-                                                    weight-decay defaults
+    pab_old_*   image 0.2.1 + probe3.toml           per-BATCH cadence
+    pab_asis_*  image 0.3.2 + probe3.toml           per-EPOCH cadence, SAME weight decays as 0.2.1
+    pab_new_*   image 0.3.2 + patience_ab_new.toml  per-EPOCH cadence, weight decays deliberately
+                                                    altered (encoder 1e-2->1e-3, head 1e-5->1e-3)
 
-    old  -> new   the patience effect, isolated (this is the question)
-    new  -> asis  the weight-decay side effect that #42 introduced
-    old  -> asis  what simply switching images does, both effects together
+    old  -> asis   THE ANSWER: cadence changed, everything else held equal
+    asis -> new    a weight-decay sensitivity probe, free with the runs already done
+    old  -> new    both changes at once; reported only to show they do not interact
 
-Why the pinning matters: #42 replaced one global ``weight_decay = 1e-3`` with per-group defaults
-(encoder 1e-2, head 1e-5, ae 1e-3). Comparing 0.2.1 to 0.3.2 on an unmodified probe3.toml would
-move the encoder's decay 10x and the heads' 100x at the same time as the cadence, and the result
-would be unattributable. pab_new pins all four back; pab_asis deliberately does not, so the side
-effect is measured instead of hidden.
+A CORRECTION IS BAKED INTO THESE LABELS. This experiment was designed believing #42 had changed
+the weight-decay defaults (global 1e-3 -> encoder 1e-2 / head 1e-5), so pab_new "pinned them back"
+to 1e-3. That belief was wrong: 0.2.1 hardcoded encoder=1e-2 (_engine.py:80) and head=1e-5
+(_HEAD_WEIGHT_DECAY), and #42 lifted exactly those values into named config fields without
+changing any of them. Verified field by field against the pre-#42 tree.
 
-SEEDS ARE NOT OPTIONAL HERE. Stage A measured a seed band of 8.48% on this same probe, which was
-large enough to overturn its single-seed leader. A one-seed A/B on a 3-task probe cannot
-distinguish a real effect from seed noise, so every arm is repeated at 3 seeds and every delta is
-reported against the band rather than as a bare number.
+So pab_new does not restore 0.2.1 — it *introduces* a deviation, and pab_ASIS is the arm that
+holds weight decay equal to 0.2.1. The clean cadence measurement is therefore old -> asis, not
+old -> new. The conclusion is unchanged and slightly stronger; only which comparison carries it
+has moved.
 
-The mechanism is NOT re-derived here — it is already pinned down by
-`test_scheduler_steps_once_per_epoch_not_per_batch`, which asserts the scheduler is stepped once
-per epoch rather than once per batch. No LR column is written to metrics.csv, so this script
-measures the OUTCOME and leaves the mechanism to that test.
+SEEDS ARE NOT OPTIONAL HERE. Stage A measured a seed band of 8.48% on this same probe, wide
+enough to have overturned its single-seed leader. Every arm is repeated at 3 seeds and every
+delta is reported against the band rather than as a bare number.
+
+The mechanism is not re-derived here — `test_scheduler_steps_once_per_epoch_not_per_batch` already
+asserts the per-epoch cadence, and no LR column is written to metrics.csv. This measures OUTCOME.
 
     python analysis/patience_ab.py --runs <outroot> -o results/patience_ab.json
 """
@@ -46,8 +47,8 @@ from pathlib import Path
 PROBE_TASKS = ["formation_energy", "tc", "magnetization"]
 ARMS = {
     "old": "0.2.1 · per-batch cadence",
-    "new": "0.3.2 · per-epoch cadence, weight decay pinned to 0.2.1",
-    "asis": "0.3.2 · per-epoch cadence + #42 weight-decay defaults",
+    "asis": "0.3.2 · per-epoch cadence, weight decay identical to 0.2.1",
+    "new": "0.3.2 · per-epoch cadence, weight decay altered (enc 1e-3, head 1e-3)",
 }
 
 
@@ -142,9 +143,9 @@ def main() -> None:
         "probe_tasks": PROBE_TASKS,
         "arms": summary,
         "comparisons": {
-            "patience effect (old -> new)": delta("old", "new"),
-            "weight-decay side effect (new -> asis)": delta("new", "asis"),
-            "switching images as-is (old -> asis)": delta("old", "asis"),
+            "PATIENCE EFFECT (old -> asis)": delta("old", "asis"),
+            "weight-decay sensitivity (asis -> new)": delta("asis", "new"),
+            "both changes together (old -> new)": delta("old", "new"),
         },
         "incomplete_runs": missing,
     }

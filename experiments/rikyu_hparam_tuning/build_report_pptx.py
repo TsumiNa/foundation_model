@@ -333,17 +333,19 @@ def main() -> None:
               col_w=[5.6, 2.2, 1.9, 2.4], size=12)
         y += 0.32 * (len(cmps) + 1) + 0.25
         txt(s, 0.6, y, 12.1, 2.0,
-            ["The cadence fix is a real gain: every seed of 'new' beats every seed of 'old' with no overlap",
-             "(new min 0.8358 > old max 0.8226). By task size — tc +0.0412, magnetization +0.0173,",
-             "formation_energy +0.0047 (already at its 0.995 ceiling, so no room to move).",
+            ["The cadence fix is a real gain: every seed of 'asis' beats every seed of 'old' with no",
+             "overlap (asis min 0.8369 > old max 0.8226). By task size — tc +0.0412, magnetization",
+             "+0.0173, formation_energy +0.0047 (already at its 0.995 ceiling, so no room to move).",
              "",
-             "The new arm also early-stops sooner (114 vs 136 mean final epoch) and runs 21% faster.",
-             "That is what per-batch patience predicts: at ~90 batches/epoch the LR hit the min_lr floor",
-             "inside epoch 1, so the old arm crawled to a worse plateau and took longer to get there.",
+             "The per-epoch arm also early-stops sooner (114 vs 136 mean final epoch) and runs 21%",
+             "faster. That is what per-batch patience predicts: at ~90 batches/epoch the LR hit the",
+             "min_lr floor inside epoch 1, so the old arm crawled to a worse plateau, slower.",
              "",
-             "The 'asis' arm carries #42's new weight-decay defaults (encoder 10x, head 1/100x) on top.",
-             "Pinning those back in 'new' is what makes the gain attributable to the cadence alone —",
-             "the decay change itself lands within noise."],
+             "'asis' — not 'new' — is the arm that holds weight decay equal to 0.2.1. #42 lifted",
+             "0.2.1's hardcoded decays (encoder 1e-2, head 1e-5) into named config fields without",
+             "changing them, so 0.3.2's defaults already ARE 0.2.1's. 'new' alters them on purpose,",
+             "and that turns out to be worth -0.0052 — within noise. The decay simply does not matter",
+             "much here; the cadence does."],
             size=11, color=MUT)
 
     # 12 — conclusions

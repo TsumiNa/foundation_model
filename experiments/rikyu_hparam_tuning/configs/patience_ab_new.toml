@@ -1,26 +1,24 @@
-# fm pretrain — NEW-IMAGE arm of the patience A/B (see analysis/patience_ab.py).
+# fm pretrain — the WEIGHT-DECAY SENSITIVITY arm of the patience A/B.
 #
-# Identical to probe3.toml except for the four weight-decay terms below. That difference is what
-# makes the A/B a test of ONE thing.
+# NOT the "restore 0.2.1" arm it was written to be. This file was created believing #42 had
+# changed the weight-decay defaults (one global 1e-3 -> encoder 1e-2 / head 1e-5), so pinning
+# them to 1e-3 would isolate #45's scheduler-cadence change. That belief was wrong:
 #
-# The comparison is image 0.2.1 (probe3.toml) vs image 0.3.2 (this file). Three training-relevant
-# changes land in that window:
+#   0.2.1 encoder : 1e-2   hardcoded at _engine.py:80
+#   0.2.1 head    : 1e-5   hardcoded as _HEAD_WEIGHT_DECAY
+#   0.2.1 kr      : 5e-5   from training.kr_weight_decay
+#   0.2.1 ae      : 1e-3   OptimizerConfig default (none passed)
 #
-#   #42  optimizer/scheduler knobs exposed, AND new PER-GROUP weight-decay defaults:
-#          before: one global weight_decay = 1e-3 for every group
-#          after:  encoder 1e-2 (10x higher), head 1e-5 (100x lower), ae 1e-3, kr 5e-5
-#   #45  the subject of this experiment: ReduceLROnPlateau is stepped once per EPOCH
-#        (on_train_epoch_end, on the epoch-aggregated monitor) instead of once per BATCH
-#        (training_step, on the raw batch loss). At ~90 batches/epoch the old cadence drove the
-#        LR to the min_lr floor inside epoch 1, so `patience` never behaved as documented.
-#   #48  mypy refactor of the model — intended behaviour-preserving.
+# #42 lifted exactly those four values into named config fields and changed none of them, so
+# 0.3.2's defaults already equal 0.2.1's. probe3.toml unchanged is what holds weight decay equal
+# across images — that is the pab_asis arm, and old -> asis is the clean cadence measurement.
 #
-# Left alone, #42's weight-decay change would be inseparable from #45's cadence change: a 10x
-# encoder decay shift moves training on its own. Pinning all four back to 0.2.1's effective
-# values removes that confound, leaving the scheduler cadence as the only deliberate difference.
+# The file is kept, and kept in the grid, because what it actually measures is still worth having:
+# how much the encoder/head weight decay matters at all. Measured answer: -0.0052, 0.40x the seed
+# band, i.e. within noise.
 #
-# Everything else — architecture, LRs, replay recipe, early stopping, splits, seed handling —
-# is inherited unchanged from probe3.toml.
+# Everything else — architecture, LRs, replay recipe, early stopping, splits — is inherited
+# unchanged from probe3.toml.
 #
 [data]
 composition_column = "composition"
