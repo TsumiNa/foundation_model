@@ -9,6 +9,7 @@ from foundation_model.models.model_config import (
     PREDICT_IDX_LITERALS,
     ClassificationTaskConfig,
     KernelRegressionTaskConfig,
+    OptimizerConfig,
     RegressionTaskConfig,
     TaskType,
 )
@@ -92,3 +93,40 @@ def test_existing_construction_pattern_still_works():
     # New fields are inert for old-style configs.
     assert cfg.data_files == ()
     assert cfg.predict_idx is None
+
+
+# --- OptimizerConfig -------------------------------------------------------------------------
+
+
+def test_optimizer_config_defaults_are_adamw_plus_plateau():
+    cfg = OptimizerConfig()
+    assert cfg.scheduler_enabled is True
+    assert cfg.betas == (0.9, 0.999)
+    assert (cfg.factor, cfg.patience, cfg.min_lr) == (0.5, 5, 1e-4)
+
+
+def test_optimizer_config_rejects_a_scheduler_that_cannot_reduce():
+    """min_lr is a floor: at or above lr, ReduceLROnPlateau fires but never changes the LR."""
+    with pytest.raises(ValueError, match="must be below lr"):
+        OptimizerConfig(lr=1e-4, min_lr=1e-4)
+    # Disabling the scheduler makes a constant LR the explicit intent, so the same pair is fine.
+    assert OptimizerConfig(lr=1e-4, min_lr=1e-4, scheduler_enabled=False).lr == 1e-4
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"lr": 0.0}, "lr must be > 0"),
+        ({"weight_decay": -1.0}, "weight_decay must be >= 0"),
+        ({"eps": 0.0}, "eps must be > 0"),
+        ({"betas": (0.9,)}, "two floats"),
+        ({"betas": (0.9, 1.0)}, "two floats"),
+        ({"mode": "lowest"}, "must be 'min' or 'max'"),
+        ({"factor": 1.5}, r"factor must be in \(0, 1\)"),
+        ({"patience": -1}, "patience must be >= 0"),
+        ({"frequency": 0}, "frequency must be >= 1"),
+    ],
+)
+def test_optimizer_config_validation(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        OptimizerConfig(**kwargs)

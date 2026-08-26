@@ -146,14 +146,59 @@ above).
 | Key | Type | Default | Constraint | Description |
 |---|---|---|---|---|
 | `max_epochs` | int | `100` | `>= 1` | Max epochs per training step. |
-| `encoder_lr` | float | `0.005` | | Shared-encoder learning rate. |
-| `head_lr` | float | `0.005` | | Regression/classification head learning rate. |
-| `kr_lr` | float | `0.0005` | | Kernel-regression head learning rate. |
-| `kr_weight_decay` | float | `5e-05` | | Weight decay for KR heads (reg/clf heads use a fixed `1e-5`). |
-| `ae_lr` | float | `0.005` | | AutoEncoder head learning rate (the AE head always trains). |
+| `encoder_lr` | float | `0.005` | `> 0` | Shared-encoder learning rate. |
+| `encoder_weight_decay` | float | `0.01` | `>= 0` | Shared-encoder weight decay. |
+| `head_lr` | float | `0.005` | `> 0` | Regression/classification head learning rate. |
+| `head_weight_decay` | float | `1e-05` | `>= 0` | Regression/classification head weight decay. |
+| `kr_lr` | float | `0.0005` | `> 0` | Kernel-regression head learning rate. |
+| `kr_weight_decay` | float | `5e-05` | `>= 0` | Kernel-regression head weight decay. |
+| `ae_lr` | float | `0.005` | `> 0` | AutoEncoder head learning rate (the AE head always trains). |
+| `ae_weight_decay` | float | `0.001` | `>= 0` | AutoEncoder head weight decay. |
 | `accelerator` | str | `"auto"` | | Lightning accelerator (`auto` / `cpu` / `gpu` / …). |
 | `devices` | int \| list[int] \| str | `"auto"` | | Passed to Lightning `Trainer(devices=...)`: `"auto"` (all devices for the accelerator), an int count (`-1` = all), a list of device indices (`[1, 3]`), or a string (`"1,3"` / `"0-3"`). |
 | `seed` | int | `2025` | | Global seed (`--seed` overrides). |
+
+The model builds **one AdamW instance per parameter group** — shared encoder, regression/
+classification heads, kernel-regression heads, and the always-on autoencoder head — so each group
+has its own learning rate and weight decay. The four defaults span three orders of magnitude
+(`1e-2` encoder / `1e-3` AE / `5e-5` KR / `1e-5` reg+clf); they were call-site constants before
+`0.3.0` and are configuration now.
+
+A single `[[tasks]]` entry may override its own head with `lr` / `weight_decay`, which win over
+these group defaults. Everything else about the optimizer comes from the two sub-tables below and
+is shared by every group.
+
+### `[training.optimizer]` → AdamW numerics (shared by every group)
+
+| Key | Type | Default | Constraint | Description |
+|---|---|---|---|---|
+| `betas` | list[float] | `[0.9, 0.999]` | two values in `[0, 1)` | AdamW running-average coefficients. |
+| `eps` | float | `1e-06` | `> 0` | Added to the denominator for numerical stability. |
+
+AdamW is the only optimizer. Earlier revisions carried `Adam` and `SGD` branches that no config
+key could reach; they were removed in `0.3.0` rather than left as untested dead paths.
+
+### `[training.scheduler]` → `ReduceLROnPlateau` (shared by every group)
+
+| Key | Type | Default | Constraint | Description |
+|---|---|---|---|---|
+| `enabled` | bool | `true` | | `false` = constant learning rate; no scheduler is constructed. |
+| `mode` | str | `"min"` | `min` \| `max` | Whether a lower or higher monitored value is better. |
+| `factor` | float | `0.5` | `(0, 1)` | Multiplier applied to the LR on plateau. |
+| `patience` | int | `5` | `>= 0` | Epochs without improvement before reducing. |
+| `min_lr` | float | `0.0001` | `>= 0`, `< lr` | **Floor** for the reduced LR — see the warning below. |
+| `monitor` | str | `"train_total_loss"` | | Metric the plateau is measured on. Note this is a *training* loss, while `[training.early_stopping]` watches `val_final_loss` by default. |
+| `interval` | str | `"epoch"` | `epoch` \| `step` | Lightning scheduler interval. |
+| `frequency` | int | `1` | `>= 1` | Lightning scheduler frequency. |
+
+`ReduceLROnPlateau` is the only scheduler; `StepLR` and the `"None"` selector were removed in
+`0.3.0`, the latter replaced by `enabled`.
+
+> **`min_lr` interacts with every learning rate.** It is a floor, so a low LR plus the default
+> `1e-4` floor leaves almost no room to anneal: at `lr = 2e-4` the scheduler can halve once and
+> then stops. `min_lr >= lr` is rejected at config time, because in that case the scheduler runs
+> but can never change the LR — a no-op that is invisible in logs. When lowering a learning rate
+> below ~`1e-3`, lower `min_lr` with it or set `enabled = false` deliberately.
 
 ### `[training.early_stopping]` → Lightning `EarlyStopping` (on by default)
 

@@ -23,6 +23,7 @@ from foundation_model.workflows.task_catalog import (
     ScalerSpec,
     TaskCatalog,
     TaskKind,
+    TaskSpec,
     build_task_catalog_config,
     init_kernel_centers_sigmas,
 )
@@ -580,3 +581,24 @@ def test_build_datamodule(catalog_dir) -> None:
     cfgs = {c.name: c for c in dm.task_configs}
     assert cfgs["density"].task_masking_ratio == 0.5
     assert cfgs["density"].predict_idx == "test"
+
+
+# --- per-task optimizer overrides ------------------------------------------------------------
+
+
+def test_per_task_lr_and_weight_decay_override_the_group_defaults():
+    spec = TaskSpec(name="t", kind="regression", dataset="d", column="c", lr=1e-4, weight_decay=0.25)
+    assert (spec.lr, spec.weight_decay) == (1e-4, 0.25)
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"lr": 0.0}, "lr must be > 0"),
+        ({"lr": -1e-3}, "lr must be > 0"),
+        ({"weight_decay": -0.1}, "weight_decay must be >= 0"),
+    ],
+)
+def test_per_task_optimizer_overrides_are_validated(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        TaskSpec(name="t", kind="regression", dataset="d", column="c", **kwargs)

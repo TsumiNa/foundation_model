@@ -51,7 +51,7 @@ def model_config_mixed_tasks():
             type=TaskType.REGRESSION,
             dims=[latent_dim, 64, 1],
             data_column="regr_task_1",
-            optimizer=OptimizerConfig(lr=1e-4, scheduler_type="None"),
+            optimizer=OptimizerConfig(lr=1e-4, scheduler_enabled=False),
             loss_weight=1.0,
         ),
         ClassificationTaskConfig(
@@ -60,7 +60,7 @@ def model_config_mixed_tasks():
             dims=[latent_dim, 64, 3],
             data_column="clf_task_1_classification_value",
             num_classes=3,
-            optimizer=OptimizerConfig(lr=1e-4, scheduler_type="None"),
+            optimizer=OptimizerConfig(lr=1e-4, scheduler_enabled=False),
             loss_weight=1.0,
         ),
         RegressionTaskConfig(
@@ -68,7 +68,7 @@ def model_config_mixed_tasks():
             type=TaskType.REGRESSION,
             dims=[latent_dim, 32, 2],
             data_column="regr_task_2",
-            optimizer=OptimizerConfig(lr=1e-4, scheduler_type="None"),
+            optimizer=OptimizerConfig(lr=1e-4, scheduler_enabled=False),
             loss_weight=0.5,
         ),
     ]
@@ -77,7 +77,7 @@ def model_config_mixed_tasks():
         "shared_block_dims": shared_dims,
         "task_configs": task_configs_list,
         "encoder_config": MLPEncoderConfig(hidden_dims=shared_dims, norm=True, residual=False),
-        "shared_block_optimizer": OptimizerConfig(lr=1e-3, scheduler_type="None"),
+        "shared_block_optimizer": OptimizerConfig(lr=1e-3, scheduler_enabled=False),
     }
     return SimpleNamespace(**config_dict)
 
