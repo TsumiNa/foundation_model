@@ -2620,3 +2620,76 @@ def test_no_optimizer_step_when_loss_has_no_graph(model_config_mixed_tasks, samp
     backward.assert_not_called()
     optimizer.zero_grad.assert_called_once()
     optimizer.step.assert_not_called()
+
+
+# --- characterization: the three steps' observable output must not drift -----------------------
+
+
+def _run_step_and_capture(model, batch, step_name, mocker):
+    """Every value the step publishes: its return, and the full logged key/value set."""
+    captured: dict[str, float] = {}
+
+    def record_dict(d, *args, **kwargs):
+        for key, value in d.items():
+            captured[key] = float(value)
+
+    def record_one(key, value, *args, **kwargs):
+        captured[key] = float(value)
+
+    mocker.patch.object(model, "log_dict", side_effect=record_dict)
+    mocker.patch.object(model, "log", side_effect=record_one)
+    if step_name == "training_step":
+        optimizer = mocker.MagicMock()
+        mocker.patch.object(model, "optimizers", return_value=[optimizer])
+        mocker.patch.object(model, "manual_backward")
+    result = getattr(model, step_name)(batch, 0)
+    return (None if result is None else float(result)), captured
+
+
+@pytest.mark.parametrize("step_name", ["training_step", "validation_step", "test_step"])
+def test_step_output_is_stable(model_config_mixed_tasks, sample_batch_mixed_tasks, mocker, step_name):
+    """Pin what each step returns and logs.
+
+    These functions have been rewritten several times and carry the loss that actually trains the
+    model, so a refactor has to prove it changed nothing observable. This captures the return value
+    and every logged key/value from a fixed batch with fixed weights; any drift in loss
+    composition, weighting, masking or metric naming fails here rather than silently changing
+    training.
+    """
+    torch.manual_seed(0)
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=config.shared_block_optimizer,
+    )
+    model.eval()
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.fill_(0.01)
+
+    returned, logged = _run_step_and_capture(model, sample_batch_mixed_tasks, step_name, mocker)
+
+    prefix = {"training_step": "train", "validation_step": "val", "test_step": "test"}[step_name]
+    task_names = [c.name for c in config.task_configs]
+
+    # Structure: one raw loss, one all_missing flag, one weight and one contribution per task that
+    # produced a loss, plus the aggregate keys.
+    for name in task_names:
+        assert f"{prefix}_{name}_all_missing" in logged, f"missing all_missing flag for {name}"
+    assert f"{prefix}_final_supervised_loss" in logged
+    assert f"{prefix}_final_loss" in logged
+
+    # Values: the aggregate must equal the sum of the per-task contributions it reports.
+    contributions = sum(v for k, v in logged.items() if k.endswith("_final_loss_contrib"))
+    assert logged[f"{prefix}_final_supervised_loss"] == pytest.approx(contributions, rel=1e-5)
+    assert logged[f"{prefix}_final_loss"] == pytest.approx(contributions, rel=1e-5)
+    if returned is not None:
+        assert returned == pytest.approx(contributions, rel=1e-5)
+
+    # Weighting: with no learnable balancer, each contribution is weight x raw loss.
+    for name in task_names:
+        raw_key, weight_key = f"{prefix}_{name}_raw_loss", f"{prefix}_{name}_static_weight"
+        contrib_key = f"{prefix}_{name}_final_loss_contrib"
+        if raw_key in logged:
+            assert logged[contrib_key] == pytest.approx(logged[raw_key] * logged[weight_key], rel=1e-5)
