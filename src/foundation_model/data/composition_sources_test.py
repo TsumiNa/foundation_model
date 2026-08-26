@@ -12,6 +12,7 @@ import pytest
 from loguru import logger
 
 from foundation_model.data.composition_sources import (
+    canonical_key,
     DescriptorCache,
     PrecomputedDescriptorSource,
     build_composition_universe,
@@ -27,15 +28,16 @@ from foundation_model.data.composition_sources import (
 
 
 def _key(formula: str) -> str:
-    """The canonical key for a formula the test knows is parseable.
+    """The canonical key for ``formula``, by the same rule the descriptor frame is indexed with.
 
-    ``normalize_composition`` returns ``None`` for input it cannot parse, which pandas indexers
-    reject. Every formula in these fixtures is valid, so assert it once here instead of narrowing
-    at each call site.
+    ``normalize_composition`` returns ``str | None``, which pandas indexers reject — but unboxing
+    it here with an assert would invent a second rule: production never calls it bare, it goes
+    through ``canonical_key``, which falls back to ``str(value)`` so unparseable keys (synthetic
+    IDs) still align across the task and descriptor sides. Reusing that function keeps the test
+    asserting against the keys the code under test actually produces, and it returns ``str``, so
+    the narrowing falls out rather than being asserted.
     """
-    key = normalize_composition(formula)
-    assert key is not None, f"fixture formula {formula!r} should be parseable"
-    return key
+    return canonical_key(formula, normalize_composition)
 
 
 def test_normalize_composition_formula_and_order_invariant():
