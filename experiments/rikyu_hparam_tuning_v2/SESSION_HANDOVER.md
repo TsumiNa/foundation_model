@@ -167,8 +167,20 @@ master 上 encoder/ae 都走 `training.optimizer_config(...)`，**接线是好�
 
 ## 6. 未决事项
 
-> 本节在 v1 完全结束后由 v1 session 更新为最终状态。若你读到时仍是"进行中"，
-> 说明 v1 session 未能收尾，请先按 §3 的路径确认 Stage C 的实际完成情况。
+> **v1 完成的判定信号是 git tag `v1-complete`**（与你完成时打 `v2-complete` 对称）。
+>
+> ```bash
+> git fetch --tags && git tag -l v1-complete
+> ```
+>
+> tag 出现 = Stage C 全部结果、报告、PPT 均已就位，可以放心读取。
+> tag 未出现 = v1 仍在收尾，`results/` 里的 Stage C 数据**可能不完整**。
+>
+> **这不会阻塞你**：v2 的实验部分完全独立，只有最后的合并综述需要 v1 的数据，
+> 而那时（v2 约 1.5 天）v1 早已结束。
+>
+> 若 v2 都跑完了 tag 仍未出现，说明 v1 session 未能收尾 —— 此时按 §3 的路径
+> 自行确认 Stage C 的实际完成情况，并在合并报告里注明 v1 的哪些部分缺失。
 
 - [ ] Stage C `c_base` 预训练完成 + 提交 `ccon_base`
 - [ ] Stage C `c_tuned` consolidation（job 52238）完成

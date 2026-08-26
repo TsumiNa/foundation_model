@@ -15,10 +15,22 @@
 > | **收口 PR #41** | |
 > | 记录偏离计划之处与异常 | |
 >
-> **v1 已由上一个 session 独立完成并封存**（报告 + PPT + Stage C 全部结果）。
-> 你不需要跑 v1，也不要改它 —— 直接把它当作既成的对照数据读取。
+> **v2 可以立刻开始，不需要等 v1。** 两者互不阻塞 —— v2 的 Stage 0 / A' / B' / C'
+> 没有任何一步依赖 v1 的产出。
 >
-> v2 可以**立刻开始**，不需要等 v1。
+> ⚠️ **但 v1 在你开始时可能仍在收尾。** v1 由上一个 session 负责跑完并封存
+> （Stage C + 报告 + PPT）。你只有在**最后一步的合并综述**（§9.5）才需要它的结果。
+>
+> **判断 v1 是否已完成：检查 git tag `v1-complete`。**
+>
+> ```bash
+> git fetch --tags
+> git tag -l v1-complete        # 出现 = v1 已封存，结果可读
+> ```
+>
+> tag 出现之前，`experiments/rikyu_hparam_tuning/results/` 里的 Stage C 数据
+> **可能不完整**，不要拿它下结论。v2 自己的实验完全不受影响，照常推进即可。
+> 到你做合并综述时（v2 要跑约 1.5 天），v1 早就结束了。
 >
 > **动手前必读** `experiments/rikyu_hparam_tuning_v2/SESSION_HANDOVER.md` ——
 > 那份文档记录了 v1 session 建立的全部事实、**以及它犯过并修正过的错误**。
