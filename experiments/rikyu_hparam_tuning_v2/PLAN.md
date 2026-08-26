@@ -2,6 +2,22 @@
 
 > 本文档为**全新 session 的执行说明**，不依赖任何对话上下文。执行者应先通读全文，再动手。
 > 前一轮（v1）的全部产物在 `experiments/rikyu_hparam_tuning/`，本文档大量引用它。
+>
+> ## ⚠️ 先读这段：你的职责范围
+>
+> **你负责 v2 的执行与结果整理，不负责最终总结。**
+>
+> | 归你 | 不归你 |
+> |---|---|
+> | 跑完 Stage 0 / A' / B' / C' | 撰写 v1+v2 的合并报告或 PPT |
+> | 产出 v2 自己的分析产物（JSON / 图 / v2 报告） | 关闭或合并 PR #41 |
+> | 记录偏离计划之处与异常 | 对 v1 的产物做任何改动 |
+> | 按 §9 发出完成信号 | 判定整个 campaign 的结论 |
+>
+> 另一个 session 正在等 v1 跑完，并会在收到你的信号后做**跨 v1/v2 的最终收尾**
+> （合并报告、PPT、#41 收口）。v2 可以**立刻开始**，不需要等 v1 —— 两者互不阻塞。
+>
+> 完成（或卡住）后**必须**按 **§9 交接协议**发信号，否则收尾方无法感知。
 
 ---
 
@@ -396,3 +412,145 @@ ssh rikyu-login 'bash -lc "sinfo -s | head; squeue -u \$USER"'
 **第一件该确认的事**：v1 的 Stage C 是否已跑完（`c_base` / `c_tuned` 的
 `training/final_model.pt` 是否存在），以及 consolidation 是否已提交。
 那批结果是 v2 的外部对照，需要先归档。
+
+---
+
+## 9. 交接协议（**必须执行**）
+
+v2 与最终收尾在**两个不同的 session**里。收尾方不会看到你的对话，只能看到你留下的**文件与 git 状态**。
+所以信号必须是**仓库里可被轮询到的东西**，而不是一句口头汇报。
+
+### 9.1 完成时要做的五件事
+
+按顺序执行，**缺一不可**：
+
+**1）结果落地到两个位置**
+
+```bash
+# RIKYU 上的原始输出（权威副本）
+/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning_v2/
+
+# rsync 回本地镜像（收尾方从这里读）
+rsync -az --partial rikyu-login:/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning_v2/ \
+    experiments/rikyu_hparam_tuning_v2/results/raw/
+```
+
+> `experiments/*/results/` 在 `.gitignore` 里 —— 原始结果**不进 git**，靠 rsync 传递。
+> 但下面第 2 步的 `HANDOFF.md` 和分析产物的**汇总 JSON** 必须进 git（见 9.3）。
+
+**2）写 `experiments/rikyu_hparam_tuning_v2/HANDOFF.md`**
+
+严格按 §9.2 的模板。收尾方会**逐字段**读它，字段缺失会导致收尾停下来反问。
+
+**3）提交并推送到分支 `exp/rikyu-hparam-tuning-v2`**
+
+```bash
+git checkout -b exp/rikyu-hparam-tuning-v2   # 若尚未创建
+git add experiments/rikyu_hparam_tuning_v2/   # results/ 会被 gitignore 自动排除
+git commit -m "exp(v2): campaign complete — handoff"
+git push -u origin exp/rikyu-hparam-tuning-v2
+```
+
+**4）打并推送 tag `v2-complete`** ← **这是收尾方轮询的信号**
+
+```bash
+git tag -a v2-complete -m "v2 tuning campaign complete; see HANDOFF.md"
+git push origin v2-complete
+```
+
+> tag 是**唯一的机器可判定信号**。只推分支不打 tag，收尾方不会认为 v2 已结束。
+> 若 tag 已存在需要更新：`git tag -f -a v2-complete ... && git push -f origin v2-complete`，
+> 并在 `HANDOFF.md` 里写明为什么重发。
+
+**5）在 PR #41 上留一条评论**（人类可见的信号）
+
+```bash
+gh pr comment 41 --body "v2 调参 campaign 已完成，tag \`v2-complete\`，详见 exp/rikyu-hparam-tuning-v2 分支的 HANDOFF.md。"
+```
+
+### 9.2 `HANDOFF.md` 模板（字段不可省略）
+
+```markdown
+# v2 交接
+
+## 状态
+COMPLETE | PARTIAL | BLOCKED        <- 三选一，必填
+（PARTIAL / BLOCKED 时：说明卡在哪一步、已完成到什么程度、是否可恢复）
+
+## 采纳参数
+- encoder：latent_dim / encoder_hidden_dims / encoder_lr
+- 调度器：min_lr / patience / factor
+- head：head_hidden_dims / head_lr / kr_x_hidden_dims / kr_lr
+- 其余一律为默认值？（是/否；否则逐条列出偏离）
+
+## 关键数字（每项都必须带 seed 数与噪声带）
+| 阶段 | 配置 | 指标 | 均值 | seed 数 | 噪声带 | 是否超出带 |
+|---|---|---|---|---|---|---|
+
+- Stage 0 锚点（未调 + 新镜像）：
+- A' 决赛前 3 名（25 seed）：
+- B' 决赛前 3 名（25 seed）：
+- Stage C' 四个 arm 的 mean R² 与大/中/小 deficit：
+
+## 与计划的偏离
+逐条列出：改了什么、为什么、影响哪些结论。**没有偏离也要显式写"无"。**
+
+## 异常与存疑
+跑挂过的、重跑过的、数字反直觉的、边界仍然binding 的 —— 全部列出。
+**不要为了好看而省略。** 收尾方需要据此判断哪些结论能写进报告。
+
+## 产物位置
+- RIKYU 原始输出：
+- 本地镜像：
+- 汇总 JSON（已进 git）：
+- 图（已进 git）：
+
+## 环境
+- 镜像 tag / 版本：
+- 提交时的 commit sha：
+```
+
+### 9.3 哪些分析产物要进 git
+
+`.gitignore` 里除了 `experiments/**/results/`，还排除了 **`experiments/**/*.png`** 与
+**`experiments/**/*.csv`**（实测确认过）。所以**图和 CSV 也不进 git** —— 别指望它们能通过
+`git push` 传给收尾方。
+
+| 进 git | 不进 git（靠 rsync 或重新生成） |
+|---|---|
+| `HANDOFF.md` | `results/**` 原始 run 输出 |
+| **汇总 JSON** ← 收尾方的主要数据源 | `*.png` 图 |
+| config / 作业脚本 / 分析代码（`.py`） | `*.csv` |
+| | checkpoint（`*.pt`）、lightning logs |
+
+**因此汇总 JSON 是唯一能可靠跨 session 传递的数据载体，必须写全。**
+凡是收尾方需要的数字，都要能从 JSON 里读到，不能只存在于图里或 CSV 里。
+
+图按 v1 的做法处理：**由分析脚本从 JSON 重新生成**。只要 JSON 和 `.py` 都在，
+收尾方可以自己重画 —— 所以分析脚本必须能脱离原始 run 输出、仅凭汇总 JSON 出图。
+（v1 的图就是这样：`analysis/*.png` 存在于本地但从未进 git。）
+
+汇总 JSON 放在 `experiments/rikyu_hparam_tuning_v2/summary/`（**不要**放 `results/`，
+那整个目录被忽略；`summary/` 实测不被忽略）。建议沿用 v1 `analysis/patience_ab.py` 的结构 ——
+它已经带了 arm / per_seed / band / comparison 这几层，正是收尾需要的形状。
+
+### 9.4 卡住或失败时
+
+**不要沉默。** 同样走 §9.1 的五步，只是：
+
+- `HANDOFF.md` 状态写 `BLOCKED` 或 `PARTIAL`，并写清卡点
+- tag 改用 **`v2-blocked`**（不要用 `v2-complete`，否则收尾方会以为数据齐了）
+- PR #41 的评论里说明卡在哪、需要什么
+
+部分完成也有价值：Stage 0 + A' 跑完但 C' 没跑完，收尾方仍能写出"调参收益"的部分结论，
+只是不能写部署 régime 的迁移结论。**把跑到哪里如实说清楚，比硬凑一个完整结论有用得多。**
+
+### 9.5 收尾方（另一个 session）会做什么
+
+供你判断该留下什么，不需要你执行：
+
+1. 轮询 `git fetch --tags` 检测 `v2-complete` / `v2-blocked`
+2. 读 `HANDOFF.md` + `summary/*.json`
+3. 合并 v1 的四个参照点与 v2 的结果，判定"升级值多少 / 调参值多少 / probe 排名是否迁移"
+4. 出最终合并报告与 PPT
+5. 收口 PR #41
