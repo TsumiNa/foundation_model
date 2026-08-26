@@ -63,6 +63,28 @@ campaign, i.e. not a measurement. MAE separates them by 13%. Ranking 80 configs 
 have ranked noise. The 3-task probe fixes this structurally (mid/small tasks have real R²
 headroom) and MAE remains the primary statistic on the big task.
 
+### 学习率结论的机制修正（2026-08-26，来自 PR #42 review）
+
+Stage A 的核心结论"`encoder_lr` 是主导旋钮"在**数值上成立**（3 seed 确认），但它的**机制解释需要修正**。
+
+审查 PR #42 时确认：`FlexibleMultiTaskModel` 设置 `automatic_optimization = False`，并在
+`training_step` 里手动调用 `scheduler.step(total_loss)` —— 而 `training_step` **每个 batch 执行一次**。
+因此 `ReduceLROnPlateau` 的 `patience = 5` 单位是 **batch 而非 epoch**。
+
+对本 campaign 的探针（`formation_energy` 23,180 行、`batch_size = 256`，约 90 batch/epoch）：
+学习率可能在**第一个 epoch 之内**就经由多次减半跌到 `min_lr = 1e-4` 的地板。
+
+由此，正确的表述是：
+
+- 被调的是**衰减到地板之前的初始学习率与早期轨迹**，不是一个全程有效的学习率。
+- A1 里 `encoder_lr` 从 5e-3 → 1e-3 的收益，来自早期阶段的更新幅度，而非"整个训练用更小的 LR"。
+- A1b 中 2e-4 / 5e-4 表现更差，除了"LR 过低"之外还有第二个解释：它们距 `min_lr` 只剩 1–2 次减半，
+  scheduler 几乎失去退火能力。**现有数据无法区分这两个原因。**
+
+`min_lr` 与 `patience` 在本 campaign 期间都是硬编码不可配的；PR #42 之后两者均已暴露为配置项，
+且 `min_lr >= lr` 会被直接拒绝。**后续任何 LR 相关实验都应把这两个值一并纳入网格**，否则测的是
+"初始 LR × 一个固定且未申报的退火时间表"的混合效应。
+
 ### Two things the ranking is not
 
 **The optimum must not sit on the grid boundary.** A1's leaders all landed at `encoder_lr` 1e-3,
