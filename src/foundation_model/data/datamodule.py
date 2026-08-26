@@ -1,7 +1,7 @@
 # Copyright 2026 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, Dict, List, Mapping, Sequence
+from typing import Dict, List, Mapping, Sequence
 
 import lightning as L
 import numpy as np
@@ -40,6 +40,11 @@ BatchedTaskValue = torch.Tensor | list[torch.Tensor]
 #: ``{task_name: value}`` for targets and for masks.
 TaskBatch = dict[str, BatchedTaskValue]
 
+#: One sample as ``CompoundDataset.__getitem__`` returns it: descriptors, then a per-task tensor
+#: for targets, masks and t-sequences. Sequence lengths differ between samples, which is why the
+#: collate function cannot stack the last three.
+DatasetItem = tuple[torch.Tensor, dict[str, torch.Tensor], dict[str, torch.Tensor], dict[str, torch.Tensor]]
+
 #: What the collate function returns and every ``*_step`` unpacks:
 #: ``(descriptors, targets, masks, t-sequences)``.
 CollatedBatch = tuple[torch.Tensor, TaskBatch, TaskBatch, dict[str, list[torch.Tensor]]]
@@ -67,14 +72,14 @@ class CollateFnWithTaskInfo:
             cfg.name for cfg in task_configs if cfg.type == TaskType.KERNEL_REGRESSION and cfg.enabled
         }
 
-    def __call__(self, batch: Sequence[tuple[Any, ...]]) -> CollatedBatch:
+    def __call__(self, batch: Sequence[DatasetItem]) -> CollatedBatch:
         """Collate one batch.
 
         Parameters
         ----------
-        batch : Sequence[tuple]
+        batch : Sequence[DatasetItem]
             One ``(model_input_x, sample_y_dict, sample_task_masks_dict, sample_t_sequences_dict)``
-            per sample.
+            per sample, as ``CompoundDataset.__getitem__`` produces it.
 
         Returns
         -------
@@ -548,11 +553,12 @@ class CompoundDataModule(L.LightningDataModule):
 
     def on_train_epoch_start(self) -> None:
         """Update the DistributedSampler epoch so shuffling differs across epochs."""
-        # `_train_sampler` is initialised in __init__ and `DistributedSampler` always defines
-        # set_epoch, so the old getattr/hasattr guards around them tested conditions that cannot
-        # occur. `trainer` is different: Lightning injects it on attach and it is genuinely absent
-        # on a standalone datamodule, so that lookup stays defensive — bound to a typed local so
-        # the check narrows instead of hiding the type behind Any.
+        # `_train_sampler` is legitimately None without DDP — what the old guards got wrong is
+        # that the ATTRIBUTE always exists (it is set in __init__), so `getattr` was redundant, and
+        # `DistributedSampler` always defines set_epoch, so `hasattr` was too. A plain `is None`
+        # test says the real thing. `trainer` is different again: Lightning injects it on attach
+        # and it is genuinely absent on a standalone datamodule, so that lookup stays defensive —
+        # bound to a typed local so the check narrows instead of hiding the type behind Any.
         trainer: L.Trainer | None = getattr(self, "trainer", None)
         sampler = self._train_sampler
         if sampler is None or trainer is None:
