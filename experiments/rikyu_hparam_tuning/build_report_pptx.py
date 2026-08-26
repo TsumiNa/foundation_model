@@ -152,6 +152,7 @@ def main() -> None:
     # so pointing here at it produced an empty ranking and an IndexError three slides later.
     ap.add_argument("--winners", type=Path, default=RES / "head_winners_confirmed.json")
     ap.add_argument("--stage-c", type=Path, default=RES / "stage_c.json")
+    ap.add_argument("--patience-ab", type=Path, default=RES / "patience_ab.json")
     args = ap.parse_args()
 
     scores, per_task, base = stage_a_scores(args.stage_a, args.a_baseline)
@@ -228,7 +229,7 @@ def main() -> None:
           col_w=[4.0, 1.9] + [2.05] * len(tasks), size=11)
     txt(s, 0.6, 1.5 + 0.32 * (len(rows) + 1) + 0.25, 12.1, 1.6,
         [f"Winner: {winner}   ({winner_gain:+.1%} mean relative MAE over the untuned baseline)",
-         f"Untuned baseline: " + ", ".join(f"{t} {base[t]:.4f}" for t in tasks)],
+         "Untuned baseline: " + ", ".join(f"{t} {base[t]:.4f}" for t in tasks)],
         size=13)
 
     # 7 — stage B design
@@ -311,6 +312,39 @@ def main() -> None:
         table(s, 0.6, 1.6, 12.1, headers, rows, col_w=[4.3, 2.3, 1.9, 1.8, 1.8], size=12)
         txt(s, 0.6, 1.6 + 0.32 * (len(rows) + 1) + 0.3, 12.1, 2.2,
             payload.get("notes", []), size=12, color=MUT)
+
+    # 11b — patience A/B (an addition to the campaign, not one of its three stages)
+    if args.patience_ab.exists():
+        pab = json.loads(args.patience_ab.read_text())
+        s = prs.slides.add_slide(BLANK)
+        title_bar(s, "Addendum — does per-epoch LR patience change training?",
+                  "probe3, 3 arms x 3 seeds; PR #45 moved ReduceLROnPlateau from once-per-batch to once-per-epoch")
+        arms = pab["arms"]
+        table(s, 0.6, 1.5, 12.1,
+              ["arm", "mean R²", "seed band", "what it is"],
+              [[k, f"{a['mean_r2']:.4f}", f"{a['band']:.4f}", a["label"]] for k, a in arms.items()],
+              col_w=[1.2, 1.6, 1.6, 7.7], size=12)
+        y = 1.5 + 0.32 * (len(arms) + 1) + 0.25
+        cmps = pab["comparisons"]
+        table(s, 0.6, y, 12.1,
+              ["comparison", "Δ mean R²", "vs band", "verdict"],
+              [[name, f"{c['delta_mean_r2']:+.4f}", f"{c['ratio']:+.2f}x", c["verdict"]]
+               for name, c in cmps.items() if c],
+              col_w=[5.6, 2.2, 1.9, 2.4], size=12)
+        y += 0.32 * (len(cmps) + 1) + 0.25
+        txt(s, 0.6, y, 12.1, 2.0,
+            ["The cadence fix is a real gain: every seed of 'new' beats every seed of 'old' with no overlap",
+             "(new min 0.8358 > old max 0.8226). By task size — tc +0.0412, magnetization +0.0173,",
+             "formation_energy +0.0047 (already at its 0.995 ceiling, so no room to move).",
+             "",
+             "The new arm also early-stops sooner (114 vs 136 mean final epoch) and runs 21% faster.",
+             "That is what per-batch patience predicts: at ~90 batches/epoch the LR hit the min_lr floor",
+             "inside epoch 1, so the old arm crawled to a worse plateau and took longer to get there.",
+             "",
+             "The 'asis' arm carries #42's new weight-decay defaults (encoder 10x, head 1/100x) on top.",
+             "Pinning those back in 'new' is what makes the gain attributable to the cadence alone —",
+             "the decay change itself lands within noise."],
+            size=11, color=MUT)
 
     # 12 — conclusions
     s = prs.slides.add_slide(BLANK)

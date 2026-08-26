@@ -36,6 +36,10 @@ module purge
 PROJ=${PROJ:-$HOME/projects/foundation_model}
 OUTROOT=${OUTROOT:-/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning/patience_ab}
 GRID=${GRID:-$PROJ/experiments/rikyu_hparam_tuning/configs/grid_patience_ab.txt}
+# Set EXTRA_FLAGS="--sample 400 --max-epochs 1" (with a smoke OUTROOT) to smoke every
+# image/config pair before committing GPU-hours to the real arms. patience_ab_new.toml and
+# probe3.toml have never run on the 0.3.2 image, so that check is not optional.
+EXTRA_FLAGS=${EXTRA_FLAGS:-}
 
 test -r "$GRID" || { echo "FAIL missing grid $GRID"; exit 2; }
 LINE=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$GRID")
@@ -60,6 +64,7 @@ fi
 echo "host=$(hostname) run=$RUNID seed=$SEED"
 echo "image=$IMAGE"
 echo "config=$CONFIG"
+echo "extra=$EXTRA_FLAGS"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 START=$SECONDS
@@ -70,7 +75,7 @@ apptainer exec --nv \
     --env MPLCONFIGDIR=/tmp/mplconfig \
     --pwd /workspace \
     "$IMAGE" \
-    fm pretrain --config "$CONFIG" --output-dir "/out/$RUNID" --seed "$SEED"
+    fm pretrain --config "$CONFIG" --output-dir "/out/$RUNID" --seed "$SEED" $EXTRA_FLAGS
 RC=$?
 set -e
 ELAPSED=$((SECONDS - START))
