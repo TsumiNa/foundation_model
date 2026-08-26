@@ -223,6 +223,11 @@ class OptimizerConfig:
             )
         if self.frequency < 1:
             raise ValueError(f"OptimizerConfig.frequency must be >= 1, got {self.frequency}.")
+        # monitor is looked up in trainer.callback_metrics at epoch end. Validating it here keeps
+        # a directly-constructed OptimizerConfig self-consistent instead of deferring the failure
+        # to the end of the first epoch; the TOML layer checks the same thing.
+        if self.scheduler_enabled and not self.monitor:
+            raise ValueError("OptimizerConfig.monitor must be a non-empty metric name.")
 
 
 # Allowed string selectors for ``BaseTaskConfig.predict_idx``. Any other string is rejected;

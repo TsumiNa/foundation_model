@@ -2693,3 +2693,39 @@ def test_step_output_is_stable(model_config_mixed_tasks, sample_batch_mixed_task
         contrib_key = f"{prefix}_{name}_final_loss_contrib"
         if raw_key in logged:
             assert logged[contrib_key] == pytest.approx(logged[raw_key] * logged[weight_key], rel=1e-5)
+
+
+def test_checkpoint_records_each_scheduler_under_its_own_group(model_config_mixed_tasks, mocker):
+    """A scheduler's checkpoint entry must be keyed by the group that owns it.
+
+    checkpoint["lr_schedulers"] is compact — one entry per scheduler, not per optimizer — so the
+    old positional indexing misfiled every entry as soon as one group had no scheduler and another
+    did: with an unscheduled encoder and a scheduled head, the head's scheduler landed under
+    "shared_encoder" and the head lost its LR/best/patience state on resume.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        # Encoder without a scheduler, heads with one — the mixed case.
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, scheduler_enabled=False),
+    )
+    for task_config in model.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=1e-3, min_lr=1e-6)
+
+    model.configure_optimizers()
+    assert "shared_encoder" not in model._scheduler_group_keys
+    n_scheduled = len(model._scheduler_group_keys)
+    assert n_scheduled > 0
+
+    checkpoint = {
+        "optimizer_states": [{"opt": i} for i in range(1 + len(model.task_heads))],
+        "lr_schedulers": [{"sched": i} for i in range(n_scheduled)],
+    }
+    model.on_save_checkpoint(checkpoint)
+
+    saved = checkpoint["lr_schedulers_dict"]
+    assert "shared_encoder" not in saved, "unscheduled encoder must not be credited with a scheduler"
+    assert list(saved) == model._scheduler_group_keys
+    for i, key in enumerate(model._scheduler_group_keys):
+        assert saved[key] == {"sched": i}

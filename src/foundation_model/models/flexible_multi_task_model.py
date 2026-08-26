@@ -270,9 +270,10 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.test_r2_metrics = nn.ModuleDict()
         self._metrics_updated: dict[str, set[str]] = {"val": set(), "test": set()}
         self._stage_index_trackers: dict[str, dict[str, Any] | None] = {"val": None, "test": None}
-        # Rebuilt by configure_optimizers; defined here so on_train_epoch_end never depends on
-        # that having run (e.g. a hook invoked directly in a test).
+        # Rebuilt by configure_optimizers; defined here so on_train_epoch_end and
+        # on_save_checkpoint never depend on that having run (e.g. a hook called directly).
         self._scheduler_monitors: list[str] = []
+        self._scheduler_group_keys: list[str] = []
         self._init_stage_metrics()
 
         logger.info("Initializing FlexibleMultiTaskModel...")
@@ -1122,8 +1123,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         The monitored value is read from ``trainer.callback_metrics``, so ``monitor`` selects a real
         metric instead of the current batch's loss. A missing key raises rather than silently
-        skipping the step: a scheduler that never anneals is invisible in logs, and the default
-        ``train_total_loss`` is logged with ``on_epoch=True`` in ``training_step``.
+        skipping the step: a scheduler that never anneals is invisible in logs. The default,
+        ``train_final_loss_epoch``, is the epoch aggregate of the ``train_final_loss`` that
+        ``training_step`` logs with ``on_epoch=True``.
         """
         schedulers = self.lr_schedulers()
         if schedulers is None:
@@ -1143,7 +1145,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
                     f"LR scheduler monitor {monitor!r} is not among the logged metrics at the end "
                     f"of the training epoch. Available: {sorted(metrics)}. Set "
                     "[training.scheduler].monitor to a metric logged with on_epoch=True during "
-                    "training (the default is 'train_total_loss')."
+                    "training (the default is 'train_final_loss_epoch')."
                 )
             scheduler.step(metrics[monitor])
 
@@ -1291,9 +1293,11 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         optimizers_and_schedulers: list[Any] = []
         # Parallel to the schedulers Lightning hands back from self.lr_schedulers(), so
-        # on_train_epoch_end can feed each one the metric its own group configured. Reset on every
-        # call, because configure_optimizers can run more than once per model.
+        # on_train_epoch_end can feed each one the metric its own group configured, and
+        # on_save_checkpoint can name its group. Reset on every call, because configure_optimizers
+        # can run more than once per model.
         self._scheduler_monitors = []
+        self._scheduler_group_keys = []
 
         # 1. Main parameters (Encoder + optionally task_log_sigmas)
         main_params_to_optimize = list(self.encoder.parameters())
@@ -1319,6 +1323,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
             if encoder_sched:
                 self._scheduler_monitors.append(self.shared_block_optimizer.monitor)
+                self._scheduler_group_keys.append("shared_encoder")
                 optimizers_and_schedulers.append(
                     {
                         "optimizer": encoder_opt,
@@ -1355,6 +1360,7 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
             if task_sched:
                 self._scheduler_monitors.append(task_optimizer_config.monitor)
+                self._scheduler_group_keys.append(f"task_{name}")
                 optimizers_and_schedulers.append(
                     {
                         "optimizer": task_opt,
@@ -1569,8 +1575,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
         main_params_trainable = [p for p in main_params if p.requires_grad]
         if main_params_trainable and optimizer_index < len(optimizer_states_list):
             optimizer_states_dict["shared_encoder"] = optimizer_states_list[optimizer_index]
-            if optimizer_index < len(lr_schedulers_list):
-                lr_schedulers_dict["shared_encoder"] = lr_schedulers_list[optimizer_index]
             optimizer_index += 1
 
         # 2. Task head optimizers
@@ -1578,9 +1582,24 @@ class FlexibleMultiTaskModel(L.LightningModule):
             head_params_trainable = [p for p in head.parameters() if p.requires_grad]
             if head_params_trainable and optimizer_index < len(optimizer_states_list):
                 optimizer_states_dict[f"task_{name}"] = optimizer_states_list[optimizer_index]
-                if optimizer_index < len(lr_schedulers_list):
-                    lr_schedulers_dict[f"task_{name}"] = lr_schedulers_list[optimizer_index]
                 optimizer_index += 1
+
+        # 3. Schedulers, by the group that owns them.
+        #
+        # checkpoint["lr_schedulers"] is COMPACT — one entry per scheduler, not per optimizer — so
+        # indexing it by optimizer position silently misfiles every entry as soon as one group has
+        # no scheduler and another does. With an unscheduled encoder and a scheduled head, the
+        # head's scheduler was stored under "shared_encoder" and the head lost its LR, best value
+        # and patience on resume. _scheduler_group_keys is built in the same order Lightning
+        # returns them, so the two zip exactly.
+        for group_key, scheduler_state in zip(self._scheduler_group_keys, lr_schedulers_list):
+            lr_schedulers_dict[group_key] = scheduler_state
+        if len(self._scheduler_group_keys) != len(lr_schedulers_list):
+            logger.warning(
+                f"Scheduler bookkeeping mismatch: {len(self._scheduler_group_keys)} known group(s) "
+                f"vs {len(lr_schedulers_list)} saved scheduler state(s); some LR state may not be "
+                "restored on resume."
+            )
 
         # Store both formats for compatibility
         checkpoint["optimizer_states_dict"] = optimizer_states_dict
