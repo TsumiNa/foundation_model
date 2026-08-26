@@ -71,16 +71,46 @@ kr_x_hidden_dims = [128, 64]     # KR value branch default: latent_dim -> 128 ->
 kr_t_hidden_dims = [16, 8]       # KR coordinate branch default: t -> 16 -> 8
 n_kernel = 15                    # KR kernel centers default
 
+# One AdamW instance per parameter group — shared encoder, regression/classification heads,
+# kernel-regression heads, and the always-on autoencoder head — so each group carries its own
+# learning rate AND weight decay. The values below are the defaults; every one is tunable.
 [training]
 max_epochs = 100
 encoder_lr = 5e-3
+encoder_weight_decay = 1e-2
 head_lr = 5e-3
+head_weight_decay = 1e-5
 kr_lr = 5e-4
 kr_weight_decay = 5e-5
 ae_lr = 5e-3
+ae_weight_decay = 1e-3
 accelerator = "auto"
 devices = "auto"   # "auto" = all devices for the accelerator; or an int count, a list ([1, 3]), or "1,3"
 seed = 2025
+
+# AdamW numerics shared by every parameter group. AdamW is the only optimizer.
+[training.optimizer]
+betas = [0.9, 0.999]
+eps = 1e-6
+
+# ReduceLROnPlateau, shared by every parameter group. It is the only scheduler; set
+# enabled = false for a constant learning rate.
+#
+# CAUTION: min_lr is a FLOOR on the reduced LR, so it interacts with every learning rate above.
+# At this default, an lr of 2e-4 can only be halved once before hitting the floor. A config with
+# min_lr >= lr is rejected outright, because there the scheduler would run without ever changing
+# the LR. Lower min_lr alongside any learning rate you take below ~1e-3.
+#
+# Note monitor is a TRAINING loss, while [training.early_stopping] watches a validation one.
+[training.scheduler]
+enabled = true
+mode = "min"
+factor = 0.5
+patience = 5
+min_lr = 1e-4
+monitor = "train_total_loss"
+interval = "epoch"
+frequency = 1
 
 # Lightning EarlyStopping (a subset of its args; enabled by default).
 [training.early_stopping]
