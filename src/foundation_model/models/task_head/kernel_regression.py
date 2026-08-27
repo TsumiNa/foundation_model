@@ -334,12 +334,16 @@ def expand_for_kernel_regression(
         expanded_h_task = torch.cat(expanded_h_list, dim=0)  # Shape: (total_points, D)
         expanded_t = torch.cat(expanded_t_list, dim=0)  # Shape: (total_points,)
     else:
-        # Handle empty case gracefully
+        # Handle empty case gracefully. An empty LIST carries no dtype to borrow — and it is the
+        # one that reaches here with nothing to index, since a batch of zero samples passes the
+        # length check above — so fall back to h_task's rather than indexing t_sequence[0].
         device = h_task.device
+        if isinstance(t_sequence, list):
+            t_dtype = t_sequence[0].dtype if t_sequence else h_task.dtype
+        else:
+            t_dtype = t_sequence.dtype
         expanded_h_task = torch.empty(0, h_task.shape[1], device=device, dtype=h_task.dtype)
-        expanded_t = torch.empty(
-            0, device=device, dtype=t_sequence[0].dtype if isinstance(t_sequence, list) else t_sequence.dtype
-        )
+        expanded_t = torch.empty(0, device=device, dtype=t_dtype)
 
     return expanded_h_task, expanded_t
 
