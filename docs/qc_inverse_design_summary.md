@@ -185,5 +185,5 @@ see all 20 seeds individually instead of the mean, rerun with
 * **Method math + per-term design intent**: [docs/inverse_design_algorithms.md](inverse_design_algorithms.md)
 * **Per-scenario outputs**: `artifacts/inverse/<scenario>/` (gitignored — regenerate with
   `fm inverse --config samples/inverse.toml --checkpoint <ckpt>`).
-* **Implementation**: [`workflows/inverse.py`](../src/foundation_model/workflows/inverse.py)
+* **Implementation**: [`workflows/inverse/`](../src/foundation_model/workflows/inverse/)
   (scenario × path engine) + [`workflows/inverse_trajectory.py`](../src/foundation_model/workflows/inverse_trajectory.py).

@@ -59,9 +59,9 @@ from .inverse_design import (
     OptimizationTarget,
 )
 
-# Re-exported: inverse design moved to .inverse_design, but workflows/inverse.py and the tests
-# import these from here. Keeping the names bound preserves those call sites, so the move stays a
-# pure relocation.
+# Re-exported: inverse design lives in the .inverse_design package, but workflows/inverse/ and the
+# tests import these names from here. Keeping them bound preserves those call sites, so the move
+# stays a pure relocation.
 __all__ = [
     "FlexibleMultiTaskModel",
     "TaskPredictions",

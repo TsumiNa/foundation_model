@@ -12,8 +12,15 @@ foundation_model/
 │   │   │   ├── classification.py
 │   │   │   ├── kernel_regression.py
 │   │   │   └── autoencoder.py   # Reconstructs x from h_task; powers optimize_latent
+│   │   ├── inverse_design/      # Target-driven search over inputs (a *use* of a trained model)
+│   │   │   ├── targets.py       # What to optimise toward: objective terms + result containers
+│   │   │   ├── constraints.py   # What a recipe may be: whitelist, pins, floor, cardinality
+│   │   │   ├── annealing.py     # How fast the cardinality limit commits (the τ schedule)
+│   │   │   ├── simplex.py       # How logits become a legal recipe (top-K, lock paste, floor)
+│   │   │   ├── latent.py        # Search over descriptors, via the autoencoder
+│   │   │   ├── composition.py   # Search over element weights, through the KMD transform
+│   │   │   └── mixin.py         # InverseDesignMixin: what a search needs from the model
 │   │   ├── flexible_multi_task_model.py  # LightningModule: task lifecycle + train/eval steps
-│   │   ├── inverse_design.py    # InverseDesignMixin: optimize_latent / optimize_composition
 │   │   └── model_config.py      # EncoderConfig + per-task config dataclasses
 │   ├── data/                    # CompoundDataModule + per-task data sources + splitter
 │   ├── utils/                   # KMD + plotting / training helpers
@@ -25,7 +32,12 @@ foundation_model/
 │       ├── _sections.py / _engine.py     # shared [model]/[training] configs + model build + eval
 │       ├── pretrain.py                   # replay-based continual engine (interval replay, n_runs)
 │       ├── finetune.py                   # freeze policy + fine-tune engine
-│       ├── inverse.py                    # scenario × path inverse-design engine
+│       ├── inverse/                     # scenario × path inverse-design engine
+│       │   ├── config.py                #   TOML schema: targets / scenarios / paths / seeds
+│       │   ├── seeds.py                 #   which compositions a scenario starts from
+│       │   ├── paths.py                 #   running one seed set down one path
+│       │   ├── report.py                #   figures + markdown
+│       │   └── engine.py                #   run: the scenario loop
 │       ├── inverse_trajectory.py         # trajectory analytics / plots / animations
 │       ├── plots.py                      # parity / confusion / kr-sequence / forgetting plots
 │       └── predict.py                    # arbitrary-checkpoint evaluation & prediction
@@ -65,12 +77,20 @@ is a single-encoder, multi-head supervised model. Composition descriptors enter 
 get `tanh`'d at the model level, and feed every active task head.
 
 Target-driven search over *inputs* — `optimize_latent` / `optimize_composition`, a **use** of a
-trained model rather than part of training one — lives in `InverseDesignMixin`
-([src/foundation_model/models/inverse_design.py](src/foundation_model/models/inverse_design.py)),
-which the model class mixes in. It reaches for four members (`encoder`, `task_heads`,
-`task_configs_map`, `_head`) and declares that contract rather than assuming it; nothing on the
-training path calls any of it, and the only consumers are `workflows/inverse.py` and
+trained model rather than part of training one — lives in
+[src/foundation_model/models/inverse_design/](src/foundation_model/models/inverse_design/).
+`InverseDesignMixin` declares what the search needs from the model — four members (`encoder`,
+`task_heads`, `task_configs_map`, `_head`) — and the model class mixes it in; nothing on the
+training path calls any of it, and the only consumers are `workflows/inverse/` and
 `workflows/inverse_trajectory.py`.
+
+The package's modules each answer one question — what to optimise *toward* (`targets`), what a
+recipe may *be* (`constraints`), how fast the cardinality limit *commits* (`annealing`), how a
+logit vector *becomes* a recipe (`simplex`), and the two searches themselves (`latent`,
+`composition`). Dependencies run one way, leaves first. That split came out of
+`optimize_composition`, which was a single 975-line method whose nine nested closures — eight of
+them never touching `self` — were a constraint system with no way to reach it except through a
+twenty-keyword call.
 
 ## Diagram
 
