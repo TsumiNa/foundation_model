@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from lightning.pytorch.loggers import CSVLogger
+from lightning.pytorch.utilities.exceptions import MisconfigurationException
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel, OptimizationTarget
@@ -473,6 +474,45 @@ def test_configure_optimizers_returns_a_bare_optimizer_when_the_scheduler_is_off
         task_config.optimizer = OptimizerConfig(lr=5e-3, scheduler_enabled=False)
 
     assert isinstance(model.configure_optimizers(), torch.optim.AdamW)
+
+
+def test_scheduler_policy_is_only_compared_where_it_decides_something(model_config_mixed_tasks):
+    """With the scheduler off everywhere, mode/factor/patience/monitor decide nothing.
+
+    No scheduler is constructed in that case, so those fields are dead values — rejecting the model
+    over them would refuse to build an optimizer on the strength of settings no code path reads.
+    The inference-only builder in workflows/_engine.py assembles exactly this shape.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, scheduler_enabled=False, patience=5, factor=0.5),
+    )
+    for task_config in model.task_configs_map.values():
+        # Same switch, wildly different dead values.
+        task_config.optimizer = OptimizerConfig(lr=5e-3, scheduler_enabled=False, patience=99, factor=0.1, mode="max")
+
+    assert isinstance(model.configure_optimizers(), torch.optim.AdamW)
+
+
+def test_configure_optimizers_rejects_a_scheduler_that_is_on_for_some_groups_only(model_config_mixed_tasks):
+    """Mixed on/off is still an error: there the settings do decide something.
+
+    One optimizer carries one scheduler, so "annealed" and "constant" cannot both be honoured —
+    and picking either silently is how a group ends up training under a schedule nobody chose.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, scheduler_enabled=False),
+    )
+    for task_config in model.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=5e-3, min_lr=1e-6, scheduler_enabled=True)
+
+    with pytest.raises(ValueError, match="must agree on whether the LR scheduler is enabled"):
+        model.configure_optimizers()
 
 
 # --- Fixtures for DataModule and Trainer Integration ---
@@ -2559,13 +2599,22 @@ def test_scheduler_steps_once_per_epoch_not_per_batch(model_config_mixed_tasks, 
 
 def test_scheduler_monitor_missing_raises(model_config_mixed_tasks, dummy_compound_datamodule):
     """A monitor that never appears must fail loudly — a scheduler that silently never anneals
-    is invisible in logs, which is the failure mode this whole area kept producing."""
+    is invisible in logs, which is the failure mode this whole area kept producing.
+
+    Every group has to carry the SAME live scheduler here. The fixture's heads switch theirs off,
+    so leaving them alone makes the model fail in configure_optimizers on the mixed on/off policy
+    instead — an error that also happens to quote the monitor name, so the assertion below would
+    pass without a single epoch ever running.
+    """
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
         task_configs=config.task_configs,
         encoder_config=config.encoder_config,
         shared_block_optimizer=OptimizerConfig(lr=1e-3, min_lr=1e-6, monitor="no_such_metric"),
     )
+    for task_config in model.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=1e-3, min_lr=1e-6, monitor="no_such_metric")
+
     trainer = L.Trainer(
         logger=False,
         max_epochs=1,
@@ -2576,7 +2625,7 @@ def test_scheduler_monitor_missing_raises(model_config_mixed_tasks, dummy_compou
         enable_progress_bar=False,
         enable_model_summary=False,
     )
-    with pytest.raises(ValueError, match="no_such_metric"):
+    with pytest.raises(MisconfigurationException, match="no_such_metric"):
         trainer.fit(model, datamodule=dummy_compound_datamodule)
 
 
@@ -2625,10 +2674,8 @@ def _run_step_and_capture(model, batch, step_name, mocker):
 
     mocker.patch.object(model, "log_dict", side_effect=record_dict)
     mocker.patch.object(model, "log", side_effect=record_one)
-    if step_name == "training_step":
-        optimizer = mocker.MagicMock()
-        mocker.patch.object(model, "optimizers", return_value=[optimizer])
-        mocker.patch.object(model, "manual_backward")
+    # No optimizer or backward mocking: under automatic optimization every step is a pure function
+    # of the batch that logs and returns, and touches neither.
     result = getattr(model, step_name)(batch, 0)
     return (None if result is None else float(result)), captured
 

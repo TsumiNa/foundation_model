@@ -1084,19 +1084,34 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
         mixed policies was assembled in Python, and quietly honouring one group's settings while
         discarding another's is exactly the kind of invisible divergence this campaign has already
         been bitten by once.
+
+        Only what the scheduler would actually read is compared. Groups that all have it switched
+        off construct no scheduler at all, so their mode/factor/patience/monitor are dead values
+        and cannot diverge from anything — refusing to build the optimizer over them would reject a
+        model on the strength of settings no code path reads. Mixed on/off is still an error: there
+        the values do decide something.
         """
-        policies = {(c.scheduler_enabled, c.mode, c.factor, c.patience, c.monitor): name for name, _, c in groups}
+        switches = {c.scheduler_enabled for _, _, c in groups}
+        if len(switches) > 1:
+            on = [name for name, _, c in groups if c.scheduler_enabled]
+            off = [name for name, _, c in groups if not c.scheduler_enabled]
+            raise ValueError(
+                "All parameter groups must agree on whether the LR scheduler is enabled — a single "
+                f"optimizer carries a single scheduler. Enabled: {on}; disabled: {off}."
+            )
+        if not switches.pop():
+            return None
+
+        policies = {(c.mode, c.factor, c.patience, c.monitor): name for name, _, c in groups}
         if len(policies) > 1:
             detail = "; ".join(
-                f"{name}: enabled={p[0]} mode={p[1]} factor={p[2]} patience={p[3]} monitor={p[4]!r}"
-                for p, name in policies.items()
+                f"{name}: mode={p[0]} factor={p[1]} patience={p[2]} monitor={p[3]!r}" for p, name in policies.items()
             )
             raise ValueError(
                 "All parameter groups must share one LR-scheduler policy — a single optimizer "
                 f"carries a single scheduler. Groups disagree: {detail}"
             )
-        first = groups[0][2]
-        return first if first.scheduler_enabled else None
+        return groups[0][2]
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         """One AdamW over per-role parameter groups, plus at most one ReduceLROnPlateau.
