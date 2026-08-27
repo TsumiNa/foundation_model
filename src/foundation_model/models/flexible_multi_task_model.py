@@ -281,10 +281,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
         self.test_r2_metrics = nn.ModuleDict()
         self._metrics_updated: dict[str, set[str]] = {"val": set(), "test": set()}
         self._stage_index_trackers: dict[str, dict[str, Any] | None] = {"val": None, "test": None}
-        # Rebuilt by configure_optimizers; defined here so on_train_epoch_end and
-        # on_save_checkpoint never depend on that having run (e.g. a hook called directly).
+        # Rebuilt by configure_optimizers; defined here so on_train_epoch_end never depends on
+        # that having run (e.g. a hook called directly).
         self._scheduler_monitors: list[str] = []
-        self._scheduler_group_keys: list[str] = []
         self._init_stage_metrics()
 
         logger.info("Initializing FlexibleMultiTaskModel...")
@@ -1327,11 +1326,9 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
         optimizers_and_schedulers: list[Any] = []
         # Parallel to the schedulers Lightning hands back from self.lr_schedulers(), so
-        # on_train_epoch_end can feed each one the metric its own group configured, and
-        # on_save_checkpoint can name its group. Reset on every call, because configure_optimizers
-        # can run more than once per model.
+        # on_train_epoch_end can feed each one the metric its own group configured. Reset on
+        # every call, because configure_optimizers can run more than once per model.
         self._scheduler_monitors = []
-        self._scheduler_group_keys = []
 
         # 1. Main parameters (Encoder + optionally task_log_sigmas)
         main_params_to_optimize = list(self.encoder.parameters())
@@ -1357,7 +1354,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
             if encoder_sched:
                 self._scheduler_monitors.append(self.shared_block_optimizer.monitor)
-                self._scheduler_group_keys.append("shared_encoder")
                 optimizers_and_schedulers.append(
                     {
                         "optimizer": encoder_opt,
@@ -1394,7 +1390,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
 
             if task_sched:
                 self._scheduler_monitors.append(task_optimizer_config.monitor)
-                self._scheduler_group_keys.append(f"task_{name}")
                 optimizers_and_schedulers.append(
                     {
                         "optimizer": task_opt,
@@ -1563,214 +1558,6 @@ class FlexibleMultiTaskModel(L.LightningModule):
             reshaped_dict[key] = reshaped_list
 
         return reshaped_dict
-
-    def on_save_checkpoint(self, checkpoint):
-        """
-        Custom checkpoint saving that stores optimizer states as dict for better flexibility.
-
-        This method converts the default list-based optimizer states to a dictionary format
-        using meaningful keys (shared_encoder, task_{name}). This allows for
-        robust checkpoint loading even when task configurations change.
-
-        Special handling for task_log_sigmas:
-        - Records which task_log_sigmas were saved
-        - Allows for proper reconstruction during loading
-        """
-        super().on_save_checkpoint(checkpoint)
-
-        if "optimizer_states" not in checkpoint:
-            return
-
-        # Convert list format to dictionary format
-        optimizer_states_list = checkpoint["optimizer_states"]
-        lr_schedulers_list = checkpoint.get("lr_schedulers", [])
-
-        optimizer_states_dict = {}
-        lr_schedulers_dict = {}
-
-        # Record task_log_sigmas information for proper loading
-        task_log_sigmas_info = {}
-        if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas"):
-            task_log_sigmas_info = {
-                "enabled": True,
-                "task_names": list(self.task_log_sigmas.keys()),
-                "count": len(self.task_log_sigmas),
-            }
-        else:
-            task_log_sigmas_info = {"enabled": False, "task_names": [], "count": 0}
-
-        optimizer_index = 0
-
-        # 1. Main optimizer (shared_encoder + task_log_sigmas)
-        main_params = list(self.encoder.parameters())
-        if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas"):
-            main_params.extend(list(self.task_log_sigmas.parameters()))
-
-        main_params_trainable = [p for p in main_params if p.requires_grad]
-        if main_params_trainable and optimizer_index < len(optimizer_states_list):
-            optimizer_states_dict["shared_encoder"] = optimizer_states_list[optimizer_index]
-            optimizer_index += 1
-
-        # 2. Task head optimizers
-        for name, head in self.task_heads.items():
-            head_params_trainable = [p for p in head.parameters() if p.requires_grad]
-            if head_params_trainable and optimizer_index < len(optimizer_states_list):
-                optimizer_states_dict[f"task_{name}"] = optimizer_states_list[optimizer_index]
-                optimizer_index += 1
-
-        # 3. Schedulers, by the group that owns them.
-        #
-        # checkpoint["lr_schedulers"] is COMPACT — one entry per scheduler, not per optimizer — so
-        # indexing it by optimizer position silently misfiles every entry as soon as one group has
-        # no scheduler and another does. With an unscheduled encoder and a scheduled head, the
-        # head's scheduler was stored under "shared_encoder" and the head lost its LR, best value
-        # and patience on resume. _scheduler_group_keys is built in the same order Lightning
-        # returns them, so the two zip exactly.
-        for group_key, scheduler_state in zip(self._scheduler_group_keys, lr_schedulers_list):
-            lr_schedulers_dict[group_key] = scheduler_state
-        if len(self._scheduler_group_keys) != len(lr_schedulers_list):
-            logger.warning(
-                f"Scheduler bookkeeping mismatch: {len(self._scheduler_group_keys)} known group(s) "
-                f"vs {len(lr_schedulers_list)} saved scheduler state(s); some LR state may not be "
-                "restored on resume."
-            )
-
-        # Store both formats for compatibility
-        checkpoint["optimizer_states_dict"] = optimizer_states_dict
-        checkpoint["lr_schedulers_dict"] = lr_schedulers_dict
-        checkpoint["task_log_sigmas_info"] = task_log_sigmas_info
-
-        logger.debug(f"Saved optimizer states in dict format: {list(optimizer_states_dict.keys())}")
-        logger.debug(f"Saved task_log_sigmas info: {task_log_sigmas_info}")
-
-    def on_load_checkpoint(self, checkpoint):
-        """
-        Custom checkpoint loading that handles frozen parameters using dict-based optimizer states.
-
-        This method provides robust checkpoint loading by:
-        1. Using dict-based optimizer states when available (handles task changes)
-        2. Filtering out optimizer states for frozen components
-        3. Falling back to graceful loading when optimizer states don't match
-        """
-        # Priority 1: Use new dict format if available
-        if "optimizer_states_dict" in checkpoint:
-            self._load_checkpoint_from_dict(checkpoint)
-        # Priority 2: Use fallback logic for list format
-        elif "optimizer_states" in checkpoint:
-            self._load_checkpoint_with_fallback(checkpoint)
-
-        # Always call parent method to load model state
-        super().on_load_checkpoint(checkpoint)
-
-    def _load_checkpoint_from_dict(self, checkpoint):
-        """
-        Load checkpoint using dict-based optimizer states with special handling for task_log_sigmas.
-
-        This method handles the case where task_log_sigmas parameters may have changed between
-        saving and loading due to different task configurations.
-        """
-        optimizer_states_dict = checkpoint["optimizer_states_dict"]
-        lr_schedulers_dict = checkpoint.get("lr_schedulers_dict", {})
-        task_log_sigmas_info = checkpoint.get("task_log_sigmas_info", {"enabled": False, "task_names": [], "count": 0})
-
-        # Build required optimizer states list based on current configuration
-        optimizer_states_list = []
-        lr_schedulers_list = []
-
-        # 1. Main optimizer (only if not frozen)
-        if not self.freeze_shared_encoder:
-            main_params = list(self.encoder.parameters())
-
-            # Check task_log_sigmas compatibility
-            current_task_log_sigmas_names = []
-            if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas"):
-                current_task_log_sigmas_names = list(self.task_log_sigmas.keys())
-                main_params.extend(list(self.task_log_sigmas.parameters()))
-
-            saved_task_log_sigmas_names = task_log_sigmas_info.get("task_names", [])
-
-            # Check if task_log_sigmas configuration has changed
-            task_log_sigmas_changed = set(current_task_log_sigmas_names) != set(saved_task_log_sigmas_names) or len(
-                current_task_log_sigmas_names
-            ) != len(saved_task_log_sigmas_names)
-
-            main_params_trainable = [p for p in main_params if p.requires_grad]
-            if main_params_trainable and "shared_encoder" in optimizer_states_dict:
-                if task_log_sigmas_changed:
-                    logger.warning(
-                        f"task_log_sigmas configuration has changed: "
-                        f"saved={saved_task_log_sigmas_names}, current={current_task_log_sigmas_names}. "
-                        "Skipping main optimizer state loading to avoid parameter group mismatch."
-                    )
-                    # Skip loading this optimizer state due to task_log_sigmas mismatch
-                else:
-                    optimizer_states_list.append(optimizer_states_dict["shared_encoder"])
-                    if "shared_encoder" in lr_schedulers_dict:
-                        lr_schedulers_list.append(lr_schedulers_dict["shared_encoder"])
-                    logger.info("Loaded shared_encoder optimizer state from checkpoint")
-            elif main_params_trainable:
-                logger.warning("shared_encoder has trainable params but no optimizer state found in checkpoint")
-
-        # 2. Task head optimizers (only if not frozen)
-        for name, head in self.task_heads.items():
-            config = self.task_configs_map[name]
-            if not config.freeze_parameters:
-                head_params_trainable = [p for p in head.parameters() if p.requires_grad]
-                task_key = f"task_{name}"
-                if head_params_trainable and task_key in optimizer_states_dict:
-                    optimizer_states_list.append(optimizer_states_dict[task_key])
-                    if task_key in lr_schedulers_dict:
-                        lr_schedulers_list.append(lr_schedulers_dict[task_key])
-                    logger.info(f"Loaded {name} task optimizer state from checkpoint")
-                elif head_params_trainable:
-                    logger.warning(f"Task {name} has trainable params but no optimizer state found in checkpoint")
-
-        # Update checkpoint with filtered states
-        checkpoint["optimizer_states"] = optimizer_states_list
-        checkpoint["lr_schedulers"] = lr_schedulers_list
-
-        logger.info(f"Successfully loaded {len(optimizer_states_list)} optimizer states from dict format")
-
-    def _load_checkpoint_with_fallback(self, checkpoint):
-        """Load checkpoint with fallback logic for list-based optimizer states."""
-        try:
-            # Calculate expected number of optimizers based on current config
-            expected_optimizers = 0
-
-            # Count main optimizer
-            main_params = list(self.encoder.parameters())
-            if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas"):
-                main_params.extend(list(self.task_log_sigmas.parameters()))
-            main_params_trainable = [p for p in main_params if p.requires_grad]
-            if main_params_trainable and not self.freeze_shared_encoder:
-                expected_optimizers += 1
-
-            # Count task head optimizers
-            for name, head in self.task_heads.items():
-                config = self.task_configs_map[name]
-                head_params_trainable = [p for p in head.parameters() if p.requires_grad]
-                if head_params_trainable and not config.freeze_parameters:
-                    expected_optimizers += 1
-
-            actual_optimizers = len(checkpoint["optimizer_states"])
-
-            if expected_optimizers != actual_optimizers:
-                logger.warning(
-                    f"Optimizer count mismatch: expected {expected_optimizers}, "
-                    f"found {actual_optimizers} in checkpoint. "
-                    "This likely indicates frozen parameter configuration has changed. "
-                    "Removing optimizer states to avoid parameter group size mismatch."
-                )
-                # Remove optimizer states to avoid mismatch errors
-                checkpoint.pop("optimizer_states", None)
-                checkpoint.pop("lr_schedulers", None)
-            else:
-                logger.info(f"Optimizer count matches: {expected_optimizers}. Loading normally.")
-
-        except Exception as e:
-            logger.warning(f"Error during optimizer state validation: {e}. Removing optimizer states as fallback.")
-            checkpoint.pop("optimizer_states", None)
-            checkpoint.pop("lr_schedulers", None)
 
     def _prepare_optimization_targets(
         self, targets: Sequence[OptimizationTarget], *, device: torch.device, dtype: torch.dtype
