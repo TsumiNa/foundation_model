@@ -388,6 +388,55 @@ def stage_a2(winner: str, n_seeds: int) -> tuple[list[tuple[str, str]], list[str
     return rows, skipped
 
 
+def stage_a4(n_seeds: int) -> tuple[list[tuple[str, str]], list[str]]:
+    """Does the LR schedule earn its place, and is the optimum below the searched floor?
+
+    Two stage-A' findings point the same way. `encoder_lr` declines monotonically as it rises, and
+    short scheduler `patience` — cut the LR early and often — is the only axis whose effect clears
+    the seed band. Read together they suggest the model simply wants a low effective LR quickly,
+    in which case the schedule may be an elaborate way of arriving somewhere a constant low LR
+    reaches directly.
+
+    Stage A' cannot answer that. Its `encoder_lr` floor was 1e-3, so BELOW that is unmeasured, and
+    every point it ran had the scheduler enabled. The one hint it does carry argues weakly the
+    other way — the lowest decile scored a little worse than the interior — but that decile spans
+    only [1e-3, ~1.3e-3] and the gap is inside the noise.
+
+    So: a full 2 x 6 factorial, schedule on/off crossed with an `encoder_lr` axis extended a decade
+    lower, everything else held identical. Both questions get answered by the same runs, and
+    "schedule vs none" is measured AT each LR rather than confounded with it.
+
+    Two honest limits on what this can conclude:
+      * `[training.scheduler]` governs all four parameter groups, so `enabled = false` also
+        freezes the head / KR / AE learning rates. A loss for the flat arm therefore does not say
+        WHICH group needed annealing. There is no per-group switch to decompose it with.
+      * `min_lr = 1e-8` on the scheduled arm, far below the 1e-4 default, so the schedule has room
+        to anneal across the whole extended LR range rather than hitting its floor immediately.
+    """
+    rows: list[tuple[str, str]] = []
+    skipped: list[str] = []
+    for enabled in (True, False):
+        for lr in (1e-4, 2e-4, 5e-4, 1e-3, 2e-3, 5e-3):
+            point = {
+                "model__latent_dim": 384,
+                "training__encoder_lr": lr,
+                "training__scheduler__enabled": enabled,
+                "training__scheduler__min_lr": 1e-8,
+                "training__scheduler__patience": 5,
+                "training__scheduler__factor": 0.5,
+            }
+            label = f"a4{'sched' if enabled else 'flat'}_E{tag(lr)}"
+            # validate_point checks min_lr against every group LR. With the scheduler off the
+            # engine skips that rejection entirely, so the check only has to hold for the
+            # scheduled arm — which it does at min_lr 1e-8.
+            bad = validate_point(point) if enabled else None
+            if bad:
+                skipped.append(f"{label}: {bad}")
+                continue
+            rows += expand(label, point, seeds(n_seeds))
+    return rows, skipped
+
+
 def stage_finals(prefix: str, winners: list[str], n_seeds: int, include_anchors: bool):
     """The decisive step: promoted configurations re-measured at many seeds.
 
@@ -462,7 +511,7 @@ def stage_b(base_point: dict, n_seeds: int) -> tuple[list[tuple[str, str]], list
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("stage", choices=["smoke", "s0", "a1", "a1r", "a1b", "a2", "a3", "b", "b3"])
+    ap.add_argument("stage", choices=["smoke", "s0", "a1", "a1r", "a1b", "a2", "a3", "a4", "b", "b3"])
     ap.add_argument("--winner", help="runid of the winning A' point (a2)")
     ap.add_argument("--winners", nargs="+", default=[], help="promoted runids (a1b / a3 / b3)")
     ap.add_argument("--seeds-n", type=int, default=None, help="seeds per point (stage default otherwise)")
@@ -495,6 +544,8 @@ def main() -> None:
         if not (args.lrs or args.min_lrs):
             raise SystemExit("a1b needs --lrs and/or --min-lrs (which edge to reopen)")
         rows, skipped = stage_a1b(args.winners, args.lrs, args.min_lrs, n or 5)
+    elif args.stage == "a4":
+        rows, skipped = stage_a4(n or 5)
     elif args.stage == "a2":
         if not args.winner:
             raise SystemExit("a2 needs --winner")

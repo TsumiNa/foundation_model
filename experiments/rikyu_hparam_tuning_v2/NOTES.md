@@ -184,9 +184,32 @@ Two things to keep straight if that is adopted:
   timing figure from a packed stage cannot be put beside one from an unpacked stage.
 * it changes nothing about accuracy, so the tuning conclusions are unaffected either way.
 
-Recorded here rather than acted on mid-stage: A' is already complete under the unpacked model, and
-this is worth more to the project than to this campaign — every future campaign on this codebase
-is paying the same 10× premium.
+**Packing was then measured, and it scales almost linearly.** Eight grid points that had already
+completed unpacked were re-run into a scratch output root at two pack sizes, so the comparison is
+against a known per-run baseline for the *same configurations* rather than an average over a
+different set:
+
+| | wall clock per run | vs baseline | runs per GPU | throughput |
+|---|---:|---:|---:|---:|
+| unpacked | 2.19h | 1.00× | 1 | 1× |
+| PACK=4 | 2.28h | 1.04× | 4 | **3.84×** |
+| PACK=8 | 2.46h | 1.12× | 8 | **7.1×** |
+
+Twelve percent slower per run for seven times the throughput. Every other resource still has room
+at PACK=8: 10 GB of 189 GB device memory, 141 GB of the 400 GB host allocation, 8 of 32 CPUs.
+
+**PACK=8 adopted for the remaining stages.** Not extrapolated further — PACK=16 was not measured,
+and host RAM (282 GB of 400 GB) is the dimension that would bind first, so raising it would need
+its own calibration rather than an assumption.
+
+The site enforces a per-GPU CPU cap that is easy to trip: `--cpus-per-task` above 32 is rejected
+outright with `[AI4S] Requested CPUs (64 cpus-per-task x 1 tasks = 64) exceed the per-GPU cap 32`.
+The pack sizing is capped there.
+
+Recorded rather than retrofitted: stages 0 and A' ran unpacked and are not re-run. That has one
+consequence for the report — **wall-clock comparisons do not cross the boundary.** The observation
+that high `encoder_lr` converges faster was measured unpacked; no timing figure from a packed
+stage may be placed beside it.
 
 ---
 

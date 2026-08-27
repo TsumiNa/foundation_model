@@ -69,7 +69,7 @@ case "$STAGE" in
     # Measured on stage 0: steps run 45-75 epochs each and get more expensive as replay
     # accumulates, putting a run at 1.0-1.5h. That is close enough to three hours that a slow
     # configuration could cross it, and with 217 idle nodes the over-request costs nothing.
-    a1|a1r|a1b|a2|a3) CONFIG=probe6.toml; OUT=stage_a; DEFTIME=06:00:00 ;;
+    a1|a1r|a1b|a2|a3|a4) CONFIG=probe6.toml; OUT=stage_a; DEFTIME=06:00:00 ;;
     b|b3)             CONFIG=probe6.toml; OUT=stage_b; DEFTIME=06:00:00 ;;
     # Stage C': 24 tasks, 4 arms. `fm pretrain --resume` is idempotent, so a walltime kill is
     # recovered by resubmitting the identical command; `fm finetune` has NO resume and gets its
