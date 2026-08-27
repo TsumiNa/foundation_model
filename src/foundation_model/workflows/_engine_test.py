@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
+from typing import cast
+
 import pytest
 import torch
 from torch.utils.data import DataLoader
@@ -113,3 +115,27 @@ def test_replay_resample_callback_accepts_non_persistent_workers() -> None:
     trainer = SimpleNamespace(datamodule=dm, current_epoch=1, train_dataloader=loader)
     ReplayResampleCallback().on_train_epoch_start(trainer, None)
     assert not torch.equal(epoch0, _dense_mask(dm, "task_a"))  # redraw went through
+
+
+def test_build_empty_model_routes_the_loss_balancer_flag(tmp_path):
+    """The link that was missing: [training] -> build_empty_model -> the model.
+
+    Every other piece of uncertainty weighting was already implemented — registration on task
+    activation, the objective term, inclusion in the main optimizer — but nothing carried a value
+    from config to constructor, so the feature had never been switched on in any run. Asserting
+    the route here is what stops it silently detaching again.
+    """
+    from foundation_model.workflows._engine import build_empty_model
+    from foundation_model.workflows.task_catalog import TaskCatalog
+    from foundation_model.workflows._sections import build_model_section, build_training_section
+
+    # build_empty_model only reads descriptor_dim off the catalog; cast rather than
+    # constructing a full TaskCatalog, which would need data files on disk.
+    catalog = cast(TaskCatalog, SimpleNamespace(descriptor_dim=32))
+    model_cfg = build_model_section({"latent_dim": 8, "encoder_hidden_dims": [16]})
+
+    off = build_empty_model(catalog, model_cfg, build_training_section({}))
+    on = build_empty_model(catalog, model_cfg, build_training_section({"learnable_loss_balancer": True}))
+
+    assert off.enable_learnable_loss_balancer is False
+    assert on.enable_learnable_loss_balancer is True

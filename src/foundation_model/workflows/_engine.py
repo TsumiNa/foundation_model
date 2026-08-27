@@ -76,6 +76,7 @@ def build_empty_model(
         task_configs=[],
         encoder_config=build_encoder_config(model, catalog.descriptor_dim),
         enable_autoencoder=True,
+        enable_learnable_loss_balancer=training.learnable_loss_balancer,
         shared_block_optimizer=training.optimizer_config(
             lr=training.encoder_lr, weight_decay=training.encoder_weight_decay
         ),

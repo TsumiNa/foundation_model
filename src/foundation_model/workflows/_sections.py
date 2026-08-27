@@ -221,6 +221,15 @@ class TrainingSectionConfig:
     kr_weight_decay: float = 5e-5
     ae_lr: float = 5e-3
     ae_weight_decay: float = 1e-3
+    # Kendall/Gal/Cipolla (CVPR 2018) uncertainty weighting: learn one log sigma per supervised
+    # task and combine losses as sum_i [ 0.5 * exp(-2 log sigma_i) * L_i + log sigma_i ]. It exists
+    # to stop multi-task training from collapsing onto whichever tasks descend fastest, which is a
+    # live risk here — the 24-task sequence spans three orders of magnitude in label count.
+    #
+    # The model has implemented this since before this section existed, but nothing ever routed a
+    # value to it, so it has never been switched on in any run. Exposing it does not turn it on;
+    # it makes the comparison runnable.
+    learnable_loss_balancer: bool = False
     accelerator: str = "auto"
     # Passed straight to Lightning's Trainer(devices=...): "auto" (all devices for the accelerator),
     # an int count (-1 = all), a list of device indices ([1, 3]), or a string ("1,3" / "0-3").

@@ -2786,3 +2786,85 @@ def test_head_accessor_returns_the_registered_head_for_every_kind(model_config_m
         assert head is model.task_heads[name]
         assert isinstance(head, BaseTaskHead)
         assert callable(head.compute_loss)
+
+
+# --- learnable loss balancer (uncertainty weighting) -------------------------------------------
+
+
+def test_loss_balancer_registers_one_log_sigma_per_supervised_task(model_config_mixed_tasks):
+    """Kendall/Gal/Cipolla uncertainty weighting needs one learnable log sigma per task.
+
+    The feature has been implemented on the model since before the [training] section existed, but
+    nothing routed a value to it, so it had never run. These two tests are the on/off comparison
+    that absence made impossible.
+    """
+    config = model_config_mixed_tasks
+    off = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        enable_learnable_loss_balancer=False,
+    )
+    on = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        enable_learnable_loss_balancer=True,
+    )
+
+    assert len(off.task_log_sigmas) == 0, "no sigmas may exist while the balancer is off"
+    supervised = [n for n in on.task_heads if n != "__reconstruction__"]
+    assert sorted(on.task_log_sigmas) == sorted(supervised)
+    # They must be learnable, and start at log sigma = 0 (sigma = 1), i.e. the unweighted objective.
+    assert all(p.requires_grad for p in on.task_log_sigmas.parameters())
+    assert all(p.detach().item() == 0.0 for p in on.task_log_sigmas.values())
+
+    # And they must reach an optimizer, or they would never move. configure_optimizers puts them
+    # in the main (encoder) group, so look for them there rather than trusting that it did.
+    opts = cast(list[dict[str, Any]], on.configure_optimizers())
+    optimised = {id(p) for entry in opts for group in entry["optimizer"].param_groups for p in group["params"]}
+    assert all(id(p) in optimised for p in on.task_log_sigmas.parameters()), (
+        "log sigmas exist but no optimizer owns them — they would stay at their init value forever"
+    )
+
+
+def test_loss_balancer_changes_the_objective_and_its_gradient(model_config_mixed_tasks):
+    """At log sigma = 0 the balanced objective is HALF the static one, plus a log-sigma penalty.
+
+    That factor is not cosmetic: it halves every gradient reaching the shared encoder on the first
+    step, which is exactly the kind of silent scale change that has to be visible in a test before
+    anyone reads an A/B of this feature.
+    """
+    config = model_config_mixed_tasks
+    losses = {"regr_task_1": torch.tensor(4.0, requires_grad=True)}
+
+    off = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        enable_learnable_loss_balancer=False,
+    )
+    on = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        enable_learnable_loss_balancer=True,
+    )
+
+    logs_off: dict[str, torch.Tensor] = {}
+    logs_on: dict[str, torch.Tensor] = {}
+    total_off = off._weighted_total_loss(
+        stage="train", raw_losses=losses, logs=logs_off, device=torch.device("cpu"), keep_graph=True
+    )
+    total_on = on._weighted_total_loss(
+        stage="train", raw_losses=losses, logs=logs_on, device=torch.device("cpu"), keep_graph=True
+    )
+
+    assert float(total_off) == pytest.approx(4.0)
+    # 0.5 * exp(-2*0) * 4.0 + 0 = 2.0
+    assert float(total_on) == pytest.approx(2.0)
+    # The balancer reports the sigma it is using; the static path does not.
+    assert "train_regr_task_1_sigma_t" in logs_on
+    assert "train_regr_task_1_sigma_t" not in logs_off
+    assert float(logs_on["train_regr_task_1_sigma_t"]) == pytest.approx(1.0)
+
+    # The log sigma must carry gradient, or the weighting could never adapt.
+    total_on.backward()
+    assert on.task_log_sigmas["regr_task_1"].grad is not None
+    assert float(on.task_log_sigmas["regr_task_1"].grad) != 0.0
