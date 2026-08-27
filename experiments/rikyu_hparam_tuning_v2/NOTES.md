@@ -39,6 +39,90 @@ predicted; it stays in the probe for continuity with v1 but cannot move a rankin
 
 ---
 
+## Transferable methodology
+
+> Separated deliberately from this campaign's numbers. The hyper-parameters below are specific to
+> probe6 on this task set; **these lessons are not**, and they are the part that should reach the
+> next campaign and any large-scale training that follows. Each carries the measurement that
+> produced it, so a future reader can check whether it still applies rather than taking it on faith.
+
+**1. Measure σ on YOUR probe. Never inherit it.** probe3's seed sigma was 5.01%; probe6's is
+3.58% on the same cluster, same code, same day. Every seed-count decision follows from σ, so an
+inherited σ silently mis-sizes the whole campaign. The arithmetic is `n ≈ (2σ / target)²`: at
+σ = 3.58%, resolving a 1.5% difference needs 23 seeds, and resolving 1.0% needs 52.
+
+**2. The winner's curse is measurable, so measure it instead of arguing about it.** At 5 seeds
+per point, stage A's leader could not be separated from **11 of 296** configurations. v1 learned
+the same thing the expensive way: its single-seed leader (+23.9%) fell to +18.45% at three seeds
+and tied with another config. Ranking N noisy points by their maximum biases that maximum upward,
+and adding points makes it worse while adding seeds makes it better.
+
+**3. Two statistical tests disagree, and both belong in the report.** The single-run *range*
+("noise band") is a conservative screen, right for a grid where each point carries few seeds. The
+standard error of the *difference* is the right test for comparing two arm means. They can point
+opposite ways: stage 0's two arms differed by 3.3× their own resolvable margin while sitting at
+0.97× the single-run band — the band alone would have called a well-powered result "inside the
+noise". State which test a claim rests on.
+
+**4. Boundary checks must test the trend, not exact membership.** "Does a short-listed config sit
+ON the extreme value" works for a pure grid and fails the moment a random search is mixed in:
+with ~200 sampled values none ever sits exactly on a bound, so a genuine edge reports clear.
+Compare the best score reachable in each outer decile against the interior instead.
+
+**5. Rank axes by effect size before deciding where to spend next.** Spread of the best-reachable
+score along each axis, against the seed band, told us in one table that two of five axes carried
+the stage:
+
+| axis | vs band |
+|---|---:|
+| scheduler patience | 0.97× |
+| encoder_lr | 0.84× |
+| factor | 0.40× |
+| min_lr | 0.29× |
+| latent_dim | 0.15× |
+
+**6. A tiny consistent effect dominates the top of a noisy ranking.** All twelve top configs used
+`latent_dim = 384`, which reads as decisive; its measured spread was the smallest of any axis
+(0.09× band). Both are true — a small consistent shift moves the whole distribution, so the
+maximum comes disproportionately from the shifted side. Never report "X wins" without the effect
+size beside it.
+
+**7. Know what the framework resets.** Every task step builds a fresh `Trainer`, so the optimizer
+and its learning rate are rebuilt at the configured value at each of six steps and annealing never
+carries across the sequence. That bounds what any schedule can do — within a 45–75 epoch step,
+`patience = 24` acts about once — and it means every scheduler conclusion has to state the step
+length it was measured at. This was not in any config or doc; it came from reading the step loop.
+
+**8. Gate on identity, not on intent.** A wrong container image produces plausible numbers from
+the wrong regime, exits 0, and drops success markers. The worker asks the container its own
+version and refuses to train on a mismatch — verified by running it against the wrong image
+deliberately (exit 3, no marker, so the point re-runs rather than being skipped).
+
+**9. Cheap asymmetries are worth taking.** Probe grid lines carry no `--resume`, so an
+under-requested walltime discards the whole run while an over-requested one costs nothing on an
+idle cluster. Stage 0 lost 7 of 18 runs to a 3-hour limit set before the true cost was known.
+
+**10. Check GPU utilisation before sizing a fleet.** Recorded in `AGENTS.md` and the RIKYU
+instructions rather than only here, because the failure mode is not knowing to look. ~9% of a
+GB200 per run; packing eight to a card measured 8.0×.
+
+### The probe-cost question, stated honestly
+
+probe6 costs **7.5× probe3 per run** (2.39 h vs 0.32 h) and buys a 28% σ reduction. Purely for
+noise that is a bad trade: probe3 at 2× seeds reaches the same σ for ~3.7× less. **The premium
+buys regime fidelity, not precision** — two kernel-regression heads and six tasks mean the encoder
+is tuned under the pressure it will actually be deployed under, and v1's stage B is direct evidence
+that tuning in the wrong regime does not transfer (2 of 24 per-task head gains survived, 5 tasks
+got worse).
+
+Whether the premium was justified is not a matter of opinion and is not settled by this stage. It
+is answered by stage C': **if the probe's ranking holds on 24 tasks, the fidelity was worth
+paying for; if it scrambles, probe6's design is itself in question.** That is why C' promotes
+three configurations instead of one. This is a one-time cost that buys the evidence for why the
+final recipe was chosen — which is the part a paper needs and a hyper-parameter table is not.
+
+---
+
 ## Results that changed what the plan assumed
 
 **PLAN's central hypothesis about high learning rates is REFUTED.** §0 argued that v1's
