@@ -87,6 +87,15 @@ the stage:
 maximum comes disproportionately from the shifted side. Never report "X wins" without the effect
 size beside it.
 
+**6b. A hyper-parameter can cost compute as well as accuracy, and the accuracy table will not
+show it.** Stage a4 measured the LR schedule against a constant LR at six learning rates. Before
+any accuracy verdict, the schedule is plainly **more expensive**: 610 epochs against 452 over the
+six-task sequence, **35% more**, consistent at every learning rate. Epochs rather than wall clock,
+because the two arms sat in different packed tasks and wall clock would have carried the
+contention with it. The mechanism is that annealing slows per-epoch progress, so early stopping
+(patience 24 on `val_final_loss`) fires later. Any "is it worth it" comparison has to put the
+accuracy delta against this, not against zero.
+
 **7. Know what the framework resets.** Every task step builds a fresh `Trainer`, so the optimizer
 and its learning rate are rebuilt at the configured value at each of six steps and annealing never
 carries across the sequence. That bounds what any schedule can do — within a 45–75 epoch step,
@@ -230,6 +239,35 @@ was the other reason to wait. Saved roughly 45 minutes of serial time.
 **6. Probe walltime raised from 3h to 6h.** See the anomaly below; this is the fix for it.
 
 ---
+
+## Corrections to inherited guidance
+
+**PLAN §5 lesson 2 — "`apptainer` only exists on compute nodes" — is no longer true.** Verified on
+the login node `c000`: `/shared/software/apptainer/bin/apptainer`, version 1.4.5-3.el8, and
+`apptainer exec <sif> python -c ...` runs there. This matters for how much work has to be submitted
+as a job: container inspection, config-schema checks against an image, and version probes can all
+be done interactively. (Pulling an image may still be worth submitting for other reasons — size and
+network — but that is a different argument from "the binary is absent".)
+
+## Pending: the learnable loss balancer needs an image before it can be A/B'd
+
+The wiring exists (PR #53) but **is not in any container**, and the campaign runs
+`foundation-model_rikyu-0.3.2.sif`. Verified directly:
+`"learnable_loss_balancer" in TrainingSectionConfig.__dataclass_fields__` is `False` there. So the
+comparison cannot run on the current image at all.
+
+The planned shape, once an image carries it:
+
+* **when** — after the A' finals fix the encoder and scheduler, before B'. The balancer changes how
+  task losses are combined, so it is only meaningful on a settled base.
+* **design** — adopted A' configuration, balancer ON vs OFF, both arms **on the same image**, five
+  seeds each. Internally controlled, so the verdict does not depend on how that image differs from
+  0.3.2.
+* **decision it feeds** — if the effect is inside the seed band, the balancer is ignorable and the
+  final tuning need not carry it. If it clears the band, it becomes a dimension the final stage has
+  to consider, and Stage C' then faces an image question that is a real decision rather than a
+  detail: running C' on a different image from the rest of the campaign reintroduces exactly the
+  cross-version confound v1 died of.
 
 ## Anomalies
 
