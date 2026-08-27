@@ -34,6 +34,7 @@ from ..task_head.autoencoder import AutoEncoderHead
 from ..task_head.base import BaseTaskHead
 from ..task_head.kernel_regression import expand_for_kernel_regression
 from .annealing import AnnealingSchedule
+from .simplex import SimplexProjector
 from .targets import (
     CompositionOptimizationResult,
     OptimizationResult,
@@ -1250,135 +1251,19 @@ class InverseDesignMixin(nn.Module):
                         "drop the lock)."
                     )
 
-            # --- Soft top-K (cardinality constraint) helpers ----------------------------------------
-            # ``current_tau`` lives in a list so the optimisation loop can mutate it each step
-            # without rebuilding the ``_w_from_logits`` closure that reads it.
-            current_tau = [schedule.tau_for_step(0)]
-
-            def _soft_topk_mask(
-                lg: torch.Tensor, K: int, tau: float, *, force_select: torch.Tensor | None = None
-            ) -> torch.Tensor:
-                """Plötz–Roth iterative softmax. Returns m ∈ [0,1]^(B, n) with Σm = K.
-
-                ``force_select`` (n_components,) bool marks positions that must be in the K
-                selection (e.g. hard-locked elements). Instead of boosting those logits — which
-                would make the iterative softmax pick them K times in a row, never moving on —
-                we **pre-seed** the mask with 1.0 at those positions and run only ``K - n_locked``
-                iterations on the *unlocked* positions (their logits are masked to ``-inf``
-                inside the iteration so they never compete).
-                """
-                if force_select is None:
-                    alpha = lg
-                    m = torch.zeros_like(lg)
-                    n_iter = K
-                else:
-                    # Pre-mark locked positions as fully selected; iterate only on the rest.
-                    n_locked = int(force_select.sum().item())
-                    n_iter = K - n_locked
-                    locked_row = force_select.to(lg.dtype).unsqueeze(0).expand_as(lg)
-                    m = locked_row.clone()
-                    alpha = lg.masked_fill(force_select, float("-inf"))
-                for _ in range(n_iter):
-                    p = torch.softmax(alpha / tau, dim=-1)
-                    m = m + p
-                    # The shift in scaled-logit space at the selected position is
-                    # ``log(1−p)/τ`` — at small τ this is enormously negative, so the next
-                    # iteration cannot re-pick the same position. (We must NOT multiply by τ here.)
-                    alpha = alpha + torch.log((1.0 - p).clamp(min=1e-12))
-                return m
-
-            def _hard_topk_project(w: torch.Tensor, K: int) -> torch.Tensor:
-                """Hard top-K projection: keep K largest per row, zero rest, renormalise.
-
-                If ``locked_mask`` is set, every locked position is forced into the kept set
-                (so the lock-paste below still has a place to write its seed values); the
-                remaining ``K − n_locked`` slots are filled by the largest unlocked weights.
-                """
-                if locked_mask is None:
-                    _, idx = w.topk(K, dim=-1)
-                    keep = torch.zeros_like(w).scatter_(-1, idx, 1.0)
-                else:
-                    n_locked = int(locked_mask.sum().item())
-                    n_free = K - n_locked
-                    locked_row = locked_mask.to(w.dtype).unsqueeze(0).expand_as(w)
-                    if n_free > 0:
-                        # Exclude locked positions from the unlocked competition by sending them
-                        # to ``-inf`` before topk; locked positions are added back via ``locked_row``.
-                        w_for_free = w.masked_fill(locked_mask.unsqueeze(0), float("-inf"))
-                        _, idx = w_for_free.topk(n_free, dim=-1)
-                        free_keep = torch.zeros_like(w).scatter_(-1, idx, 1.0)
-                        keep = (locked_row + free_keep).clamp(max=1.0)
-                    else:
-                        keep = locked_row
-                w = w * keep
-                return w / w.sum(dim=-1, keepdim=True).clamp(min=1e-12)
-
-            def _apply_lock_paste(w: torch.Tensor) -> torch.Tensor:
-                """Paste locked seed values onto ``w`` and renormalise unlocked positions."""
-                if locked_mask is None:
-                    return w
-                assert locked_w0 is not None  # set alongside locked_mask
-                free_mask_f = (~locked_mask).to(w.dtype)
-                w_unlocked = w * free_mask_f
-                free_mass = (1.0 - locked_w0.sum(dim=-1, keepdim=True)).clamp(min=0.0)
-                w_unlocked = w_unlocked / w_unlocked.sum(dim=-1, keepdim=True).clamp(min=1e-12) * free_mass
-                return w_unlocked + locked_w0
-
-            def _apply_min_floor(w: torch.Tensor) -> torch.Tensor:
-                """Drop unlocked positions below ``min_nonzero_weight`` and re-fill free mass.
-
-                Locked positions are exempt (their values are user-set). If dropping below-floor
-                positions would leave a row with zero unlocked mass, the floor is skipped for
-                that row — preserving the simplex invariant. The "at most K" guarantee still
-                holds; some rows may end up with fewer than K non-zero positions.
-                """
-                if min_nonzero_weight <= 0.0:
-                    return w
-                if locked_mask is not None:
-                    assert locked_w0 is not None  # set alongside locked_mask
-                    unlocked_f = (~locked_mask).to(w.dtype)
-                    free_mass = (1.0 - locked_w0.sum(dim=-1, keepdim=True)).clamp(min=0.0)
-                    unlocked_bool = (~locked_mask).unsqueeze(0).expand_as(w)
-                else:
-                    unlocked_f = torch.ones_like(w[0])
-                    free_mass = torch.ones(w.shape[0], 1, dtype=w.dtype, device=w.device)
-                    unlocked_bool = torch.ones_like(w, dtype=torch.bool)
-                below = (w > 0) & (w < min_nonzero_weight) & unlocked_bool
-                if not below.any():
-                    return w
-                w_drop = w.masked_fill(below, 0.0)
-                # Per-row unlocked sum after the tentative drop.
-                unlocked_after = w_drop * unlocked_f
-                unlocked_sum = unlocked_after.sum(dim=-1, keepdim=True)
-                # Rows where the drop is safe — at least one unlocked position survives.
-                can_drop = unlocked_sum > 1e-12
-                # Renormalise unlocked portion to fit the free mass; locked stays as-is.
-                safe_sum = unlocked_sum.clamp(min=1e-12)
-                if locked_mask is not None:
-                    locked_part = w_drop * locked_mask.to(w.dtype)
-                    w_renorm = locked_part + unlocked_after * (free_mass / safe_sum)
-                else:
-                    w_renorm = w_drop / safe_sum
-                return torch.where(can_drop.expand_as(w), w_renorm, w)
-
-            def _w_from_logits(lg: torch.Tensor) -> torch.Tensor:
-                """Softmax → optional soft top-K → optional hard-lock paste → optional min-floor.
-
-                Reads ``current_tau[0]`` (set by the outer loop) for the soft top-K temperature.
-                """
-                if elem_mask is not None:
-                    lg = lg.masked_fill(~elem_mask, float("-inf"))
-                w_soft = torch.softmax(lg, dim=-1)
-                if max_elements is not None and max_elements < n_components:
-                    # Force locked positions to always sit in the K-hot mask so the lock-paste
-                    # below has somewhere to write. ``w_soft`` itself is computed from the
-                    # *unboosted* logits, so the within-K ratios reflect the optimisation state.
-                    m_topk = _soft_topk_mask(lg, max_elements, current_tau[0], force_select=locked_mask)
-                    w = w_soft * m_topk
-                    w = w / w.sum(dim=-1, keepdim=True).clamp(min=1e-12)
-                else:
-                    w = w_soft
-                return _apply_min_floor(_apply_lock_paste(w))
+            # --- Logits → a legal recipe -------------------------------------------------------------
+            # Every constraint settled above, bound once. The loop calls
+            # ``project.w_from_logits(logits, tau)`` and gets back a row on the simplex; the
+            # maths lives in .simplex, which is where to read about the soft top-K, the
+            # lock-paste and the floor.
+            project = SimplexProjector(
+                n_components=n_components,
+                elem_mask=elem_mask,
+                locked_mask=locked_mask,
+                locked_w0=locked_w0,
+                min_nonzero_weight=min_nonzero_weight,
+                max_elements=max_elements,
+            )
 
             def _heads_forward(h_task: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
                 """Evaluate the target terms; return (per-target channels (B, T), scalar objective).
@@ -1395,9 +1280,8 @@ class InverseDesignMixin(nn.Module):
             # Initial scoring uses τ at step 0 of the annealing schedule — i.e. the softest end
             # of the (annealing_scale + annealing_schedule)-derived τ curve, where the optimisation
             # actually begins.
-            current_tau[0] = schedule.tau_for_step(0)
             with torch.no_grad():
-                w0_tensor = _w_from_logits(logits)
+                w0_tensor = project.w_from_logits(logits, schedule.tau_for_step(0))
                 h0 = torch.tanh(self.encoder(w0_tensor @ kmd_kernel))
                 initial_channels, _ = _heads_forward(h0)
                 initial_score = initial_channels.detach()
@@ -1408,9 +1292,9 @@ class InverseDesignMixin(nn.Module):
             trajectory: list[torch.Tensor] = []
             weights_trajectory: list[torch.Tensor] = [] if record_weights_trajectory else []
             for step in range(steps):
-                current_tau[0] = schedule.tau_for_step(step)
+                tau = schedule.tau_for_step(step)
                 optimizer.zero_grad()
-                w = _w_from_logits(logits)
+                w = project.w_from_logits(logits, tau)
                 x = w @ kmd_kernel
                 h_task = torch.tanh(self.encoder(x))
                 channels, loss = _heads_forward(h_task)
@@ -1432,7 +1316,7 @@ class InverseDesignMixin(nn.Module):
                     # trajectory thus reflects the annealing schedule, not the hard projection.
                     # Stored on CPU to keep GPU memory flat for long trajectories on large B.
                     with torch.no_grad():
-                        weights_trajectory.append(_w_from_logits(logits).detach().cpu())
+                        weights_trajectory.append(project.w_from_logits(logits, tau).detach().cpu())
 
             # --- Final state ------------------------------------------------------------------------
             # Use the hardest τ for the final readout, then (if ``max_elements`` is active) apply
@@ -1440,17 +1324,11 @@ class InverseDesignMixin(nn.Module):
             # non-zero positions (the floor below may reduce that further) — at τ_end ≈ 0.01 the
             # soft mask is already near-K-hot, so the projection just cleans up residual
             # sub-threshold weights.
-            current_tau[0] = schedule.final_tau
             with torch.no_grad():
-                w_final = _w_from_logits(logits)
-                if max_elements is not None and max_elements < n_components:
-                    w_final = _hard_topk_project(w_final, max_elements)
-                    # Re-apply lock-paste — the projection may have re-distributed mass across
-                    # unlocked positions, and lock-paste's "free mass" renormalisation needs to
-                    # be re-run so the row still sums to exactly 1. Then re-floor: the projection
-                    # may have promoted a previously-zeroed below-floor position back in.
-                    w_final = _apply_lock_paste(w_final)
-                    w_final = _apply_min_floor(w_final)
+                # Hardest τ for the final readout, then the hard top-K clean-up: at τ_end ≈ 0.01
+                # the soft mask is already near-K-hot, so the projection only removes residual
+                # sub-threshold weights.
+                w_final = project.hard_project(project.w_from_logits(logits, schedule.final_tau))
                 x_final = w_final @ kmd_kernel
                 h_final = torch.tanh(self.encoder(x_final))
                 final_channels, _ = _heads_forward(h_final)
