@@ -8,8 +8,7 @@ or a direction (higher/lower), kernel-regression tasks toward a target curve ``{
 classification tasks pushing the probability of chosen label(s) high or low — each with its own
 weight. The engine selects seed compositions once per run, then optimises them along each
 configured *path*: latent-space optimisation with AE alignment, or differentiable
-composition-space optimisation over element weights. Trajectory analytics live in
-:mod:`foundation_model.workflows.inverse_trajectory`.
+composition-space optimisation over element weights.
 
 WHAT LIVES WHERE
 
@@ -21,7 +20,9 @@ guessed: the cross-references between these five groups run one way, with no cyc
 * :mod:`.seeds`   — choosing which compositions to start from  (depends on config)
 * :mod:`.paths`   — running one seed set down one path, and what a result looks like
 * :mod:`.report`  — figures and markdown; the leaf that everything else feeds
-* :mod:`.engine`  — ``run``: the scenario loop that drives the four above
+* :mod:`.trajectory` — per-step analytics, plots and animations; a second leaf, deliberately
+  knowing nothing about the config that feeds it
+* :mod:`.engine`  — ``run``: the scenario loop that drives the others
 
 The names below are re-exported, so the CLI's ``from foundation_model.workflows.inverse import
 InverseConfig, build_inverse_config, run`` is unchanged. Only the public surface is: a private

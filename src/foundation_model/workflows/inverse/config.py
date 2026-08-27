@@ -27,7 +27,7 @@ matplotlib.use("Agg")
 
 from foundation_model.models.flexible_multi_task_model import OptimizationTarget  # noqa: E402
 
-from .. import inverse_trajectory  # noqa: E402
+from . import trajectory  # noqa: E402
 from .._sections import ModelSectionConfig, build_model_section, reject_unknown  # noqa: E402
 from ..task_catalog import TaskCatalogConfig, TaskKind, TaskSpec, build_task_catalog_config  # noqa: E402
 
@@ -254,9 +254,9 @@ class ScenarioConfig:
         return [t.to_model_target() for t in self.targets]
 
     @property
-    def target_metas(self) -> list[inverse_trajectory.TargetMeta]:
+    def target_metas(self) -> list[trajectory.TargetMeta]:
         return [
-            inverse_trajectory.TargetMeta(
+            trajectory.TargetMeta(
                 task=t.task,
                 kind=t.kind.value,
                 label=target_label(t),

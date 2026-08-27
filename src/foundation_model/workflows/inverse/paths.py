@@ -24,7 +24,7 @@ import torch  # noqa: E402
 
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS  # noqa: E402
 
-from .. import inverse_trajectory  # noqa: E402
+from . import trajectory  # noqa: E402
 from ..task_catalog import TaskCatalog  # noqa: E402
 from .config import InverseConfig, PathConfig, ScenarioConfig, TargetSpec  # noqa: E402
 from .seeds import _evaluate, _format_weights, _seed_weights  # noqa: E402
@@ -178,25 +178,21 @@ def _emit_trajectory(
     if targets.size == 0:
         return
     metas = scenario.target_metas
-    progress = inverse_trajectory.normalize_target_trajectories(targets, metas, seed_channels)
-    inverse_trajectory.plot_trajectory_static(
-        progress, traj_dir / f"{result['path']}_trajectory.png", title=result["path"]
-    )
+    progress = trajectory.normalize_target_trajectories(targets, metas, seed_channels)
+    trajectory.plot_trajectory_static(progress, traj_dir / f"{result['path']}_trajectory.png", title=result["path"])
 
     if cfg.animation_formats and weights.size:
         # Representative seed for the composition animation = the best final objective score.
         best = min(int(np.argmin(result["objective_after_decode"])), weights.shape[1] - 1)
         out_paths = {fmt: traj_dir / f"{result['path']}_trajectory.{fmt}" for fmt in cfg.animation_formats}
-        inverse_trajectory.plot_trajectory_animation(
+        trajectory.plot_trajectory_animation(
             progress, weights[:, best, :], list(DEFAULT_ELEMENTS), out_paths, title=result["path"]
         )
 
     if cfg.per_seed_trajectories:
         per_dir = traj_dir / f"{result['path']}_per_seed"
         per_dir.mkdir(exist_ok=True)
-        matrix = inverse_trajectory.target_progress_matrix(targets, metas, seed_channels)
+        matrix = trajectory.target_progress_matrix(targets, metas, seed_channels)
         for i in range(min(targets.shape[1], 20)):  # cap the per-seed fan-out
             ps = {label: mat[:, i] for label, mat in matrix.items()}
-            inverse_trajectory.plot_trajectory_static(
-                ps, per_dir / f"seed{i:02d}.png", title=f"{result['path']} · seed {i}"
-            )
+            trajectory.plot_trajectory_static(ps, per_dir / f"seed{i:02d}.png", title=f"{result['path']} · seed {i}")

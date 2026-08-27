@@ -37,8 +37,8 @@ foundation_model/
 │       │   ├── seeds.py                 #   which compositions a scenario starts from
 │       │   ├── paths.py                 #   running one seed set down one path
 │       │   ├── report.py                #   figures + markdown
+│       │   ├── trajectory.py            #   per-step analytics / plots / animations
 │       │   └── engine.py                #   run: the scenario loop
-│       ├── inverse_trajectory.py         # trajectory analytics / plots / animations
 │       ├── plots.py                      # parity / confusion / kr-sequence / forgetting plots
 │       └── predict.py                    # arbitrary-checkpoint evaluation & prediction
 │
@@ -81,8 +81,7 @@ trained model rather than part of training one — lives in
 [src/foundation_model/models/inverse_design/](src/foundation_model/models/inverse_design/).
 `InverseDesignMixin` declares what the search needs from the model — four members (`encoder`,
 `task_heads`, `task_configs_map`, `_head`) — and the model class mixes it in; nothing on the
-training path calls any of it, and the only consumers are `workflows/inverse/` and
-`workflows/inverse_trajectory.py`.
+training path calls any of it, and the only consumer is `workflows/inverse/`.
 
 The package's modules each answer one question — what to optimise *toward* (`targets`), what a
 recipe may *be* (`constraints`), how fast the cardinality limit *commits* (`annealing`), how a

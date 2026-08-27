@@ -161,7 +161,7 @@ Three consequences for interpreting the per-scenario heatmaps:
   for the application.
 
 The "best-per-target representative seed" used in the GIF / HTML's composition
-panel is picked by `workflows.inverse_trajectory.best_seed_by_target_distance`
+panel is picked by `workflows.inverse.trajectory.best_seed_by_target_distance`
 (minimises the joint normalised distance to QC = 1 and every reg target). To
 see all 20 seeds individually instead of the mean, rerun with
 `--per-seed-trajectories`.
@@ -186,4 +186,4 @@ see all 20 seeds individually instead of the mean, rerun with
 * **Per-scenario outputs**: `artifacts/inverse/<scenario>/` (gitignored — regenerate with
   `fm inverse --config samples/inverse.toml --checkpoint <ckpt>`).
 * **Implementation**: [`workflows/inverse/`](../src/foundation_model/workflows/inverse/)
-  (scenario × path engine) + [`workflows/inverse_trajectory.py`](../src/foundation_model/workflows/inverse_trajectory.py).
+  (scenario × path engine, including its `trajectory` module).

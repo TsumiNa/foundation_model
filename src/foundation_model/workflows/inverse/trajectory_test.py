@@ -1,7 +1,7 @@
 # Copyright 2026 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the pure helpers in :mod:`foundation_model.workflows.inverse_trajectory`.
+"""Tests for the pure helpers in :mod:`foundation_model.workflows.inverse.trajectory`.
 
 The full trajectory orchestrator needs a real trained checkpoint to exercise; this file covers
 the pure functions — per-kind progress normalisation and the writer smoke-tests (static plot +
@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from foundation_model.workflows.inverse_trajectory import (
+from foundation_model.workflows.inverse.trajectory import (
     TargetMeta,
     normalize_target_trajectories,
     plot_trajectory_animation,
