@@ -33,8 +33,7 @@ from ..model_config import TaskConfigType, TaskType
 from ..task_head.autoencoder import AutoEncoderHead
 from ..task_head.base import BaseTaskHead
 from ..task_head.kernel_regression import expand_for_kernel_regression
-from .annealing import AnnealingSchedule
-from .simplex import SimplexProjector
+from .constraints import CompositionConstraints
 from .targets import (
     CompositionOptimizationResult,
     OptimizationResult,
@@ -917,179 +916,23 @@ class InverseDesignMixin(nn.Module):
         if not 0.0 <= seed_blend <= 1.0:
             raise ValueError(f"seed_blend must be in [0, 1], got {seed_blend}")
 
-        # --- Per-element constraints (symbol-based) -----------------------------------------------
-        # ``allowed_elements`` is a hard whitelist; ``element_step_scale`` is a soft per-element
-        # learning-rate multiplier (0 = frozen). Symbol-based inputs are resolved against the
-        # bundled :data:`DEFAULT_ELEMENTS` registry — see argument docs above.
-        from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS  # local import; small list
-
-        elem_mask_arg: torch.Tensor | None = None
-        if isinstance(allowed_elements, str):
-            if allowed_elements != "all":
-                raise ValueError(f"allowed_elements as a string must be 'all'; got {allowed_elements!r}.")
-            # "all": no constraint, leave elem_mask_arg as None.
-        elif isinstance(allowed_elements, (list, tuple)):
-            if len(allowed_elements) == 0:
-                raise ValueError("allowed_elements list must be non-empty.")
-            sym_to_idx = {s: i for i, s in enumerate(DEFAULT_ELEMENTS)}
-            bad = [s for s in allowed_elements if s not in sym_to_idx]
-            if bad:
-                raise ValueError(f"Unknown element symbol(s) in allowed_elements: {bad}.")
-            if n_components != len(DEFAULT_ELEMENTS):
-                raise ValueError(
-                    f"allowed_elements as element symbols requires the kernel to align with "
-                    f"DEFAULT_ELEMENTS (n_components={n_components}, expected {len(DEFAULT_ELEMENTS)})."
-                )
-            elem_mask_arg = torch.zeros(n_components, dtype=torch.bool)
-            for sym in allowed_elements:
-                elem_mask_arg[sym_to_idx[sym]] = True
-        else:
-            raise TypeError(
-                f"allowed_elements must be 'all' or a non-empty list of element symbols; got {type(allowed_elements).__name__}."
-            )
-
-        step_scale_arg: torch.Tensor | None = None
-        if isinstance(element_step_scale, (int, float)) and not isinstance(element_step_scale, bool):
-            if element_step_scale < 0:
-                raise ValueError(f"element_step_scale must be >= 0; got {element_step_scale}.")
-            if float(element_step_scale) != 1.0:
-                step_scale_arg = torch.full((n_components,), float(element_step_scale))
-            # else: 1.0 means "no scaling"; keep step_scale_arg = None for the fast path.
-        elif isinstance(element_step_scale, Mapping):
-            sym_to_idx = {s: i for i, s in enumerate(DEFAULT_ELEMENTS)}
-            bad = [s for s in element_step_scale if s not in sym_to_idx]
-            if bad:
-                raise ValueError(f"Unknown element symbol(s) in element_step_scale: {bad}.")
-            if any(float(v) < 0 for v in element_step_scale.values()):
-                raise ValueError("element_step_scale values must be >= 0.")
-            if n_components != len(DEFAULT_ELEMENTS):
-                raise ValueError(
-                    f"element_step_scale as a symbol dict requires the kernel to align with "
-                    f"DEFAULT_ELEMENTS (n_components={n_components}, expected {len(DEFAULT_ELEMENTS)})."
-                )
-            step_scale_arg = torch.ones(n_components)
-            for sym, val in element_step_scale.items():
-                step_scale_arg[sym_to_idx[sym]] = float(val)
-        else:
-            raise TypeError(
-                f"element_step_scale must be a non-negative float or a mapping of "
-                f"element_symbol → float; got {type(element_step_scale).__name__}."
-            )
-
-        # --- Validate fixed_amounts (per-element explicit pinning) -------------------------------
-        # Build the (n_components,) tensors lazily: ``fixed_w0_vec`` (per-element pinned value,
-        # zero elsewhere) and ``fixed_mask_vec`` (bool: True at pinned positions). The actual
-        # batch-shaped ``locked_w0`` is materialised later (alongside step_scale=0 locks) once we
-        # know the batch size.
-        fixed_w0_vec: torch.Tensor | None = None
-        fixed_mask_vec: torch.Tensor | None = None
-        if fixed_amounts is not None:
-            if not isinstance(fixed_amounts, Mapping):
-                raise TypeError(
-                    f"fixed_amounts must be a mapping of element_symbol → float or None; "
-                    f"got {type(fixed_amounts).__name__}."
-                )
-            if len(fixed_amounts) == 0:
-                raise ValueError("fixed_amounts must be non-empty when provided.")
-            sym_to_idx = {s: i for i, s in enumerate(DEFAULT_ELEMENTS)}
-            bad_syms = [s for s in fixed_amounts if s not in sym_to_idx]
-            if bad_syms:
-                raise ValueError(f"Unknown element symbol(s) in fixed_amounts: {bad_syms}.")
-            if n_components != len(DEFAULT_ELEMENTS):
-                raise ValueError(
-                    f"fixed_amounts requires the kernel to align with DEFAULT_ELEMENTS "
-                    f"(n_components={n_components}, expected {len(DEFAULT_ELEMENTS)})."
-                )
-            for sym, amt in fixed_amounts.items():
-                if not 0.0 < float(amt) < 1.0:
-                    raise ValueError(f"fixed_amounts['{sym}']={amt} must be strictly between 0 and 1.")
-            total = float(sum(fixed_amounts.values()))
-            if total >= 1.0:
-                raise ValueError(
-                    f"sum(fixed_amounts.values())={total:.4f} must be strictly less than 1.0 "
-                    "(the optimiser needs unfixed mass to allocate)."
-                )
-            # Allowed-list compatibility — pinning outside the whitelist is contradictory.
-            if elem_mask_arg is not None:
-                bad_against_allowed = [s for s in fixed_amounts if not elem_mask_arg[sym_to_idx[s]]]
-                if bad_against_allowed:
-                    raise ValueError(
-                        f"fixed_amounts symbols {bad_against_allowed} are not in allowed_elements — "
-                        "pinning a disallowed element is contradictory."
-                    )
-            # Mutual exclusion with element_step_scale = 0 (the other hard-lock path).
-            if step_scale_arg is not None:
-                overlap = [s for s in fixed_amounts if float(step_scale_arg[sym_to_idx[s]]) == 0.0]
-                if overlap:
-                    raise ValueError(
-                        f"Symbols {overlap} appear in both element_step_scale=0 and "
-                        "fixed_amounts. Use one mechanism per element."
-                    )
-            fixed_w0_vec = torch.zeros(n_components)
-            fixed_mask_vec = torch.zeros(n_components, dtype=torch.bool)
-            for sym, amt in fixed_amounts.items():
-                idx = sym_to_idx[sym]
-                fixed_w0_vec[idx] = float(amt)
-                fixed_mask_vec[idx] = True
-
-        # --- Validate min_nonzero_weight (per-element floor) -------------------------------------
-        if not 0.0 <= min_nonzero_weight <= 1.0:
-            raise ValueError(f"min_nonzero_weight must be in [0, 1]; got {min_nonzero_weight}.")
-        if min_nonzero_weight > 0.0:
-            # If max_elements is set, the floor must be feasible: K elements ≥ floor summing to 1
-            # implies K * floor ≤ 1.
-            if max_elements is not None and min_nonzero_weight > 1.0 / max_elements:
-                raise ValueError(
-                    f"min_nonzero_weight={min_nonzero_weight} exceeds 1 / max_elements="
-                    f"{1.0 / max_elements:.4f}. With at most {max_elements} non-zero positions, "
-                    "no row can have every weight ≥ floor and still sum to 1."
-                )
-            # Fixed amounts must themselves be ≥ the floor (else contradiction).
-            if fixed_amounts is not None:
-                bad_pins = sorted((s, float(v)) for s, v in fixed_amounts.items() if float(v) < min_nonzero_weight)
-                if bad_pins:
-                    raise ValueError(
-                        f"fixed_amounts entries {bad_pins} are below min_nonzero_weight="
-                        f"{min_nonzero_weight}. The floor cannot override an explicit pin."
-                    )
-
-        # --- Validate cardinality constraint (max_elements + annealing knobs) -----------------------
-        # No cardinality constraint means no soft mask to harden, so the annealing knobs describe
-        # nothing and are deliberately left unvalidated — see AnnealingSchedule.disabled.
-        schedule = AnnealingSchedule.disabled()
-        if max_elements is not None:
-            if not isinstance(max_elements, int) or isinstance(max_elements, bool):
-                raise TypeError(f"max_elements must be an int or None; got {type(max_elements).__name__}.")
-            if not 1 <= max_elements <= n_components:
-                raise ValueError(f"max_elements must be in [1, n_components={n_components}]; got {max_elements}.")
-            if elem_mask_arg is not None:
-                n_allowed = int(elem_mask_arg.sum().item())
-                if max_elements > n_allowed:
-                    raise ValueError(
-                        f"max_elements={max_elements} exceeds the number of allowed elements "
-                        f"({n_allowed}). Widen ``allowed_elements`` or lower ``max_elements``."
-                    )
-            # Lock-vs-K check: locked positions (element_step_scale=0 ∪ fixed_amounts) all count
-            # toward K. We require *strict* ``max_elements > n_locked`` for both lock paths:
-            # equality leaves the lock-paste with no unlocked slot to absorb the leftover mass
-            # (1 − Σ locked) and produces rows that sum to < 1 — silently breaking the simplex.
-            # For ``fixed_amounts`` this is definite (``Σ < 1`` enforced at kwarg time); for
-            # ``element_step_scale=0`` the seed values *could* sum to exactly 1, but K-constrained
-            # all-locked recipes have no degrees of freedom anyway, so rejecting equality is
-            # both safe and clearer.
-            n_locked_pre = 0
-            if step_scale_arg is not None:
-                n_locked_pre += int((step_scale_arg == 0).sum().item())
-            if fixed_mask_vec is not None:
-                n_locked_pre += int(fixed_mask_vec.sum().item())
-            if n_locked_pre >= max_elements:
-                raise ValueError(
-                    f"max_elements={max_elements} must be > total locked elements ({n_locked_pre}, "
-                    "counting element_step_scale=0 ∪ fixed_amounts) — the lock-paste needs at "
-                    "least one unlocked slot to absorb the leftover mass (1 − Σ locked); equality "
-                    "would silently produce row sums < 1. Raise max_elements or unlock some."
-                )
-            schedule = AnnealingSchedule.build(scale=annealing_scale, schedule=annealing_schedule, steps=steps)
+        # --- Every constraint on the recipe, validated once -------------------------------------
+        # allowed_elements / element_step_scale / fixed_amounts / min_nonzero_weight /
+        # max_elements can each contradict another, and a contradiction that is not caught
+        # produces a plausible-looking recipe rather than an error. .constraints catches them
+        # all here, before the model is touched, and freezes the result.
+        constraints = CompositionConstraints.build(
+            n_components=n_components,
+            allowed_elements=allowed_elements,
+            element_step_scale=element_step_scale,
+            fixed_amounts=fixed_amounts,
+            min_nonzero_weight=min_nonzero_weight,
+            max_elements=max_elements,
+            annealing_scale=annealing_scale,
+            annealing_schedule=annealing_schedule,
+            steps=steps,
+        )
+        schedule = constraints.schedule
 
         # --- Validate the seed (BEFORE touching model state, so a bad input doesn't leave the
         #     model in eval() / with params switched off). ---------------------------------------
@@ -1132,11 +975,11 @@ class InverseDesignMixin(nn.Module):
                 # Use the caller's existing global RNG state — don't reseed here (would defeat
                 # the intended diversity across repeated calls and would leak state outward).
                 logits = torch.randn(n_starts, n_components, device=device, dtype=dtype) * 0.5
-                if elem_mask_arg is not None:
+                if constraints.elem_mask is not None:
                     # Push disallowed elements to a deep negative logit so softmax mask works
                     # consistently for both the random and seeded branches (the per-step mask
                     # below also enforces this; we mirror it here for the t=0 score).
-                    logits = logits.masked_fill(~elem_mask_arg.to(device=device), -1e9)
+                    logits = logits.masked_fill(~constraints.elem_mask.to(device=device), -1e9)
             else:
                 w0 = initial_weights.to(device=device, dtype=dtype)
                 w0 = w0 / w0.sum(dim=-1, keepdim=True)
@@ -1148,8 +991,8 @@ class InverseDesignMixin(nn.Module):
                 # the seed's nonzero elements. ``seed_blend < 1`` spreads a small uniform mass
                 # over the allowed elements so every reachable element starts at a workable logit.
                 if seed_blend < 1.0:
-                    if elem_mask_arg is not None:
-                        uniform_row = elem_mask_arg.to(device=device, dtype=dtype)
+                    if constraints.elem_mask is not None:
+                        uniform_row = constraints.elem_mask.to(device=device, dtype=dtype)
                         uniform_row = uniform_row / uniform_row.sum()
                     else:
                         uniform_row = torch.full((n_components,), 1.0 / n_components, device=device, dtype=dtype)
@@ -1164,106 +1007,19 @@ class InverseDesignMixin(nn.Module):
             # Validate the targets against the heads and build the per-term tensors once.
             prepared = self._prepare_optimization_targets(resolved_targets, device=device, dtype=dtype)
 
-            # Move the element-constraint tensors onto the right device (validated above).
-            elem_mask = elem_mask_arg.to(device=device) if elem_mask_arg is not None else None
-            step_scale = step_scale_arg.to(device=device, dtype=dtype) if step_scale_arg is not None else None
-            fixed_w0_dev = fixed_w0_vec.to(device=device, dtype=dtype) if fixed_w0_vec is not None else None
-            fixed_mask_dev = fixed_mask_vec.to(device=device) if fixed_mask_vec is not None else None
+            constraints = constraints.on(device=device, dtype=dtype)
 
-            # --- Hard-lock setup ----------------------------------------------------------------------
-            # Two hard-lock sources both end up in the same ``(locked_mask, locked_w0)`` pair so the
-            # downstream ``_w_from_logits`` / ``_apply_lock_paste`` logic is unchanged:
-            #
-            #   1. ``element_step_scale = 0``: pins the listed elements at their (un-blended)
-            #      ``initial_weights`` values. Requires ``initial_weights`` because there's no other
-            #      source for per-row seed values.
-            #   2. ``fixed_amounts``: pins the listed elements at user-given absolute amounts. No
-            #      ``initial_weights`` required — the lock values come straight from the kwarg.
-            #
-            # The two paths must not overlap (validated above). When both are present, we just
-            # OR the masks and add the value tensors (disjoint by construction).
-            #
-            # Why this matters: zeroing ``logit_i.grad`` keeps that logit constant but does NOT keep
-            # ``w_i`` constant — softmax renormalises across all logits, so when other (unlocked)
-            # logits move, the softmax denominator changes and so does the locked weight. The fix
-            # is to (a) detect locked indices, (b) capture their per-row target weights, and (c)
-            # inside ``_w_from_logits`` paste those values back over the softmax output and
-            # renormalise the unlocked positions to fill the remaining ``1 − Σ locked_w`` mass per
-            # row. The gradient through the locked indices is automatically zero (the lock branch
-            # uses a constant), so we no longer need the ``step_scale.mul_`` zeroing for them —
-            # but we leave that path active for the genuinely soft case ``0 < step_scale < 1``.
-            locked_mask: torch.Tensor | None = None
-            locked_w0: torch.Tensor | None = None
-            if step_scale is not None:
-                locked_idx_mask = step_scale == 0
-                if locked_idx_mask.any():
-                    if w0_seed is None:
-                        raise ValueError(
-                            "element_step_scale = 0 (hard lock) requires initial_weights — there's no "
-                            "per-row seed to lock to when initial_weights=None."
-                        )
-                    if elem_mask is not None and (~elem_mask[locked_idx_mask]).any():
-                        raise ValueError(
-                            "Locked elements (element_step_scale = 0) must also be in allowed_elements; "
-                            "locking a disallowed element is contradictory."
-                        )
-                    locked_mask = locked_idx_mask  # (n_components,) bool, on device
-                    # (B, n_components): seed values at locked positions, 0 elsewhere — constant.
-                    locked_w0 = (w0_seed * locked_mask.to(dtype)).detach()
-            if fixed_mask_dev is not None:
-                assert fixed_w0_dev is not None  # built together with fixed_mask_dev
-                # Broadcast the per-element fixed values to every row in the batch.
-                B = logits.shape[0]
-                fixed_w0_batch = fixed_w0_dev.unsqueeze(0).expand(B, -1).detach()
-                if locked_mask is None:
-                    locked_mask = fixed_mask_dev
-                    locked_w0 = fixed_w0_batch
-                else:
-                    assert locked_w0 is not None  # set alongside locked_mask above
-                    locked_mask = locked_mask | fixed_mask_dev  # validated disjoint
-                    locked_w0 = locked_w0 + fixed_w0_batch
-
-            # Runtime sanity: combined lock sum must leave room (or fit exactly) for the simplex.
-            # ``fixed_amounts`` enforces ``Σ < 1`` at kwarg time, and ``element_step_scale=0``
-            # locks at seed values which sum to ≤ 1 per row — but the *combined* total could
-            # exceed 1 (e.g. seed-lock Mg=0.50 + fix Au=0.65). Check here, with a tiny tolerance
-            # for float noise.
-            if locked_w0 is not None:
-                lock_sums = locked_w0.sum(dim=-1)
-                if (lock_sums > 1.0 + 1e-5).any():
-                    raise ValueError(
-                        f"Combined locked mass exceeds 1.0 on at least one row "
-                        f"(max row-sum = {float(lock_sums.max()):.4f}). Likely cause: "
-                        "``element_step_scale=0`` locks plus ``fixed_amounts`` together claim more "
-                        "than 100% of the simplex. Lower one set of values or drop a lock."
-                    )
-
-            # Runtime sanity: floored elements must not contradict the lock-paste targets.
-            # ``fixed_amounts`` was checked at kwarg time; ``element_step_scale=0`` locks have
-            # per-row seed values we couldn't see earlier — verify them now.
-            if min_nonzero_weight > 0.0 and locked_mask is not None and locked_w0 is not None:
-                locked_below_floor = (locked_w0 > 0) & (locked_w0 < min_nonzero_weight)
-                if locked_below_floor.any():
-                    raise ValueError(
-                        f"At least one locked element's value falls below min_nonzero_weight="
-                        f"{min_nonzero_weight}. Likely cause: an element_step_scale=0 lock points "
-                        "at a seed value below the floor (raise the seed, lower the floor, or "
-                        "drop the lock)."
-                    )
+            # --- Hard locks, now that there is a batch to lock ------------------------------------
+            # element_step_scale=0 pins at the seed's per-row values, so this half could not run
+            # at validation time. Both lock sources come back as one (mask, values) pair.
+            locked_mask, locked_w0 = constraints.resolve_locks(w0_seed=w0_seed, batch_size=logits.shape[0], dtype=dtype)
 
             # --- Logits → a legal recipe -------------------------------------------------------------
             # Every constraint settled above, bound once. The loop calls
             # ``project.w_from_logits(logits, tau)`` and gets back a row on the simplex; the
             # maths lives in .simplex, which is where to read about the soft top-K, the
             # lock-paste and the floor.
-            project = SimplexProjector(
-                n_components=n_components,
-                elem_mask=elem_mask,
-                locked_mask=locked_mask,
-                locked_w0=locked_w0,
-                min_nonzero_weight=min_nonzero_weight,
-                max_elements=max_elements,
-            )
+            project = constraints.projector(locked_mask, locked_w0)
 
             def _heads_forward(h_task: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
                 """Evaluate the target terms; return (per-target channels (B, T), scalar objective).
@@ -1306,9 +1062,9 @@ class InverseDesignMixin(nn.Module):
                     entropy = -(w * w.clamp(min=1e-12).log()).sum(dim=-1).mean()
                     loss = loss + (1.0 - diversity_scale) * entropy
                 loss.backward()
-                if step_scale is not None and logits.grad is not None:
+                if constraints.step_scale is not None and logits.grad is not None:
                     # Soft per-element constraint: scale each element's logit gradient (0 = frozen).
-                    logits.grad.mul_(step_scale)
+                    logits.grad.mul_(constraints.step_scale)
                 optimizer.step()
                 trajectory.append(channels.detach())
                 if record_weights_trajectory:
