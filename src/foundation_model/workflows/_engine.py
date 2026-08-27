@@ -105,6 +105,14 @@ def build_model_for_checkpoint(
         # rule from rejecting a small caller-supplied lr on an inference-only path.
         shared_block_optimizer=OptimizerConfig(lr=lr, weight_decay=1e-2, scheduler_enabled=False),
     )
+    if AE_NAME in built.task_configs_map:
+        # The AE head is auto-created by the constructor, so it never passes through the add_task
+        # loop below and would keep `optimizer = None`. configure_optimizers reads that as the
+        # OptimizerConfig defaults, i.e. scheduler_enabled=True, which disagrees with every other
+        # group here and raises. Nothing calls configure_optimizers on this model today —
+        # predict/inverse build no Trainer — but "every parameter group is consistent" has to be
+        # true of the model, not just of the groups this function happens to touch.
+        built.task_configs_map[AE_NAME].optimizer = OptimizerConfig(lr=lr, weight_decay=1e-2, scheduler_enabled=False)
     for name in task_names:
         head = catalog.build_task_config(
             name,
