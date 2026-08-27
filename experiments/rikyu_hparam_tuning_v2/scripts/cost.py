@@ -15,9 +15,10 @@ inferred from which stages were launched with ``--pack``.
     python scripts/cost.py                                     # this campaign
     python scripts/cost.py --also /path/to/another/outbase     # alongside another
 
-The packed ratio is reported over the PACKED RUNS ALONE. Dividing campaign totals instead mixes in
-every unpacked run and lands near 1.0x, which reads as "packing did nothing" while the packed runs
-themselves went 8x.
+No throughput ratio is printed. ``card_s`` is DEFINED as ``run_s / pack_size``, so dividing one by
+the other returns the pack size whatever the runs did — an accounting identity that looks like a
+measurement. The real speed-up comes from a calibration that runs the same grid points both ways;
+for this workload that is 7.1x at eight per card, not the 8.0x the identity would suggest.
 """
 
 from __future__ import annotations
@@ -98,9 +99,13 @@ def report(root: Path) -> None:
     if total.n_failed:
         print(f"  {total.failed_s / 3600:.1f} card-h burned by {total.n_failed} failed run(s)")
     if total.n_packed and total.packed_card_s:
+        # No throughput ratio here on purpose. card_s is DEFINED as run_s / pack_size, so
+        # run_s / card_s returns the pack size by construction and measures nothing — it would
+        # print "8.0x" however the packed runs actually behaved. The real speed-up has to come
+        # from a calibration that re-runs the same points both ways (7.1x at eight per card).
         print(f"  packed: {total.n_packed} of {total.n} runs, "
-              f"{total.packed_run_s / 3600:.0f} run-h into {total.packed_card_s / 3600:.0f} card-h "
-              f"= {total.packed_run_s / total.packed_card_s:.1f}x on that portion")
+              f"{total.packed_run_s / 3600:.0f} run-h billed as {total.packed_card_s / 3600:.0f} "
+              f"card-h (an accounting split, not a measured speed-up)")
     unpacked_n = total.n - total.n_packed
     if unpacked_n:
         unpacked_card = (total.card_s - total.packed_card_s) / 3600
