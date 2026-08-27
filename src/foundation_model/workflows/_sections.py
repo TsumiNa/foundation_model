@@ -159,14 +159,20 @@ class OptimizerSectionConfig:
 class SchedulerSectionConfig:
     """``[training.scheduler]`` — ``ReduceLROnPlateau``, applied to every parameter group.
 
-    ``patience`` counts **epochs**. Under manual optimization Lightning does not drive schedulers,
-    so the model steps them itself in ``on_train_epoch_end`` — once per epoch, on the
-    epoch-aggregated ``monitor`` metric. (Before 0.3.1 it stepped inside ``training_step``, i.e.
-    once per *batch*, which made ``patience`` count batches and drove the LR to ``min_lr`` inside
-    the first epoch on a 24k-row task.)
+    ``patience`` counts **epochs**. The model declares one scheduler at ``interval = "epoch"`` and
+    Lightning drives it: once per epoch, on the epoch-aggregated ``monitor`` metric read from
+    ``trainer.callback_metrics``. (The model used to step its own schedulers — it had one per
+    parameter group, which forced manual optimization, under which Lightning drives neither. It did
+    that inside ``training_step``, i.e. once per *batch*, which made ``patience`` count batches and
+    drove the LR to ``min_lr`` inside the first epoch on a 24k-row task.)
 
-    ``interval`` / ``frequency`` are not exposed: stepping is per-epoch by construction, and
-    Lightning's own scheduler cadence does not apply under manual optimization.
+    There is no ``interval`` / ``frequency`` key, and no ``OptimizerConfig`` field behind one:
+    per-batch stepping of a plateau scheduler is the bug above, not a configuration.
+
+    One block, every group. These five settings are the scheduling **decision**, which reads only
+    the monitored metric, so the single scheduler owns them for all parameter groups; ``lr`` /
+    ``weight_decay`` / ``min_lr`` are per-group and stay that way. A model assembled in Python with
+    groups that disagree here is rejected by ``configure_optimizers`` rather than resolved silently.
 
     ``min_lr`` is a FLOOR on the reduced learning rate. A low configured LR plus this floor leaves
     the scheduler almost no room to anneal — at the default ``1e-4``, an ``lr`` of ``2e-4`` can only

@@ -12,7 +12,8 @@ foundation_model/
 │   │   │   ├── classification.py
 │   │   │   ├── kernel_regression.py
 │   │   │   └── autoencoder.py   # Reconstructs x from h_task; powers optimize_latent
-│   │   ├── flexible_multi_task_model.py
+│   │   ├── flexible_multi_task_model.py  # LightningModule: task lifecycle + train/eval steps
+│   │   ├── inverse_design.py    # InverseDesignMixin: optimize_latent / optimize_composition
 │   │   └── model_config.py      # EncoderConfig + per-task config dataclasses
 │   ├── data/                    # CompoundDataModule + per-task data sources + splitter
 │   ├── utils/                   # KMD + plotting / training helpers
@@ -62,6 +63,14 @@ parquets, metrics, figures). `_sections.py` (the `[model]`/`[training]` config) 
 `FlexibleMultiTaskModel` ([src/foundation_model/models/flexible_multi_task_model.py](src/foundation_model/models/flexible_multi_task_model.py))
 is a single-encoder, multi-head supervised model. Composition descriptors enter the encoder,
 get `tanh`'d at the model level, and feed every active task head.
+
+Target-driven search over *inputs* — `optimize_latent` / `optimize_composition`, a **use** of a
+trained model rather than part of training one — lives in `InverseDesignMixin`
+([src/foundation_model/models/inverse_design.py](src/foundation_model/models/inverse_design.py)),
+which the model class mixes in. It reaches for four members (`encoder`, `task_heads`,
+`task_configs_map`, `_head`) and declares that contract rather than assuming it; nothing on the
+training path calls any of it, and the only consumers are `workflows/inverse.py` and
+`workflows/inverse_trajectory.py`.
 
 ## Diagram
 

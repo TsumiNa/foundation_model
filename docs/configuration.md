@@ -155,19 +155,36 @@ above).
 | `kr_weight_decay` | float | `5e-05` | `>= 0` | Kernel-regression head weight decay. |
 | `ae_lr` | float | `0.005` | `> 0` | AutoEncoder head learning rate (the AE head always trains). |
 | `ae_weight_decay` | float | `0.001` | `>= 0` | AutoEncoder head weight decay. |
+| `learnable_loss_balancer` | bool | `false` | | Uncertainty weighting (Kendall/Gal/Cipolla, CVPR 2018): learn one log σ per supervised task and combine losses as Σᵢ [ 0.5·exp(−2 log σᵢ)·Lᵢ + log σᵢ ] instead of the static `[[tasks]].loss_weight`. Off by default — see the note below. |
 | `accelerator` | str | `"auto"` | | Lightning accelerator (`auto` / `cpu` / `gpu` / …). |
 | `devices` | int \| list[int] \| str | `"auto"` | | Passed to Lightning `Trainer(devices=...)`: `"auto"` (all devices for the accelerator), an int count (`-1` = all), a list of device indices (`[1, 3]`), or a string (`"1,3"` / `"0-3"`). |
 | `seed` | int | `2025` | | Global seed (`--seed` overrides). |
 
-The model builds **one AdamW instance per parameter group** — shared encoder, regression/
+The model builds **one AdamW with one parameter group per role** — shared encoder, regression/
 classification heads, kernel-regression heads, and the always-on autoencoder head — so each group
 has its own learning rate and weight decay. The four defaults span three orders of magnitude
 (`1e-2` encoder / `1e-3` AE / `5e-5` KR / `1e-5` reg+clf); they were call-site constants before
 `0.3.0` and are configuration now.
 
+> **Changed.** It used to be one AdamW *instance* per group. Lightning drives at most one optimizer
+> automatically, so that shape forced `automatic_optimization = False`, and under manual
+> optimization Lightning stops driving schedulers too — which is how stepping them became the
+> model's job, and how the #45 per-batch bug got in. The collapse changes no learning rate: every
+> group's scheduler was built from the one `[training.scheduler]` block below and monitored the
+> same metric, so the N schedulers already decided identically. Per-group `lr` / `weight_decay` /
+> `min_lr` survive as parameter groups and a list-valued `min_lr`.
+
 A single `[[tasks]]` entry may override its own head with `lr` / `weight_decay`, which win over
 these group defaults. Everything else about the optimizer comes from the two sub-tables below and
 is shared by every group.
+
+> **`learnable_loss_balancer` has never been switched on in any run.** The model has implemented
+> uncertainty weighting since before `[training]` existed, but nothing routed a value to it, so it
+> defaulted off and stayed there. Exposing the key does not turn it on; it makes the A/B runnable.
+> Note when you do run it: the log σ parameters join the shared-encoder group, so they take
+> `encoder_weight_decay` — AdamW's decoupled decay pulls each log σ toward 0 (σ = 1, i.e. the
+> unweighted objective), which is a mild bias against the balancer that is worth being aware of
+> when reading the comparison.
 
 ### `[training.optimizer]` → AdamW numerics (shared by every group)
 
@@ -193,9 +210,16 @@ key could reach; they were removed in `0.3.0` rather than left as untested dead 
 `ReduceLROnPlateau` is the only scheduler; `StepLR` and the `"None"` selector were removed in
 `0.3.0`, the latter replaced by `enabled`.
 
-The model uses manual optimization, so Lightning does not drive its schedulers; it steps them
-itself in `on_train_epoch_end` — **once per epoch**, on the epoch-aggregated `monitor` metric.
-`interval` / `frequency` are therefore not exposed: the cadence is per-epoch by construction.
+There is **one** scheduler, over the single AdamW, and **Lightning** drives it: the model declares
+`interval = "epoch"` and Lightning steps it once per epoch on the epoch-aggregated `monitor`
+metric. The model does not touch it, so the cadence cannot drift back to per-batch. There is no
+`interval` / `frequency` key here and no field behind one — a plateau scheduler stepped per batch
+is the bug below, not a setting.
+
+These five keys are the scheduling **decision**, which reads only the monitored metric, so they
+apply to every parameter group; `lr` / `weight_decay` / `min_lr` remain per-group. A per-group
+scheduler *policy* is therefore not expressible — it never was from this file, which has always
+been one block feeding every group.
 
 > **Changed in 0.3.1.** Schedulers previously stepped inside `training_step`, i.e. once per
 > *batch*, which made `patience` count batches — on a 24k-row task at `batch_size = 256`
