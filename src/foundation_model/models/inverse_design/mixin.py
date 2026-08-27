@@ -41,8 +41,8 @@ from .composition import optimize_composition
 from .latent import optimize_latent
 from .targets import (
     OptimizationTarget,
-    _PreparedTarget,
-    _reduce_pred,
+    PreparedTarget,
+    reduce_pred,
 )
 
 
@@ -90,7 +90,7 @@ class InverseDesignMixin(nn.Module):
 
     def _prepare_optimization_targets(
         self, targets: Sequence[OptimizationTarget], *, device: torch.device, dtype: torch.dtype
-    ) -> list[_PreparedTarget]:
+    ) -> list[PreparedTarget]:
         """Validate a target list against the model's heads and build the per-term tensors.
 
         The target *kind* comes from the head type in ``task_configs_map`` — the caller never
@@ -99,7 +99,7 @@ class InverseDesignMixin(nn.Module):
         """
         if not targets:
             raise ValueError("targets must be a non-empty sequence of OptimizationTarget.")
-        prepared: list[_PreparedTarget] = []
+        prepared: list[PreparedTarget] = []
         seen: set[str] = set()
         for spec in targets:
             name = spec.task
@@ -119,7 +119,7 @@ class InverseDesignMixin(nn.Module):
                     raise ValueError(f"Regression target '{name}' needs exactly one of value or direction.")
                 if spec.value is not None:
                     prepared.append(
-                        _PreparedTarget(
+                        PreparedTarget(
                             task=name,
                             kind="value",
                             weight=weight,
@@ -132,7 +132,7 @@ class InverseDesignMixin(nn.Module):
                             f"targets['{name}'].direction must be 'high' or 'low', got {spec.direction!r}."
                         )
                     prepared.append(
-                        _PreparedTarget(
+                        PreparedTarget(
                             task=name,
                             kind="direction",
                             weight=weight,
@@ -153,7 +153,7 @@ class InverseDesignMixin(nn.Module):
                         raise ValueError(f"targets['{name}'].points entries must be [t, y] pairs, got {p!r}.")
                     pairs.append((float(pair[0]), float(pair[1])))
                 prepared.append(
-                    _PreparedTarget(
+                    PreparedTarget(
                         task=name,
                         kind="curve",
                         weight=weight,
@@ -185,7 +185,7 @@ class InverseDesignMixin(nn.Module):
                     )
                 complement = [i for i in range(num_classes) if i not in set(idxs)]
                 prepared.append(
-                    _PreparedTarget(
+                    PreparedTarget(
                         task=name,
                         kind="class",
                         weight=weight,
@@ -200,7 +200,7 @@ class InverseDesignMixin(nn.Module):
         return prepared
 
     def _optimization_objective(
-        self, h_task: torch.Tensor, prepared: Sequence[_PreparedTarget]
+        self, h_task: torch.Tensor, prepared: Sequence[PreparedTarget]
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Evaluate every target term at ``h_task``.
 
@@ -238,13 +238,13 @@ class InverseDesignMixin(nn.Module):
                     loss_cols.append(tgt.weight * (-lp_rest))
             else:
                 pred = head(h_task)
-                reduced = _reduce_pred(pred)
+                reduced = reduce_pred(pred)
                 channel_cols.append(reduced)
                 if tgt.kind == "value":
                     assert tgt.value is not None
                     expanded = tgt.value.reshape([1] * pred.ndim).expand(pred.shape)
                     per_sample = (pred - expanded) ** 2
-                    per_sample = _reduce_pred(per_sample)
+                    per_sample = reduce_pred(per_sample)
                     loss_cols.append(tgt.weight * per_sample)
                 else:  # direction
                     loss_cols.append(tgt.weight * tgt.sign * reduced)

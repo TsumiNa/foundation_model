@@ -108,7 +108,7 @@ def run(cfg: PredictConfig, recorder: RunRecorder | None = None) -> dict[str, An
     seed_everything(cfg.seed, workers=True)
 
     try:
-        model, ckpt_tasks = _rebuild_model(cfg, catalog)
+        model, ckpt_tasks = rebuild_model(cfg, catalog)
         model = model.to(resolve_device(cfg.accelerator))
         heads = set(model.task_heads)
         requested = cfg.tasks or [t for t in ckpt_tasks if t in heads]
@@ -141,7 +141,7 @@ def run(cfg: PredictConfig, recorder: RunRecorder | None = None) -> dict[str, An
             rec.close()
 
 
-def _rebuild_model(cfg: PredictConfig, catalog: TaskCatalog) -> tuple[Any, list[str]]:
+def rebuild_model(cfg: PredictConfig, catalog: TaskCatalog) -> tuple[Any, list[str]]:
     state = load_checkpoint_state(cfg.checkpoint)
     ckpt_tasks = checkpoint_task_order(state)
     catalog_tasks = {t.name for t in cfg.catalog.tasks}

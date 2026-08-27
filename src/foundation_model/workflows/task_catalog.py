@@ -56,7 +56,7 @@ from ._sections import reject_unknown, validate_hidden_dims, validate_positive_i
 TaskConfig = RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
 
 # A composition key element token, e.g. "Fe" / "Cu" in "Fe0.5 Cu0.5".
-_ELEMENT_TOKEN = re.compile(r"[A-Z][a-z]?")
+ELEMENT_TOKEN = re.compile(r"[A-Z][a-z]?")
 
 
 class TaskKind(str, Enum):
@@ -362,7 +362,7 @@ def init_kernel_centers_sigmas(t_values: np.ndarray, n_kernel: int) -> tuple[lis
 
 
 def _count_elements(composition_key: str) -> int:
-    return len(_ELEMENT_TOKEN.findall(composition_key))
+    return len(ELEMENT_TOKEN.findall(composition_key))
 
 
 def _as_float_array(cell: Any) -> np.ndarray:

@@ -26,10 +26,12 @@ from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, formula_to_composi
 from .._engine import build_model_for_checkpoint, checkpoint_task_order, descriptor_tensor  # noqa: E402
 from ..recording import load_checkpoint_state  # noqa: E402
 from ..task_catalog import TaskCatalog  # noqa: E402
-from .config import _ELEMENT_TOKEN, InverseConfig, SeedConfig, SeedStrategy, TargetSpec  # noqa: E402
+from .config import ELEMENT_TOKEN, InverseConfig, SeedConfig, SeedStrategy, TargetSpec  # noqa: E402
 
 
-def _evaluate(model: Any, x: torch.Tensor, specs: Sequence[TargetSpec]) -> tuple[dict[str, np.ndarray], np.ndarray]:
+def evaluate_descriptors(
+    model: Any, x: torch.Tensor, specs: Sequence[TargetSpec]
+) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """Per-target channels (keyed by task name) + per-sample objective score for descriptors ``x``.
 
     Thin wrapper over :meth:`FlexibleMultiTaskModel.evaluate_targets` — the same terms the
@@ -41,7 +43,7 @@ def _evaluate(model: Any, x: torch.Tensor, specs: Sequence[TargetSpec]) -> tuple
     return {s.task: ch[:, j] for j, s in enumerate(specs)}, objective.cpu().numpy()
 
 
-def _seed_weights(seeds: Sequence[str]) -> torch.Tensor:
+def seed_weights(seeds: Sequence[str]) -> torch.Tensor:
     rows = []
     for comp in seeds:
         w = formula_to_composition(comp)
@@ -51,7 +53,7 @@ def _seed_weights(seeds: Sequence[str]) -> torch.Tensor:
     return torch.tensor(np.stack(rows), dtype=torch.float64)
 
 
-def _format_weights(weights: np.ndarray, *, top_k: int = 6, eps: float = 1e-3) -> list[str]:
+def format_weights(weights: np.ndarray, *, top_k: int = 6, eps: float = 1e-3) -> list[str]:
     out = []
     for row in np.asarray(weights):
         order = np.argsort(row)[::-1]
@@ -60,11 +62,11 @@ def _format_weights(weights: np.ndarray, *, top_k: int = 6, eps: float = 1e-3) -
     return out
 
 
-def _element_system(composition: str) -> frozenset[str]:
-    return frozenset(_ELEMENT_TOKEN.findall(composition))
+def element_system(composition: str) -> frozenset[str]:
+    return frozenset(ELEMENT_TOKEN.findall(composition))
 
 
-def _rebuild_model(cfg: InverseConfig, catalog: TaskCatalog) -> tuple[Any, list[str]]:
+def rebuild_model(cfg: InverseConfig, catalog: TaskCatalog) -> tuple[Any, list[str]]:
     state = load_checkpoint_state(cfg.checkpoint)
     ckpt_tasks = checkpoint_task_order(state)
     catalog_tasks = {t.name for t in cfg.catalog.tasks}
@@ -84,7 +86,7 @@ def _dedup_by_system(candidates: Sequence[str], n: int, *, enabled: bool) -> lis
     seen: set[frozenset[str]] = set()
     out: list[str] = []
     for comp in candidates:
-        key = _element_system(comp)
+        key = element_system(comp)
         if not key or key in seen:
             continue
         seen.add(key)
@@ -130,8 +132,8 @@ def select_seeds(
     n_strategy = max(0, seed_cfg.n - len(appended))
 
     def _merge(strategy_seeds: Sequence[str]) -> list[str]:
-        seen = {_element_system(c) for c in appended}
-        kept = [c for c in strategy_seeds if _element_system(c) not in seen]
+        seen = {element_system(c) for c in appended}
+        kept = [c for c in strategy_seeds if element_system(c) not in seen]
         return kept[:n_strategy] + appended
 
     if seed_cfg.strategy is SeedStrategy.EXPLICIT:

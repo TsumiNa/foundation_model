@@ -32,7 +32,7 @@ def validate_positive_int(where: str, value: Any) -> None:
         raise ValueError(f"{where} must be a positive int, got {value!r}.")
 
 
-_MULTI_DEVICE_HELP = (
+MULTI_DEVICE_HELP = (
     "Distributed training is temporarily removed (see the DDP note in ARCHITECTURE.md): the "
     "sampler and metric half was built but the output half never was, so ranks would concurrently "
     "overwrite the same checkpoint and results. Until it is restored, more than one device is "
@@ -46,7 +46,7 @@ def validate_devices(value: Any) -> None:
 
     The shape Lightning accepts is wider — an int count, a list of indices, a range string — and
     this used to accept all of it, which left the configuration surface pointing at a code path
-    that no longer exists. See :data:`_MULTI_DEVICE_HELP`.
+    that no longer exists. See :data:`MULTI_DEVICE_HELP`.
     """
     if isinstance(value, bool):  # bool is an int subclass — reject it explicitly
         raise ValueError(f"training.devices must be an int, list of ints, or str, got bool {value!r}.")
@@ -55,7 +55,7 @@ def validate_devices(value: Any) -> None:
             return
         if value == -1 or value > 1:
             raise ValueError(
-                f"training.devices must be 1 while distributed training is out, got {value}. {_MULTI_DEVICE_HELP}"
+                f"training.devices must be 1 while distributed training is out, got {value}. {MULTI_DEVICE_HELP}"
             )
         raise ValueError(f"training.devices int must be -1 (all) or >= 1, got {value}.")
     if isinstance(value, list):
@@ -63,7 +63,7 @@ def validate_devices(value: Any) -> None:
             raise ValueError(f"training.devices list must be non-empty non-negative int indices, got {value!r}.")
         if len(value) > 1:
             raise ValueError(
-                f"training.devices must name one device while distributed training is out, got {value!r}. {_MULTI_DEVICE_HELP}"
+                f"training.devices must name one device while distributed training is out, got {value!r}. {MULTI_DEVICE_HELP}"
             )
         return
     if isinstance(value, str):
@@ -71,7 +71,7 @@ def validate_devices(value: Any) -> None:
             raise ValueError('training.devices string must be non-empty (e.g. "auto", "1,3", "0-3").')
         if value.strip() != "auto" and any(sep in value for sep in (",", "-")):
             raise ValueError(
-                f"training.devices must name one device while distributed training is out, got {value!r}. {_MULTI_DEVICE_HELP}"
+                f"training.devices must name one device while distributed training is out, got {value!r}. {MULTI_DEVICE_HELP}"
             )
         return
     raise ValueError(f"training.devices must be an int, list of ints, or str, got {value!r}.")

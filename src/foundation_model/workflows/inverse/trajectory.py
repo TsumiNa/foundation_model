@@ -21,7 +21,7 @@ These are enough to visualise:
    on the side, frame per step).
 
 This module hosts the pure helpers; :func:`~.engine.run` drives them (via :mod:`.paths`'s
-``_emit_trajectory``), and they are unit-tested directly. It is a leaf: nothing here imports a
+``emit_trajectory``), and they are unit-tested directly. It is a leaf: nothing here imports a
 sibling, which is what keeps ``TargetMeta`` a hand-copied slice of a scenario target rather than
 an import of the config that owns it.
 """

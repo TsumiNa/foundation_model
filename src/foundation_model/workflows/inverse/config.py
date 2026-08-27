@@ -38,7 +38,7 @@ _ANIMATION_FORMATS = {"gif", "html", "svg"}
 _ACCELERATORS = {"auto", "cpu"}
 
 
-_ELEMENT_TOKEN = re.compile(r"[A-Z][a-z]?")
+ELEMENT_TOKEN = re.compile(r"[A-Z][a-z]?")
 
 
 # 48-element feasible alloy palette (copied verbatim from paper_inverse_comparison.py).

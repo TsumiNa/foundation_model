@@ -30,7 +30,7 @@ from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, formula_to_composi
 from ..plots import DISCOVERED_ELEMENT_COLOR, SCATTER_COLOR  # noqa: E402
 from ..recording import RunRecorder  # noqa: E402
 from .config import InverseConfig, ScenarioConfig, target_label, TargetKind, TargetSpec  # noqa: E402
-from .seeds import _element_system  # noqa: E402
+from .seeds import element_system  # noqa: E402
 
 
 def _method_color(method: str) -> str:
@@ -48,7 +48,7 @@ def _target_ref_line(spec: TargetSpec) -> float | None:
     return None  # direction: unbounded
 
 
-def _plot_comparison(results: list[dict[str, Any]], scenario: ScenarioConfig, rec: RunRecorder, rel: str) -> None:
+def plot_comparison(results: list[dict[str, Any]], scenario: ScenarioConfig, rec: RunRecorder, rel: str) -> None:
     specs = scenario.targets
     panels = ["objective", *[s.task for s in specs]]
     fig, axes = plt.subplots(1, len(panels), figsize=(4.4 * len(panels), 5.0), squeeze=False)
@@ -75,7 +75,7 @@ def _plot_comparison(results: list[dict[str, Any]], scenario: ScenarioConfig, re
     plt.close(fig)
 
 
-def _plot_objective_vs_targets(
+def plot_objective_vs_targets(
     results: list[dict[str, Any]],
     scenario: ScenarioConfig,
     seed_channels: dict[str, np.ndarray],
@@ -172,7 +172,7 @@ def _format_channel_delta(spec: TargetSpec, delta: float) -> str:
 def _top_fractions(weights: np.ndarray, *, top_k: int | None, eps: float = 1e-3) -> dict[str, float]:
     """``{element: fraction}`` for the largest ``top_k`` entries, renormalised to sum 1.
 
-    ``top_k=6`` mirrors :func:`_format_weights`, so the map plots exactly the elements that
+    ``top_k=6`` mirrors :func:`format_weights`, so the map plots exactly the elements that
     ``decoded_composition`` prints; the renormalisation is what makes a truncated row still read
     as percentages of 100. ``top_k=None`` keeps every element above ``eps`` (used for seeds,
     which are short and should be shown whole).
@@ -197,7 +197,7 @@ _MAP_CMAP = mcolors.LinearSegmentedColormap.from_list(
 
 #: Advance width of DejaVu Sans Mono (matplotlib's default monospace face) in em. Every glyph in
 #: these rows is monospaced, so a row's width is exactly ``n_chars × advance × fontsize`` — that
-#: lets :func:`_plot_seed_to_optimized` size its columns from the text *before* drawing, instead
+#: lets :func:`plot_seed_to_optimized` size its columns from the text *before* drawing, instead
 #: of hard-coding fractions that break as soon as a scenario adds a target.
 _MONO_ADVANCE_EM = 0.602
 
@@ -256,7 +256,7 @@ def _render_row(ax: Any, x_axes_frac: float, y_data: float, parts: Sequence[tupl
     )
 
 
-def _plot_seed_to_optimized(
+def plot_seed_to_optimized(
     seeds: list[str],
     result: dict[str, Any],
     specs: Sequence[TargetSpec],
@@ -369,14 +369,14 @@ def _plot_seed_to_optimized(
     plt.close(fig)
 
 
-def _plot_element_frequency(results: list[dict[str, Any]], seeds: list[str], rec: RunRecorder, rel: str) -> None:
-    seed_elements = set().union(*[_element_system(s) for s in seeds]) if seeds else set()
+def plot_element_frequency(results: list[dict[str, Any]], seeds: list[str], rec: RunRecorder, rel: str) -> None:
+    seed_elements = set().union(*[element_system(s) for s in seeds]) if seeds else set()
     counts: dict[str, dict[str, int]] = {}
     all_elems: dict[str, int] = {}
     for r in results:
         c: dict[str, int] = {}
         for formula in r["decoded_composition"]:
-            for el in _element_system(formula):
+            for el in element_system(formula):
                 c[el] = c.get(el, 0) + 1
                 all_elems[el] = all_elems.get(el, 0) + 1
         counts[r["path"]] = c
@@ -395,7 +395,7 @@ def _plot_element_frequency(results: list[dict[str, Any]], seeds: list[str], rec
     plt.close(fig)
 
 
-def _write_scenario_md(sc_dir: Path, scenario: ScenarioConfig, summary: list[dict[str, Any]]) -> None:
+def write_scenario_md(sc_dir: Path, scenario: ScenarioConfig, summary: list[dict[str, Any]]) -> None:
     lines = [f"# Inverse design — {scenario.name}", "", "Targets:"]
     lines.extend(f"- {target_label(t)}  (weight {t.weight:g})" for t in scenario.targets)
     lines.append("")
@@ -408,7 +408,7 @@ def _write_scenario_md(sc_dir: Path, scenario: ScenarioConfig, summary: list[dic
     (sc_dir / "SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _write_root_summary(root: Path, all_summary: Mapping[str, Any], cfg: InverseConfig) -> None:
+def write_root_summary(root: Path, all_summary: Mapping[str, Any], cfg: InverseConfig) -> None:
     lines = ["# Inverse design — all scenarios", "", f"Checkpoint: `{cfg.checkpoint}`", ""]
     for name, summary in all_summary.items():
         best = min(summary, key=lambda row: row["objective_mean"]) if summary else None

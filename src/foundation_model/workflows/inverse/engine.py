@@ -29,16 +29,16 @@ from .._engine import descriptor_tensor, resolve_device  # noqa: E402
 from ..recording import RunRecorder  # noqa: E402
 from ..task_catalog import TaskCatalog  # noqa: E402
 from .config import InverseConfig, InverseMethod, ScenarioConfig, target_label, TargetSpec  # noqa: E402
-from .paths import _emit_trajectory, _run_composition_path, _run_latent_path  # noqa: E402
+from .paths import emit_trajectory, run_composition_path, run_latent_path  # noqa: E402
 from .report import (  # noqa: E402
-    _plot_comparison,
-    _plot_element_frequency,
-    _plot_objective_vs_targets,
-    _plot_seed_to_optimized,
-    _write_root_summary,
-    _write_scenario_md,
+    plot_comparison,
+    plot_element_frequency,
+    plot_objective_vs_targets,
+    plot_seed_to_optimized,
+    write_root_summary,
+    write_scenario_md,
 )
-from .seeds import _evaluate, _rebuild_model, select_seeds  # noqa: E402
+from .seeds import evaluate_descriptors, rebuild_model, select_seeds  # noqa: E402
 
 
 def run(
@@ -52,7 +52,7 @@ def run(
     seed_everything(cfg.seed, workers=True)
 
     try:
-        model, ckpt_tasks = _rebuild_model(cfg, catalog)
+        model, ckpt_tasks = rebuild_model(cfg, catalog)
         _validate_heads(model, cfg)
         device = resolve_device(cfg.accelerator)
         model.to(device)
@@ -78,7 +78,7 @@ def run(
             all_summary[scenario.name] = summary
 
         (rec.paths.root / "inverse_design.json").write_text(json.dumps(all_summary, indent=2), encoding="utf-8")
-        _write_root_summary(rec.paths.root, all_summary, cfg)
+        write_root_summary(rec.paths.root, all_summary, cfg)
         return all_summary
     finally:
         if owns_recorder:
@@ -106,12 +106,12 @@ def _run_scenario(
 ) -> list[dict[str, Any]]:
     sc_dir = rec.paths.root / scenario.name
     sc_dir.mkdir(parents=True, exist_ok=True)
-    seed_channels, seed_objective = _evaluate(model, x_seed, scenario.targets)
+    seed_channels, seed_objective = evaluate_descriptors(model, x_seed, scenario.targets)
 
     results: list[dict[str, Any]] = []
     for path in cfg.paths:
         if path.method is InverseMethod.LATENT:
-            r = _run_latent_path(
+            r = run_latent_path(
                 model,
                 catalog,
                 seeds,
@@ -123,7 +123,7 @@ def _run_scenario(
                 record_trajectory=cfg.record_trajectory,
             )
         else:
-            r = _run_composition_path(
+            r = run_composition_path(
                 model,
                 catalog,
                 seeds,
@@ -148,7 +148,7 @@ def _run_scenario(
                 continue
             targets = np.asarray(r["trajectory_targets"], dtype=np.float32)
             weights = np.asarray(r["trajectory_weights"], dtype=np.float32)
-            _emit_trajectory(r, targets, weights, scenario, seed_channels, cfg, traj_dir)
+            emit_trajectory(r, targets, weights, scenario, seed_channels, cfg, traj_dir)
             npz = traj_dir / f"{r['path']}.npz"
             np.savez_compressed(npz, targets=targets, weights=weights, labels=labels)
             r["trajectory_file"] = str(npz.relative_to(sc_dir))
@@ -183,19 +183,19 @@ def _run_scenario(
     )
     (sc_dir / "targets.json").write_text(json.dumps(target_dump, indent=2), encoding="utf-8")
     (sc_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    _write_scenario_md(sc_dir, scenario, summary)
+    write_scenario_md(sc_dir, scenario, summary)
 
     # figures
     rel = scenario.name
-    _plot_comparison(results, scenario, rec, f"{rel}/comparison.png")
-    _plot_objective_vs_targets(
+    plot_comparison(results, scenario, rec, f"{rel}/comparison.png")
+    plot_objective_vs_targets(
         results, scenario, seed_channels, seed_objective, rec, f"{rel}/objective_vs_targets_scatter.png"
     )
-    _plot_element_frequency(results, list(seeds), rec, f"{rel}/element_frequency_heatmap.png")
+    plot_element_frequency(results, list(seeds), rec, f"{rel}/element_frequency_heatmap.png")
     for r in results:
         if r["method"] == "composition" and r["path"].endswith("random"):
             continue  # random init: no per-seed correspondence
-        _plot_seed_to_optimized(
+        plot_seed_to_optimized(
             list(seeds),
             r,
             scenario.targets,

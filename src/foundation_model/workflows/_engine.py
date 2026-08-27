@@ -29,7 +29,7 @@ from foundation_model.models.task_head.kernel_regression import expand_for_kerne
 from foundation_model.models.model_config import MLPEncoderConfig, OptimizerConfig
 
 from . import plots
-from ._sections import _MULTI_DEVICE_HELP, ModelSectionConfig, TrainingSectionConfig
+from ._sections import MULTI_DEVICE_HELP, ModelSectionConfig, TrainingSectionConfig
 from .recording import RunRecorder
 from .task_catalog import TaskCatalog, TaskConfig, TaskKind
 
@@ -297,7 +297,7 @@ def guard_single_device(trainer: Any) -> None:
     n = getattr(trainer, "num_devices", 1)
     if n and n > 1:
         raise RuntimeError(
-            f"Lightning resolved training.devices onto {n} devices. {_MULTI_DEVICE_HELP} "
+            f"Lightning resolved training.devices onto {n} devices. {MULTI_DEVICE_HELP} "
             "Set [training] devices = 1 (or a single index) to pin one."
         )
 

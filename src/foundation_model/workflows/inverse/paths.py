@@ -27,10 +27,10 @@ from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS  # noqa: E402
 from . import trajectory  # noqa: E402
 from ..task_catalog import TaskCatalog  # noqa: E402
 from .config import InverseConfig, PathConfig, ScenarioConfig, TargetSpec  # noqa: E402
-from .seeds import _evaluate, _format_weights, _seed_weights  # noqa: E402
+from .seeds import evaluate_descriptors, format_weights, seed_weights  # noqa: E402
 
 
-def _run_latent_path(
+def run_latent_path(
     model: Any,
     catalog: TaskCatalog,
     seeds: list[str],
@@ -56,7 +56,7 @@ def _run_latent_path(
     kmd = catalog.kmd()
     achieved = res.optimized_target[:, 0, :].cpu().numpy()  # channels at the final LATENT h
     optimized_desc = res.optimized_input[:, 0, :]
-    channels_after, objective_after = _evaluate(model, optimized_desc, scenario.targets)
+    channels_after, objective_after = evaluate_descriptors(model, optimized_desc, scenario.targets)
     desc_np = optimized_desc.detach().cpu().numpy()
     weights = kmd.inverse(desc_np) if kmd is not None else np.zeros((desc_np.shape[0], len(DEFAULT_ELEMENTS)))
     out = _result_dict(
@@ -72,7 +72,7 @@ def _run_latent_path(
     return out
 
 
-def _run_composition_path(
+def run_composition_path(
     model: Any,
     catalog: TaskCatalog,
     seeds: list[str],
@@ -89,7 +89,7 @@ def _run_composition_path(
     kernel = kmd.kernel_torch(device=device, dtype=dtype)
 
     if path.init == "seed":
-        init_kwargs: dict[str, Any] = {"initial_weights": _seed_weights(seeds), "seed_blend": path.seed_blend}
+        init_kwargs: dict[str, Any] = {"initial_weights": seed_weights(seeds), "seed_blend": path.seed_blend}
         n_rows = len(seeds)
     else:
         n_rows = path.n_starts or len(seeds)  # random init yields n_starts rows, not len(seeds)
@@ -115,7 +115,7 @@ def _run_composition_path(
     optimized_desc = res.optimized_descriptor
     weights = res.optimized_weights.cpu().numpy()
     achieved = res.optimized_target.cpu().numpy()
-    channels_after, objective_after = _evaluate(model, optimized_desc, scenario.targets)
+    channels_after, objective_after = evaluate_descriptors(model, optimized_desc, scenario.targets)
     seed_labels = list(seeds) if path.init == "seed" else [f"random_start_{i}" for i in range(n_rows)]
     out = _result_dict(
         path, "composition", seed_labels, channels_after, objective_after, achieved, scenario.targets, weights, elapsed
@@ -152,12 +152,12 @@ def _result_dict(
         # Channels at the optimiser's own final state (latent path: pre-decode latent h;
         # composition path: same descriptor, so this matches channels_after_decode).
         "channels_optimized": {s.task: achieved[:, j].tolist() for j, s in enumerate(specs)},
-        "decoded_composition": _format_weights(weights),
+        "decoded_composition": format_weights(weights),
         "optimized_weights": np.asarray(weights).tolist(),
     }
 
 
-def _emit_trajectory(
+def emit_trajectory(
     result: dict[str, Any],
     targets: np.ndarray,
     weights: np.ndarray,

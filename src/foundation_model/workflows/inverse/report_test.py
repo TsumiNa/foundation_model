@@ -58,7 +58,7 @@ def test_top_fractions_truncates_and_renormalises() -> None:
     for i in range(8):  # 8 elements at descending weights, summing to 1
         row[i] = (8 - i) / 36
     top = _top_fractions(row, top_k=6)
-    assert len(top) == 6  # the two smallest are dropped, matching `_format_weights`
+    assert len(top) == 6  # the two smallest are dropped, matching `format_weights`
     assert sum(top.values()) == pytest.approx(1.0)  # ... and what is left is renormalised
     assert list(top) == [DEFAULT_ELEMENTS[i] for i in range(6)]  # largest first
     assert len(_top_fractions(row, top_k=None)) == 8  # seeds keep every element above eps

@@ -73,7 +73,7 @@ class OptimizationTarget:
 
 
 @dataclass(kw_only=True)
-class _PreparedTarget:
+class PreparedTarget:
     """Validated, tensor-ready form of one :class:`OptimizationTarget` (internal)."""
 
     task: str
@@ -89,7 +89,7 @@ class _PreparedTarget:
     class_indices: list[int] = field(default_factory=list)
 
 
-def _reduce_pred(pred: torch.Tensor) -> torch.Tensor:
+def reduce_pred(pred: torch.Tensor) -> torch.Tensor:
     """Reduce a head prediction to one scalar per batch row: mean over all non-batch dims."""
     if pred.ndim == 1:
         return pred
