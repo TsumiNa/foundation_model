@@ -155,12 +155,12 @@ above).
 | `kr_weight_decay` | float | `5e-05` | `>= 0` | Kernel-regression head weight decay. |
 | `ae_lr` | float | `0.005` | `> 0` | AutoEncoder head learning rate (the AE head always trains). |
 | `ae_weight_decay` | float | `0.001` | `>= 0` | AutoEncoder head weight decay. |
-| `learnable_loss_balancer` | bool | `false` | | Uncertainty weighting (Kendall/Gal/Cipolla, CVPR 2018): learn one log σ per supervised task and combine losses as Σᵢ [ 0.5·exp(−2 log σᵢ)·Lᵢ + log σᵢ ] instead of the static `[[tasks]].loss_weight`. Off by default — see the note below. |
+| `learnable_loss_balancer` | bool | `false` | new in `0.4.0` | Uncertainty weighting (Kendall/Gal/Cipolla, CVPR 2018): learn one log σ per supervised task and combine losses as Σᵢ [ 0.5·exp(−2 log σᵢ)·Lᵢ + log σᵢ ] instead of the static `[[tasks]].loss_weight`. Off by default — see the note below. |
 | `accelerator` | str | `"auto"` | | Lightning accelerator (`auto` / `cpu` / `gpu` / …). |
 | `devices` | int \| list[int] \| str | `"auto"` | **one device only** | Passed to Lightning `Trainer(devices=...)`. While distributed training is out (see the note below), only single-device forms are accepted: `1`, `"auto"`, `[0]`, `"0"`. `-1`, `2`, `[1, 3]`, `"1,3"` and `"0-3"` are rejected at config time, and a `"auto"` that Lightning resolves onto several GPUs is refused before the fit starts. |
 | `seed` | int | `2025` | | Global seed (`--seed` overrides). |
 
-> **One device.** Distributed training was removed with its output half never written —
+> **One device.** Distributed training was removed in `0.4.0` with its output half never written —
 > the sampler and metric side was built, but nothing guarded writes by rank, so every rank would
 > concurrently overwrite the same checkpoint, metrics JSON and prediction parquet. There is a
 > second reason it cannot simply be switched back on: the training logs no longer carry
@@ -176,7 +176,7 @@ has its own learning rate and weight decay. The four defaults span three orders 
 (`1e-2` encoder / `1e-3` AE / `5e-5` KR / `1e-5` reg+clf); they were call-site constants before
 `0.3.0` and are configuration now.
 
-> **Changed.** It used to be one AdamW *instance* per group. Lightning drives at most one optimizer
+> **Changed in 0.4.0.** It used to be one AdamW *instance* per group. Lightning drives at most one optimizer
 > automatically, so that shape forced `automatic_optimization = False`, and under manual
 > optimization Lightning stops driving schedulers too — which is how stepping them became the
 > model's job, and how the #45 per-batch bug got in. The collapse changes no learning rate: every

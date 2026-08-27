@@ -72,7 +72,7 @@ parquets, metrics, figures). `_sections.py` (the `[model]`/`[training]` config) 
 
 ## Distributed training: removed, and probably not worth re-adding
 
-`0.3.2` removed the DDP surface. Sampling and metrics had been built — a `DistributedSampler`
+`0.4.0` removed the DDP surface. Sampling and metrics had been built — a `DistributedSampler`
 branch, `set_epoch`, a per-rank index tracker so padded samples were not double-counted, and
 `sync_dist=True` on every log — but the **output half never was**: there is no rank guarding
 anywhere in the tree, so every rank would concurrently write the same checkpoint, the same metrics
