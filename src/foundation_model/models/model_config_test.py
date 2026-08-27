@@ -124,9 +124,23 @@ def test_optimizer_config_rejects_a_scheduler_that_cannot_reduce():
         ({"mode": "lowest"}, "must be 'min' or 'max'"),
         ({"factor": 1.5}, r"factor must be in \(0, 1\)"),
         ({"patience": -1}, "patience must be >= 0"),
-        ({"frequency": 0}, "frequency must be >= 1"),
     ],
 )
 def test_optimizer_config_validation(kwargs, message):
     with pytest.raises(ValueError, match=message):
         OptimizerConfig(**kwargs)
+
+
+def test_optimizer_config_has_no_scheduler_cadence_fields():
+    """The cadence is not a per-config choice, so there is no field to set it wrong with.
+
+    ``configure_optimizers`` declares ``interval="epoch"`` / ``frequency=1``. The only other value
+    ``interval`` could take is ``"step"``, i.e. stepping ReduceLROnPlateau once per batch — which
+    is #45, the bug that made ``patience`` count batches and cost a tuning campaign.
+    """
+    assert "interval" not in OptimizerConfig.__dataclass_fields__
+    assert "frequency" not in OptimizerConfig.__dataclass_fields__
+    with pytest.raises(TypeError):
+        OptimizerConfig(interval="step")  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        OptimizerConfig(frequency=2)  # type: ignore[call-arg]

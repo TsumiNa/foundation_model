@@ -189,13 +189,17 @@ class OptimizerConfig:
     factor: float = 0.5  # LR multiplier applied on plateau
     patience: int = 5  # epochs without improvement before reducing
     min_lr: float = 1e-4  # Floor for the reduced LR — see the note below
-    # monitor IS honoured: on_train_epoch_end looks it up in trainer.callback_metrics and feeds
-    # it to ReduceLROnPlateau. It must therefore name a metric that exists at the end of a
-    # training epoch, which the model validates. interval/frequency remain inert — stepping is
-    # per-epoch by construction under manual optimization — and are not exposed as config.
+    # monitor IS honoured: configure_optimizers hands it to Lightning, which looks it up in
+    # trainer.callback_metrics at epoch end and steps ReduceLROnPlateau itself. It must therefore
+    # name a metric that exists at the end of a training epoch, and a missing one raises there.
+    # Only the first group's decision parameters (scheduler_enabled/mode/factor/patience/monitor)
+    # are read: one optimizer carries one scheduler, so configure_optimizers requires every group
+    # to agree on them and raises if they do not. lr/weight_decay/min_lr stay genuinely per-group.
     monitor: str = "train_final_loss_epoch"  # must exist in trainer.callback_metrics at epoch end
-    interval: str = "epoch"  # inert: stepping is per-epoch by construction
-    frequency: int = 1  # inert: stepping is per-epoch by construction
+    # No `interval` / `frequency` fields. They were carried here as inert values, read by nothing
+    # but their own validator, and the only other value they could take is the bug this class's
+    # history is about: `interval = "step"` is per-batch stepping, which is what made `patience`
+    # count batches (#45). configure_optimizers declares "epoch"/1 outright.
 
     def __post_init__(self) -> None:
         if self.lr <= 0:
@@ -224,8 +228,6 @@ class OptimizerConfig:
                 "ReduceLROnPlateau can never reduce the learning rate. Lower min_lr, raise lr, or "
                 "set scheduler_enabled = false for a deliberately constant LR."
             )
-        if self.frequency < 1:
-            raise ValueError(f"OptimizerConfig.frequency must be >= 1, got {self.frequency}.")
         # monitor is looked up in trainer.callback_metrics at epoch end. Validating it here keeps
         # a directly-constructed OptimizerConfig self-consistent instead of deferring the failure
         # to the end of the first epoch; the TOML layer checks the same thing.
