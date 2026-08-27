@@ -24,7 +24,17 @@ from foundation_model.workflows.inverse import (
     SeedStrategy,
     TargetKind,
     TargetSpec,
-    _default_paths,
+    build_inverse_config,
+    select_seeds,
+    target_label,
+)
+from foundation_model.workflows.inverse import run as inverse_run
+
+# Private helpers come from the module that owns them rather than through the package: the
+# re-export list is the public surface, and widening it to spare a test an import would say these
+# are API when they are not.
+from foundation_model.workflows.inverse.config import _default_paths
+from foundation_model.workflows.inverse.report import (
     _format_channel,
     _format_channel_delta,
     _row_parts,
@@ -32,11 +42,7 @@ from foundation_model.workflows.inverse import (
     _short_task,
     _target_direction_arrow,
     _top_fractions,
-    build_inverse_config,
-    select_seeds,
-    target_label,
 )
-from foundation_model.workflows.inverse import run as inverse_run
 from foundation_model.workflows.recording import RunRecorder
 from foundation_model.workflows.task_catalog import TaskCatalog, build_task_catalog_config
 
