@@ -28,7 +28,6 @@ import torch.nn as nn
 import torch.optim as optim
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from loguru import logger  # Replaced logging with loguru
-from torch.optim.lr_scheduler import LRScheduler  # Changed from _LRScheduler
 from torchmetrics.regression import R2Score
 
 try:  # pragma: no cover - optional distributed import
@@ -212,17 +211,11 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
         # Initialize weights
         self._init_weights()
 
-        # Set to manual optimization as we handle multiple optimizers
-        self.automatic_optimization = False
-
         # Distributed metric tracking
         self.val_r2_metrics = nn.ModuleDict()
         self.test_r2_metrics = nn.ModuleDict()
         self._metrics_updated: dict[str, set[str]] = {"val": set(), "test": set()}
         self._stage_index_trackers: dict[str, dict[str, Any] | None] = {"val": None, "test": None}
-        # Rebuilt by configure_optimizers; defined here so on_train_epoch_end never depends on
-        # that having run (e.g. a hook called directly).
-        self._scheduler_monitors: list[str] = []
         self._init_stage_metrics()
 
         logger.info("Initializing FlexibleMultiTaskModel...")
@@ -989,14 +982,14 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
 
     # --- Lightning hooks ----------------------------------------------------------------------
 
-    def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
-        """Supervised multi-task training step (manual optimization)."""
-        optimizers = self.optimizers()
-        if not isinstance(optimizers, list):
-            optimizers = [optimizers]
-        for opt in optimizers:
-            opt.zero_grad(set_to_none=True)
+    def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor | None:
+        """Supervised multi-task training step.
 
+        Lightning owns the backward pass and the optimizer step: this returns the objective and
+        nothing else. That is only possible because there is now ONE optimizer (see
+        ``configure_optimizers``); the previous per-group optimizers forced manual optimization,
+        and manual optimization is what put scheduler stepping in the model's hands.
+        """
         x, y_dict_batch, task_masks_batch, task_sequence_data_batch = batch
         if not isinstance(x, torch.Tensor):
             raise TypeError(f"Expected tensor inputs in training_step, received {type(x)}")
@@ -1023,24 +1016,17 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
         self.log_dict(logs, prog_bar=False, on_step=True, on_epoch=True, sync_dist=True)
         self.log("train_final_loss", total_loss.detach(), prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
 
-        if total_loss.requires_grad:
-            self.manual_backward(total_loss)
-            for opt in optimizers:
-                opt.step()
-            # Schedulers are stepped once per epoch in on_train_epoch_end, not here: stepping a
-            # ReduceLROnPlateau per batch makes its `patience` count batches.
-        else:
-            # No opt.step() in this branch. It used to call it on every optimizer right after
-            # logging that it was skipping the optimizer step — a no-op only because
-            # zero_grad(set_to_none=True) leaves every p.grad as None and AdamW skips gradientless
-            # params. With set_to_none=False the same line applies AdamW's decoupled weight decay
-            # to the whole model on a batch that carried no signal.
+        if not total_loss.requires_grad:
+            # Returning None is Lightning's documented way to skip a batch entirely — it performs
+            # no backward and no optimizer step. Returning the grad-less tensor instead would make
+            # Lightning attempt a backward on a graph that does not exist.
             self._log_warning(
                 f"total_loss does not require grad and has no grad_fn at batch_idx {batch_idx}. "
-                "Skipping backward pass and optimizer step. "
+                "Skipping the backward pass and optimizer step for this batch. "
                 "This might indicate all parameters are frozen, loss contributions are zero, "
                 "or an issue with the computation graph.",
             )
+            return None
 
         return total_loss
 
@@ -1056,41 +1042,6 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
         super().on_validation_epoch_start()
         self._reset_stage_metrics("val")
         self._init_stage_index_tracker("val")
-
-    def on_train_epoch_end(self) -> None:
-        """Step every ``ReduceLROnPlateau`` once, on the epoch-aggregated monitored metric.
-
-        Under manual optimization Lightning does not drive schedulers, so the model must. Doing it
-        here rather than in ``training_step`` is what makes ``patience`` count **epochs** — the
-        unit every ReduceLROnPlateau tutorial assumes, and the one the config documents.
-
-        The monitored value is read from ``trainer.callback_metrics``, so ``monitor`` selects a real
-        metric instead of the current batch's loss. A missing key raises rather than silently
-        skipping the step: a scheduler that never anneals is invisible in logs. The default,
-        ``train_final_loss_epoch``, is the epoch aggregate of the ``train_final_loss`` that
-        ``training_step`` logs with ``on_epoch=True``.
-        """
-        schedulers = self.lr_schedulers()
-        if schedulers is None:
-            return
-        if not isinstance(schedulers, list):
-            schedulers = [schedulers]
-
-        metrics = self.trainer.callback_metrics if self.trainer is not None else {}
-        for scheduler, monitor in zip(schedulers, self._scheduler_monitors):
-            if scheduler is None:
-                continue
-            if not isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                scheduler.step()
-                continue
-            if monitor not in metrics:
-                raise ValueError(
-                    f"LR scheduler monitor {monitor!r} is not among the logged metrics at the end "
-                    f"of the training epoch. Available: {sorted(metrics)}. Set "
-                    "[training.scheduler].monitor to a metric logged with on_epoch=True during "
-                    "training (the default is 'train_final_loss_epoch')."
-                )
-            scheduler.step(metrics[monitor])
 
     def on_validation_epoch_end(self) -> None:
         super().on_validation_epoch_end()
@@ -1213,119 +1164,116 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
             )
         return pd.DataFrame(task_info)
 
-    def _create_optimizer(self, params: list[torch.nn.Parameter], config: OptimizerConfig) -> torch.optim.Optimizer:
-        """``AdamW`` over ``params`` with this group's hyper-parameters."""
-        params = list(filter(lambda p: p.requires_grad, params))
-        if not params:  # If no parameters require gradients, return a dummy optimizer or handle appropriately
-            # This path should ideally not be hit if checks are done before calling _create_optimizer
-            logger.warning(f"Optimizer creation called with no parameters requiring gradients for config: {config}")
-            # Depending on strictness, could raise error or return a dummy. For now, let it proceed (might error in optim).
-            # A more robust solution might be to return a specific dummy optimizer if PyTorch allows,
-            # or ensure this function is not called with empty grad-requiring params.
-            pass
+    def _param_groups(self) -> list[tuple[str, list[torch.nn.Parameter], OptimizerConfig]]:
+        """One entry per trainable parameter group: (name, params, its OptimizerConfig).
 
-        return optim.AdamW(params, lr=config.lr, betas=config.betas, eps=config.eps, weight_decay=config.weight_decay)
+        Groups with nothing to train are dropped rather than added empty — AdamW accepts an empty
+        param group and then quietly contributes nothing, which would make a fully frozen head
+        indistinguishable from a trainable one in the optimizer's own state.
+        """
+        groups: list[tuple[str, list[torch.nn.Parameter], OptimizerConfig]] = []
 
-    def _create_scheduler(self, optimizer: torch.optim.Optimizer, config: OptimizerConfig) -> LRScheduler | None:
-        """``ReduceLROnPlateau`` for this parameter group, or ``None`` when the scheduler is off."""
-        if not config.scheduler_enabled:
-            return None
-        return optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer,
-            mode=config.mode,
-            factor=config.factor,
-            patience=config.patience,
-            min_lr=config.min_lr,
-        )
+        main = list(self.encoder.parameters())
+        if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas"):
+            main.extend(self.task_log_sigmas.parameters())
+        main = [p for p in main if p.requires_grad]
+        if main:
+            groups.append(("shared_encoder", main, self.shared_block_optimizer))
+
+        for name, head in self.task_heads.items():
+            params = [p for p in head.parameters() if p.requires_grad]
+            if params:
+                groups.append((f"task_{name}", params, self.task_configs_map[name].optimizer or OptimizerConfig()))
+        return groups
+
+    @staticmethod
+    def _shared_scheduler_settings(
+        groups: list[tuple[str, list[torch.nn.Parameter], OptimizerConfig]],
+    ) -> OptimizerConfig | None:
+        """The one scheduler policy every group agrees on, or None when it is switched off.
+
+        ``ReduceLROnPlateau`` decides WHEN to cut from the monitored metric alone, so mode, factor,
+        patience and monitor are properties of the decision and have to be shared by the single
+        scheduler. ``lr``, ``weight_decay`` and ``min_lr`` are properties of each group — what to
+        cut and how low it may go — and stay per-group, which the scheduler supports natively by
+        taking ``min_lr`` as a list.
+
+        Disagreement is an error rather than a silent pick. It cannot arise from configuration —
+        one ``[training.scheduler]`` block feeds every group — so a model that reaches here with
+        mixed policies was assembled in Python, and quietly honouring one group's settings while
+        discarding another's is exactly the kind of invisible divergence this campaign has already
+        been bitten by once.
+        """
+        policies = {(c.scheduler_enabled, c.mode, c.factor, c.patience, c.monitor): name for name, _, c in groups}
+        if len(policies) > 1:
+            detail = "; ".join(
+                f"{name}: enabled={p[0]} mode={p[1]} factor={p[2]} patience={p[3]} monitor={p[4]!r}"
+                for p, name in policies.items()
+            )
+            raise ValueError(
+                "All parameter groups must share one LR-scheduler policy — a single optimizer "
+                f"carries a single scheduler. Groups disagree: {detail}"
+            )
+        first = groups[0][2]
+        return first if first.scheduler_enabled else None
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
-        """Configure optimizers for all parameter groups."""
+        """One AdamW over per-role parameter groups, plus at most one ReduceLROnPlateau.
 
-        optimizers_and_schedulers: list[Any] = []
-        # Parallel to the schedulers Lightning hands back from self.lr_schedulers(), so
-        # on_train_epoch_end can feed each one the metric its own group configured. Reset on
-        # every call, because configure_optimizers can run more than once per model.
-        self._scheduler_monitors = []
+        This used to build one optimizer AND one scheduler per group, which forced
+        ``automatic_optimization = False`` — Lightning drives at most one optimizer automatically.
+        That split is what made the model responsible for stepping its own schedulers, and stepping
+        them in ``training_step`` instead of at epoch end is the bug (#45) that made ``patience``
+        count batches, drove the LR to its floor inside the first epoch, and cost a whole tuning
+        campaign.
 
-        # 1. Main parameters (Encoder + optionally task_log_sigmas)
-        main_params_to_optimize = list(self.encoder.parameters())
+        Collapsing them costs nothing that was ever used. Every group's scheduler was built from
+        the same ``[training.scheduler]`` block and monitored the same metric, so the N schedulers
+        made identical decisions at identical times — verified by replaying a metric trajectory
+        through both shapes and getting byte-identical learning rates. What differs per group is
+        ``lr`` / ``weight_decay`` / ``min_lr``, and AdamW param groups plus a list-valued
+        ``min_lr`` express all three.
+        """
+        groups = self._param_groups()
+        if not groups:
+            logger.info("No parameters require gradients; no optimizer is configured.")
+            return None
 
-        if self.enable_learnable_loss_balancer and hasattr(self, "task_log_sigmas") and self.task_log_sigmas:
-            learnable_log_sigmas = [p for p in self.task_log_sigmas.parameters() if p.requires_grad]
-            if learnable_log_sigmas:
-                main_params_to_optimize.extend(learnable_log_sigmas)
-                logger.info(f"Added {len(learnable_log_sigmas)} task_log_sigmas parameters to the main optimizer.")
-            else:
-                logger.info(
-                    "No learnable task_log_sigmas parameters found to add to the main optimizer (all frozen or empty)."
-                )
-        elif self.enable_learnable_loss_balancer:  # task_log_sigmas might not exist or be empty
-            logger.info("Learnable task uncertainty is ON, but task_log_sigmas is not populated or has no parameters.")
+        optimizer = optim.AdamW(
+            [
+                {
+                    "params": params,
+                    "lr": config.lr,
+                    "weight_decay": config.weight_decay,
+                    "betas": config.betas,
+                    "eps": config.eps,
+                }
+                for _, params, config in groups
+            ]
+        )
+        logger.info(f"Optimizer groups: {[name for name, _, _ in groups]}")
 
-        # Filter main_params_to_optimize to ensure all require grad before creating optimizer
-        main_params_to_optimize_filtered = [p for p in main_params_to_optimize if p.requires_grad]
+        policy = self._shared_scheduler_settings(groups)
+        if policy is None:
+            return optimizer
 
-        if main_params_to_optimize_filtered:
-            encoder_opt = self._create_optimizer(main_params_to_optimize_filtered, self.shared_block_optimizer)
-            encoder_sched = self._create_scheduler(encoder_opt, self.shared_block_optimizer)
-
-            if encoder_sched:
-                self._scheduler_monitors.append(self.shared_block_optimizer.monitor)
-                optimizers_and_schedulers.append(
-                    {
-                        "optimizer": encoder_opt,
-                        "lr_scheduler": {
-                            "scheduler": encoder_sched,
-                            "monitor": self.shared_block_optimizer.monitor,
-                            "interval": self.shared_block_optimizer.interval,
-                            "frequency": self.shared_block_optimizer.frequency,
-                        },
-                    }
-                )
-            else:
-                # Always a dict, never a bare Optimizer: Lightning rejects a list that mixes the
-                # two, which happens as soon as one group disables its scheduler and another
-                # does not (e.g. the inference placeholder in build_model_for_checkpoint).
-                optimizers_and_schedulers.append({"optimizer": encoder_opt})
-        else:
-            logger.info(
-                "No parameters requiring gradients for the main optimizer (encoder/log_sigmas). Skipping its creation."
-            )
-
-        # 2. Task head parameters
-        for name, head in self.task_heads.items():
-            head_params_to_optimize = [p for p in head.parameters() if p.requires_grad]
-            if not head_params_to_optimize:
-                logger.info(f"No parameters requiring gradients for task head '{name}'. Skipping optimizer creation.")
-                continue
-
-            config = self.task_configs_map[name]
-            task_optimizer_config = config.optimizer or OptimizerConfig()  # Use default if specific not provided
-
-            task_opt = self._create_optimizer(head_params_to_optimize, task_optimizer_config)
-            task_sched = self._create_scheduler(task_opt, task_optimizer_config)
-
-            if task_sched:
-                self._scheduler_monitors.append(task_optimizer_config.monitor)
-                optimizers_and_schedulers.append(
-                    {
-                        "optimizer": task_opt,
-                        "lr_scheduler": {
-                            "scheduler": task_sched,
-                            "monitor": task_optimizer_config.monitor,
-                            "interval": task_optimizer_config.interval,
-                            "frequency": task_optimizer_config.frequency,
-                        },
-                    }
-                )
-            else:
-                optimizers_and_schedulers.append({"optimizer": task_opt})
-
-        if not optimizers_and_schedulers:
-            logger.warning(
-                "No optimizers were configured. This might be due to all parameters being frozen or an issue in parameter collection."
-            )
-            # Lightning requires at least one optimizer if the model has trainable parameters.
-            # If all parameters are frozen, this is fine. Otherwise, it's an issue.
-
-        return optimizers_and_schedulers
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode=policy.mode,
+            factor=policy.factor,
+            patience=policy.patience,
+            # Per group, in the same order the param groups were built.
+            min_lr=[config.min_lr for _, _, config in groups],
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                # Lightning reads this from callback_metrics at epoch end and steps the scheduler
+                # itself, which is what makes `patience` count epochs. The model no longer touches
+                # it, so the cadence cannot drift back to per-batch.
+                "monitor": policy.monitor,
+                "interval": "epoch",
+                "frequency": 1,
+            },
+        }

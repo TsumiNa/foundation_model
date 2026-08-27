@@ -167,7 +167,11 @@ def test_model_initialization(model_config_mixed_tasks):
             )
         # No sequence tasks in this fixture
 
-    assert not model.automatic_optimization, "automatic_optimization should be False for FlexibleMultiTaskModel"
+    # Automatic optimization, deliberately. The model returns one optimizer, so Lightning owns the
+    # backward pass, the optimizer step AND the scheduler step. It was manual only because the old
+    # per-group optimizers made Lightning refuse to drive them, and that split is what let the
+    # scheduler be stepped per batch instead of per epoch (#45).
+    assert model.automatic_optimization, "FlexibleMultiTaskModel must use automatic optimization"
 
 
 def test_model_forward_pass(model_config_mixed_tasks, sample_batch_mixed_tasks):
@@ -240,20 +244,8 @@ def test_model_training_step(model_config_mixed_tasks, sample_batch_mixed_tasks,
     # which is what training_step uses internally.
     # Number of optimizers = 1 (shared) + num_enabled_tasks
     num_enabled_tasks = sum(1 for tc in config.task_configs if tc.enabled)
-    mock_optimizers_list = []
-    for _ in range(1 + num_enabled_tasks):
-        opt = mocker.MagicMock(spec=torch.optim.Optimizer)
-        opt.step = mocker.MagicMock()
-        opt.zero_grad = mocker.MagicMock()
-        mock_optimizers_list.append(opt)
-
-    # Patch model.optimizers() to return our list of mock optimizers
-    # Note: model.optimizers() is a property that calls self.trainer.optimizers,
-    # so we need to ensure model.trainer.optimizers returns our mocks.
-    # A more direct way if model.optimizers() is called:
-    mocker.patch.object(model, "optimizers", return_value=mock_optimizers_list)
-    # If training_step directly accesses self.trainer.optimizers:
-    # mock_trainer.optimizers = mock_optimizers_list # This might be needed if self.optimizers() is complex
+    # No optimizer mocking: under automatic optimization training_step neither fetches optimizers
+    # nor steps them. It computes the objective and hands it back, and that is the whole contract.
 
     mock_log_dict = mocker.patch.object(model, "log_dict")
     mock_log = mocker.patch.object(model, "log")
@@ -263,25 +255,15 @@ def test_model_training_step(model_config_mixed_tasks, sample_batch_mixed_tasks,
     loss = model.training_step(sample_batch_mixed_tasks, batch_idx=0)
 
     assert isinstance(loss, torch.Tensor), "Loss should be a Tensor"
-    # With manual optimization, the returned loss might not directly have requires_grad=True
-    # if it's detached or cloned before returning. The important part is that the original
-    # computed loss that was passed to manual_backward had requires_grad=True.
-    # We'll assert that backward was called on a tensor.
-    # assert loss.requires_grad, "Loss should require gradients for backpropagation"
     assert loss.ndim == 0, "Loss should be a scalar"
+    # It must carry the graph: Lightning backwards exactly what this returns, so a detached loss
+    # would train nothing while still looking like a healthy step.
+    assert loss.requires_grad, "the returned loss is what Lightning backwards, so it needs a graph"
 
-    # Check that manual_backward was called (via strategy)
-    mock_strategy.backward.assert_called_once()
-    # Check that backward was called with a tensor that requires grad
-    backward_loss_arg = mock_strategy.backward.call_args[0][0]
-    assert isinstance(backward_loss_arg, torch.Tensor)
-    assert backward_loss_arg.requires_grad, "Loss passed to backward should require gradients"
+    # The model must NOT touch backward or the optimizer itself any more.
+    mock_strategy.backward.assert_not_called()
 
     # Check that optimizer steps and zero_grads were called
-    for opt_mock in mock_optimizers_list:
-        opt_mock.step.assert_called_once()
-        opt_mock.zero_grad.assert_called_once()
-
     mock_log_dict.assert_called()
     logged_metrics = mock_log_dict.call_args[0][0]
 
@@ -408,84 +390,89 @@ def test_model_predict_step_all_tasks(model_config_mixed_tasks, sample_batch_mix
 
 
 def test_model_configure_optimizers(model_config_mixed_tasks):
-    """Test configure_optimizers for mixed regression and classification tasks."""
+    """ONE AdamW with one param group per role, and at most one ReduceLROnPlateau.
+
+    The previous shape — one optimizer and one scheduler per group — is what forced manual
+    optimization, since Lightning drives at most one optimizer on its own. Collapsing it gives up
+    nothing that was reachable: every group's scheduler came from the same [training.scheduler]
+    block and monitored the same metric, so the N schedulers stepped in lockstep. What genuinely
+    varies per group — lr, weight_decay, min_lr — survives as param groups and a list-valued
+    min_lr.
+    """
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
         task_configs=config.task_configs,
         encoder_config=config.encoder_config,
-        shared_block_optimizer=config.shared_block_optimizer,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, weight_decay=1e-2, min_lr=1e-6),
     )
+    for task_config in model.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=5e-3, weight_decay=1e-5, min_lr=1e-7)
 
-    optimizers_and_schedulers = model.configure_optimizers()
+    result = cast(dict[str, Any], model.configure_optimizers())
+    optimizer = result["optimizer"]
+    assert isinstance(optimizer, torch.optim.AdamW), "exactly one AdamW, not one per group"
 
-    assert isinstance(optimizers_and_schedulers, list), "configure_optimizers should return a list"
-
-    num_optimizers = 0
-    encoder_opt_found = False
-    task_head_opts_found_count = 0
-
-    all_optimized_param_ids: set[int] = set()
-    enabled_tasks_in_config = [tc for tc in config.task_configs if tc.enabled]
-
-    for item in optimizers_and_schedulers:
-        num_optimizers += 1
-        optimizer = item["optimizer"] if isinstance(item, dict) else item
-        assert isinstance(optimizer, torch.optim.Optimizer), "Optimizer item is not a torch.optim.Optimizer"
-
-        current_opt_param_ids = set()
-        for group in optimizer.param_groups:
-            for p in group["params"]:
-                assert p.requires_grad, "Optimizer should only manage parameters that require gradients"
-                current_opt_param_ids.add(id(p))
-
-        assert all_optimized_param_ids.isdisjoint(current_opt_param_ids), (
-            "Optimizers should manage disjoint sets of parameters"
-        )
-        all_optimized_param_ids.update(current_opt_param_ids)
-
-        # Check if this optimizer handles encoder parameters
-        # model.encoder contains all encodable parts (shared, struct_enc, fusion)
-        encoder_params_ids = {id(p) for p in model.encoder.parameters() if p.requires_grad}
-        log_sigma_param_ids = {id(p) for p in model.task_log_sigmas.parameters() if p.requires_grad}
-        encoder_related_ids = encoder_params_ids.union(log_sigma_param_ids)
-        if not encoder_related_ids.isdisjoint(current_opt_param_ids):
-            assert current_opt_param_ids.issubset(encoder_related_ids)
-            encoder_opt_found = True
-            continue
-
-        # Check if this optimizer handles one of the task heads
-        found_task_head_for_this_opt = False
-        for task_name, head in model.task_heads.items():
-            head_params_ids = {id(p) for p in head.parameters() if p.requires_grad}
-            if not head_params_ids.isdisjoint(current_opt_param_ids):
-                assert current_opt_param_ids == head_params_ids, (
-                    f"Optimizer does not manage all and only parameters for task head {task_name}"
-                )
-                task_head_opts_found_count += 1
-                found_task_head_for_this_opt = True
-                break
-
-        if not found_task_head_for_this_opt and not encoder_opt_found:
-            # If it wasn't an encoder optimizer, it must be a task head optimizer
-            # This assertion might be too strict if encoder_params are split across multiple optimizers by configure_optimizers
-            # For now, assume one optimizer for encoder, one for each head.
-            pass  # Allow falling through if it's an encoder optimizer already marked
-
-    # Expected optimizers: 1 for encoder + 1 for each enabled task
-    expected_num_optimizers = 1 + len(enabled_tasks_in_config)
-    assert num_optimizers == expected_num_optimizers, (
-        f"Expected {expected_num_optimizers} optimizers, got {num_optimizers}"
+    # One group for the encoder plus one per head with trainable parameters.
+    expected_groups = 1 + len(
+        [n for n in model.task_heads if any(p.requires_grad for p in model._head(n).parameters())]
     )
-    assert encoder_opt_found, "No optimizer found for the encoder components"
-    assert task_head_opts_found_count == len(enabled_tasks_in_config), (
-        f"Expected {len(enabled_tasks_in_config)} optimizers for task heads, found {task_head_opts_found_count}"
-    )
+    assert len(optimizer.param_groups) == expected_groups
 
-    # Verify all trainable model parameters are covered
-    all_model_trainable_params_ids = {id(p) for p in model.parameters() if p.requires_grad}
-    assert all_optimized_param_ids == all_model_trainable_params_ids, (
-        "Not all trainable model parameters are covered by the optimizers"
+    # Per-group hyper-parameters must survive the collapse — this is the whole reason param groups
+    # exist rather than a single flat parameter list.
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(1e-3)
+    assert optimizer.param_groups[0]["weight_decay"] == pytest.approx(1e-2)
+    assert all(g["lr"] == pytest.approx(5e-3) for g in optimizer.param_groups[1:])
+    assert all(g["weight_decay"] == pytest.approx(1e-5) for g in optimizer.param_groups[1:])
+
+    # Every trainable parameter is optimized exactly once — no gaps, no double counting.
+    optimized = [id(p) for g in optimizer.param_groups for p in g["params"]]
+    trainable = {id(p) for p in model.parameters() if p.requires_grad}
+    assert len(optimized) == len(set(optimized)), "a parameter appears in more than one group"
+    assert set(optimized) == trainable
+
+    # One scheduler, driven by Lightning at epoch end — the model no longer steps it, which is
+    # what makes `patience` count epochs by construction rather than by convention.
+    lr_config = result["lr_scheduler"]
+    assert isinstance(lr_config["scheduler"], torch.optim.lr_scheduler.ReduceLROnPlateau)
+    assert lr_config["interval"] == "epoch"
+    assert lr_config["monitor"] == "train_final_loss_epoch"
+    # min_lr stays per group: it is a floor on each group's own learning rate.
+    assert lr_config["scheduler"].min_lrs == [1e-6] + [1e-7] * (expected_groups - 1)
+
+
+def test_configure_optimizers_rejects_groups_that_disagree_on_scheduler_policy(model_config_mixed_tasks):
+    """A single optimizer carries a single scheduler, so a mixed policy has to be an error.
+
+    It cannot arise from configuration — one [training.scheduler] block feeds every group — so a
+    model that reaches here with mixed policies was assembled in Python. Silently honouring one
+    group's patience while discarding another's is the class of invisible divergence that made the
+    v1 campaign unusable.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, patience=5, min_lr=1e-6),
     )
+    for task_config in model.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=5e-3, patience=20, min_lr=1e-6)
+
+    with pytest.raises(ValueError, match="must share one LR-scheduler policy"):
+        model.configure_optimizers()
+
+
+def test_configure_optimizers_returns_a_bare_optimizer_when_the_scheduler_is_off(model_config_mixed_tasks):
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, scheduler_enabled=False),
+    )
+    for task_config in model.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=5e-3, scheduler_enabled=False)
+
+    assert isinstance(model.configure_optimizers(), torch.optim.AdamW)
 
 
 # --- Fixtures for DataModule and Trainer Integration ---
@@ -2547,13 +2534,18 @@ class _SchedulerStepCounter(FlexibleMultiTaskModel):
 def test_scheduler_steps_once_per_epoch_not_per_batch(model_config_mixed_tasks, dummy_compound_datamodule):
     """``patience`` must count epochs, so the scheduler must be stepped once per epoch.
 
-    The model uses manual optimization, so Lightning does not drive its schedulers and the model
-    steps them itself. It used to do that inside ``training_step`` — once per *batch* — which made
+    History this guards against: the model once used manual optimization — forced by having one
+    optimizer per parameter group, since Lightning drives at most one automatically — and manual
+    optimization means Lightning does not drive schedulers either, so the model stepped them
+    itself. It did that inside ``training_step``, once per *batch*, which made
     ReduceLROnPlateau's ``patience`` count batches: on a 24k-row task at ``batch_size = 256``
-    (~90 batches/epoch) the LR reached ``min_lr`` inside the first epoch.
+    (~90 batches/epoch) the LR reached ``min_lr`` inside the first epoch, and a whole tuning
+    campaign was run and discarded before anyone noticed.
 
-    This asserts the runtime cadence rather than the config, because the config layer read
-    perfectly while the runtime did the wrong thing.
+    The optimizers are now collapsed into one, so Lightning owns the scheduler and steps it at the
+    interval configure_optimizers declares. The model cannot get the cadence wrong because it no
+    longer chooses it — but this still asserts the RUNTIME cadence rather than that declaration,
+    because last time the config read perfectly while the runtime did the wrong thing.
     """
     config = model_config_mixed_tasks
     model = _SchedulerStepCounter(
@@ -2613,13 +2605,16 @@ def test_scheduler_monitor_missing_raises(model_config_mixed_tasks, dummy_compou
 
 
 def test_no_optimizer_step_when_loss_has_no_graph(model_config_mixed_tasks, sample_batch_mixed_tasks, mocker):
-    """A batch whose loss carries no graph must not step any optimizer.
+    """A batch whose loss carries no graph must be skipped, not backwarded.
 
-    The else-branch used to call opt.step() on every optimizer immediately after logging that it
-    was *skipping* the optimizer step. That is a no-op only because zero_grad(set_to_none=True)
-    leaves every p.grad as None and AdamW skips gradientless params — with set_to_none=False the
-    same line applies AdamW's decoupled weight decay to the whole model on a batch that carried no
-    signal. Asserting the call count keeps the log and the behaviour agreeing.
+    Under automatic optimization the way to skip a batch is to return None — Lightning then
+    performs no backward and no optimizer step. Returning the graph-free tensor instead would have
+    Lightning try to backward a graph that does not exist.
+
+    The manual-optimization version of this test guarded a subtler bug: the else-branch called
+    opt.step() on every optimizer right after logging that it was *skipping* the step, which was a
+    no-op only because zero_grad(set_to_none=True) leaves grads as None. Handing the loop to
+    Lightning removes the branch and the bug with it.
     """
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
@@ -2630,18 +2625,12 @@ def test_no_optimizer_step_when_loss_has_no_graph(model_config_mixed_tasks, samp
     for parameter in model.parameters():
         parameter.requires_grad_(False)
 
-    optimizer = mocker.MagicMock()
-    mocker.patch.object(model, "optimizers", return_value=[optimizer])
     mocker.patch.object(model, "log_dict")
     mocker.patch.object(model, "log")
-    backward = mocker.patch.object(model, "manual_backward")
 
-    loss = model.training_step(sample_batch_mixed_tasks, 0)
-
-    assert not loss.requires_grad, "test needs a graph-free loss to exercise the branch"
-    backward.assert_not_called()
-    optimizer.zero_grad.assert_called_once()
-    optimizer.step.assert_not_called()
+    assert model.training_step(sample_batch_mixed_tasks, 0) is None, (
+        "a graph-free batch must be skipped by returning None, not by returning a detached loss"
+    )
 
 
 # --- characterization: the three steps' observable output must not drift -----------------------
@@ -2819,8 +2808,14 @@ def test_loss_balancer_registers_one_log_sigma_per_supervised_task(model_config_
 
     # And they must reach an optimizer, or they would never move. configure_optimizers puts them
     # in the main (encoder) group, so look for them there rather than trusting that it did.
-    opts = cast(list[dict[str, Any]], on.configure_optimizers())
-    optimised = {id(p) for entry in opts for group in entry["optimizer"].param_groups for p in group["params"]}
+    # The fixture gives some heads scheduler_enabled=False while the encoder has it on — a mix a
+    # single scheduler cannot represent, and which configure_optimizers now rejects. Pin one policy
+    # here: this test is about the balancer, not about that constraint.
+    for task_config in on.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=1e-3, min_lr=1e-6)
+
+    result = cast(dict[str, Any], on.configure_optimizers())
+    optimised = {id(p) for group in result["optimizer"].param_groups for p in group["params"]}
     assert all(id(p) in optimised for p in on.task_log_sigmas.parameters()), (
         "log sigmas exist but no optimizer owns them — they would stay at their init value forever"
     )
