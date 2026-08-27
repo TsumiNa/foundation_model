@@ -57,14 +57,26 @@ AXES = {
 }
 
 
-def boundary_report(points: dict[str, dict], short_list: list[str]) -> dict:
-    """Which axes the short list is pressed up against.
+def boundary_report(points: dict[str, dict], short_list: list[str], ranking: list[dict]) -> dict:
+    """Which axes the search is pressed up against.
 
     An optimum at the edge of the searched range is the range running out, not an optimum. v1 got
     this right once — its A1 optimum sat on the smallest encoder_lr it had tried, and A1b reopened
     that edge and confirmed an interior point. That step is the one v1 procedure carried into v2
     unchanged.
+
+    TWO tests, because the first one alone is not enough once a random search is mixed into the
+    grid. Exact membership asks "does a short-listed config sit ON the extreme value" — and with
+    ~200 continuously sampled values, none ever does, so a pure grid edge gets reported as clear
+    even when every good configuration is crowded against that end. That is not hypothetical: it
+    is what stage A' did. Its best encoder_lr decile was its lowest, the optimum apparently below
+    the floor, and the exact test said all clear.
+
+    So the second test asks where the good scores LIVE: split each axis into an outer decile at
+    either end plus the interior, and compare the best score reachable in each. If an outer decile
+    matches or beats the interior, the trend points out of the range and an extension is owed.
     """
+    by_config = {r["config"]: r["score_mean"] for r in ranking}
     report: dict[str, dict] = {}
     for key, name in AXES.items():
         searched = sorted({p[key] for p in points.values() if key in p})
@@ -81,14 +93,32 @@ def boundary_report(points: dict[str, dict], short_list: list[str]) -> dict:
         # extension round for what is really just a preference between two options. Only axes
         # with an interior can be edge-bound; the two-level axes still report which side won.
         can_be_edge_bound = len(searched) >= 3
+
+        edge_of = max(1, len(searched) // 10)
+        lo_cut, hi_cut = searched[edge_of - 1], searched[-edge_of]
+        scored = [(by_config[c], p[key]) for c, p in points.items() if key in p and c in by_config]
+        best_lo = max((s for s, v in scored if v <= lo_cut), default=None)
+        best_hi = max((s for s, v in scored if v >= hi_cut), default=None)
+        best_mid = max((s for s, v in scored if lo_cut < v < hi_cut), default=None)
+        trend_low = best_lo is not None and best_mid is not None and best_lo >= best_mid
+        trend_high = best_hi is not None and best_mid is not None and best_hi >= best_mid
+
         report[name] = {
             "searched_min": lo,
             "searched_max": hi,
             "n_values": len(searched),
             "short_list_at_min": at_lo,
             "short_list_at_max": at_hi,
-            "edge_bound": bool(at_lo or at_hi) and can_be_edge_bound,
             "has_interior": can_be_edge_bound,
+            "at_exact_edge": bool(at_lo or at_hi) and can_be_edge_bound,
+            "best_in_low_decile": best_lo,
+            "best_in_interior": best_mid,
+            "best_in_high_decile": best_hi,
+            "trend_points_below_range": bool(trend_low and can_be_edge_bound),
+            "trend_points_above_range": bool(trend_high and can_be_edge_bound),
+            # Either signal is enough to owe an extension round: an optimum pressed against a
+            # bound is the bound, not an optimum, however it came to be there.
+            "edge_bound": can_be_edge_bound and (bool(at_lo or at_hi) or trend_low or trend_high),
             "preference": (
                 "min" if at_lo and not at_hi else "max" if at_hi and not at_lo else "mixed"
             ),
@@ -160,7 +190,7 @@ def main() -> None:
 
     scored.sort(key=lambda r: r["score_mean"], reverse=True)
     short_list = [r["config"] for r in scored[: args.top]]
-    edges = boundary_report(points, short_list)
+    edges = boundary_report(points, short_list, scored)
 
     # A margin the seeds cannot resolve is not a ranking. Report how far down the list the
     # ordering is actually supported, rather than presenting all of it as if it were.

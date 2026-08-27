@@ -1,0 +1,280 @@
+{
+  "stage": "stage0",
+  "probe": {
+    "tasks": [
+      "volume",
+      "formation_energy",
+      "seebeck",
+      "zt",
+      "magnetization",
+      "magnetic_moment"
+    ],
+    "metric_by_task": {
+      "volume": "r2",
+      "formation_energy": "r2",
+      "seebeck": "r2",
+      "zt": "r2",
+      "magnetization": "r2",
+      "magnetic_moment": "r2"
+    },
+    "groups": {
+      "volume": "big",
+      "formation_energy": "big",
+      "seebeck": "mid",
+      "zt": "mid",
+      "magnetization": "small",
+      "magnetic_moment": "small"
+    }
+  },
+  "reference": {
+    "volume": 0.6151255174070575,
+    "formation_energy": 0.9874603574001662,
+    "seebeck": 0.6716290971344573,
+    "zt": 0.6943649862953352,
+    "magnetization": 0.782356248966131,
+    "magnetic_moment": 0.6828667679844714
+  },
+  "arms": {
+    "s0_base": {
+      "label": "untuned defaults on 0.3.2 \u2014 THE anchor",
+      "n_seeds": 9,
+      "score": {
+        "n": 9,
+        "mean": -2.0142067026619593e-17,
+        "min": -0.05061329954433073,
+        "max": 0.016184462300932036,
+        "range": 0.06679776184526276,
+        "sigma": 0.020463997308445503,
+        "sem": 0.006821332436148501,
+        "resolves": 0.013642664872297003,
+        "values": [
+          -0.05061329954433073,
+          -0.005827842017857145,
+          -0.0036917704645074508,
+          0.002849756474219102,
+          0.007125524940191745,
+          0.008758017072581841,
+          0.00903919660630013,
+          0.016175954632470287,
+          0.016184462300932036
+        ]
+      },
+      "per_seed": {
+        "2025": 0.016175954632470287,
+        "2026": 0.016184462300932036,
+        "2027": -0.005827842017857145,
+        "2028": 0.002849756474219102,
+        "2029": -0.0036917704645074508,
+        "2030": 0.008758017072581841,
+        "2031": 0.007125524940191745,
+        "2032": -0.05061329954433073,
+        "2033": 0.00903919660630013
+      },
+      "per_task": {
+        "volume": {
+          "metric": "r2",
+          "group": "big",
+          "mean": 0.6151255174070575,
+          "n": 9,
+          "spread": 0.032194547007863505,
+          "r2_mean": 0.6151255174070575,
+          "mae_mean": 0.45127767227686505
+        },
+        "formation_energy": {
+          "metric": "r2",
+          "group": "big",
+          "mean": 0.9874603574001662,
+          "n": 9,
+          "spread": 0.011800012180423813,
+          "r2_mean": 0.9874603574001662,
+          "mae_mean": 0.08095146514592128
+        },
+        "seebeck": {
+          "metric": "r2",
+          "group": "mid",
+          "mean": 0.6716290971344573,
+          "n": 9,
+          "spread": 0.0865823388636987,
+          "r2_mean": 0.6716290971344573,
+          "mae_mean": 0.35326223279289415
+        },
+        "zt": {
+          "metric": "r2",
+          "group": "mid",
+          "mean": 0.6943649862953352,
+          "n": 9,
+          "spread": 0.05657758968024473,
+          "r2_mean": 0.6943649862953352,
+          "mae_mean": 0.39564774420535354
+        },
+        "magnetization": {
+          "metric": "r2",
+          "group": "small",
+          "mean": 0.782356248966131,
+          "n": 9,
+          "spread": 0.05370662404054072,
+          "r2_mean": 0.782356248966131,
+          "mae_mean": 0.2777621038006179
+        },
+        "magnetic_moment": {
+          "metric": "r2",
+          "group": "small",
+          "mean": 0.6828667679844714,
+          "n": 9,
+          "spread": 0.07693591985592385,
+          "r2_mean": 0.6828667679844714,
+          "mae_mean": 0.3908178772295534
+        }
+      }
+    },
+    "s0_v1enc": {
+      "label": "v1's adopted encoder (latent 384, encoder_lr 1e-3) on 0.3.2",
+      "n_seeds": 9,
+      "score": {
+        "n": 9,
+        "mean": -0.008326843575465823,
+        "min": -0.07696167684668904,
+        "max": 0.01873696670287461,
+        "range": 0.09569864354956366,
+        "sigma": 0.0354713440367044,
+        "sem": 0.011823781345568133,
+        "resolves": 0.023647562691136267,
+        "values": [
+          -0.07696167684668904,
+          -0.05551323105466052,
+          -0.019948881403601747,
+          -0.001722304084701325,
+          0.012259352163146761,
+          0.014276208731096895,
+          0.01571119944018563,
+          0.01822077417315634,
+          0.01873696670287461
+        ]
+      },
+      "per_seed": {
+        "2025": 0.01571119944018563,
+        "2026": -0.07696167684668904,
+        "2027": -0.05551323105466052,
+        "2028": 0.012259352163146761,
+        "2029": 0.01822077417315634,
+        "2030": 0.01873696670287461,
+        "2031": -0.001722304084701325,
+        "2032": 0.014276208731096895,
+        "2033": -0.019948881403601747
+      },
+      "per_task": {
+        "volume": {
+          "metric": "r2",
+          "group": "big",
+          "mean": 0.5968478644830282,
+          "n": 9,
+          "spread": 0.05072364945374008,
+          "r2_mean": 0.5968478644830282,
+          "mae_mean": 0.45557178943891974
+        },
+        "formation_energy": {
+          "metric": "r2",
+          "group": "big",
+          "mean": 0.989666770612478,
+          "n": 9,
+          "spread": 0.005092737752096732,
+          "r2_mean": 0.989666770612478,
+          "mae_mean": 0.0734261859615971
+        },
+        "seebeck": {
+          "metric": "r2",
+          "group": "mid",
+          "mean": 0.6647193681890604,
+          "n": 9,
+          "spread": 0.11730211762336196,
+          "r2_mean": 0.6647193681890604,
+          "mae_mean": 0.3524297461991153
+        },
+        "zt": {
+          "metric": "r2",
+          "group": "mid",
+          "mean": 0.6896466734008752,
+          "n": 9,
+          "spread": 0.07060144906995214,
+          "r2_mean": 0.6896466734008752,
+          "mae_mean": 0.3980161513108122
+        },
+        "magnetization": {
+          "metric": "r2",
+          "group": "small",
+          "mean": 0.7862822861736372,
+          "n": 9,
+          "spread": 0.060070041744296976,
+          "r2_mean": 0.7862822861736372,
+          "mae_mean": 0.2814965933021426
+        },
+        "magnetic_moment": {
+          "metric": "r2",
+          "group": "small",
+          "mean": 0.6757534419446772,
+          "n": 9,
+          "spread": 0.16556526555890372,
+          "r2_mean": 0.6757534419446772,
+          "mae_mean": 0.40201039277496575
+        }
+      }
+    }
+  },
+  "comparisons": [
+    {
+      "from": "s0_base",
+      "to": "s0_v1enc",
+      "delta_score": -0.008326843575465802,
+      "se_of_difference": 0.013650361955356956,
+      "resolvable_at_this_n": 0.027300723910713913,
+      "separated": false,
+      "band_width_single_run_range": 0.06679776184526276,
+      "vs_band": -0.12465752362713833,
+      "exceeds_band": false,
+      "verdict": "NOT separated \u2014 the seeds cannot tell these apart",
+      "note": "vs_band is v1's single-run-range screen, kept for continuity; the verdict uses the standard error of the difference, which is the right test for two means."
+    }
+  ],
+  "calibration": {
+    "wallclock": {
+      "n_runs": 18,
+      "mean_hours": 2.826635802469136,
+      "min_hours": 2.075,
+      "max_hours": 3.855,
+      "total_gpu_hours": 50.879444444444445
+    },
+    "sigma_per_run": 0.020463997308445503,
+    "band_range_at_n": {
+      "9": 0.06679776184526276
+    },
+    "seeds_needed_to_resolve": {
+      "0.050": 1,
+      "0.030": 2,
+      "0.020": 5,
+      "0.015": 8,
+      "0.010": 17
+    },
+    "v1_probe3_band_for_reference": 0.0848,
+    "note": "sigma is measured on probe6 and supersedes v1's probe3 band for every v2 margin. seeds_needed is what sizes the A'/B' finals; PLAN's 25 is an inherited estimate."
+  },
+  "runs_used": [
+    "s0_base_s2025",
+    "s0_base_s2026",
+    "s0_base_s2027",
+    "s0_base_s2028",
+    "s0_base_s2029",
+    "s0_base_s2030",
+    "s0_base_s2031",
+    "s0_base_s2032",
+    "s0_base_s2033",
+    "s0_v1enc_s2025",
+    "s0_v1enc_s2026",
+    "s0_v1enc_s2027",
+    "s0_v1enc_s2028",
+    "s0_v1enc_s2029",
+    "s0_v1enc_s2030",
+    "s0_v1enc_s2031",
+    "s0_v1enc_s2032",
+    "s0_v1enc_s2033"
+  ]
+}

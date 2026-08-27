@@ -39,6 +39,49 @@ predicted; it stays in the probe for continuity with v1 but cannot move a rankin
 
 ---
 
+## Results that changed what the plan assumed
+
+**PLAN's central hypothesis about high learning rates is REFUTED.** §0 argued that v1's
+"`encoder_lr = 0.01` diverges" verdict was a symptom of having no working annealing, so with the
+cadence fixed "更高的初始 LR 反而可能变好" — a higher start might now be better. That is why the
+A'1 grid was extended up to 5e-2, past PLAN's own 3e-2. The data says the opposite, monotonically:
+
+| encoder_lr | mean over the other axes | best reachable |
+|---|---:|---:|
+| [0.001, 0.002) | −1.85% | **+2.31%** |
+| [0.002, 0.005) | −2.99% | +1.89% |
+| [0.005, 0.012) | −6.31% | +2.15% |
+| [0.012, 0.025) | −10.50% | −0.09% |
+| [0.025, 0.06) | −15.32% | −2.27% |
+
+v1's verdict survives the regime change. The upward extension found nothing, which is itself the
+answer, and the grid points spent on it are what makes the answer trustworthy rather than assumed.
+
+**The scheduler's `patience` is the one axis with an effect larger than the noise band.** It is
+also the axis v1 could not test at all, because before PR #45 it counted batches and was inert.
+Short patience — cut the LR early and often — wins by a wide margin:
+
+| patience | 4 | 5 | 8 | 15 | 24 |
+|---|---:|---:|---:|---:|---:|
+| mean | **+0.46%** | −1.44% | −2.97% | −10.45% | −15.23% |
+
+The spread across this axis is roughly 15%, against a 6.68% seed band. Nothing else in stage A'
+comes close.
+
+**All four continuous axes converged to INTERIOR optima, so no a1b extension is owed.** Checked
+both ways (see the boundary-logic note below): the leader's `encoder_lr = 0.001671` sits at rank
+32 of 206 searched values, and the lowest decile scores slightly WORSE than the interior, so the
+trend does not point out of the range.
+
+**Boundary logic had a real gap, found while checking the above.** The original test asked only
+whether a short-listed config sat exactly ON an extreme value. With ~200 continuously sampled
+values from the random search, none ever does, so a genuine grid edge would have been reported as
+clear. The test now also compares the best score reachable in each outer decile against the
+interior. On this data both tests agree, but the exact-membership test agreed for the wrong
+reason and would not have caught the case it exists for.
+
+---
+
 ## Deviations from PLAN
 
 **1. probe6 task composition is a choice PLAN left open.** §7.2 specifies "two per size group, two
