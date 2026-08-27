@@ -182,11 +182,29 @@ master 上 encoder/ae 都走 `training.optimizer_config(...)`，**接线是好�
 > 若 v2 都跑完了 tag 仍未出现，说明 v1 session 未能收尾 —— 此时按 §3 的路径
 > 自行确认 Stage C 的实际完成情况，并在合并报告里注明 v1 的哪些部分缺失。
 
-- [ ] Stage C `c_base` 预训练完成 + 提交 `ccon_base`
-- [ ] Stage C `c_tuned` consolidation（job 52238）完成
-- [ ] Stage C 分析（`analysis/stage_c.py`）+ 报告 Stage C 段落
-- [ ] 最终 deck 重建（Stage C 页会自动补上）
-- [ ] PR #41 就绪
+- [x] Stage C 四个 arm 全部 COMPLETED 0:0（c_base 1-15:50 · c_tuned 18:36 · ccon_tuned 1:59 · ccon_base 2:49）
+- [x] Stage C 分析完成，`results/stage_c.json`
+- [x] 报告 Stage C 段落 + 结论章节
+- [x] deck 重建（14 页，Stage C 页含结论与单 seed 限制）
+- [x] 原始输出已 rsync 到 `results/stage_c_raw/`（923M，696 份 metrics JSON）
+- [x] PR #41 就绪
+
+### v1 Stage C 最终结果
+
+| arm | mean R²（23 任务） | 大 | 中 | 小 | material_type |
+|---|---:|---:|---:|---:|---|
+| 未调 | 0.6480 | 0.0261 | 0.0150 | 0.0144 | acc 0.991 / F1 0.583 |
+| **调参** | **0.6854** | **0.0032** | −0.0205 | −0.0275 | acc 0.993 / F1 0.595 |
+| 未调 + consolidation | 0.6474 | 0.0310 | 0.0094 | 0.0536 | acc 0.989 / F1 0.604 |
+| **调参 + consolidation** | **0.6918** | 0.0085 | −0.0309 | −0.0550 | acc 0.993 / **F1 0.676** |
+
+- **调参收益 +0.0374**（迁移到 24 任务部署 régime 成立）
+- **consolidation 只对调好的模型有用**：调参臂 +0.0064，未调臂 **−0.0005**
+- ⚠️ **每 arm 只有 1 个 seed**，无本阶段自己的噪声带。以 20260809 的 +0.006 噪声水平作参照，
+  调参收益约 6 倍（大概率真实），而 consolidation 的 +0.0064 **恰在噪声水平上，不作独立结论**。
+- 大/中/小的负值是**预期内**的：天花板参照取自**未调架构**的单任务上限，调参后超过它属正常。
+
+**这四个数字就是 v2 的外部对照**（v1 `c_base` = 未调+坏调度器；v1 `c_tuned` = v1 调参+坏调度器）。
 
 ---
 

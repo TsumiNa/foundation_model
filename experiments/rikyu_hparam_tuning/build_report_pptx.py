@@ -310,8 +310,33 @@ def main() -> None:
         rows = [[a["label"], f"{a['mean_r2']:.3f}", f"{a['big']:.3f}", f"{a['mid']:.3f}", f"{a['small']:.3f}"]
                 for a in payload["arms"]]
         table(s, 0.6, 1.6, 12.1, headers, rows, col_w=[4.3, 2.3, 1.9, 1.8, 1.8], size=12)
-        txt(s, 0.6, 1.6 + 0.32 * (len(rows) + 1) + 0.3, 12.1, 2.2,
-            payload.get("notes", []), size=12, color=MUT)
+        y = 1.6 + 0.32 * (len(rows) + 1) + 0.25
+
+        # The table alone does not say what the campaign found; spell out the deltas that matter,
+        # computed rather than typed so they cannot drift from the JSON.
+        by = {a["label"]: a for a in payload["arms"]}
+        lines = []
+        if {"untuned", "tuned"} <= by.keys():
+            d = by["tuned"]["mean_r2"] - by["untuned"]["mean_r2"]
+            lines.append(
+                f"Tuning transfers to the deployment regime: {d:+.4f} mean R² at 24 tasks "
+                f"(big-task deficit {by['untuned']['big']:.4f} -> {by['tuned']['big']:.4f})."
+            )
+        pairs = [("tuned", "tuned + consolidation"), ("untuned", "untuned + consolidation")]
+        deltas = {b: by[b]["mean_r2"] - by[a]["mean_r2"] for a, b in pairs if {a, b} <= by.keys()}
+        if len(deltas) == 2:
+            lines.append(
+                f"Consolidation only pays on a tuned model: {deltas['tuned + consolidation']:+.4f} there "
+                f"vs {deltas['untuned + consolidation']:+.4f} on the untuned one — polish, not rescue."
+            )
+        lines += [
+            "",
+            "CAVEAT: one seed per arm. These are single-seed differences with no noise band of their",
+            "own. Against the 24-task campaign's own noise reference (+0.006), the tuning gain is ~6x",
+            "and is almost certainly real; the consolidation gain sits AT that level and should not be",
+            "reported as a standalone result.",
+        ]
+        txt(s, 0.6, y, 12.1, 2.6, lines, size=11, color=MUT)
 
     # 11b — patience A/B (an addition to the campaign, not one of its three stages)
     if args.patience_ab.exists():
