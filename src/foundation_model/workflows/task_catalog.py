@@ -51,7 +51,7 @@ from foundation_model.models.model_config import (
 )
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, KMD, element_features, formula_to_composition
 
-from ._sections import validate_hidden_dims, validate_positive_int
+from ._sections import reject_unknown, validate_hidden_dims, validate_positive_int
 
 TaskConfig = RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
 
@@ -290,14 +290,8 @@ class TaskCatalogConfig:
 # --- TOML → dataclass builder -------------------------------------------------------------
 
 
-def _reject_unknown(section: str, raw: Mapping[str, Any], known: set[str]) -> None:
-    unknown = sorted(set(raw) - known)
-    if unknown:
-        raise ValueError(f"[{section}]: unknown key(s) {unknown}; allowed keys are {sorted(known)}.")
-
-
 def _build_scaler_spec(raw: Mapping[str, Any], *, task_name: str) -> ScalerSpec:
-    _reject_unknown(f"tasks.{task_name}.scaler", raw, {"path", "key"})
+    reject_unknown(f"tasks.{task_name}.scaler", raw, {"path", "key"})
     if "path" not in raw:
         raise ValueError(f"Task '{task_name}': scaler requires 'path'.")
     return ScalerSpec(path=Path(raw["path"]), key=raw.get("key"))
@@ -310,14 +304,14 @@ def build_task_catalog_config(raw: Mapping[str, Any]) -> TaskCatalogConfig:
     the dataclasses alone would surface a less friendly ``TypeError``).
     """
 
-    _reject_unknown("<root>", raw, {"data", "descriptor", "datasets", "tasks"})
+    reject_unknown("<root>", raw, {"data", "descriptor", "datasets", "tasks"})
 
     data_raw = dict(raw.get("data", {}))
-    _reject_unknown("data", data_raw, set(DataConfig.__dataclass_fields__))
+    reject_unknown("data", data_raw, set(DataConfig.__dataclass_fields__))
     data = DataConfig(**data_raw)
 
     descriptor_raw = dict(raw.get("descriptor", {}))
-    _reject_unknown("descriptor", descriptor_raw, set(DescriptorConfig.__dataclass_fields__))
+    reject_unknown("descriptor", descriptor_raw, set(DescriptorConfig.__dataclass_fields__))
     descriptor = DescriptorConfig(**descriptor_raw)
 
     datasets_raw = raw.get("datasets", {})
@@ -326,7 +320,7 @@ def build_task_catalog_config(raw: Mapping[str, Any]) -> TaskCatalogConfig:
     datasets: dict[str, DatasetSpec] = {}
     for name, spec_raw in datasets_raw.items():
         spec_map = dict(spec_raw)
-        _reject_unknown(f"datasets.{name}", spec_map, set(DatasetSpec.__dataclass_fields__) - {"name"})
+        reject_unknown(f"datasets.{name}", spec_map, set(DatasetSpec.__dataclass_fields__) - {"name"})
         datasets[name] = DatasetSpec(name=name, **spec_map)
 
     tasks_raw = raw.get("tasks", [])
@@ -335,7 +329,7 @@ def build_task_catalog_config(raw: Mapping[str, Any]) -> TaskCatalogConfig:
     tasks: list[TaskSpec] = []
     for task_raw in tasks_raw:
         task_map = dict(task_raw)
-        _reject_unknown(
+        reject_unknown(
             f"tasks.{task_map.get('name', '?')}",
             task_map,
             set(TaskSpec.__dataclass_fields__),

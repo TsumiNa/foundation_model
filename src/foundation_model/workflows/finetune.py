@@ -29,6 +29,7 @@ from ._engine import (
     DropLastTrainCompoundDataModule,
     build_empty_model,
     guard_single_device,
+    task_names_from_state,
     build_head_config,
     build_trainer_extras,
     evaluate_task,
@@ -139,17 +140,6 @@ class _FrozenEncoderEval(Callback):
         pl_module.encoder.eval()
 
 
-def _task_names_from_state(state_dict: Mapping[str, Any]) -> list[str]:
-    """Head task names present in a checkpoint state_dict (excludes the AE head)."""
-    names: list[str] = []
-    for key in state_dict:
-        if key.startswith("task_heads."):
-            name = key.split(".", 2)[1]
-            if name != AE_NAME and name not in names:
-                names.append(name)
-    return names
-
-
 def run(cfg: FinetuneConfig, recorder: RunRecorder | None = None) -> dict[str, Any]:
     """Fine-tune ``cfg.tasks`` on top of ``cfg.checkpoint``; return the finetune summary dict."""
 
@@ -160,7 +150,7 @@ def run(cfg: FinetuneConfig, recorder: RunRecorder | None = None) -> dict[str, A
 
     try:
         state = load_checkpoint_state(cfg.checkpoint)
-        ckpt_tasks = list(state.get("task_sequence") or _task_names_from_state(state["model"]))
+        ckpt_tasks = list(state.get("task_sequence") or task_names_from_state(state["model"]))
         catalog_tasks = {t.name for t in cfg.catalog.tasks}
         missing_from_catalog = [t for t in ckpt_tasks if t not in catalog_tasks]
         if missing_from_catalog:

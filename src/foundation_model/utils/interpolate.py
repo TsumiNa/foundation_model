@@ -2,6 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+"""Interpolation + smoothing for irregular (x, y) curves.
+
+CONSUMED FROM OUTSIDE src/. Nothing in the package imports this, which makes it look dead to any
+sweep that only reads src/ — and it was deleted once on exactly that reasoning and restored in
+549c3cf. The users are the data-preparation notebooks: data/scripts/DOS_smoothing.ipynb and
+data/scripts/process_ac_qe_te_data.ipynb, which resample raw DOS and transport curves onto the
+regular grids the kernel-regression heads train on.
+"""
+
 from typing import Literal, Optional
 
 import numpy as np
