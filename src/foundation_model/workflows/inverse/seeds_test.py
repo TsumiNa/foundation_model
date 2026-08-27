@@ -99,3 +99,33 @@ def test_top_objective_ranking_matches_evaluate_targets(data_dir) -> None:
     _, objective = model.evaluate_targets(x, [s.to_model_target() for s in specs])
     expected = [kept[i] for i in np.argsort(objective.numpy(), kind="stable")][:3]
     assert seeds == expected
+
+
+def test_the_run_seed_actually_varies_the_draw(data_dir):
+    """Two seeds must give different starts; the same seed must repeat.
+
+    Both random strategies used a literal default_rng(0), so [inverse].seed reached
+    seed_everything but never reached here — every run of a stochastic search began from exactly
+    the same compositions, which is the one thing the knob exists to prevent.
+    """
+    cat, model = _model_with_heads(data_dir)
+    specs = [_spec(cat, task="a", value=1.0)]
+    cfg = SeedConfig(strategy=SeedStrategy.RANDOM, n=4, split="all", dedup_by_element_system=False)
+
+    def pick(seed):
+        return select_seeds(cat, model, cfg, targets=specs, device=torch.device("cpu"), seed=seed)
+
+    assert pick(2025) == pick(2025), "the same seed must reproduce the same seeds"
+    assert pick(2025) != pick(7), "different seeds must give different seeds"
+
+
+def test_weighted_random_also_honours_the_run_seed(data_dir):
+    cat, model = _model_with_heads(data_dir)
+    specs = [_spec(cat, task="a", value=1.0)]
+    cfg = SeedConfig(strategy="weighted_random", weight_task="a", n=4, split="all", dedup_by_element_system=False)
+
+    def pick(seed):
+        return select_seeds(cat, model, cfg, targets=specs, device=torch.device("cpu"), seed=seed)
+
+    assert pick(2025) == pick(2025)
+    assert pick(2025) != pick(7)

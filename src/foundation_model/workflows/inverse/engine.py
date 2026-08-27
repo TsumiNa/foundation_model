@@ -64,7 +64,7 @@ def run(
             raise ValueError(f"no scenarios match the filter {list(only_scenarios or [])}.")
 
         seed_scn = scenarios[0]
-        seeds = select_seeds(catalog, model, cfg.seeds, targets=seed_scn.targets, device=device)
+        seeds = select_seeds(catalog, model, cfg.seeds, targets=seed_scn.targets, device=device, seed=cfg.seed)
         if not seeds:
             raise RuntimeError("no seed compositions selected.")
         x_seed, seeds = descriptor_tensor(catalog, seeds, device)

@@ -622,11 +622,39 @@ def test_training_subtables_parse() -> None:
 
 @pytest.mark.parametrize(
     ("toml_value", "expected"),
-    [("2", 2), ("-1", -1), ("[1, 3]", [1, 3]), ("[0]", [0]), ('"1,3"', "1,3"), ('"auto"', "auto")],
+    [("1", 1), ("[0]", [0]), ('"auto"', "auto"), ('"0"', "0")],
 )
-def test_devices_accepts_lightning_forms(toml_value: str, expected) -> None:
+def test_devices_accepts_the_single_device_forms(toml_value: str, expected) -> None:
     cfg = build_training_section(tomllib.loads(f"devices = {toml_value}"))
     assert cfg.devices == expected
+
+
+@pytest.mark.parametrize("toml_value", ["2", "-1", "[1, 3]", '"1,3"', '"0-3"'])
+def test_devices_rejects_more_than_one_while_ddp_is_out(toml_value: str) -> None:
+    """The config surface must not point at a code path that was removed.
+
+    Distributed training came out of this codebase with its output half never written, so the
+    schema used to accept -1 / [1, 3] / "0-3" and hand them straight to Lightning. Under DDP each
+    rank feeds its own shard's train_final_loss_epoch to ReduceLROnPlateau, so the learning rates
+    diverge even though the gradients are synced — an incorrect run that finishes and looks normal.
+    """
+    with pytest.raises(ValueError, match="while distributed training is out"):
+        build_training_section(tomllib.loads(f"devices = {toml_value}"))
+
+
+def test_a_trainer_lightning_spread_over_several_devices_is_refused() -> None:
+    """``devices = "auto"`` is the default and resolves to EVERY GPU on the node.
+
+    No config check can catch that, so the guard reads what Lightning actually decided, after the
+    Trainer exists and before it runs.
+    """
+    from types import SimpleNamespace
+
+    from foundation_model.workflows._engine import guard_single_device
+
+    guard_single_device(SimpleNamespace(num_devices=1))  # the supported case stays silent
+    with pytest.raises(RuntimeError, match="resolved training.devices onto 4 devices"):
+        guard_single_device(SimpleNamespace(num_devices=4))
 
 
 @pytest.mark.parametrize(

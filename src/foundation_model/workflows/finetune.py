@@ -28,6 +28,7 @@ from ._engine import (
     AE_NAME,
     DropLastTrainCompoundDataModule,
     build_empty_model,
+    guard_single_device,
     build_head_config,
     build_trainer_extras,
     evaluate_task,
@@ -233,6 +234,7 @@ def run(cfg: FinetuneConfig, recorder: RunRecorder | None = None) -> dict[str, A
             enable_progress_bar=False,
             callbacks=callbacks,
         )
+        guard_single_device(trainer)
         trainer.fit(model, datamodule=datamodule)
 
         if disabled:

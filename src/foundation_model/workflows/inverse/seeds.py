@@ -101,8 +101,14 @@ def select_seeds(
     *,
     targets: Sequence[TargetSpec],
     device: torch.device,
+    seed: int = 0,
 ) -> list[str]:
     """Select seed compositions per :class:`SeedConfig`.
+
+    ``seed`` drives the random and weighted-random draws. It used to be the literal 0 at both
+    sites, so ``[inverse].seed`` / ``--seed`` reached ``seed_everything`` but not here, and two runs
+    that differed only in their seed started from exactly the same compositions — which is the one
+    thing a seed is for on a stochastic search.
 
     The candidate pool is the ordered union of the scenario's target tasks' data frames (filtered
     to ``seed_cfg.split``). ``top_objective`` ranks the pool by the scenario's objective score
@@ -158,7 +164,7 @@ def select_seeds(
             score = vals
         ranks = score.argsort().argsort() + 1  # 1 = worst match … N = best match
         probs = ranks / ranks.sum()
-        rng = np.random.default_rng(0)
+        rng = np.random.default_rng(seed)
         perm = rng.choice(len(pairs), size=len(pairs), replace=False, p=probs)
         ordered = [pairs[i][0] for i in perm]
         return _merge(_dedup_by_system(ordered, n_strategy, enabled=seed_cfg.dedup_by_element_system))
@@ -179,7 +185,7 @@ def select_seeds(
         return appended
 
     if seed_cfg.strategy is SeedStrategy.RANDOM:
-        rng = np.random.default_rng(0)
+        rng = np.random.default_rng(seed)
         shuffled = [pool[i] for i in rng.permutation(len(pool))]
         return _merge(_dedup_by_system(shuffled, n_strategy, enabled=seed_cfg.dedup_by_element_system))
 

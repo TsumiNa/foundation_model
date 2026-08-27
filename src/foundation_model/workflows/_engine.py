@@ -29,7 +29,7 @@ from foundation_model.models.task_head.kernel_regression import expand_for_kerne
 from foundation_model.models.model_config import MLPEncoderConfig, OptimizerConfig
 
 from . import plots
-from ._sections import ModelSectionConfig, TrainingSectionConfig
+from ._sections import _MULTI_DEVICE_HELP, ModelSectionConfig, TrainingSectionConfig
 from .recording import RunRecorder
 from .task_catalog import TaskCatalog, TaskConfig, TaskKind
 
@@ -285,6 +285,21 @@ def test_rows(catalog: TaskCatalog, name: str, test_keys: set[str] | None) -> li
     elif "split" in frame.columns:
         mask &= frame["split"] == "test"
     return list(frame.index[mask])
+
+
+def guard_single_device(trainer: Any) -> None:
+    """Fail a fit that Lightning resolved onto more than one device.
+
+    The config check cannot cover ``devices = "auto"``, which is the default and resolves to *every*
+    GPU on the node — so on a multi-GPU machine the default itself would start DDP. This reads what
+    Lightning actually decided, after the Trainer exists and before it runs.
+    """
+    n = getattr(trainer, "num_devices", 1)
+    if n and n > 1:
+        raise RuntimeError(
+            f"Lightning resolved training.devices onto {n} devices. {_MULTI_DEVICE_HELP} "
+            "Set [training] devices = 1 (or a single index) to pin one."
+        )
 
 
 def resolve_device(accelerator: str) -> torch.device:

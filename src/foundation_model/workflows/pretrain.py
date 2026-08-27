@@ -35,6 +35,7 @@ from ._engine import (
     DropLastTrainCompoundDataModule,
     ReplayResampleCallback,
     build_empty_model,
+    guard_single_device,
     build_head_config,
     build_trainer_extras,
     checkpoint_task_order,
@@ -432,6 +433,7 @@ def _run_single(
             enable_progress_bar=False,
             callbacks=callbacks,
         )
+        guard_single_device(trainer)
         # Learned-but-not-participating heads (replay off this step) must sit out the fit: forward
         # runs every registered head, and a kernel-regression head raises without its t-sequence,
         # which the datamodule only carries for active tasks. Always restore them so exceptions do

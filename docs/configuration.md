@@ -157,8 +157,17 @@ above).
 | `ae_weight_decay` | float | `0.001` | `>= 0` | AutoEncoder head weight decay. |
 | `learnable_loss_balancer` | bool | `false` | | Uncertainty weighting (Kendall/Gal/Cipolla, CVPR 2018): learn one log σ per supervised task and combine losses as Σᵢ [ 0.5·exp(−2 log σᵢ)·Lᵢ + log σᵢ ] instead of the static `[[tasks]].loss_weight`. Off by default — see the note below. |
 | `accelerator` | str | `"auto"` | | Lightning accelerator (`auto` / `cpu` / `gpu` / …). |
-| `devices` | int \| list[int] \| str | `"auto"` | | Passed to Lightning `Trainer(devices=...)`: `"auto"` (all devices for the accelerator), an int count (`-1` = all), a list of device indices (`[1, 3]`), or a string (`"1,3"` / `"0-3"`). |
+| `devices` | int \| list[int] \| str | `"auto"` | **one device only** | Passed to Lightning `Trainer(devices=...)`. While distributed training is out (see the note below), only single-device forms are accepted: `1`, `"auto"`, `[0]`, `"0"`. `-1`, `2`, `[1, 3]`, `"1,3"` and `"0-3"` are rejected at config time, and a `"auto"` that Lightning resolves onto several GPUs is refused before the fit starts. |
 | `seed` | int | `2025` | | Global seed (`--seed` overrides). |
+
+> **One device, for now.** Distributed training was removed with its output half never written —
+> the sampler and metric side was built, but nothing guarded writes by rank, so every rank would
+> concurrently overwrite the same checkpoint, metrics JSON and prediction parquet. There is a
+> second reason it cannot simply be switched back on: the training logs no longer carry
+> `sync_dist=True`, so each rank would hand `ReduceLROnPlateau` its own shard's
+> `train_final_loss_epoch` and the learning rates would diverge across ranks even though the
+> gradients are synchronised — a run that finishes, looks normal, and is wrong. Both halves are
+> named in `ARCHITECTURE.md`'s re-add list.
 
 The model builds **one AdamW with one parameter group per role** — shared encoder, regression/
 classification heads, kernel-regression heads, and the always-on autoencoder head — so each group
