@@ -98,6 +98,69 @@ For more than 4 GPUs, Phase 2 allocates whole four-GPU nodes, so the GPU count m
 The memory figures are estimates combining usable CPU and GPU memory. CPU and GPU memory have
 different performance characteristics even though GB200 connects them coherently through NVLink-C2C.
 
+The table's per-GPU core limit is not what the scheduler enforces. A `--cpus-per-task` above **32
+per GPU** is rejected outright:
+
+```
+[AI4S] Requested CPUs (64 cpus-per-task x 1 tasks = 64) exceed the per-GPU cap 32 (= 1 GPU x 32)
+```
+
+## Measure GPU utilisation before assuming one run per GPU
+
+**A GB200 is far larger than this project's models. One run per GPU wastes most of the card, and
+nothing will tell you.** The jobs complete, exit 0, drop their markers and log nothing unusual;
+Slurm does not warn about an idle GPU. It has to be checked deliberately.
+
+Measured on this repository's training workload — an MLP encoder at `batch_size = 256` — across
+394 grid runs, plus v1's campaign for comparison:
+
+| campaign / stage | `gres/gpuutil` | device memory used |
+|---|---:|---:|
+| v2 stage A' grid (394 runs) | 8–10%, mode **9%** | 1.29 GB of 189 GB |
+| v1 stage A probe (66 runs) | 6–8% | 998 MB |
+| v1 stage C, 24 tasks, ~20 h | **7%** | — |
+
+A run is also allocated 18 CPUs and 400 GB of host RAM and uses about **one core** and 17.6 GB. So
+the reservation is correct — one GPU per run, never more — and the reserved GPU idles through
+roughly nine tenths of it.
+
+Read it from Slurm's own accounting rather than a sampled `nvidia-smi`:
+
+```bash
+ssh rikyu-login 'bash -lc "sacct -j <jobid> --format=JobID,TRESUsageInAve -n -P"'
+# ... gres/gpumem=1290M,gres/gpuutil=9,mem=17639M ...
+```
+
+### Pack independent runs onto one GPU
+
+Where a workload cannot saturate a card, run several independent processes on it. They are separate
+processes with separate seeds and no shared state, so **packing changes throughput and nothing else
+about the numbers.** Measured against the same grid points run one-per-GPU:
+
+| | wall clock per run | runs per GPU | throughput |
+|---|---:|---:|---:|
+| unpacked | 2.19 h | 1 | 1× |
+| `PACK=4` | 2.28 h | 4 | **3.8×** |
+| `PACK=8` | 2.46 h | 8 | **7.1×** |
+
+Twelve percent slower per run for seven times the throughput; in production over 55 runs the packed
+portion came out at exactly **8.0×**. At `PACK=8` every other dimension still has room: 10 GB of
+189 GB device memory, 141 GB of the 400 GB host allocation, 8 of the 32 permitted CPUs.
+
+The shape is one array task holding one GPU and running `PACK` grid points concurrently, each with
+its own output directory and completion marker; the array shrinks to `ceil(N / PACK)`. See
+`experiments/rikyu_hparam_tuning_v2/scripts/fm_array_packed.sbatch` for a worked implementation.
+
+Three things to get right:
+
+- **Calibrate, do not extrapolate.** Re-run points that already completed unpacked, into a scratch
+  output root, so the speedup is measured against a known baseline for the *same* configurations.
+  Contention is not linear; `PACK=16` was never measured here and host RAM binds first.
+- **Wall-clock comparisons do not cross the boundary.** Packed runs contend, so a timing figure
+  from a packed stage cannot be placed beside one from an unpacked stage. Accuracy is unaffected.
+- **Do not pack a workload that already fills the card.** Check `gres/gpuutil` first. This is a
+  remedy for small models on large GPUs, not a general speed-up.
+
 ## Usage fees
 
 Early Access Phase 2 compute jobs cost **300 JPY per GPU-hour**, plus consumption tax, billed to the
