@@ -23,7 +23,7 @@ import torch  # noqa: E402
 
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, formula_to_composition  # noqa: E402
 
-from .._engine import build_model_for_checkpoint, checkpoint_task_order  # noqa: E402
+from .._engine import build_model_for_checkpoint, checkpoint_task_order, descriptor_tensor  # noqa: E402
 from ..recording import load_checkpoint_state  # noqa: E402
 from ..task_catalog import TaskCatalog  # noqa: E402
 from .config import _ELEMENT_TOKEN, InverseConfig, SeedConfig, SeedStrategy, TargetSpec  # noqa: E402
@@ -184,7 +184,7 @@ def select_seeds(
         return _merge(_dedup_by_system(shuffled, n_strategy, enabled=seed_cfg.dedup_by_element_system))
 
     # top_objective — chunked no-grad scoring, stable ascending sort (lower score = better seed).
-    x, pool = _descriptor_tensor(catalog, pool, device)
+    x, pool = descriptor_tensor(catalog, pool, device)
     model_targets = [t.to_model_target() for t in targets]
     scores = [
         model.evaluate_targets(x[i : i + 4096], model_targets)[1].cpu().numpy() for i in range(0, len(pool), 4096)
@@ -192,11 +192,3 @@ def select_seeds(
     objective = np.concatenate(scores) if scores else np.zeros(0)
     ranked = [pool[i] for i in np.argsort(objective, kind="stable")]
     return _merge(_dedup_by_system(ranked, n_strategy, enabled=seed_cfg.dedup_by_element_system))
-
-
-def _descriptor_tensor(
-    catalog: TaskCatalog, comps: Sequence[str], device: torch.device
-) -> tuple[torch.Tensor, list[str]]:
-    desc = catalog.descriptor_fn()(list(comps))
-    kept = [c for c in comps if c in desc.index]
-    return torch.tensor(desc.loc[kept].values, dtype=torch.float32, device=device), kept

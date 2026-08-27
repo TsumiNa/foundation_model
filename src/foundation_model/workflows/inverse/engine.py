@@ -25,10 +25,11 @@ from lightning import seed_everything  # noqa: E402
 from loguru import logger  # noqa: E402
 
 
+from .._engine import descriptor_tensor, resolve_device  # noqa: E402
 from ..recording import RunRecorder  # noqa: E402
 from ..task_catalog import TaskCatalog  # noqa: E402
 from .config import InverseConfig, InverseMethod, ScenarioConfig, target_label, TargetSpec  # noqa: E402
-from .paths import _emit_trajectory, _resolve_device, _run_composition_path, _run_latent_path  # noqa: E402
+from .paths import _emit_trajectory, _run_composition_path, _run_latent_path  # noqa: E402
 from .report import (  # noqa: E402
     _plot_comparison,
     _plot_element_frequency,
@@ -37,7 +38,7 @@ from .report import (  # noqa: E402
     _write_root_summary,
     _write_scenario_md,
 )
-from .seeds import _descriptor_tensor, _evaluate, _rebuild_model, select_seeds  # noqa: E402
+from .seeds import _evaluate, _rebuild_model, select_seeds  # noqa: E402
 
 
 def run(
@@ -53,7 +54,7 @@ def run(
     try:
         model, ckpt_tasks = _rebuild_model(cfg, catalog)
         _validate_heads(model, cfg)
-        device = _resolve_device(cfg.accelerator)
+        device = resolve_device(cfg.accelerator)
         model.to(device)
 
         # Apply the --scenario filter FIRST, then select seeds using the first *selected* scenario's
@@ -66,7 +67,7 @@ def run(
         seeds = select_seeds(catalog, model, cfg.seeds, targets=seed_scn.targets, device=device)
         if not seeds:
             raise RuntimeError("no seed compositions selected.")
-        x_seed, seeds = _descriptor_tensor(catalog, seeds, device)
+        x_seed, seeds = descriptor_tensor(catalog, seeds, device)
         (rec.paths.root / "seeds.json").write_text(json.dumps({"seeds": list(seeds)}, indent=2), encoding="utf-8")
         logger.info(f"Selected {len(seeds)} seeds.")
 

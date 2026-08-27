@@ -157,14 +157,6 @@ def _result_dict(
     }
 
 
-def _resolve_device(accelerator: str) -> torch.device:
-    if accelerator == "cpu":
-        return torch.device("cpu")
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
-
-
 def _emit_trajectory(
     result: dict[str, Any],
     targets: np.ndarray,

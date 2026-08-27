@@ -11,7 +11,7 @@ use one implementation. Only :class:`RunRecorder` writes files.
 from __future__ import annotations
 
 import ast
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -287,8 +287,25 @@ def test_rows(catalog: TaskCatalog, name: str, test_keys: set[str] | None) -> li
     return list(frame.index[mask])
 
 
-def descriptor_tensor(catalog: TaskCatalog, comps: list[str], device: torch.device) -> tuple[torch.Tensor, list[str]]:
-    desc = catalog.descriptor_fn()(comps)
+def resolve_device(accelerator: str) -> torch.device:
+    """``"cpu"`` forces CPU; anything else uses CUDA when available, else CPU.
+
+    Shared rather than per-workflow: predict and inverse each carried their own copy, written
+    differently (``!= "cpu" and is_available()`` against a two-branch form) though the truth tables
+    matched. Two spellings of one decision is how the next accelerator gets added to only one.
+    """
+    if accelerator == "cpu":
+        return torch.device("cpu")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
+def descriptor_tensor(
+    catalog: TaskCatalog, comps: Sequence[str], device: torch.device
+) -> tuple[torch.Tensor, list[str]]:
+    """Descriptors for ``comps`` as a tensor, plus the subset the descriptor function kept."""
+    desc = catalog.descriptor_fn()(list(comps))
     kept = [c for c in comps if c in desc.index]
     tensor = torch.tensor(desc.loc[kept].values, dtype=torch.float32, device=device)
     return tensor, kept
