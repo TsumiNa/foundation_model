@@ -91,19 +91,23 @@ Supported job sizes are:
 | 12 | 3 | 144 | 1,600 GB | 96 h |
 | 16 | 4 | 144 | 1,600 GB | 96 h |
 
+**The CPU column above is the manual's figure, not what the scheduler enforces.** A
+`--cpus-per-task` above **32 per GPU** is rejected outright, so size CPU requests from 32 per GPU
+(128 on a four-GPU node) rather than from the table:
+
+```
+[AI4S] Requested CPUs (64 cpus-per-task x 1 tasks = 64) exceed the per-GPU cap 32 (= 1 GPU x 32)
+```
+
+The table is left as the manual states it; the cap is what was observed. Values between 32 and the
+table's 36 were not tested — the rejection message names 32 explicitly.
+
 The live partition default time is 12 hours and the maximum is 4 days. Specify `--time` explicitly.
 For more than 4 GPUs, Phase 2 allocates whole four-GPU nodes, so the GPU count must be a multiple of
 4. A five-GPU request was verified to be rejected by Slurm.
 
 The memory figures are estimates combining usable CPU and GPU memory. CPU and GPU memory have
 different performance characteristics even though GB200 connects them coherently through NVLink-C2C.
-
-The table's per-GPU core limit is not what the scheduler enforces. A `--cpus-per-task` above **32
-per GPU** is rejected outright:
-
-```
-[AI4S] Requested CPUs (64 cpus-per-task x 1 tasks = 64) exceed the per-GPU cap 32 (= 1 GPU x 32)
-```
 
 ## Measure GPU utilisation before assuming one run per GPU
 
@@ -143,13 +147,30 @@ about the numbers.** Measured against the same grid points run one-per-GPU:
 | `PACK=4` | 2.28 h | 4 | **3.8×** |
 | `PACK=8` | 2.46 h | 8 | **7.1×** |
 
-Twelve percent slower per run for seven times the throughput; in production over 55 runs the packed
-portion came out at exactly **8.0×**. At `PACK=8` every other dimension still has room: 10 GB of
-189 GB device memory, 141 GB of the 400 GB host allocation, 8 of the 32 permitted CPUs.
+Twelve percent slower per run for seven times the throughput. At `PACK=8` every other dimension
+still has room: 10 GB of 189 GB device memory, 141 GB of the 400 GB host allocation, and 8 of the
+32 permitted CPUs.
+
+Do **not** quote a "production" ratio computed as run-hours ÷ pack size. That divides by the pack
+size by construction and returns it unchanged, so it measures nothing — it will report exactly
+`PACK` however the runs actually behaved. The calibration above is the measurement.
 
 The shape is one array task holding one GPU and running `PACK` grid points concurrently, each with
-its own output directory and completion marker; the array shrinks to `ceil(N / PACK)`. See
-`experiments/rikyu_hparam_tuning_v2/scripts/fm_array_packed.sbatch` for a worked implementation.
+its own output directory and completion marker; the array shrinks to `ceil(N / PACK)`:
+
+```bash
+#SBATCH --gpus=1
+#SBATCH --cpus-per-task=32          # the enforced per-GPU cap; ~4 cores per co-tenant at PACK=8
+PACK=${PACK:-8}
+START=$((SLURM_ARRAY_TASK_ID * PACK))
+for k in $(seq 0 $((PACK - 1))); do
+    run_one $((START + k)) &        # own output dir, own DONE marker, own log
+done
+wait                                 # fail the task if any co-tenant failed
+```
+
+`run_one` reads its grid line, skips if its DONE marker exists, and runs one `fm` invocation. Submit
+with `--array=0-$(((N + PACK - 1) / PACK - 1))%<throttle>`.
 
 Three things to get right:
 

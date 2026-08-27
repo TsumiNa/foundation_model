@@ -65,8 +65,7 @@ analysis code are tracked). Share results between machines/people via rsync.
   reports it: the jobs exit 0 and look healthy. Read it from
   `sacct -j <id> --format=JobID,TRESUsageInAve -n -P`. When it is low, run N grid points
   concurrently inside one array task holding one GPU (separate processes, separate output dirs and
-  markers → throughput changes, results do not). Measured **8.0× at PACK=8 for 12% slower wall
-  clock per run**. Calibrate the pack size by re-running points that already finished unpacked;
+  markers → throughput changes, results do not). Measured **7.1× at eight per card**, for 12% slower wall clock per run. Calibrate the pack size by re-running points that already finished unpacked;
   contention is not linear. Skipping this check once cost ~2,600 GPU-h where ~330 would have done.
 - After code/schema changes while checkpoints are in flight: hold dependents
   (`scontrol hold`), run a small **GPU compat-probe job** (real environment, real checkpoint,

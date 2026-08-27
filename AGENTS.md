@@ -61,14 +61,14 @@
 > ```
 >
 > When utilisation is low, pack independent runs onto one GPU. They are separate processes with
-> separate seeds, so this changes throughput and nothing else about the results: `PACK=8` measured
-> **8.0× throughput for 12% slower wall clock per run**. Calibrate the pack size against runs that
-> already completed unpacked; do not extrapolate it.
+> separate seeds, so this changes throughput and nothing else about the results: eight to a card
+> measured **7.1× throughput** for 12% slower wall clock per run. Calibrate the pack size against
+> runs that already completed unpacked; do not extrapolate it.
 >
 > Cost of skipping this check, once: a campaign spent ~2,600 GPU-hours on work that would have
 > taken ~330 packed, because the idle GPUs were invisible until someone thought to look.
 >
-> Details, the per-GPU 32-CPU cap, and a worked array-job implementation:
+> Details, the per-GPU 32-CPU cap, and the array-job pattern:
 > `.github/instructions/rikyu-supercomputer.instructions.md`.
 
 ## Key Conventions
