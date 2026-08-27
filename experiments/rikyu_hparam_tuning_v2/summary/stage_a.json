@@ -6,7 +6,7 @@
     "Ranking is over relative deltas against the stage-0 untuned anchor, matching v1's convention, so v1 and v2 numbers are on one scale in the merged report."
   ],
   "n_configs": 296,
-  "n_runs": 1079,
+  "n_runs": 1080,
   "seed_band_from_stage0": {
     "n": 9,
     "mean": -2.0142067026619593e-17,
@@ -11968,64 +11968,6 @@
       }
     },
     {
-      "config": "a1r153_L384_E0p009999_M1p493e-06_P27_F0p39",
-      "point": {
-        "model__latent_dim": 384,
-        "training__encoder_lr": 0.009999,
-        "training__scheduler__min_lr": 1.493e-06,
-        "training__scheduler__patience": 27,
-        "training__scheduler__factor": 0.39
-      },
-      "n_seeds": 2,
-      "score_mean": -0.09277395287819143,
-      "score_sem": 0.00016372849031401349,
-      "score_range": 0.00032745698062802697,
-      "per_seed": {
-        "2026": -0.09261022438787742,
-        "2027": -0.09293768136850544
-      },
-      "vs_band": -1.388878164707114,
-      "exceeds_band": true,
-      "per_task": {
-        "volume": {
-          "metric": "r2",
-          "group": "big",
-          "r2_mean": 0.5248731375670963,
-          "mae_mean": 0.5489298515156313
-        },
-        "formation_energy": {
-          "metric": "r2",
-          "group": "big",
-          "r2_mean": 0.9765568572897447,
-          "mae_mean": 0.11643103024860302
-        },
-        "seebeck": {
-          "metric": "r2",
-          "group": "mid",
-          "r2_mean": 0.5463957792828116,
-          "mae_mean": 0.4486536223881558
-        },
-        "zt": {
-          "metric": "r2",
-          "group": "mid",
-          "r2_mean": 0.6050080879830964,
-          "mae_mean": 0.46156083630415734
-        },
-        "magnetization": {
-          "metric": "r2",
-          "group": "small",
-          "r2_mean": 0.7677241123436546,
-          "mae_mean": 0.310200878166344
-        },
-        "magnetic_moment": {
-          "metric": "r2",
-          "group": "small",
-          "r2_mean": 0.6384623094826799,
-          "mae_mean": 0.4567098322985881
-        }
-      }
-    },
-    {
       "config": "a1_L384_E0p05_M1e-06_P5",
       "point": {
         "model__latent_dim": 384,
@@ -12318,6 +12260,65 @@
           "group": "small",
           "r2_mean": 0.6124298919861605,
           "mae_mean": 0.4808377393543491
+        }
+      }
+    },
+    {
+      "config": "a1r153_L384_E0p009999_M1p493e-06_P27_F0p39",
+      "point": {
+        "model__latent_dim": 384,
+        "training__encoder_lr": 0.009999,
+        "training__scheduler__min_lr": 1.493e-06,
+        "training__scheduler__patience": 27,
+        "training__scheduler__factor": 0.39
+      },
+      "n_seeds": 3,
+      "score_mean": -0.09836796439279637,
+      "score_sem": 0.005594810139618629,
+      "score_range": 0.016945763034128813,
+      "per_seed": {
+        "2025": -0.10955598742200623,
+        "2026": -0.09261022438787742,
+        "2027": -0.09293768136850544
+      },
+      "vs_band": -1.472623657970249,
+      "exceeds_band": true,
+      "per_task": {
+        "volume": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.5236889002587424,
+          "mae_mean": 0.5500120974333239
+        },
+        "formation_energy": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.9764353883936884,
+          "mae_mean": 0.11586822749239235
+        },
+        "seebeck": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.537613009095837,
+          "mae_mean": 0.44949652891458447
+        },
+        "zt": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6184510595170138,
+          "mae_mean": 0.45418944407757494
+        },
+        "magnetization": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.7561950001759953,
+          "mae_mean": 0.31644018557035475
+        },
+        "magnetic_moment": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.6227135289089302,
+          "mae_mean": 0.4623814721032806
         }
       }
     },

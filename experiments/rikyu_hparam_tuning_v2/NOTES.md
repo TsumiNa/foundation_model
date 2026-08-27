@@ -57,6 +57,30 @@ A'1 grid was extended up to 5e-2, past PLAN's own 3e-2. The data says the opposi
 v1's verdict survives the regime change. The upward extension found nothing, which is itself the
 answer, and the grid points spent on it are what makes the answer trustworthy rather than assumed.
 
+**PLAN's other named bet — that `min_lr` would be the most important new dimension — is also
+refuted.** §0 calls it "最重要" on the reasoning that the broken cadence had made it the de-facto
+training LR, so restoring it to a floor should matter most. Ranking the axes by how much score
+they can actually move (spread across the axis, against the 6.68% seed band):
+
+| axis | spread of the BEST reachable | vs band | spread of the MEAN | vs band |
+|---|---:|---:|---:|---:|
+| **patience** | 6.46% | **0.97×** | 10.97% | **1.64×** |
+| **encoder_lr** | 5.59% | **0.84×** | 14.59% | **2.18×** |
+| factor | 2.65% | 0.40× | 3.72% | 0.56× |
+| **min_lr** | 1.92% | **0.29×** | 4.63% | 0.69× |
+| latent_dim | 1.02% | 0.15× | 0.58% | 0.09× |
+
+`min_lr` comes out second-weakest. Its best-reachable frontier is flat across six orders of
+magnitude, from 1e-8 to 1e-4 — once the scheduler steps per epoch, where the floor sits stops
+mattering. Two axes carry this stage and both were on PLAN's list for other reasons.
+
+`latent_dim` deserves a note of its own, because the raw ranking is misleading about it: all
+twelve top configurations use 384, which looks decisive, while its measured spread is the
+smallest of any axis (0.09× band on the mean). Both are true. A small CONSISTENT shift moves the
+whole distribution, so the maximum over a noisy ranking comes disproportionately from the shifted
+side. That is what a tiny real effect looks like at the tail — not evidence of a large one, and
+it must not be reported as "384 wins" without the effect size beside it.
+
 **The scheduler's `patience` is the one axis with an effect larger than the noise band.** It is
 also the axis v1 could not test at all, because before PR #45 it counted batches and was inert.
 Short patience — cut the LR early and often — wins by a wide margin:

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import matplotlib
@@ -55,6 +56,38 @@ plt.rcParams.update({
     "figure.facecolor": "white",
     "axes.facecolor": "white",
 })
+
+
+# An axis with at most this many distinct values is drawn at those values; more than this and it
+# is binned. The grid axes sit below it, the random-search axes far above.
+PER_VALUE_MAX = 10
+MARGINAL_BINS = 8
+
+
+def _bin_axis(buckets: dict[float, list[float]], logx: bool, n_bins: int):
+    """Aggregate a continuously-sampled axis into ``n_bins``, returning (centres, score groups).
+
+    Bins are equal-width in log space for the learning-rate axes, because that is how they were
+    sampled and how they matter — the distance from 1e-3 to 2e-3 is the same kind of step as
+    1e-2 to 2e-2. Empty bins are dropped rather than plotted as gaps at zero.
+    """
+    xs = sorted(buckets)
+    lo, hi = xs[0], xs[-1]
+    if logx and lo > 0:
+        edges = [10 ** (math.log10(lo) + i * (math.log10(hi) - math.log10(lo)) / n_bins)
+                 for i in range(n_bins + 1)]
+    else:
+        edges = [lo + i * (hi - lo) / n_bins for i in range(n_bins + 1)]
+    centres, groups = [], []
+    for i in range(n_bins):
+        left, right = edges[i], edges[i + 1]
+        members = [v for v in xs if (left <= v < right or (i == n_bins - 1 and v == hi))]
+        if not members:
+            continue
+        scores = [s for v in members for s in buckets[v]]
+        centres.append(math.sqrt(left * right) if (logx and left > 0) else (left + right) / 2)
+        groups.append(scores)
+    return centres, groups
 
 
 def tidy(ax, *, grid_axis="y"):
@@ -146,25 +179,33 @@ def plot_stage_a(summary: dict, out: Path) -> list[Path]:
                 if v is not None:
                     buckets.setdefault(v, []).append(r["score_mean"])
             xs = sorted(buckets)
-            means = [sum(buckets[x]) / len(buckets[x]) for x in xs]
-            best = [max(buckets[x]) for x in xs]
-            ax.plot(xs, means, "-o", color=SERIES[0], linewidth=2, markersize=6,
+
+            # A grid axis has a handful of values; a random-search axis has one per sample. Both
+            # feed this plot, and drawing them the same way makes the second unreadable: 206
+            # distinct encoder_lr values become 206 overlapping tick labels and a sawtooth line
+            # whose every point averages one or two configs. So few values are drawn as they were
+            # searched, and many values are BINNED — which is also what makes the aggregate mean
+            # mean anything.
+            if len(xs) <= PER_VALUE_MAX:
+                centres = xs
+                groups = [buckets[x] for x in xs]
+                ax.set_xticks(xs)
+                ax.set_xticklabels([f"{x:g}" for x in xs], fontsize=8)
+                ax.minorticks_off()
+            else:
+                centres, groups = _bin_axis(buckets, logx, MARGINAL_BINS)
+
+            means = [sum(g) / len(g) for g in groups]
+            best = [max(g) for g in groups]
+            ax.plot(centres, means, "-o", color=SERIES[0], linewidth=2, markersize=6,
                     label="mean over the other axes", zorder=3)
-            ax.plot(xs, best, "--^", color=SERIES[1], linewidth=1.6, markersize=6,
+            ax.plot(centres, best, "--^", color=SERIES[1], linewidth=1.6, markersize=6,
                     label="best at this value", zorder=3)
             if logx:
                 ax.set_xscale("log")
-            # Ticks ONLY at the values actually searched. Matplotlib's default ticker invents a
-            # continuum — it will happily label 150/200/250/300/350 on an axis whose only sampled
-            # values are 128 and 384 — which reads as a swept range rather than two options.
-            ax.set_xticks(xs)
-            # Rotated because eight log-spaced values collide horizontally — unrotated they
-            # render as "0.0020.003" and the axis becomes unreadable exactly where the campaign's
-            # dominant knob is.
-            ax.set_xticklabels([f"{x:g}" for x in xs], fontsize=7.5,
-                               rotation=45 if len(xs) > 4 else 0,
-                               ha="right" if len(xs) > 4 else "center")
-            ax.minorticks_off()
+            # A rug of the actual samples, so binning never hides where the search really looked.
+            ax.plot(xs, [ax.get_ylim()[0]] * len(xs), "|", color=MUTED, alpha=0.35,
+                    markersize=4, clip_on=False, zorder=1)
             ax.set_xlabel(label)
             tidy(ax)
         axs[0].set_ylabel("mean relative improvement")
@@ -207,10 +248,12 @@ def plot_stage_a(summary: dict, out: Path) -> list[Path]:
     ax.set_xlabel("mean relative improvement vs the untuned anchor  (bars = ±2 SE)")
     ax.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:+.1%}"))
     n_tied = len(tied)
+    # Two short lines rather than one long one: the single-line version ran past the axes and lost
+    # its config count, which is the half that carries the finding.
     ax.set_title(
-        f"Stage A' ranking — green = not separated from the leader at this seed count"
-        f" ({n_tied} config{'s' if n_tied != 1 else ''})",
-        fontsize=10, loc="left")
+        f"Stage A' ranking — {n_tied} config{'s' if n_tied != 1 else ''} not separated "
+        f"from the leader\nat this seed count (green)",
+        fontsize=9.5, loc="left")
     # Outside the axes: at the default lower-right it sits on top of the last row's error bar.
     ax.legend(loc="upper left", bbox_to_anchor=(0, -0.10 - 0.4 / len(top)),
               frameon=False, fontsize=8)
