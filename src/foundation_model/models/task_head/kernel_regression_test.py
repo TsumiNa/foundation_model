@@ -86,3 +86,17 @@ def test_reshape_keeps_a_slot_for_a_zero_length_sample():
 
     assert len(reshaped["dos_value"]) == 3
     assert reshaped["dos_value"][1].size == 0
+
+
+@pytest.mark.parametrize("lengths", [[3, 1], [3, 2, 2]])
+def test_reshape_rejects_lengths_that_do_not_match_the_predictions(lengths):
+    """A mismatch used to pass silently, handing back short arrays and dropping the tail.
+
+    The regroup is positional, so nothing downstream can tell a truncated sequence from a genuine
+    one — the two inputs have to come from the same batch, and saying so is the only way to notice
+    when they do not.
+    """
+    flat = np.arange(6, dtype=float).reshape(-1, 1)  # 6 rows
+
+    with pytest.raises(ValueError, match="sequence_lengths sums to"):
+        reshape_kernel_regression_predictions({"dos_value": flat}, lengths)

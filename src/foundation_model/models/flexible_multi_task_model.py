@@ -396,8 +396,19 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
         return head_module
 
     def _register_task_log_sigma(self, task_name: str):
-        """Register a learnable log sigma parameter for the task if enabled."""
+        """Register a learnable log sigma parameter for the task if enabled.
+
+        Supervised tasks only. Uncertainty weighting balances heads that compete for the encoder
+        by learning how noisy each one's LABELS are; the autoencoder has no labels — it reconstructs
+        the input — and it is always on, so giving it a sigma would let the reconstruction term
+        rescale itself against every supervised task and change the encoder gradient in an
+        experiment whose whole point is to compare the supervised balance. It is the one head
+        ``build_empty_model`` always creates, so this path is not hypothetical.
+        """
         if not self.enable_learnable_loss_balancer:
+            return
+
+        if self.task_configs_map[task_name].type is TaskType.AUTOENCODER:
             return
 
         if task_name in self.task_log_sigmas:

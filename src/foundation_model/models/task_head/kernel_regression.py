@@ -375,6 +375,8 @@ def reshape_kernel_regression_predictions(
         Dictionary with the same keys as input, but values are reshaped to List[numpy.ndarray]
         format where each array corresponds to one sample's predictions.
     """
+    total = int(sum(max(0, n) for n in sequence_lengths))
+
     reshaped_dict = {}
 
     for key, flattened_value in processed_pred_dict.items():
@@ -384,6 +386,15 @@ def reshape_kernel_regression_predictions(
         else:
             # Fallback for torch tensors (should not happen with KernelRegression)
             flattened_array = flattened_value.detach().cpu().numpy()
+
+        # The regroup is positional, so a length mismatch does not fail — it hands back short
+        # arrays and drops the tail, which reads downstream as a genuine prediction. Check first.
+        if len(flattened_array) != total:
+            raise ValueError(
+                f"reshape_kernel_regression_predictions: '{key}' has {len(flattened_array)} rows "
+                f"but sequence_lengths sums to {total}. The flattened predictions and the batch's "
+                "sequence lengths must come from the same batch."
+            )
 
         # Split the flattened array back into individual sample predictions
         reshaped_list = []

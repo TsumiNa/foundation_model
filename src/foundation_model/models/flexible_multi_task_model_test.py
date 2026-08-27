@@ -2827,6 +2827,27 @@ def test_head_accessor_returns_the_registered_head_for_every_kind(model_config_m
 # --- learnable loss balancer (uncertainty weighting) -------------------------------------------
 
 
+def test_loss_balancer_skips_the_autoencoder_head(model_config_mixed_tasks):
+    """ "Per supervised task" has to exclude the AE head, and this is the path that always hits it.
+
+    build_empty_model turns the autoencoder on for every pretrain and finetune run, so a sigma
+    registered for it is not a corner case — it would rescale the reconstruction term against the
+    supervised ones and move the encoder gradient, in the one experiment whose point is to compare
+    the supervised balance. The head also has no labels for an uncertainty to be about.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        enable_autoencoder=True,
+        enable_learnable_loss_balancer=True,
+    )
+
+    assert "__reconstruction__" in model.task_heads, "fixture must actually have the AE head"
+    assert "__reconstruction__" not in model.task_log_sigmas
+    assert set(model.task_log_sigmas) == {tc.name for tc in config.task_configs if tc.enabled}
+
+
 def test_loss_balancer_registers_one_log_sigma_per_supervised_task(model_config_mixed_tasks):
     """Kendall/Gal/Cipolla uncertainty weighting needs one learnable log sigma per task.
 
