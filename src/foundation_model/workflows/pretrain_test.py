@@ -622,11 +622,24 @@ def test_training_subtables_parse() -> None:
 
 @pytest.mark.parametrize(
     ("toml_value", "expected"),
-    [("1", 1), ("[0]", [0]), ('"auto"', "auto"), ('"0"', "0")],
+    [("1", 1), ("[0]", [0]), ('"auto"', "auto"), ('"1"', "1"), ('"3,"', "3,")],
 )
 def test_devices_accepts_the_single_device_forms(toml_value: str, expected) -> None:
     cfg = build_training_section(tomllib.loads(f"devices = {toml_value}"))
     assert cfg.devices == expected
+
+
+@pytest.mark.parametrize("toml_value", ['"2"', '"-1"', '"0"'])
+def test_a_bare_numeric_devices_string_is_a_count_not_an_index(toml_value: str) -> None:
+    """Lightning reads devices = "2" as TWO GPUs ([0, 1]), exactly like the int 2.
+
+    Reading it as "the GPU at index 2" is the obvious mistake, and the one this validator made
+    while it decided by punctuation — a bare number has no comma or dash, so "2" sailed through a
+    check meant to stop exactly that. The string spelling of a single index carries a separator:
+    "3," is [3].
+    """
+    with pytest.raises(ValueError, match="training.devices"):
+        build_training_section(tomllib.loads(f"devices = {toml_value}"))
 
 
 @pytest.mark.parametrize("toml_value", ["2", "-1", "[1, 3]", '"1,3"', '"0-3"'])

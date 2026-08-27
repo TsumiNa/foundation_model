@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import re
+
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -31,6 +33,8 @@ def validate_positive_int(where: str, value: Any) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f"{where} must be a positive int, got {value!r}.")
 
+
+_INT_STRING = re.compile(r"-?\d+")
 
 MULTI_DEVICE_HELP = (
     "Distributed training is temporarily removed (see the DDP note in ARCHITECTURE.md): the "
@@ -67,11 +71,34 @@ def validate_devices(value: Any) -> None:
             )
         return
     if isinstance(value, str):
-        if not value.strip():
-            raise ValueError('training.devices string must be non-empty (e.g. "auto", "1,3", "0-3").')
-        if value.strip() != "auto" and any(sep in value for sep in (",", "-")):
+        text = value.strip()
+        if not text:
+            raise ValueError('training.devices string must be non-empty (e.g. "auto", "1", "0,2").')
+        if text == "auto":
+            return  # resolves at fit time; guard_single_device is what catches a multi-GPU node
+        # Lightning reads a BARE numeric string as a COUNT, not an index: devices = "2" is two GPUs
+        # ([0, 1]), exactly like the int 2. Only a string carrying a separator is a list of indices.
+        # Reading "2" as "the GPU at index 2" is the obvious mistake — and the mistake this check
+        # made when it went by punctuation alone — so bare numbers go through the int rule.
+        if _INT_STRING.fullmatch(text):
+            validate_devices(int(text))
+            return
+        indices: list[int] = []
+        for part in (p.strip() for p in text.split(",")):
+            if not part:
+                continue
+            try:
+                if "-" in part[1:]:  # a range like "0-3"
+                    lo, _, hi = part.partition("-")
+                    indices.extend(range(int(lo), int(hi) + 1))
+                else:
+                    indices.append(int(part))
+            except ValueError:
+                raise ValueError(f"training.devices string is not a device list, got {value!r}.") from None
+        if len(indices) != 1:
             raise ValueError(
-                f"training.devices must name one device while distributed training is out, got {value!r}. {MULTI_DEVICE_HELP}"
+                f"training.devices must name one device while distributed training is out, got "
+                f"{value!r} ({len(indices)} devices). {MULTI_DEVICE_HELP}"
             )
         return
     raise ValueError(f"training.devices must be an int, list of ints, or str, got {value!r}.")
