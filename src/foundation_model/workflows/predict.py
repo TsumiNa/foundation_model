@@ -20,6 +20,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from foundation_model.models.task_head.kernel_regression import expand_for_kernel_regression
 import torch
 from lightning import seed_everything
 from loguru import logger
@@ -259,7 +260,7 @@ def _predict_kr(
     with torch.no_grad():
         h = torch.tanh(model.encoder(x))
         t_tensors = [torch.tensor(t, dtype=torch.float32, device=device) for t in t_list]
-        expanded_h, expanded_t = model._expand_for_kernel_regression(h, t_tensors)
+        expanded_h, expanded_t = expand_for_kernel_regression(h, t_tensors)
         pred = catalog.inverse_transform(name, head(expanded_h, t=expanded_t).squeeze(-1).cpu().numpy())
     rows: list[dict[str, Any]] = []
     offset = 0

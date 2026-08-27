@@ -25,6 +25,7 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
+from foundation_model.models.task_head.kernel_regression import expand_for_kernel_regression
 from foundation_model.models.model_config import MLPEncoderConfig, OptimizerConfig
 
 from . import plots
@@ -390,7 +391,7 @@ def evaluate_task(
         xk, _ = descriptor_tensor(catalog, keep, device)
         h_k = torch.tanh(model.encoder(xk))
         t_tensors = [torch.tensor(t, dtype=torch.float32, device=device) for t in t_list]
-        expanded_h, expanded_t = model._expand_for_kernel_regression(h_k, t_tensors)
+        expanded_h, expanded_t = expand_for_kernel_regression(h_k, t_tensors)
         pred = catalog.inverse_transform(name, head(expanded_h, t=expanded_t).squeeze(-1).cpu().numpy())
         true = catalog.inverse_transform(name, np.concatenate(true_parts))
         r2 = float(r2_score(true, pred))

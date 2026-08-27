@@ -36,7 +36,7 @@ import math
 from collections import namedtuple
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, List
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -47,6 +47,7 @@ from .components.foundation_encoder import FoundationEncoder
 from .model_config import TaskConfigType, TaskType
 from .task_head.autoencoder import AutoEncoderHead
 from .task_head.base import BaseTaskHead
+from .task_head.kernel_regression import expand_for_kernel_regression
 
 
 # Named tuple for optimization results. ``input_trajectory`` is None unless the caller passes
@@ -148,11 +149,6 @@ class InverseDesignMixin(nn.Module):
     task_configs_map: dict[str, TaskConfigType]
 
     def _head(self, name: str) -> BaseTaskHead:  # pragma: no cover - provided by the host class
-        raise NotImplementedError
-
-    def _expand_for_kernel_regression(  # pragma: no cover - provided by the host class
-        self, h_task: torch.Tensor, t_sequence: List[torch.Tensor] | torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
         raise NotImplementedError
 
     def _resolve_target_and_mask(
@@ -304,7 +300,7 @@ class InverseDesignMixin(nn.Module):
                 assert tgt.t is not None and tgt.y is not None
                 k = tgt.t.shape[0]
                 t_batch = tgt.t.unsqueeze(0).expand(h_task.shape[0], k)
-                h_rep, t_rep = self._expand_for_kernel_regression(h_task, t_batch)
+                h_rep, t_rep = expand_for_kernel_regression(h_task, t_batch)
                 pred = head(h_rep, t=t_rep).view(h_task.shape[0], k)
                 sq = (pred - tgt.y.unsqueeze(0)) ** 2  # (B, K)
                 per_sample = sq.mean(dim=1)
