@@ -32,12 +32,8 @@ The public names below are unchanged, so ``model.optimize_composition(...)`` and
 site keep working exactly as before.
 """
 
-from .mixin import (
-    CompositionOptimizationResult,
-    InverseDesignMixin,
-    OptimizationResult,
-    OptimizationTarget,
-)
+from .mixin import InverseDesignMixin
+from .targets import CompositionOptimizationResult, OptimizationResult, OptimizationTarget
 
 __all__ = [
     "CompositionOptimizationResult",
