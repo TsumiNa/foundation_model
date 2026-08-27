@@ -19,9 +19,10 @@ Two search spaces, and the difference between them is the point:
 
 WHY A MIXIN RATHER THAN FREE FUNCTIONS
 --------------------------------------
-The coupling to the model is genuinely thin — 1536 lines reach for exactly six of its
-attributes, listed below, plus ``nn.Module``'s own ``train`` / ``eval`` / ``training``. Free
-functions taking the model as a first argument would express that better still.
+The coupling to the model is genuinely thin — 1536 lines reach for exactly four of its members
+(``encoder``, ``task_heads``, ``task_configs_map``, ``_head``), declared on the class below, plus
+``nn.Module``'s own ``train`` / ``eval`` / ``training`` / ``parameters``. Free functions taking
+the model as a first argument would express that better still.
 
 A mixin was chosen for the move itself because it keeps ``model.optimize_composition(...)``
 working unchanged across two workflow modules and 186 lines of tests, which makes this a pure
@@ -132,7 +133,7 @@ def _reduce_pred(pred: torch.Tensor) -> torch.Tensor:
 class InverseDesignMixin(nn.Module):
     """Target-driven input search over a trained :class:`FlexibleMultiTaskModel`.
 
-    THE INTERFACE THIS NEEDS FROM THE MODEL is the three attributes and two methods declared
+    THE INTERFACE THIS NEEDS FROM THE MODEL is the three attributes and one method declared
     below, plus ``train`` / ``eval`` / ``training`` / ``parameters`` — which is why the base is
     ``nn.Module`` rather than ``object``. The search toggles the host in and out of eval mode and
     freezes its parameters while it descends on the *input*, so it genuinely requires a module,
@@ -550,173 +551,178 @@ class InverseDesignMixin(nn.Module):
         for p, _ in saved_req_grad:
             p.requires_grad_(False)
 
-        optimized_inputs: list[torch.Tensor] = []
-        optimized_targets: list[torch.Tensor] = []
-        trajectories: list[torch.Tensor] = []
-        # When ``record_input_trajectory=True`` we snapshot the per-step input every iteration
-        # (input-space: ``optim_input`` directly; latent-space: ``AE.decode(tanh(h))``). Stored on
-        # CPU to keep GPU memory flat on long trajectories. One per restart, stacked at the end.
-        input_trajectories: list[torch.Tensor] = []
-        initial_scores_list: list[torch.Tensor] = []
+        # try/finally, matching optimize_composition: an exception anywhere in the search
+        # must not leave the model frozen and in eval() for the rest of the session. The
+        # symptom of that leak is 'training silently stops moving the encoder', which is
+        # expensive to bisect and invisible in logs.
+        try:
+            optimized_inputs: list[torch.Tensor] = []
+            optimized_targets: list[torch.Tensor] = []
+            trajectories: list[torch.Tensor] = []
+            # When ``record_input_trajectory=True`` we snapshot the per-step input every iteration
+            # (input-space: ``optim_input`` directly; latent-space: ``AE.decode(tanh(h))``). Stored on
+            # CPU to keep GPU memory flat on long trajectories. One per restart, stacked at the end.
+            input_trajectories: list[torch.Tensor] = []
+            initial_scores_list: list[torch.Tensor] = []
 
-        for restart_idx in range(num_restarts):
-            if optimize_space == "input":
-                # Input space optimization: optimize X directly
-                start_input = input_tensor.clone()
-                if perturbation_std > 0:
-                    start_input = start_input + torch.randn_like(start_input) * perturbation_std
+            for restart_idx in range(num_restarts):
+                if optimize_space == "input":
+                    # Input space optimization: optimize X directly
+                    start_input = input_tensor.clone()
+                    if perturbation_std > 0:
+                        start_input = start_input + torch.randn_like(start_input) * perturbation_std
 
-                # Record initial score(s)
-                with torch.no_grad():
-                    h_task = torch.tanh(self.encoder(start_input))
-                    channels, _ = self._optimization_objective(h_task, prepared)
-                    initial_scores_list.append(channels.detach())  # (B, T)
+                    # Record initial score(s)
+                    with torch.no_grad():
+                        h_task = torch.tanh(self.encoder(start_input))
+                        channels, _ = self._optimization_objective(h_task, prepared)
+                        initial_scores_list.append(channels.detach())  # (B, T)
 
-                # Create optimizable input
-                optim_input = start_input.detach().clone().requires_grad_(True)
+                    # Create optimizable input
+                    optim_input = start_input.detach().clone().requires_grad_(True)
 
-                # Setup optimizer
-                optimizer = optim.Adam([optim_input], lr=lr)
+                    # Setup optimizer
+                    optimizer = optim.Adam([optim_input], lr=lr)
 
-                # Optimization loop
-                step_traj: list[torch.Tensor] = []
-                step_input_traj: list[torch.Tensor] = []
+                    # Optimization loop
+                    step_traj: list[torch.Tensor] = []
+                    step_input_traj: list[torch.Tensor] = []
 
-                for step in range(steps):
-                    optimizer.zero_grad()
+                    for step in range(steps):
+                        optimizer.zero_grad()
 
-                    # Forward through encoder and apply Tanh
-                    h_task = torch.tanh(self.encoder(optim_input))
-                    channels, per_sample_losses = self._optimization_objective(h_task, prepared)
-                    # Σ over targets per sample, then batch mean — the same objective
-                    # evaluate_targets() reports (and the documented Σ wᵢ·termᵢ form).
-                    loss = per_sample_losses.sum(dim=1).mean()
+                        # Forward through encoder and apply Tanh
+                        h_task = torch.tanh(self.encoder(optim_input))
+                        channels, per_sample_losses = self._optimization_objective(h_task, prepared)
+                        # Σ over targets per sample, then batch mean — the same objective
+                        # evaluate_targets() reports (and the documented Σ wᵢ·termᵢ form).
+                        loss = per_sample_losses.sum(dim=1).mean()
 
-                    # Backward and optimize
-                    loss.backward()
-                    optimizer.step()
+                        # Backward and optimize
+                        loss.backward()
+                        optimizer.step()
 
-                    # Record history
-                    step_traj.append(channels.detach())
+                        # Record history
+                        step_traj.append(channels.detach())
+                        if record_input_trajectory:
+                            # Input-space optim variable IS the input — just snapshot it.
+                            step_input_traj.append(optim_input.detach().cpu())
+
+                    # Get final optimized values
+                    with torch.no_grad():
+                        h_task = torch.tanh(self.encoder(optim_input))
+                        per_task_final_tensor, _ = self._optimization_objective(h_task, prepared)
+                        per_task_final_tensor = per_task_final_tensor.detach()  # (B, T)
+                        optimized_input = optim_input.detach()
+
+                    optimized_inputs.append(optimized_input.detach())  # (B, D)
+                    optimized_targets.append(per_task_final_tensor)  # (B, T)
+                    traj_tensor = torch.stack(step_traj, dim=0)  # (steps, B, T)
+                    trajectories.append(traj_tensor)
                     if record_input_trajectory:
-                        # Input-space optim variable IS the input — just snapshot it.
-                        step_input_traj.append(optim_input.detach().cpu())
+                        input_trajectories.append(torch.stack(step_input_traj, dim=0))  # (steps, B, D)
 
-                # Get final optimized values
-                with torch.no_grad():
-                    h_task = torch.tanh(self.encoder(optim_input))
-                    per_task_final_tensor, _ = self._optimization_objective(h_task, prepared)
-                    per_task_final_tensor = per_task_final_tensor.detach()  # (B, T)
-                    optimized_input = optim_input.detach()
+                else:  # optimize_space == "latent"
+                    # Latent space optimization: encode X -> optimize latent -> decode via AE
+                    with torch.no_grad():
+                        initial_latent = self.encoder(input_tensor)
 
-                optimized_inputs.append(optimized_input.detach())  # (B, D)
-                optimized_targets.append(per_task_final_tensor)  # (B, T)
-                traj_tensor = torch.stack(step_traj, dim=0)  # (steps, B, T)
-                trajectories.append(traj_tensor)
-                if record_input_trajectory:
-                    input_trajectories.append(torch.stack(step_input_traj, dim=0))  # (steps, B, D)
+                    start_latent = initial_latent.clone()
+                    if perturbation_std > 0:
+                        start_latent = start_latent + torch.randn_like(start_latent) * perturbation_std
 
-            else:  # optimize_space == "latent"
-                # Latent space optimization: encode X -> optimize latent -> decode via AE
-                with torch.no_grad():
-                    initial_latent = self.encoder(input_tensor)
-
-                start_latent = initial_latent.clone()
-                if perturbation_std > 0:
-                    start_latent = start_latent + torch.randn_like(start_latent) * perturbation_std
-
-                # Record initial score(s)
-                # Apply Tanh to get task representation (consistent with forward())
-                with torch.no_grad():
-                    h_task = torch.tanh(start_latent)
-                    channels, _ = self._optimization_objective(h_task, prepared)
-                    initial_scores_list.append(channels.detach())  # (B, T)
-
-                # Create optimizable latent
-                optim_latent = start_latent.detach().clone().requires_grad_(True)
-
-                # Setup optimizer
-                optimizer = optim.Adam([optim_latent], lr=lr)
-
-                # Optimization loop (names already annotated in the input-space branch)
-                step_traj = []
-                step_input_traj = []
-
-                for step in range(steps):
-                    optimizer.zero_grad()
-
+                    # Record initial score(s)
                     # Apply Tanh to get task representation (consistent with forward())
-                    # This ensures architectural consistency on every optimization step
-                    h_task = torch.tanh(optim_latent)
-                    channels, per_sample_losses = self._optimization_objective(h_task, prepared)
-                    # Σ over targets per sample, then batch mean (matches evaluate_targets); the
-                    # AE term is added on top so its scale is independent of the target count.
-                    loss = per_sample_losses.sum(dim=1).mean()
-                    if ae_align_scale > 0:
-                        # Pull the optimised latent toward what the AE faithfully reconstructs:
-                        # decode it to a descriptor, re-encode, and penalise the drift in h_task.
-                        # The user-facing knob is [0, 1] with 0 = no penalty / 1 = strong penalty.
-                        re_h_task = torch.tanh(self.encoder(self.task_heads[_AE_TASK](h_task)))
-                        loss = loss + ae_align_scale * F.mse_loss(re_h_task, h_task)
+                    with torch.no_grad():
+                        h_task = torch.tanh(start_latent)
+                        channels, _ = self._optimization_objective(h_task, prepared)
+                        initial_scores_list.append(channels.detach())  # (B, T)
 
-                    # Backward and optimize
-                    loss.backward()
-                    optimizer.step()
+                    # Create optimizable latent
+                    optim_latent = start_latent.detach().clone().requires_grad_(True)
 
-                    # Record history
-                    step_traj.append(channels.detach())
+                    # Setup optimizer
+                    optimizer = optim.Adam([optim_latent], lr=lr)
+
+                    # Optimization loop (names already annotated in the input-space branch)
+                    step_traj = []
+                    step_input_traj = []
+
+                    for step in range(steps):
+                        optimizer.zero_grad()
+
+                        # Apply Tanh to get task representation (consistent with forward())
+                        # This ensures architectural consistency on every optimization step
+                        h_task = torch.tanh(optim_latent)
+                        channels, per_sample_losses = self._optimization_objective(h_task, prepared)
+                        # Σ over targets per sample, then batch mean (matches evaluate_targets); the
+                        # AE term is added on top so its scale is independent of the target count.
+                        loss = per_sample_losses.sum(dim=1).mean()
+                        if ae_align_scale > 0:
+                            # Pull the optimised latent toward what the AE faithfully reconstructs:
+                            # decode it to a descriptor, re-encode, and penalise the drift in h_task.
+                            # The user-facing knob is [0, 1] with 0 = no penalty / 1 = strong penalty.
+                            re_h_task = torch.tanh(self.encoder(self.task_heads[_AE_TASK](h_task)))
+                            loss = loss + ae_align_scale * F.mse_loss(re_h_task, h_task)
+
+                        # Backward and optimize
+                        loss.backward()
+                        optimizer.step()
+
+                        # Record history
+                        step_traj.append(channels.detach())
+                        if record_input_trajectory:
+                            # Latent-space optim: decode the current h via the AE head to recover the
+                            # per-step input. ``no_grad`` keeps this from polluting the optim graph.
+                            with torch.no_grad():
+                                step_input = self.task_heads[_AE_TASK](torch.tanh(optim_latent))
+                            step_input_traj.append(step_input.detach().cpu())
+
+                    # Get final optimized values and reconstruct via AE
+                    with torch.no_grad():
+                        # Apply Tanh to get final task representation (consistent with forward())
+                        final_h_task = torch.tanh(optim_latent)
+                        per_task_final_tensor, _ = self._optimization_objective(final_h_task, prepared)
+                        per_task_final_tensor = per_task_final_tensor.detach()  # (B, T)
+
+                        # Reconstruct input via the built-in reconstruction head
+                        reconstructed_input = self.task_heads[_AE_TASK](final_h_task)
+
+                    optimized_inputs.append(reconstructed_input.detach())  # (B, D)
+                    optimized_targets.append(per_task_final_tensor)  # (B, T)
+                    traj_tensor = torch.stack(step_traj, dim=0)  # (steps, B, T)
+                    trajectories.append(traj_tensor)
                     if record_input_trajectory:
-                        # Latent-space optim: decode the current h via the AE head to recover the
-                        # per-step input. ``no_grad`` keeps this from polluting the optim graph.
-                        with torch.no_grad():
-                            step_input = self.task_heads[_AE_TASK](torch.tanh(optim_latent))
-                        step_input_traj.append(step_input.detach().cpu())
+                        input_trajectories.append(torch.stack(step_input_traj, dim=0))  # (steps, B, D)
 
-                # Get final optimized values and reconstruct via AE
-                with torch.no_grad():
-                    # Apply Tanh to get final task representation (consistent with forward())
-                    final_h_task = torch.tanh(optim_latent)
-                    per_task_final_tensor, _ = self._optimization_objective(final_h_task, prepared)
-                    per_task_final_tensor = per_task_final_tensor.detach()  # (B, T)
+            # Stack outputs
+            opt_input_tensor = torch.stack(optimized_inputs, dim=1)  # (B, R, D)
+            opt_target_tensor = torch.stack(optimized_targets, dim=1)  # (B, R, T)
+            traj_tensor = torch.stack(trajectories, dim=0)  # (R, steps, B, T)
+            traj_tensor = traj_tensor.permute(2, 0, 1, 3)  # (B, R, steps, T)
+            initial_score_tensor = torch.stack(initial_scores_list, dim=0)  # (R, B, T)
+            initial_score_tensor = initial_score_tensor.permute(1, 0, 2)  # (B, R, T)
 
-                    # Reconstruct input via the built-in reconstruction head
-                    reconstructed_input = self.task_heads[_AE_TASK](final_h_task)
+            input_traj_tensor: torch.Tensor | None = None
+            if record_input_trajectory and input_trajectories:
+                input_traj_tensor = torch.stack(input_trajectories, dim=0)  # (R, steps, B, D)
+                input_traj_tensor = input_traj_tensor.permute(2, 0, 1, 3)  # (B, R, steps, D)
 
-                optimized_inputs.append(reconstructed_input.detach())  # (B, D)
-                optimized_targets.append(per_task_final_tensor)  # (B, T)
-                traj_tensor = torch.stack(step_traj, dim=0)  # (steps, B, T)
-                trajectories.append(traj_tensor)
-                if record_input_trajectory:
-                    input_trajectories.append(torch.stack(step_input_traj, dim=0))  # (steps, B, D)
-
-        # Restore training state + per-parameter ``requires_grad``. Without the latter, every
-        # encoder / head parameter would be left frozen for any later ``.fit()`` in the same
-        # Python session — the symptom is "training silently stops moving the encoder" which
-        # is annoying to bisect.
-        self.train(was_training)
-        for p, prev in saved_req_grad:
-            p.requires_grad_(prev)
-
-        # Stack outputs
-        opt_input_tensor = torch.stack(optimized_inputs, dim=1)  # (B, R, D)
-        opt_target_tensor = torch.stack(optimized_targets, dim=1)  # (B, R, T)
-        traj_tensor = torch.stack(trajectories, dim=0)  # (R, steps, B, T)
-        traj_tensor = traj_tensor.permute(2, 0, 1, 3)  # (B, R, steps, T)
-        initial_score_tensor = torch.stack(initial_scores_list, dim=0)  # (R, B, T)
-        initial_score_tensor = initial_score_tensor.permute(1, 0, 2)  # (B, R, T)
-
-        input_traj_tensor: torch.Tensor | None = None
-        if record_input_trajectory and input_trajectories:
-            input_traj_tensor = torch.stack(input_trajectories, dim=0)  # (R, steps, B, D)
-            input_traj_tensor = input_traj_tensor.permute(2, 0, 1, 3)  # (B, R, steps, D)
-
-        return OptimizationResult(
-            optimized_input=opt_input_tensor,
-            optimized_target=opt_target_tensor,
-            initial_score=initial_score_tensor,
-            trajectory=traj_tensor,
-            input_trajectory=input_traj_tensor,
-        )
+            return OptimizationResult(
+                optimized_input=opt_input_tensor,
+                optimized_target=opt_target_tensor,
+                initial_score=initial_score_tensor,
+                trajectory=traj_tensor,
+                input_trajectory=input_traj_tensor,
+            )
+        finally:
+            # Restore training state + per-parameter ``requires_grad``. Without the latter, every
+            # encoder / head parameter would be left frozen for any later ``.fit()`` in the same
+            # Python session — the symptom is "training silently stops moving the encoder" which
+            # is annoying to bisect.
+            self.train(was_training)
+            for p, prev in saved_req_grad:
+                p.requires_grad_(prev)
 
     def optimize_composition(
         self,

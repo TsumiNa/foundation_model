@@ -1035,6 +1035,30 @@ def test_optimize_latent_class_targets_rejects_regression_task():
         )
 
 
+def test_optimize_latent_restores_train_mode_and_requires_grad_after_a_failure(mocker):
+    """A crash mid-search must not leave the model frozen and in eval() for the whole session.
+
+    The search deliberately calls ``eval()`` and ``requires_grad_(False)`` on every parameter while
+    it descends on the *input*. Restoring that on the happy path only means one exception leaks a
+    permanently untrainable model into the rest of the process — and the symptom is "training
+    silently stops moving the encoder", which is invisible in logs and expensive to bisect.
+    ``optimize_composition`` has always used try/finally; this is the same guarantee for its twin.
+    """
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    model.train()
+    assert all(p.requires_grad for p in model.parameters()), "fixture must start trainable"
+
+    mocker.patch.object(model, "_optimization_objective", side_effect=RuntimeError("head blew up"))
+    with pytest.raises(RuntimeError, match="head blew up"):
+        model.optimize_latent(
+            initial_input=torch.randn(3, INPUT_DIM), task_targets={"prop": 1.0}, optimize_space="input", steps=5
+        )
+
+    assert model.training, "the model must be back in train mode"
+    assert all(p.requires_grad for p in model.parameters()), "every parameter must be trainable again"
+
+
 def test_optimize_latent_class_targets_rejects_out_of_range_index():
     model = _make_reg_clf_model()  # "cls" head has num_classes=3 → valid indices [0, 3)
     for bad in ([3], [-1]):
