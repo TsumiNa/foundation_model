@@ -70,6 +70,40 @@ training/predict flows (output layout, `run_provenance.json`, per-step checkpoin
 parquets, metrics, figures). `_sections.py` (the `[model]`/`[training]` config) and `_engine.py`
 (model construction + per-head evaluation) are shared by the pretrain and finetune engines.
 
+## Distributed training: removed, and probably not worth re-adding
+
+`0.3.2` removed the DDP surface. Sampling and metrics had been built — a `DistributedSampler`
+branch, `set_epoch`, a per-rank index tracker so padded samples were not double-counted, and
+`sync_dist=True` on every log — but the **output half never was**: there is no rank guarding
+anywhere in the tree, so every rank would concurrently write the same checkpoint, the same metrics
+JSON and the same prediction parquet, and per-rank prediction shards were never gathered. It
+produced correct gradients and incorrect artefacts, and it was never run end to end: `strategy` is
+never set and every config in the repo is `devices = 1`.
+
+Multi-device configurations are now **rejected** rather than merely undocumented — see
+`[training] devices` in [docs/configuration.md](docs/configuration.md) — because the removal took
+`sync_dist=True` with it, so under DDP each rank would hand `ReduceLROnPlateau` its own shard's
+`train_final_loss_epoch` and the learning rates would diverge while the gradients stayed
+synchronised: a run that finishes, looks normal, and is wrong.
+
+**Before re-adding it, check whether it is the right axis at all.** DDP splits *one* run across
+several GPUs, which pays only when a single run saturates one. This project's runs do not come
+close: measured across 394 runs, a training run uses **~9% of its GPU and 1.29 GB of its 189 GB**
+(see the GPU-utilisation section of [AGENTS.md](AGENTS.md)). The parallelism that is actually
+available here is the other one — packing independent runs onto a single card, which measured
+**7.1× throughput** at eight per card. DDP would add a synchronisation surface, four missing
+pieces, and a class of silent-divergence bug, to speed up something that is not the bottleneck.
+
+If a model does eventually outgrow one card, the work is, in order:
+
+1. **rank-zero guarding on every `RunRecorder` write, plus a gather for prediction shards** — the
+   half that was never written, and the reason this could not simply be switched on;
+2. **cross-rank synchronisation of the scheduler monitor**, or the learning rates diverge;
+3. the sampler branch and metric dedup restored — commit `7a32a82` removed them intact, so its
+   diff is the reference implementation;
+4. an end-to-end multi-process test, since the mocked-branch unit tests that existed did not catch
+   that the output side was missing.
+
 # Model architecture
 
 `FlexibleMultiTaskModel` ([src/foundation_model/models/flexible_multi_task_model.py](src/foundation_model/models/flexible_multi_task_model.py))

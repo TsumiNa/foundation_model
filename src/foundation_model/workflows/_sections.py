@@ -37,7 +37,7 @@ def validate_positive_int(where: str, value: Any) -> None:
 _INT_STRING = re.compile(r"-?\d+")
 
 MULTI_DEVICE_HELP = (
-    "Distributed training is temporarily removed (see the DDP note in ARCHITECTURE.md): the "
+    "Distributed training is removed (see ARCHITECTURE.md, 'Distributed training'): the "
     "sampler and metric half was built but the output half never was, so ranks would concurrently "
     "overwrite the same checkpoint and results. Until it is restored, more than one device is "
     "rejected rather than run — every rank would feed its own shard's train_final_loss_epoch to "

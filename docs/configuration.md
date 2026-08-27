@@ -160,14 +160,15 @@ above).
 | `devices` | int \| list[int] \| str | `"auto"` | **one device only** | Passed to Lightning `Trainer(devices=...)`. While distributed training is out (see the note below), only single-device forms are accepted: `1`, `"auto"`, `[0]`, `"0"`. `-1`, `2`, `[1, 3]`, `"1,3"` and `"0-3"` are rejected at config time, and a `"auto"` that Lightning resolves onto several GPUs is refused before the fit starts. |
 | `seed` | int | `2025` | | Global seed (`--seed` overrides). |
 
-> **One device, for now.** Distributed training was removed with its output half never written —
+> **One device.** Distributed training was removed with its output half never written —
 > the sampler and metric side was built, but nothing guarded writes by rank, so every rank would
 > concurrently overwrite the same checkpoint, metrics JSON and prediction parquet. There is a
 > second reason it cannot simply be switched back on: the training logs no longer carry
 > `sync_dist=True`, so each rank would hand `ReduceLROnPlateau` its own shard's
 > `train_final_loss_epoch` and the learning rates would diverge across ranks even though the
 > gradients are synchronised — a run that finishes, looks normal, and is wrong. Both halves are
-> named in `ARCHITECTURE.md`'s re-add list.
+> named in [ARCHITECTURE.md](../ARCHITECTURE.md)'s distributed-training section, which also records the
+> measured reason to doubt DDP is the right axis for this project at all.
 
 The model builds **one AdamW with one parameter group per role** — shared encoder, regression/
 classification heads, kernel-regression heads, and the always-on autoencoder head — so each group
