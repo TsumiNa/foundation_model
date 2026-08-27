@@ -70,6 +70,8 @@ case "$STAGE" in
     # accumulates, putting a run at 1.0-1.5h. That is close enough to three hours that a slow
     # configuration could cross it, and with 217 idle nodes the over-request costs nothing.
     a1|a1r|a1b|a2|a3|a4) CONFIG=probe6.toml; OUT=stage_a; DEFTIME=06:00:00 ;;
+    # Loss-balancer probe. Needs SRC_OVERRIDE — the flag is in no container yet.
+    bal|balx)         CONFIG=probe6.toml; OUT=stage_bal; DEFTIME=12:00:00 ;;
     b|b3)             CONFIG=probe6.toml; OUT=stage_b; DEFTIME=06:00:00 ;;
     # Stage C': 24 tasks, 4 arms. `fm pretrain --resume` is idempotent, so a walltime kill is
     # recovered by resubmitting the identical command; `fm finetune` has NO resume and gets its
@@ -115,7 +117,7 @@ JID=$(sbatch --parsable \
     --job-name="v2$STAGE" \
     --time="$TIME" \
     --array="0-$((ARRAY_N - 1))%$THROTTLE" \
-    --export=ALL,GRID="$GRID",CONFIG="experiments/rikyu_hparam_tuning_v2/configs/$CONFIG",OUTROOT="$OUTBASE/$OUT",MODE="$MODE",PROJ="$PROJ",IMAGE="$IMAGE",EXPECT_VERSION="$VERSION",EXTRA_FLAGS="$FLAGS",PACK="$PACK" \
+    --export=ALL,GRID="$GRID",CONFIG="experiments/rikyu_hparam_tuning_v2/configs/$CONFIG",OUTROOT="$OUTBASE/$OUT",MODE="$MODE",PROJ="$PROJ",IMAGE="$IMAGE",EXPECT_VERSION="$VERSION",EXTRA_FLAGS="$FLAGS",PACK="$PACK",SRC_OVERRIDE="${SRC_OVERRIDE:-}" \
     "${PACK_ARGS[@]}" \
     "${EXTRA_SBATCH[@]}" \
     "$WORKER")

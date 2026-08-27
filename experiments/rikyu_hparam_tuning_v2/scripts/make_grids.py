@@ -437,6 +437,56 @@ def stage_a4(n_seeds: int) -> tuple[list[tuple[str, str]], list[str]]:
     return rows, skipped
 
 
+def stage_balx(bases: list[str], n_seeds: int) -> tuple[list[tuple[str, str]], list[str]]:
+    """Balancer ON only, against a source tree that excludes the autoencoder head.
+
+    The OFF arms are NOT regenerated. With the balancer disabled no sigmas are registered at all,
+    so the AE-exclusion patch cannot touch that path — the existing `bal*off` runs are the valid
+    control for these, and re-running them would burn compute to reproduce identical numbers.
+    """
+    rows: list[tuple[str, str]] = []
+    skipped: list[str] = []
+    for i, base in enumerate(bases):
+        point = parse_point(base)
+        bad = validate_point(point)
+        if bad:
+            skipped.append(f"{base}: {bad}")
+            continue
+        rows += expand(f"balx{i}on", dict(point, training__learnable_loss_balancer=True), seeds(n_seeds))
+    return rows, skipped
+
+
+def stage_bal(bases: list[str], n_seeds: int) -> tuple[list[tuple[str, str]], list[str]]:
+    """Learnable loss balancer ON vs OFF, at several bases.
+
+    Uncertainty weighting (Kendall/Gal/Cipolla, CVPR 2018) exists to stop multi-task training
+    collapsing onto whichever tasks descend fastest — a live risk on a 24-task sequence spanning
+    three orders of magnitude in label count. The model has implemented it all along; nothing ever
+    routed a value to it, so it has never run once.
+
+    SEVERAL BASES, not one. A single base answers "does it help HERE", which is not the question.
+    The decision this feeds is whether the final tuning must carry the balancer as a dimension at
+    all, and that only holds if the verdict survives a change of base. The bases are the top of
+    stage A's ranking, which are statistically tied with one another, so they span the region any
+    adopted configuration will come from.
+
+    Run against a patched source tree through SRC_OVERRIDE: the flag is not in any container yet.
+    Both arms share that tree, so the comparison does not depend on how it differs from the image.
+    """
+    rows: list[tuple[str, str]] = []
+    skipped: list[str] = []
+    for i, base in enumerate(bases):
+        point = parse_point(base)
+        bad = validate_point(point)
+        if bad:
+            skipped.append(f"{base}: {bad}")
+            continue
+        for enabled in (False, True):
+            label = f"bal{i}{'on' if enabled else 'off'}"
+            rows += expand(label, dict(point, training__learnable_loss_balancer=enabled), seeds(n_seeds))
+    return rows, skipped
+
+
 def stage_finals(prefix: str, winners: list[str], n_seeds: int, include_anchors: bool):
     """The decisive step: promoted configurations re-measured at many seeds.
 
@@ -511,7 +561,7 @@ def stage_b(base_point: dict, n_seeds: int) -> tuple[list[tuple[str, str]], list
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("stage", choices=["smoke", "s0", "a1", "a1r", "a1b", "a2", "a3", "a4", "b", "b3"])
+    ap.add_argument("stage", choices=["smoke", "s0", "a1", "a1r", "a1b", "a2", "a3", "a4", "bal", "balx", "b", "b3"])
     ap.add_argument("--winner", help="runid of the winning A' point (a2)")
     ap.add_argument("--winners", nargs="+", default=[], help="promoted runids (a1b / a3 / b3)")
     ap.add_argument("--seeds-n", type=int, default=None, help="seeds per point (stage default otherwise)")
@@ -544,6 +594,14 @@ def main() -> None:
         if not (args.lrs or args.min_lrs):
             raise SystemExit("a1b needs --lrs and/or --min-lrs (which edge to reopen)")
         rows, skipped = stage_a1b(args.winners, args.lrs, args.min_lrs, n or 5)
+    elif args.stage == "balx":
+        if not args.winners:
+            raise SystemExit("balx needs --winners")
+        rows, skipped = stage_balx(args.winners, n or 5)
+    elif args.stage == "bal":
+        if not args.winners:
+            raise SystemExit("bal needs --winners (the bases to test the balancer on)")
+        rows, skipped = stage_bal(args.winners, n or 5)
     elif args.stage == "a4":
         rows, skipped = stage_a4(n or 5)
     elif args.stage == "a2":

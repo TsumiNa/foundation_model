@@ -96,6 +96,41 @@ contention with it. The mechanism is that annealing slows per-epoch progress, so
 (patience 24 on `val_final_loss`) fires later. Any "is it worth it" comparison has to put the
 accuracy delta against this, not against zero.
 
+**6c. "Worse on average" is never the answer for a mechanism that is supposed to TRADE.** The
+learnable loss balancer exists to sacrifice easy tasks so hard ones improve, so a drop in the mean
+is compatible with it doing exactly its job. Only the per-task split can tell those apart — and
+here it showed the opposite of the intent:
+
+| task | ceiling | R² off | R² on | Δ |
+|---|---:|---:|---:|---:|
+| **formation_energy** (saturated) | 0.995 | 0.9905 | 0.9937 | **+0.0032** |
+| volume | 0.569 | 0.6201 | 0.6005 | −0.0195 |
+| magnetization | 0.746 | 0.8009 | 0.7690 | −0.0319 |
+| zt (KR) | 0.653 | 0.7018 | 0.6663 | −0.0354 |
+| magnetic_moment | 0.641 | 0.7101 | 0.6634 | −0.0467 |
+| **seebeck** (KR, hardest) | 0.603 | 0.6876 | 0.6242 | **−0.0634** |
+
+The one task it helped was the easiest one. The mechanism is not a mystery: uncertainty weighting
+minimises `0.5·exp(−2 log σ)·L + log σ`, whose optimum at fixed L is **σ² = L**, so a LOW-loss head
+learns a SMALL σ and is weighted UP by `0.5/σ²`. Measured correlation between learned σ and raw
+loss across heads: **+0.972**.
+
+| head | learned σ | raw loss | implied weight |
+|---|---:|---:|---:|
+| seebeck | 0.572 | 0.324 | **1.5** |
+| formation_energy | 0.058 | 0.003 | 151 |
+| **`__reconstruction__`** | 0.005 | ~0 | **20,075** |
+
+The always-on autoencoder head reconstructs its own input, so its loss sits at zero and it took a
+weight four orders of magnitude above every supervised task. Enabling the balancer turned the run
+into "train the autoencoder, and incidentally the supervised tasks".
+
+**Kendall/Gal/Cipolla's formulation assumes loss magnitude reflects ALEATORIC NOISE** — a noisy
+task should not dominate. It does what people usually expect ("help the weak tasks") only when that
+assumption holds. Where loss magnitude instead reflects task difficulty, or simply a different loss
+SCALE, the same equation amplifies the imbalance it was added to correct. Before adopting it,
+check which of the two the loss spread represents; the AE head made that spread pathological here.
+
 **7. Know what the framework resets.** Every task step builds a fresh `Trainer`, so the optimizer
 and its learning rate are rebuilt at the configured value at each of six steps and annealing never
 carries across the sequence. That bounds what any schedule can do — within a 45–75 epoch step,

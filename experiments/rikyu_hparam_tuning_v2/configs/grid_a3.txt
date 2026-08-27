@@ -1,0 +1,250 @@
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2025	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2025
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2026	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2026
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2027	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2027
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2028	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2028
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2029	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2029
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2030	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2030
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2031	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2031
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2032	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2032
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2033	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2033
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2034	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2034
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2035	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2035
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2036	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2036
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2037	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2037
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2038	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2038
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2039	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2039
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2040	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2040
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2041	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2041
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2042	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2042
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2043	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2043
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2044	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2044
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2045	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2045
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2046	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2046
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2047	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2047
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2048	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2048
+a3_L384_E0p001671_M2p426e-07_P7_F0p62_s2049	--set model.latent_dim=384 --set training.encoder_lr=0.001671 --set training.scheduler.min_lr=2.426e-07 --set training.scheduler.patience=7 --set training.scheduler.factor=0.62 --seed 2049
+a3_L384_E0p005_M0p0001_P5_s2025	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2025
+a3_L384_E0p005_M0p0001_P5_s2026	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2026
+a3_L384_E0p005_M0p0001_P5_s2027	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2027
+a3_L384_E0p005_M0p0001_P5_s2028	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2028
+a3_L384_E0p005_M0p0001_P5_s2029	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2029
+a3_L384_E0p005_M0p0001_P5_s2030	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2030
+a3_L384_E0p005_M0p0001_P5_s2031	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2031
+a3_L384_E0p005_M0p0001_P5_s2032	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2032
+a3_L384_E0p005_M0p0001_P5_s2033	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2033
+a3_L384_E0p005_M0p0001_P5_s2034	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2034
+a3_L384_E0p005_M0p0001_P5_s2035	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2035
+a3_L384_E0p005_M0p0001_P5_s2036	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2036
+a3_L384_E0p005_M0p0001_P5_s2037	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2037
+a3_L384_E0p005_M0p0001_P5_s2038	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2038
+a3_L384_E0p005_M0p0001_P5_s2039	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2039
+a3_L384_E0p005_M0p0001_P5_s2040	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2040
+a3_L384_E0p005_M0p0001_P5_s2041	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2041
+a3_L384_E0p005_M0p0001_P5_s2042	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2042
+a3_L384_E0p005_M0p0001_P5_s2043	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2043
+a3_L384_E0p005_M0p0001_P5_s2044	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2044
+a3_L384_E0p005_M0p0001_P5_s2045	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2045
+a3_L384_E0p005_M0p0001_P5_s2046	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2046
+a3_L384_E0p005_M0p0001_P5_s2047	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2047
+a3_L384_E0p005_M0p0001_P5_s2048	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2048
+a3_L384_E0p005_M0p0001_P5_s2049	--set model.latent_dim=384 --set training.encoder_lr=0.005 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2049
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2025	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2025
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2026	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2026
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2027	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2027
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2028	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2028
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2029	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2029
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2030	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2030
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2031	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2031
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2032	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2032
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2033	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2033
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2034	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2034
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2035	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2035
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2036	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2036
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2037	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2037
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2038	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2038
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2039	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2039
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2040	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2040
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2041	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2041
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2042	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2042
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2043	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2043
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2044	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2044
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2045	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2045
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2046	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2046
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2047	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2047
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2048	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2048
+a3_L384_E0p001003_M1p023e-06_P4_F0p3_s2049	--set model.latent_dim=384 --set training.encoder_lr=0.001003 --set training.scheduler.min_lr=1.023e-06 --set training.scheduler.patience=4 --set training.scheduler.factor=0.3 --seed 2049
+a3_L384_E0p002_M1e-05_P5_s2025	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2025
+a3_L384_E0p002_M1e-05_P5_s2026	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2026
+a3_L384_E0p002_M1e-05_P5_s2027	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2027
+a3_L384_E0p002_M1e-05_P5_s2028	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2028
+a3_L384_E0p002_M1e-05_P5_s2029	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2029
+a3_L384_E0p002_M1e-05_P5_s2030	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2030
+a3_L384_E0p002_M1e-05_P5_s2031	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2031
+a3_L384_E0p002_M1e-05_P5_s2032	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2032
+a3_L384_E0p002_M1e-05_P5_s2033	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2033
+a3_L384_E0p002_M1e-05_P5_s2034	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2034
+a3_L384_E0p002_M1e-05_P5_s2035	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2035
+a3_L384_E0p002_M1e-05_P5_s2036	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2036
+a3_L384_E0p002_M1e-05_P5_s2037	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2037
+a3_L384_E0p002_M1e-05_P5_s2038	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2038
+a3_L384_E0p002_M1e-05_P5_s2039	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2039
+a3_L384_E0p002_M1e-05_P5_s2040	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2040
+a3_L384_E0p002_M1e-05_P5_s2041	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2041
+a3_L384_E0p002_M1e-05_P5_s2042	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2042
+a3_L384_E0p002_M1e-05_P5_s2043	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2043
+a3_L384_E0p002_M1e-05_P5_s2044	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2044
+a3_L384_E0p002_M1e-05_P5_s2045	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2045
+a3_L384_E0p002_M1e-05_P5_s2046	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2046
+a3_L384_E0p002_M1e-05_P5_s2047	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2047
+a3_L384_E0p002_M1e-05_P5_s2048	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2048
+a3_L384_E0p002_M1e-05_P5_s2049	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --seed 2049
+a3_L384_E0p003_M1e-06_P5_s2025	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2025
+a3_L384_E0p003_M1e-06_P5_s2026	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2026
+a3_L384_E0p003_M1e-06_P5_s2027	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2027
+a3_L384_E0p003_M1e-06_P5_s2028	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2028
+a3_L384_E0p003_M1e-06_P5_s2029	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2029
+a3_L384_E0p003_M1e-06_P5_s2030	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2030
+a3_L384_E0p003_M1e-06_P5_s2031	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2031
+a3_L384_E0p003_M1e-06_P5_s2032	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2032
+a3_L384_E0p003_M1e-06_P5_s2033	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2033
+a3_L384_E0p003_M1e-06_P5_s2034	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2034
+a3_L384_E0p003_M1e-06_P5_s2035	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2035
+a3_L384_E0p003_M1e-06_P5_s2036	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2036
+a3_L384_E0p003_M1e-06_P5_s2037	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2037
+a3_L384_E0p003_M1e-06_P5_s2038	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2038
+a3_L384_E0p003_M1e-06_P5_s2039	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2039
+a3_L384_E0p003_M1e-06_P5_s2040	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2040
+a3_L384_E0p003_M1e-06_P5_s2041	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2041
+a3_L384_E0p003_M1e-06_P5_s2042	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2042
+a3_L384_E0p003_M1e-06_P5_s2043	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2043
+a3_L384_E0p003_M1e-06_P5_s2044	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2044
+a3_L384_E0p003_M1e-06_P5_s2045	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2045
+a3_L384_E0p003_M1e-06_P5_s2046	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2046
+a3_L384_E0p003_M1e-06_P5_s2047	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2047
+a3_L384_E0p003_M1e-06_P5_s2048	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2048
+a3_L384_E0p003_M1e-06_P5_s2049	--set model.latent_dim=384 --set training.encoder_lr=0.003 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=5 --seed 2049
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2025	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2025
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2026	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2026
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2027	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2027
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2028	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2028
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2029	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2029
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2030	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2030
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2031	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2031
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2032	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2032
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2033	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2033
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2034	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2034
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2035	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2035
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2036	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2036
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2037	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2037
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2038	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2038
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2039	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2039
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2040	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2040
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2041	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2041
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2042	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2042
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2043	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2043
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2044	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2044
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2045	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2045
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2046	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2046
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2047	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2047
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2048	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2048
+a3_L384_E0p0042_M4p975e-08_P4_F0p37_s2049	--set model.latent_dim=384 --set training.encoder_lr=0.0042 --set training.scheduler.min_lr=4.975e-08 --set training.scheduler.patience=4 --set training.scheduler.factor=0.37 --seed 2049
+a3_L384_E0p002_M0p0001_P5_s2025	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2025
+a3_L384_E0p002_M0p0001_P5_s2026	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2026
+a3_L384_E0p002_M0p0001_P5_s2027	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2027
+a3_L384_E0p002_M0p0001_P5_s2028	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2028
+a3_L384_E0p002_M0p0001_P5_s2029	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2029
+a3_L384_E0p002_M0p0001_P5_s2030	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2030
+a3_L384_E0p002_M0p0001_P5_s2031	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2031
+a3_L384_E0p002_M0p0001_P5_s2032	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2032
+a3_L384_E0p002_M0p0001_P5_s2033	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2033
+a3_L384_E0p002_M0p0001_P5_s2034	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2034
+a3_L384_E0p002_M0p0001_P5_s2035	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2035
+a3_L384_E0p002_M0p0001_P5_s2036	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2036
+a3_L384_E0p002_M0p0001_P5_s2037	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2037
+a3_L384_E0p002_M0p0001_P5_s2038	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2038
+a3_L384_E0p002_M0p0001_P5_s2039	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2039
+a3_L384_E0p002_M0p0001_P5_s2040	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2040
+a3_L384_E0p002_M0p0001_P5_s2041	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2041
+a3_L384_E0p002_M0p0001_P5_s2042	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2042
+a3_L384_E0p002_M0p0001_P5_s2043	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2043
+a3_L384_E0p002_M0p0001_P5_s2044	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2044
+a3_L384_E0p002_M0p0001_P5_s2045	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2045
+a3_L384_E0p002_M0p0001_P5_s2046	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2046
+a3_L384_E0p002_M0p0001_P5_s2047	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2047
+a3_L384_E0p002_M0p0001_P5_s2048	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2048
+a3_L384_E0p002_M0p0001_P5_s2049	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=0.0001 --set training.scheduler.patience=5 --seed 2049
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2025	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2025
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2026	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2026
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2027	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2027
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2028	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2028
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2029	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2029
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2030	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2030
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2031	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2031
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2032	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2032
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2033	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2033
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2034	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2034
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2035	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2035
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2036	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2036
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2037	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2037
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2038	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2038
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2039	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2039
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2040	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2040
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2041	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2041
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2042	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2042
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2043	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2043
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2044	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2044
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2045	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2045
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2046	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2046
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2047	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2047
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2048	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2048
+a3_L384_E0p001762_M1p375e-07_P8_F0p31_s2049	--set model.latent_dim=384 --set training.encoder_lr=0.001762 --set training.scheduler.min_lr=1.375e-07 --set training.scheduler.patience=8 --set training.scheduler.factor=0.31 --seed 2049
+a3_base_s2025	 --seed 2025
+a3_base_s2026	 --seed 2026
+a3_base_s2027	 --seed 2027
+a3_base_s2028	 --seed 2028
+a3_base_s2029	 --seed 2029
+a3_base_s2030	 --seed 2030
+a3_base_s2031	 --seed 2031
+a3_base_s2032	 --seed 2032
+a3_base_s2033	 --seed 2033
+a3_base_s2034	 --seed 2034
+a3_base_s2035	 --seed 2035
+a3_base_s2036	 --seed 2036
+a3_base_s2037	 --seed 2037
+a3_base_s2038	 --seed 2038
+a3_base_s2039	 --seed 2039
+a3_base_s2040	 --seed 2040
+a3_base_s2041	 --seed 2041
+a3_base_s2042	 --seed 2042
+a3_base_s2043	 --seed 2043
+a3_base_s2044	 --seed 2044
+a3_base_s2045	 --seed 2045
+a3_base_s2046	 --seed 2046
+a3_base_s2047	 --seed 2047
+a3_base_s2048	 --seed 2048
+a3_base_s2049	 --seed 2049
+a3_v1enc_s2025	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2025
+a3_v1enc_s2026	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2026
+a3_v1enc_s2027	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2027
+a3_v1enc_s2028	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2028
+a3_v1enc_s2029	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2029
+a3_v1enc_s2030	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2030
+a3_v1enc_s2031	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2031
+a3_v1enc_s2032	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2032
+a3_v1enc_s2033	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2033
+a3_v1enc_s2034	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2034
+a3_v1enc_s2035	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2035
+a3_v1enc_s2036	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2036
+a3_v1enc_s2037	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2037
+a3_v1enc_s2038	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2038
+a3_v1enc_s2039	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2039
+a3_v1enc_s2040	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2040
+a3_v1enc_s2041	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2041
+a3_v1enc_s2042	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2042
+a3_v1enc_s2043	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2043
+a3_v1enc_s2044	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2044
+a3_v1enc_s2045	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2045
+a3_v1enc_s2046	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2046
+a3_v1enc_s2047	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2047
+a3_v1enc_s2048	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2048
+a3_v1enc_s2049	--set model.latent_dim=384 --set training.encoder_lr=0.001 --seed 2049

@@ -43,6 +43,19 @@ test -r "$IMAGE"
 test -r "$GRID"
 test -r "$PROJ/$CONFIG"
 
+# SRC_OVERRIDE runs the container's environment against a DIFFERENT source tree, by putting it
+# ahead of the installed package on PYTHONPATH. Used to probe a change that is not in any image
+# yet: the dependencies stay byte-identical to every other run in the campaign, so the only
+# difference is the code under test. Verified on the login node — the unpatched container reports
+# the package from /opt/foundation-model/.venv, and with the override it reports it from the bound
+# tree at the same version.
+SRC_ARGS=()
+if [ -n "${SRC_OVERRIDE:-}" ]; then
+    test -d "$SRC_OVERRIDE/src/foundation_model"
+    SRC_ARGS=(--bind "$SRC_OVERRIDE:/patched:ro" --env PYTHONPATH=/patched/src)
+    echo "SOURCE OVERRIDE: $SRC_OVERRIDE (container env, patched code)"
+fi
+
 # --- image identity gate, once per allocation rather than once per run -------------------------
 # Same gate as the unpacked worker and for the same reason: a wrong image would train every point
 # in this allocation under 0.2.1's per-batch scheduler cadence, exit 0, and drop DONE markers.
@@ -89,6 +102,7 @@ run_one() {
   "host": "$(hostname)",
   "slurm_job": "${SLURM_ARRAY_JOB_ID:-}_${SLURM_ARRAY_TASK_ID:-}",
   "packed_with": $PACK,
+  "src_override": "${SRC_OVERRIDE:-}",
   "started": "$(date -Is)"
 }
 JSON
@@ -98,6 +112,7 @@ JSON
 
     start=$SECONDS
     apptainer exec --nv \
+        "${SRC_ARGS[@]}" \
         --bind "$PROJ:/workspace:ro" \
         --bind "$OUTROOT:/out" \
         --env MPLCONFIGDIR="/tmp/mplconfig_$runid" \
