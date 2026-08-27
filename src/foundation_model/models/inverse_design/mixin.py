@@ -20,7 +20,6 @@ tests; removing it is an API change, and this reorganisation deliberately is not
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -34,6 +33,7 @@ from ..model_config import TaskConfigType, TaskType
 from ..task_head.autoencoder import AutoEncoderHead
 from ..task_head.base import BaseTaskHead
 from ..task_head.kernel_regression import expand_for_kernel_regression
+from .annealing import AnnealingSchedule
 from .targets import (
     CompositionOptimizationResult,
     OptimizationResult,
@@ -1053,6 +1053,9 @@ class InverseDesignMixin(nn.Module):
                     )
 
         # --- Validate cardinality constraint (max_elements + annealing knobs) -----------------------
+        # No cardinality constraint means no soft mask to harden, so the annealing knobs describe
+        # nothing and are deliberately left unvalidated — see AnnealingSchedule.disabled.
+        schedule = AnnealingSchedule.disabled()
         if max_elements is not None:
             if not isinstance(max_elements, int) or isinstance(max_elements, bool):
                 raise TypeError(f"max_elements must be an int or None; got {type(max_elements).__name__}.")
@@ -1085,44 +1088,7 @@ class InverseDesignMixin(nn.Module):
                     "least one unlocked slot to absorb the leftover mass (1 − Σ locked); equality "
                     "would silently produce row sums < 1. Raise max_elements or unlock some."
                 )
-            if not 0.0 <= annealing_scale <= 1.0:
-                raise ValueError(f"annealing_scale must be in [0, 1]; got {annealing_scale}.")
-            if annealing_schedule is not None:
-                if not isinstance(annealing_schedule, Mapping):
-                    raise TypeError(f"annealing_schedule must be a mapping; got {type(annealing_schedule).__name__}.")
-                missing = {"step", "scale", "annealing_func"} - set(annealing_schedule)
-                if missing:
-                    raise ValueError(
-                        f"annealing_schedule missing required keys {sorted(missing)}. "
-                        "Required: step, scale, annealing_func — all parallel lists."
-                    )
-                sched_steps = list(annealing_schedule["step"])
-                sched_scales = list(annealing_schedule["scale"])
-                sched_funcs = list(annealing_schedule["annealing_func"])
-                if not (len(sched_steps) == len(sched_scales) == len(sched_funcs)):
-                    raise ValueError(
-                        f"annealing_schedule lists must be the same length; got "
-                        f"step={len(sched_steps)}, scale={len(sched_scales)}, "
-                        f"annealing_func={len(sched_funcs)}."
-                    )
-                if len(sched_steps) == 0:
-                    raise ValueError("annealing_schedule lists must be non-empty.")
-                prev_s = 0.0
-                for s in sched_steps:
-                    if not 0.0 < float(s) <= 1.0:
-                        raise ValueError(f"annealing_schedule['step'] entries must be in (0, 1]; got {s}.")
-                    if float(s) <= prev_s:
-                        raise ValueError(f"annealing_schedule['step'] must be strictly increasing; got {sched_steps}.")
-                    prev_s = float(s)
-                for t in sched_scales:
-                    if not 0.0 <= float(t) <= 1.0:
-                        raise ValueError(f"annealing_schedule['scale'] entries must be in [0, 1]; got {t}.")
-                allowed_funcs = ("geometric", "linear", "cosine", "constant")
-                for f in sched_funcs:
-                    if f not in allowed_funcs:
-                        raise ValueError(
-                            f"annealing_schedule['annealing_func'] entries must be one of {allowed_funcs}; got {f!r}."
-                        )
+            schedule = AnnealingSchedule.build(scale=annealing_scale, schedule=annealing_schedule, steps=steps)
 
         # --- Validate the seed (BEFORE touching model state, so a bad input doesn't leave the
         #     model in eval() / with params switched off). ---------------------------------------
@@ -1285,84 +1251,9 @@ class InverseDesignMixin(nn.Module):
                     )
 
             # --- Soft top-K (cardinality constraint) helpers ----------------------------------------
-            # Schedule shape (controlled by ``annealing_scale`` and optionally ``annealing_schedule``):
-            #
-            #   * Normalised scale ∈ [0, 1] is the user-facing knob; raw τ is derived via
-            #     ``τ = 25**scale``  (so scale=0 → τ=1, scale=0.5 → τ=5, scale=1 → τ=25).
-            #   * Default schedule when no dict is given: geometric from ``τ_start=25**annealing_scale``
-            #     at fractional step 0 down to ``_TAU_END=0.01`` at fractional step 1.
-            #   * When ``annealing_schedule`` dict is provided, its segments override the front of
-            #     the schedule; the segment from ``step[-1]`` to 1.0 (if not already at 1.0) falls
-            #     back to the geometric tail from ``25**scale[-1]`` down to ``_TAU_END``.
-            #
             # ``current_tau`` lives in a list so the optimisation loop can mutate it each step
             # without rebuilding the ``_w_from_logits`` closure that reads it.
-            _TAU_FLOOR = 1e-3  # numerical lower bound; below this softmax(lg/τ) loses precision
-            _TAU_END = 0.01  # fixed final hardness for the default schedule's tail
-            _SCALE_TAU_BASE = 25.0  # τ = _SCALE_TAU_BASE**scale → 0→1, 0.5→5, 1→25
-
-            def _scale_to_tau(scale: float) -> float:
-                return float(_SCALE_TAU_BASE ** max(0.0, min(1.0, scale)))
-
-            def _interp_scalar(a: float, b: float, t: float, func: str) -> float:
-                """Interpolate from ``a`` to ``b`` at local-time ``t`` ∈ [0, 1]."""
-                if func == "constant":
-                    return a
-                if func == "linear":
-                    return a + (b - a) * t
-                if func == "cosine":
-                    return b + 0.5 * (a - b) * (1.0 + math.cos(math.pi * t))
-                # geometric — guard against zero/sign issues by working in log space when both >0.
-                if a > 0.0 and b > 0.0:
-                    return a * (b / a) ** t
-                # Fall back to linear for degenerate cases (shouldn't trigger in normal use).
-                return a + (b - a) * t
-
-            # Materialise schedule arrays once (validated above), so the per-step lookup is light.
-            _sched_steps: list[float] = (
-                [float(s) for s in annealing_schedule["step"]] if annealing_schedule is not None else []
-            )
-            _sched_scales: list[float] = (
-                [float(t) for t in annealing_schedule["scale"]] if annealing_schedule is not None else []
-            )
-            _sched_funcs: list[str] = (
-                list(annealing_schedule["annealing_func"]) if annealing_schedule is not None else []
-            )
-
-            def _tau_for_step(step: int) -> float:
-                """Return the raw τ for integer optimisation step ``step``."""
-                if max_elements is None or steps <= 1:
-                    return float(max(_TAU_END, _TAU_FLOOR))
-                # Fractional progress in [0, 1].
-                s = step / (steps - 1)
-                # Default schedule (used directly when no dict, or for the tail when dict ends < 1.0).
-                default_tau_start = _scale_to_tau(annealing_scale)
-                default_tau_end = _TAU_END
-
-                if _sched_steps:
-                    # Walk through dict segments to find the one containing ``s``.
-                    prev_step = 0.0
-                    prev_scale = annealing_scale  # segment 0 starts at the simple knob's value
-                    for i, seg_end in enumerate(_sched_steps):
-                        if s <= seg_end:
-                            local_t = (s - prev_step) / max(seg_end - prev_step, 1e-12)
-                            scale_now = _interp_scalar(prev_scale, _sched_scales[i], local_t, _sched_funcs[i])
-                            return float(max(_scale_to_tau(scale_now), _TAU_FLOOR))
-                        prev_step = seg_end
-                        prev_scale = _sched_scales[i]
-                    # ``s`` is past the dict's last step → use the geometric tail from
-                    # ``25**scale[-1]`` at ``step[-1]`` down to ``_TAU_END`` at 1.0.
-                    tail_start_tau = _scale_to_tau(_sched_scales[-1])
-                    tail_end_step = 1.0
-                    tail_local_t = (s - _sched_steps[-1]) / max(tail_end_step - _sched_steps[-1], 1e-12)
-                    val = tail_start_tau * (default_tau_end / tail_start_tau) ** tail_local_t
-                    return float(max(val, _TAU_FLOOR))
-
-                # No dict — default geometric schedule from τ_start(annealing_scale) to _TAU_END.
-                val = default_tau_start * (default_tau_end / default_tau_start) ** s
-                return float(max(val, _TAU_FLOOR))
-
-            current_tau = [_tau_for_step(0)]
+            current_tau = [schedule.tau_for_step(0)]
 
             def _soft_topk_mask(
                 lg: torch.Tensor, K: int, tau: float, *, force_select: torch.Tensor | None = None
@@ -1504,7 +1395,7 @@ class InverseDesignMixin(nn.Module):
             # Initial scoring uses τ at step 0 of the annealing schedule — i.e. the softest end
             # of the (annealing_scale + annealing_schedule)-derived τ curve, where the optimisation
             # actually begins.
-            current_tau[0] = _tau_for_step(0)
+            current_tau[0] = schedule.tau_for_step(0)
             with torch.no_grad():
                 w0_tensor = _w_from_logits(logits)
                 h0 = torch.tanh(self.encoder(w0_tensor @ kmd_kernel))
@@ -1517,7 +1408,7 @@ class InverseDesignMixin(nn.Module):
             trajectory: list[torch.Tensor] = []
             weights_trajectory: list[torch.Tensor] = [] if record_weights_trajectory else []
             for step in range(steps):
-                current_tau[0] = _tau_for_step(step)
+                current_tau[0] = schedule.tau_for_step(step)
                 optimizer.zero_grad()
                 w = _w_from_logits(logits)
                 x = w @ kmd_kernel
@@ -1549,7 +1440,7 @@ class InverseDesignMixin(nn.Module):
             # non-zero positions (the floor below may reduce that further) — at τ_end ≈ 0.01 the
             # soft mask is already near-K-hot, so the projection just cleans up residual
             # sub-threshold weights.
-            current_tau[0] = float(max(_TAU_END, _TAU_FLOOR))
+            current_tau[0] = schedule.final_tau
             with torch.no_grad():
                 w_final = _w_from_logits(logits)
                 if max_elements is not None and max_elements < n_components:
