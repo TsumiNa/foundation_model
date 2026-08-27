@@ -16,7 +16,6 @@ Tensor shape legend (used across all docstrings):
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping, Sequence
 from typing import Any, List, Optional, cast
 
@@ -29,11 +28,6 @@ import torch.optim as optim
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from loguru import logger  # Replaced logging with loguru
 from torchmetrics.regression import R2Score
-
-try:  # pragma: no cover - optional distributed import
-    import torch.distributed as dist
-except Exception:  # noqa: BLE001 - keep fallback for CPU-only environments
-    dist = None  # type: ignore[assignment]
 
 from .components.foundation_encoder import FoundationEncoder
 from .model_config import (
@@ -215,7 +209,6 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
         self.val_r2_metrics = nn.ModuleDict()
         self.test_r2_metrics = nn.ModuleDict()
         self._metrics_updated: dict[str, set[str]] = {"val": set(), "test": set()}
-        self._stage_index_trackers: dict[str, dict[str, Any] | None] = {"val": None, "test": None}
         self._init_stage_metrics()
 
         logger.info("Initializing FlexibleMultiTaskModel...")
@@ -283,101 +276,6 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
             cast(R2Score, metric).reset()
         self._metrics_updated[stage] = set()
 
-    def _init_stage_index_tracker(self, stage: str) -> None:
-        dataset_len = None
-        datamodule = getattr(self.trainer, "datamodule", None) if self.trainer is not None else None
-        if datamodule is not None:
-            dataset = getattr(datamodule, f"{stage}_dataset", None)
-            if dataset is not None:
-                dataset_len = len(dataset)
-        self._stage_index_trackers[stage] = self._build_index_tracker(dataset_len)
-
-    def _build_index_tracker(self, dataset_len: int | None) -> dict[str, Any] | None:
-        if dataset_len is None:
-            return None
-        is_distributed = dist is not None and dist.is_available() and dist.is_initialized()
-        if not is_distributed:
-            return None
-        world_size = dist.get_world_size()
-        rank = dist.get_rank()
-        num_samples = math.ceil(dataset_len / world_size)
-        total_size = num_samples * world_size
-        base_indices = list(range(dataset_len))
-        if len(base_indices) < total_size:
-            base_indices.extend(base_indices[: total_size - len(base_indices)])
-        indices_for_rank = base_indices[rank:total_size:world_size]
-        return {"indices": indices_for_rank, "cursor": 0, "seen": set()}
-
-    def _get_batch_valid_mask(
-        self,
-        *,
-        stage: str,
-        batch_size: int,
-        device: torch.device,
-    ) -> tuple[torch.Tensor, list[bool]] | None:
-        tracker = self._stage_index_trackers.get(stage)
-        if not tracker:
-            return None
-        start = tracker["cursor"]
-        end = start + batch_size
-        indices = tracker["indices"]
-        batch_indices = indices[start:end]
-        tracker["cursor"] = min(end, len(indices))
-        if len(batch_indices) < batch_size and indices:
-            batch_indices.extend(indices[-1:] * (batch_size - len(batch_indices)))
-        seen: set[int] = tracker["seen"]
-        valid_flags: list[bool] = []
-        for idx in batch_indices:
-            if idx in seen:
-                valid_flags.append(False)
-            else:
-                seen.add(idx)
-                valid_flags.append(True)
-        if not valid_flags:
-            return None
-        mask_tensor = torch.tensor(valid_flags, dtype=torch.bool, device=device)
-        return mask_tensor, valid_flags
-
-    def _apply_stage_valid_mask(
-        self,
-        *,
-        sample_mask: torch.Tensor | list[torch.Tensor] | None,
-        target: torch.Tensor | list[torch.Tensor],
-        batch_valid_mask: torch.Tensor | None,
-        batch_valid_list: list[bool] | None,
-        is_sequence: bool,
-    ) -> torch.Tensor | list[torch.Tensor] | None:
-        """Apply distributed duplicate filtering to per-task masks."""
-        if batch_valid_mask is None and batch_valid_list is None:
-            return sample_mask
-
-        if is_sequence:
-            if not isinstance(target, list) or batch_valid_list is None:
-                return sample_mask
-            if sample_mask is None:
-                sample_mask = [torch.ones_like(seq, dtype=torch.bool) for seq in target]
-            assert isinstance(sample_mask, list)
-            adjusted_masks: list[torch.Tensor] = []
-            for valid, mask in zip(batch_valid_list, sample_mask):
-                if valid:
-                    adjusted_masks.append(mask)
-                else:
-                    adjusted_masks.append(torch.zeros_like(mask, dtype=torch.bool))
-            return adjusted_masks
-
-        if not isinstance(target, torch.Tensor):
-            raise TypeError("Expected tensor target for non-sequence task.")
-        if batch_valid_mask is None:
-            return sample_mask
-        if sample_mask is None:
-            sample_mask = torch.ones_like(target, dtype=torch.bool)
-        if not isinstance(sample_mask, torch.Tensor):
-            raise TypeError("Expected tensor mask for non-sequence task.")
-        valid_tensor = batch_valid_mask
-        while valid_tensor.ndim < sample_mask.ndim:
-            valid_tensor = valid_tensor.unsqueeze(-1)
-        return sample_mask & valid_tensor
-
     def _update_r2_metric(
         self,
         *,
@@ -423,7 +321,6 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
                 prog_bar=False,
                 on_step=False,
                 on_epoch=True,
-                sync_dist=True,
             )
 
     @staticmethod
@@ -857,7 +754,6 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
         y_dict_batch: dict[str, Any],
         task_masks_batch: dict[str, Any],
         logs: dict[str, torch.Tensor],
-        stage_valid: tuple[torch.Tensor | None, list[bool] | None] | None = None,
     ) -> dict[str, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
         """Raw loss per participating head, as ``{name: (raw_loss, pred, target, mask)}``.
 
@@ -876,16 +772,6 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
             if resolved is None:
                 continue
             target, mask = resolved
-
-            if stage_valid is not None:
-                batch_valid_mask, batch_valid_list = stage_valid
-                mask = self._apply_stage_valid_mask(
-                    sample_mask=mask,
-                    target=target,
-                    batch_valid_mask=batch_valid_mask,
-                    batch_valid_list=batch_valid_list,
-                    is_sequence=isinstance(head, KernelRegressionHead),
-                )
 
             target, mask = self._finalize_mask(
                 name=name,
@@ -954,8 +840,6 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
 
         logs: dict[str, torch.Tensor] = {}
         preds = self(x, task_sequence_data_batch)
-        stage_valid = self._get_batch_valid_mask(stage=stage, batch_size=x.shape[0], device=x.device) or (None, None)
-
         collected = self._collect_batch_losses(
             stage=stage,
             x=x,
@@ -963,7 +847,6 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
             y_dict_batch=y_dict_batch,
             task_masks_batch=task_masks_batch,
             logs=logs,
-            stage_valid=stage_valid,
         )
         total = self._weighted_total_loss(
             stage=stage,
@@ -976,8 +859,8 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
             self._update_r2_metric(stage=stage, task_name=name, preds=pred_tensor, targets=target, sample_mask=mask)
 
         logs[f"{stage}_final_supervised_loss"] = total.detach()
-        self.log_dict(logs, prog_bar=False, on_step=False, on_epoch=True, sync_dist=True)
-        self.log(f"{stage}_final_loss", total.detach(), prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        self.log_dict(logs, prog_bar=False, on_step=False, on_epoch=True)
+        self.log(f"{stage}_final_loss", total.detach(), prog_bar=True, on_step=False, on_epoch=True)
         return None
 
     # --- Lightning hooks ----------------------------------------------------------------------
@@ -1013,8 +896,8 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
         )
 
         logs["train_final_supervised_loss"] = total_loss.detach()
-        self.log_dict(logs, prog_bar=False, on_step=True, on_epoch=True, sync_dist=True)
-        self.log("train_final_loss", total_loss.detach(), prog_bar=True, on_step=True, on_epoch=True, sync_dist=True)
+        self.log_dict(logs, prog_bar=False, on_step=True, on_epoch=True)
+        self.log("train_final_loss", total_loss.detach(), prog_bar=True, on_step=True, on_epoch=True)
 
         if not total_loss.requires_grad:
             # Returning None is Lightning's documented way to skip a batch entirely — it performs
@@ -1041,7 +924,6 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
     def on_validation_epoch_start(self) -> None:
         super().on_validation_epoch_start()
         self._reset_stage_metrics("val")
-        self._init_stage_index_tracker("val")
 
     def on_validation_epoch_end(self) -> None:
         super().on_validation_epoch_end()
@@ -1050,7 +932,6 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
     def on_test_epoch_start(self) -> None:
         super().on_test_epoch_start()
         self._reset_stage_metrics("test")
-        self._init_stage_index_tracker("test")
 
     def on_test_epoch_end(self) -> None:
         super().on_test_epoch_end()

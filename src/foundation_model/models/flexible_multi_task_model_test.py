@@ -752,30 +752,6 @@ def test_model_registered_tasks_info_property(model_config_mixed_tasks):
         assert df_info.loc[i, "enabled"] == task_cfg_from_model.enabled
 
 
-def test_stage_index_tracker_masks_duplicates(model_config_mixed_tasks):
-    """Ensure distributed index tracker flags duplicates introduced by sampler padding."""
-    config = model_config_mixed_tasks
-    model = FlexibleMultiTaskModel(
-        task_configs=config.task_configs,
-        encoder_config=config.encoder_config,
-        shared_block_optimizer=config.shared_block_optimizer,
-    )
-    tracker = {"indices": [0, 1, 0, 2], "cursor": 0, "seen": set()}
-    model._stage_index_trackers["val"] = tracker
-
-    mask_info = model._get_batch_valid_mask(stage="val", batch_size=2, device=torch.device("cpu"))
-    assert mask_info is not None
-    mask_tensor, mask_flags = mask_info
-    assert mask_tensor.tolist() == [True, True]
-    assert mask_flags == [True, True]
-
-    mask_info = model._get_batch_valid_mask(stage="val", batch_size=2, device=torch.device("cpu"))
-    assert mask_info is not None
-    mask_tensor, mask_flags = mask_info
-    assert mask_tensor.tolist() == [False, True]
-    assert mask_flags == [False, True]
-
-
 def test_r2_metric_updates_respect_masks(model_config_mixed_tasks):
     """Validate that masked samples do not influence the logged R² metric."""
     config = model_config_mixed_tasks

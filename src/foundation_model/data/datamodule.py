@@ -9,7 +9,6 @@ import pandas as pd
 import torch
 from loguru import logger
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 
 from foundation_model.models.model_config import (
     ClassificationTaskConfig,
@@ -314,7 +313,6 @@ class CompoundDataModule(L.LightningDataModule):
         self.val_dataset: CompoundDataset | None = None
         self.test_dataset: CompoundDataset | None = None
         self.predict_dataset: CompoundDataset | None = None
-        self._train_sampler: DistributedSampler | None = None
 
         self.save_hyperparameters(
             # Callables / large frames must not be pickled into checkpoints (a function reference
@@ -552,20 +550,6 @@ class CompoundDataModule(L.LightningDataModule):
 
     # ------------------------------------------------------------------ lightning
 
-    def on_train_epoch_start(self) -> None:
-        """Update the DistributedSampler epoch so shuffling differs across epochs."""
-        # `_train_sampler` is legitimately None without DDP — what the old guards got wrong is
-        # that the ATTRIBUTE always exists (it is set in __init__), so `getattr` was redundant, and
-        # `DistributedSampler` always defines set_epoch, so `hasattr` was too. A plain `is None`
-        # test says the real thing. `trainer` is different again: Lightning injects it on attach
-        # and it is genuinely absent on a standalone datamodule, so that lookup stays defensive —
-        # bound to a typed local so the check narrows instead of hiding the type behind Any.
-        trainer: L.Trainer | None = getattr(self, "trainer", None)
-        sampler = self._train_sampler
-        if sampler is None or trainer is None:
-            return
-        sampler.set_epoch(trainer.current_epoch)
-
     def setup(self, stage: str | None = None):
         """Prepare datasets for the requested stage (fit, test, predict)."""
         logger.info(f"--- Setting up DataModule for stage: {stage} ---")
@@ -605,23 +589,12 @@ class CompoundDataModule(L.LightningDataModule):
 
     # ------------------------------------------------------------------ dataloaders
 
-    def _make_loader(self, dataset, *, shuffle: bool, track_sampler: bool):
+    def _make_loader(self, dataset, *, shuffle: bool):
         collate_fn = create_collate_fn_with_task_info(self.task_configs)
-        use_ddp = torch.distributed.is_available() and torch.distributed.is_initialized()
-        sampler: DistributedSampler | None
-        if use_ddp:
-            sampler = DistributedSampler(dataset, shuffle=shuffle, drop_last=False)
-            loader_shuffle = False
-        else:
-            sampler = None
-            loader_shuffle = shuffle
-        if track_sampler:
-            self._train_sampler = sampler
         return DataLoader(
             dataset,
             batch_size=self.batch_size,
-            shuffle=loader_shuffle,
-            sampler=sampler,
+            shuffle=shuffle,
             num_workers=self.num_workers,
             persistent_workers=self.persistent_workers,
             pin_memory=self.pin_memory,
@@ -634,22 +607,22 @@ class CompoundDataModule(L.LightningDataModule):
         if self.train_dataset is None or len(self.train_dataset) == 0:
             logger.warning("train_dataloader: Train dataset is None or empty. Returning None.")
             return None
-        return self._make_loader(self.train_dataset, shuffle=True, track_sampler=True)
+        return self._make_loader(self.train_dataset, shuffle=True)
 
     def val_dataloader(self):
         if self.val_dataset is None or len(self.val_dataset) == 0:
             logger.info("val_dataloader: Validation dataset is None or empty. Returning None.")
             return None
-        return self._make_loader(self.val_dataset, shuffle=False, track_sampler=False)
+        return self._make_loader(self.val_dataset, shuffle=False)
 
     def test_dataloader(self):
         if self.test_dataset is None or len(self.test_dataset) == 0:
             logger.info("test_dataloader: Test dataset is None or empty. Returning None.")
             return None
-        return self._make_loader(self.test_dataset, shuffle=False, track_sampler=False)
+        return self._make_loader(self.test_dataset, shuffle=False)
 
     def predict_dataloader(self):
         if self.predict_dataset is None or len(self.predict_dataset) == 0:
             logger.info("predict_dataloader: Predict dataset is None or empty. Returning None.")
             return None
-        return self._make_loader(self.predict_dataset, shuffle=False, track_sampler=False)
+        return self._make_loader(self.predict_dataset, shuffle=False)

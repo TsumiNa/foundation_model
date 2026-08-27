@@ -236,8 +236,9 @@ class DropLastTrainCompoundDataModule(CompoundDataModule):
     """``CompoundDataModule`` whose train loader drops the final partial batch.
 
     Guards against BatchNorm1d crashing on a size-1 tail batch. Only the train loader is
-    affected; val/test/predict keep every held-out row. A non-default sampler (e.g. a
-    ``DistributedSampler``) is preserved rather than replaced with ``shuffle=True``.
+    affected; val/test/predict keep every held-out row. A non-default sampler is preserved
+    rather than replaced with ``shuffle=True`` — nothing sets one today, but the wrapper must not
+    be what silently discards it when distributed training is added back.
     """
 
     def train_dataloader(self) -> DataLoader | None:  # type: ignore[override]
