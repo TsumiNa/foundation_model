@@ -298,6 +298,76 @@ def plot_finals(summary: dict, out: Path) -> Path:
     return path
 
 
+def plot_a4(summary: dict, out: Path) -> Path:
+    """Schedule on/off against encoder_lr — the paired comparison, not two separate curves.
+
+    The question a4 asks is whether the LR schedule earns its place, and the honest way to show
+    that is AT each learning rate: a schedule that helps at 5e-3 and does nothing at 2e-4 says the
+    schedule's job is rescuing a too-high start, which is a different claim from "the schedule
+    helps". Two lines plus the per-LR difference underneath, so both readings are available.
+    """
+    cells = summary["cells"]
+    paired = summary["paired_by_lr"]
+    lrs = [p["encoder_lr"] for p in paired]
+    floor = min((p["encoder_lr"] for p in paired if not p["below_previous_floor"]), default=None)
+
+    fig, (ax, axd) = plt.subplots(
+        2, 1, figsize=(7.2, 6.0), sharex=True, gridspec_kw={"height_ratios": [2.2, 1]}
+    )
+
+    for i, (arm, label) in enumerate((("sched", "scheduler on"), ("flat", "constant LR"))):
+        xs, ys, errs = [], [], []
+        for lr in lrs:
+            c = cells[arm].get(f"{lr:g}")
+            if c:
+                xs.append(lr)
+                ys.append(c["mean"])
+                errs.append(2 * c["sem"])
+        ax.errorbar(xs, ys, yerr=errs, fmt="-o" if i == 0 else "--s", color=SERIES[i],
+                    linewidth=2, markersize=6, capsize=3, label=label, zorder=3)
+
+    # Everything left of this line is ground stage A' never searched.
+    if floor is not None:
+        for a in (ax, axd):
+            a.axvline(floor, color=MUTED, linewidth=1.0, linestyle=":", zorder=1)
+        ax.annotate("stage A' floor\n(left of here was never searched)", (floor, ax.get_ylim()[1]),
+                    xytext=(-6, -8), textcoords="offset points", fontsize=8, color=MUTED,
+                    ha="right", va="top")
+
+    ax.axhline(0, color=MUTED, linewidth=1.0)
+    ax.set_xscale("log")
+    ax.set_ylabel("mean relative improvement\nvs the untuned anchor")
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:+.1%}"))
+    resolved = [p for p in paired if p["separated"]]
+    ax.set_title(
+        "a4 — does the LR schedule earn its place?  bars are ±2 SE.\n"
+        f"{len(resolved)} of {len(paired)} learning rates separate the two arms",
+        fontsize=10, loc="left")
+    ax.legend(frameon=False, fontsize=9)
+    tidy(ax)
+
+    # The paired difference, which is what the verdict is actually read from.
+    deltas = [p["delta_schedule_minus_flat"] for p in paired]
+    errs = [2 * (p["se_of_difference"] or 0.0) for p in paired]
+    colours = [SERIES[2] if p["separated"] else MUTED for p in paired]
+    for lr, d, e, c in zip(lrs, deltas, errs, colours):
+        axd.errorbar(lr, d, yerr=e, fmt="o", color=c, markersize=6, capsize=3, linewidth=1.6, zorder=3)
+    axd.axhline(0, color=MUTED, linewidth=1.0)
+    axd.set_xscale("log")
+    axd.set_xlabel("encoder_lr")
+    axd.set_ylabel("schedule − flat")
+    axd.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:+.1%}"))
+    axd.set_title("green = the seeds separate the two arms at this LR; grey = they do not",
+                  fontsize=8.5, loc="left", color=MUTED)
+    tidy(axd)
+
+    fig.tight_layout()
+    path = out / "a4_schedule_vs_flat.png"
+    fig.savefig(path, dpi=170)
+    plt.close(fig)
+    return path
+
+
 def plot_stage_c(summary: dict, out: Path) -> Path:
     """Deficit to the single-task ceiling by task size, across arms.
 
@@ -330,7 +400,7 @@ def plot_stage_c(summary: dict, out: Path) -> Path:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("figure", choices=["stage0", "stage_a", "finals", "stage_c"])
+    ap.add_argument("figure", choices=["stage0", "stage_a", "finals", "stage_c", "a4"])
     ap.add_argument("--summary", type=Path, required=True)
     ap.add_argument("-o", "--out", type=Path, default=Path("."))
     args = ap.parse_args()
@@ -342,6 +412,7 @@ def main() -> None:
         "stage_a": plot_stage_a,
         "finals": plot_finals,
         "stage_c": plot_stage_c,
+        "a4": plot_a4,
     }[args.figure](summary, args.out)
     for p in (drawn if isinstance(drawn, list) else [drawn]):
         print(p)
