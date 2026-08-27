@@ -1,34 +1,21 @@
 # Copyright 2026 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Inverse design: search for inputs whose predicted properties hit a set of targets.
+"""The model-facing surface of inverse design.
 
-This is the *use* of a trained model, not part of training it. It arrived after the training
-code and grew inside :class:`FlexibleMultiTaskModel` until it was half that class's body — 1536
-lines against roughly 500 for the LightningModule surface itself. Nothing in the training path
-calls any of it: the only consumers are ``workflows/inverse.py`` and
-``workflows/inverse_trajectory.py``.
-
-Two search spaces, and the difference between them is the point:
-
-* :meth:`optimize_latent` descends in the encoder's latent space and decodes back through the
-  autoencoder, so what it returns is a *descriptor* that still has to be inverted to a recipe.
-* :meth:`optimize_composition` descends directly over element weights on the simplex, so the
-  optimised variable IS the recipe and no decode round-trip is involved. This is the KMD
-  differentiable path.
+:class:`InverseDesignMixin` declares what the search needs from the host model and nothing else:
+three attributes and one method. Everything the search does with them lives in the sibling
+modules — see this package's ``__init__`` for the map.
 
 WHY A MIXIN RATHER THAN FREE FUNCTIONS
---------------------------------------
-The coupling to the model is genuinely thin — 1536 lines reach for exactly four of its members
-(``encoder``, ``task_heads``, ``task_configs_map``, ``_head``), declared on the class below, plus
-``nn.Module``'s own ``train`` / ``eval`` / ``training`` / ``parameters``. Free functions taking
-the model as a first argument would express that better still.
 
-A mixin was chosen for the move itself because it keeps ``model.optimize_composition(...)``
-working unchanged across two workflow modules and 186 lines of tests, which makes this a pure
-relocation that can be reviewed as one. Going from here to free functions is then mechanical,
-and worth doing separately rather than folding a behaviour-visible API change into a
-1500-line move.
+The coupling to the model is genuinely thin — four members (``encoder``, ``task_heads``,
+``task_configs_map``, ``_head``) plus ``nn.Module``'s own ``train`` / ``eval`` / ``training`` /
+``parameters``. Free functions taking the model as a first argument would express that better
+still, and the split below is most of the way there: the search loops already take the model as
+their first parameter, so the public methods are one-line delegations. What keeps the mixin is
+that ``model.optimize_composition(...)`` is the call in two workflow modules and 186 lines of
+tests; removing it is an API change, and this reorganisation deliberately is not one.
 """
 
 from __future__ import annotations
@@ -44,11 +31,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-from .components.foundation_encoder import FoundationEncoder
-from .model_config import TaskConfigType, TaskType
-from .task_head.autoencoder import AutoEncoderHead
-from .task_head.base import BaseTaskHead
-from .task_head.kernel_regression import expand_for_kernel_regression
+from ..components.foundation_encoder import FoundationEncoder
+from ..model_config import TaskConfigType, TaskType
+from ..task_head.autoencoder import AutoEncoderHead
+from ..task_head.base import BaseTaskHead
+from ..task_head.kernel_regression import expand_for_kernel_regression
 
 
 # Named tuple for optimization results. ``input_trajectory`` is None unless the caller passes
