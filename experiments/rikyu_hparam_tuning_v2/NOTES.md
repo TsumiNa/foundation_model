@@ -105,6 +105,46 @@ out NEGATIVE for `volume` must be reported as such, not clipped to zero.
 **4. Zero run failures across 288 stage-A runs** other than the walltime kills above. Recorded
 because it is the kind of thing that is only reassuring if someone actually checked.
 
+**5. Every run in BOTH campaigns uses about 9% of its GPU.** From Slurm's own accounting
+(`sacct --format=TRESUsageInAve`), not from a sampled `nvidia-smi`:
+
+| campaign | stage | gpuutil | runs measured |
+|---|---|---:|---:|
+| v2 | A'1 grid | 8–10%, mode **9%** | 394 |
+| v1 | A1 probe | 6–8%, mode **7%** | 66 |
+| v1 | Stage C, 24 tasks, ~20h | **7%** | job 48088 |
+
+The rest of the footprint says the same thing. A grid run holds a GB200 and uses **1.29 GB of its
+189 GB** of device memory; it is allocated 18 CPUs and 400 GB of host RAM and consumes about **one
+core** (cpu time 03:09:36 against a 03:07:15 wall clock) and 17.6 GB. So the reservation is
+correct — one GPU per run, never more, `devices = 1` in every config — but the reserved GPU idles
+through roughly nine tenths of the campaign.
+
+This is NOT a v2 regression. v1's numbers are the same shape, and so is v1's 20-hour Stage C run,
+so it is a property of the workload as both campaigns have always run it.
+
+Probable cause, NOT yet proven: the model is small (an MLP encoder at 464→256→latent with small
+heads) at `batch_size = 256`, so a single step is trivial for a GB200, while `[data] num_workers =
+0` leaves input preparation single-threaded and serialised with training. The measured one-core
+CPU usage fits that. Distinguishing "dataloader-bound" from "model-too-small-for-this-GPU" would
+need a controlled comparison that has not been run.
+
+**The remedy does not depend on which cause it is.** At 1.29 GB and 9% utilisation, several
+independent runs fit on one GPU with room to spare — they are separate processes with separate
+seeds and no interaction, so packing them changes throughput and nothing else about the numbers.
+Four per GPU would cut the remaining probe work (~680 runs, ~1310 GPU-h) to roughly a third.
+
+Two things to keep straight if that is adopted:
+
+* **wall-clock comparisons stop being comparable across the change.** The observation that high
+  `encoder_lr` converges faster was measured one-run-per-GPU; under packing, runs contend, and a
+  timing figure from a packed stage cannot be put beside one from an unpacked stage.
+* it changes nothing about accuracy, so the tuning conclusions are unaffected either way.
+
+Recorded here rather than acted on mid-stage: A' is already complete under the unpacked model, and
+this is worth more to the project than to this campaign — every future campaign on this codebase
+is paying the same 10× premium.
+
 ---
 
 ## Compute budget
