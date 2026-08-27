@@ -15,18 +15,22 @@ difference between them is the point:
 
 WHAT LIVES WHERE
 
-``optimize_composition`` was one 975-line method, 709 of which was code, and nine nested closures
-— eight of which never referenced ``self``. Those eight, plus the ~340 lines of parameter
-validation ahead of them, were a constraint system with no way to reach it except through a
-twenty-keyword method, which is why none of it had a test. They are modules now:
+``optimize_composition`` was one 975-line method — 709 of it code — with nine nested closures,
+eight of which never referenced ``self``, and ~340 lines of parameter validation ahead of them.
+That was a constraint system with no way to reach it except through a twenty-keyword method, which
+is why none of it had a test. Each module below answers one question:
 
-* :mod:`.targets`     — what to optimise *toward* (the objective terms and result containers)
-* :mod:`.constraints` — what the recipe is allowed to *be* (element whitelist, per-element step
-  scale, pinned amounts, weight floor, cardinality) resolved once into one frozen object
-* :mod:`.annealing`   — how the cardinality constraint *hardens over time* (the τ schedule)
-* :mod:`.simplex`     — how a logit vector *becomes* a legal recipe (top-K, lock paste, floor)
-* :mod:`.composition` / :mod:`.latent` — the two search loops
-* :mod:`.mixin`       — the model-facing surface: four declared members and two public methods
+* :mod:`.targets`     — what is the search optimising *toward*?  (objective terms, results)
+* :mod:`.constraints` — what is the recipe allowed to *be*?  (whitelist, pins, floor, cardinality)
+* :mod:`.annealing`   — how fast does the cardinality limit *commit*?  (the τ schedule)
+* :mod:`.simplex`     — how does a logit vector *become* a legal recipe?  (top-K, paste, floor)
+* :mod:`.latent`      — the search over descriptors, via the autoencoder
+* :mod:`.composition` — the search over element weights, straight through the KMD transform
+* :mod:`.mixin`       — what does a search need *from the model*?  (four members, and the two
+  steps that turn a target into a loss term against real heads)
+
+Dependencies run one way: ``targets`` and ``annealing`` and ``simplex`` are leaves, ``constraints``
+composes the latter two, the two searches use all of them, and ``mixin`` binds the searches.
 
 The public names below are unchanged, so ``model.optimize_composition(...)`` and every import
 site keep working exactly as before.
