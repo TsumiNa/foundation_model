@@ -72,12 +72,23 @@ case "$STAGE" in
     a1|a1r|a1b|a2|a3|a4) CONFIG=probe6.toml; OUT=stage_a; DEFTIME=06:00:00 ;;
     # Loss-balancer probe. Needs SRC_OVERRIDE — the flag is in no container yet.
     bal|balx)         CONFIG=probe6.toml; OUT=stage_bal; DEFTIME=12:00:00 ;;
+    # Same-regime single-task ceilings — the control the recorded H200 ceilings cannot be.
+    single)           CONFIG=probe6.toml; OUT=stage_single; DEFTIME=06:00:00 ;;
+    # Transfer at deployment scale: 24-task sequences with the task under test last.
+    # 48h because these are full stage-C-length runs, and packed co-tenants contend.
+    xfer)             CONFIG=final_hybrid_v2.toml; OUT=stage_xfer; DEFTIME=48:00:00 ;;
     b|b3)             CONFIG=probe6.toml; OUT=stage_b; DEFTIME=06:00:00 ;;
     # Stage C': 24 tasks, 4 arms. `fm pretrain --resume` is idempotent, so a walltime kill is
     # recovered by resubmitting the identical command; `fm finetune` has NO resume and gets its
     # whole budget in one go.
-    c2pre)      CONFIG=final_hybrid_v2.toml;      OUT=stage_c; DEFTIME=48:00:00 ;;
-    c2con)      CONFIG=final_consolidate_v2.toml; OUT=stage_c; DEFTIME=10:00:00; MODE=finetune ;;
+    # One stage per arm, because each arm is a different config and the worker applies one CONFIG
+    # to every line of its grid. Each grid is a single line carrying --resume: `fm pretrain` is
+    # idempotent, so a walltime kill is recovered by resubmitting the identical command.
+    c2base)     CONFIG=final_hybrid_v2.toml;       OUT=stage_c; DEFTIME=48:00:00 ;;
+    c2top1)     CONFIG=final_hybrid_c2top1.toml;   OUT=stage_c; DEFTIME=48:00:00 ;;
+    c2top2)     CONFIG=final_hybrid_c2top2.toml;   OUT=stage_c; DEFTIME=48:00:00 ;;
+    c2top3)     CONFIG=final_hybrid_c2top3.toml;   OUT=stage_c; DEFTIME=48:00:00 ;;
+    c2con)      CONFIG=final_consolidate_v2.toml;  OUT=stage_c; DEFTIME=10:00:00; MODE=finetune ;;
     *) echo "unknown stage '$STAGE'" >&2; exit 2 ;;
 esac
 TIME=${TIME:-$DEFTIME}

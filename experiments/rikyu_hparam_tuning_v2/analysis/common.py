@@ -40,6 +40,55 @@ CEILING = {
     "electrical_resistivity": 0.1622, "magnetic_susceptibility": 0.1238,
 }  # fmt: skip
 
+# Single-task ceilings measured IN THIS REGIME: 0.3.2 container, the adopted configuration, five
+# seeds each, differing from a campaign run only in `pretrain.task_sequence`. These supersede
+# CEILING above for anything that reports a deficit.
+#
+# The inherited H200 numbers were measured before PR #45, i.e. under the per-batch scheduler
+# cadence that drove the LR to its floor inside the first epoch, so those runs were undertrained
+# and the "ceilings" they produced sit BELOW what single-task training actually reaches.
+#
+# Across the 23 regression / kernel-regression tasks the old ceiling is too low in 17, by
+# +0.0275 on average (median +0.0212, sd 0.0319, range -0.0168 to +0.1036). It is emphatically
+# NOT a constant, so it cannot be repaired by subtracting an offset — seebeck is understated by
+# 0.104 while dielectric_ionic is overstated by 0.017. It also grows as tasks get smaller
+# (big +0.022, mid +0.027, small +0.040), which is the pattern an LR that never anneals would
+# produce: the tasks with least data need the most optimisation to converge.
+#
+# material_type is EXCLUDED from that comparison and must stay excluded: the old entry is
+# accuracy (0.984) and the same-regime run reports macro-F1 (0.571). Their difference is a
+# metric mismatch, not an offset, and averaging it in produces a meaningless -0.41.
+#
+# Consequence for anything already published against the old ceilings: deficits computed there are
+# systematically too small, and v1's negative mid/small deficits ("we passed the ceiling") are that
+# artefact rather than a result.
+CEILING_SAME_REGIME = {
+    "curie": 0.8027,
+    "density": 0.9898,
+    "dielectric_electronic": 0.8574,
+    "dielectric_ionic": 0.5910,
+    "dielectric_total": 0.6587,
+    "dos_density": 0.6250,
+    "efermi": 0.9073,
+    "electrical_resistivity": 0.1767,
+    "final_energy": 0.7739,
+    "formation_energy": 0.9947,
+    "klat": 0.7220,
+    "kp": 0.6957,
+    "magnetic_moment": 0.6980,
+    "magnetic_susceptibility": 0.1712,
+    "magnetization": 0.7611,
+    "material_type": 0.5710,
+    "neel": 0.7176,
+    "power_factor": 0.6936,
+    "seebeck": 0.7062,
+    "tc": 0.8153,
+    "thermal_conductivity": 0.7194,
+    "total_magnetization": 0.7183,
+    "volume": 0.6191,
+    "zt": 0.6600,
+}  # fmt: skip
+
 N_TRAIN = {
     "density": 23678, "efermi": 23668, "final_energy": 23678, "total_magnetization": 23678,
     "volume": 23678, "dielectric_total": 3124, "dielectric_ionic": 3124,

@@ -437,6 +437,78 @@ def stage_a4(n_seeds: int) -> tuple[list[tuple[str, str]], list[str]]:
     return rows, skipped
 
 
+ALL24 = [
+    "density", "efermi", "final_energy", "total_magnetization", "volume",
+    "dielectric_total", "dielectric_ionic", "dielectric_electronic",
+    "magnetization", "curie", "neel", "kp",
+    "magnetic_susceptibility", "zt", "power_factor", "thermal_conductivity",
+    "electrical_resistivity", "dos_density", "seebeck",
+    "formation_energy", "magnetic_moment", "tc", "klat", "material_type",
+]  # fmt: skip
+
+
+def stage_xfer(base: str, n_orders: int, rng_seed: int, tasks: list[str]):
+    """Transfer into each task from the other 23, with the task under test placed LAST.
+
+    Measures what the probe cannot. A six-task probe says something about six tasks; the model
+    that ships trains on 24, and the question that matters for a small task is whether arriving
+    last — after an encoder has been shaped by 23 others — leaves it better off than training it
+    alone. Comparing the final task's R2 against its same-regime single-task baseline answers
+    exactly that, per task, at deployment scale.
+
+    THREE ORDERS PER TASK, not three seeds of one order. The 23 preceding tasks are shuffled
+    independently each time, so the spread across the three includes any effect of ordering as
+    well as seed noise. If that spread matches the seed noise already measured, ordering does not
+    matter — which is the claim being tested rather than assumed.
+
+    Shuffling is seeded, so the 72 sequences are reproducible from this file alone.
+    """
+    rng = random.Random(rng_seed)
+    point = parse_point(base)
+    bad = validate_point(point)
+    if bad:
+        return [], [f"{base}: {bad}"]
+    rows: list[tuple[str, str]] = []
+    for task in tasks:
+        others = [t for t in ALL24 if t != task]
+        for k in range(n_orders):
+            order = others[:]
+            rng.shuffle(order)
+            order.append(task)  # the task under test always arrives last
+            rows.append((
+                f"xf_{task}_o{k}",
+                overrides(pretrain__task_sequence=order, **point) + f" --seed {SEED0 + k}",
+            ))
+    return rows, []
+
+
+def stage_single(base: str, n_seeds: int, tasks: list[str], prefix: str = "st") -> tuple[list[tuple[str, str]], list[str]]:
+    """Single-task ceilings measured IN THIS REGIME, one run per probe task.
+
+    The recorded ceilings this campaign quotes come from the replay campaign's warm-restart
+    control: different hardware (H200), different container, different code. Five of the six probe
+    tasks sit ABOVE them under multi-task training, which reads as positive transfer — but a
+    consistent offset is exactly what a change of measurement frame also produces, so that
+    comparison cannot separate the two.
+
+    This measures the same six tasks alone, on the same image, the same probe config and the same
+    adopted hyper-parameters, differing only in `pretrain.task_sequence`. Multi-task minus this is
+    transfer; multi-task minus the old ceilings is transfer plus an unknown offset.
+
+    The question it settles is larger than it looks. If multi-task training does not beat training
+    a small task by itself, there is nothing for a loss balancer or a gradient-surgery method to
+    repair — the answer is to train it separately.
+    """
+    rows: list[tuple[str, str]] = []
+    point = parse_point(base)
+    bad = validate_point(point)
+    if bad:
+        return [], [f"{base}: {bad}"]
+    for task in tasks:
+        rows += expand(f"{prefix}_{task}", dict(point, pretrain__task_sequence=[task]), seeds(n_seeds))
+    return rows, []
+
+
 def stage_balx(bases: list[str], n_seeds: int) -> tuple[list[tuple[str, str]], list[str]]:
     """Balancer ON only, against a source tree that excludes the autoencoder head.
 
@@ -561,10 +633,13 @@ def stage_b(base_point: dict, n_seeds: int) -> tuple[list[tuple[str, str]], list
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("stage", choices=["smoke", "s0", "a1", "a1r", "a1b", "a2", "a3", "a4", "bal", "balx", "b", "b3"])
+    ap.add_argument("stage", choices=["smoke", "s0", "a1", "a1r", "a1b", "a2", "a3", "a4", "bal", "balx", "single", "xfer", "b", "b3"])
     ap.add_argument("--winner", help="runid of the winning A' point (a2)")
     ap.add_argument("--winners", nargs="+", default=[], help="promoted runids (a1b / a3 / b3)")
     ap.add_argument("--seeds-n", type=int, default=None, help="seeds per point (stage default otherwise)")
+    ap.add_argument("--tasks", nargs="+", default=PROBE6, help="single: which tasks to run alone")
+    ap.add_argument("--orders", type=int, default=3, help="xfer: random orders per task")
+    ap.add_argument("--prefix", default="st", help="single: runid prefix, so two bases do not collide")
     ap.add_argument("--points", type=int, default=200, help="a1r: number of random points")
     ap.add_argument("--rng-seed", type=int, default=20260827, help="a1r: sampling seed")
     ap.add_argument("--lrs", type=float, nargs="+", default=[], help="a1b: extra encoder LRs")
@@ -594,6 +669,15 @@ def main() -> None:
         if not (args.lrs or args.min_lrs):
             raise SystemExit("a1b needs --lrs and/or --min-lrs (which edge to reopen)")
         rows, skipped = stage_a1b(args.winners, args.lrs, args.min_lrs, n or 5)
+    elif args.stage == "xfer":
+        if not args.winners:
+            raise SystemExit("xfer needs --winners (the adopted base)")
+        rows, skipped = stage_xfer(args.winners[0], args.orders, args.rng_seed,
+                                   args.tasks if args.tasks != PROBE6 else ALL24)
+    elif args.stage == "single":
+        if not args.winners:
+            raise SystemExit("single needs --winners (one adopted base)")
+        rows, skipped = stage_single(args.winners[0], n or 5, args.tasks, args.prefix)
     elif args.stage == "balx":
         if not args.winners:
             raise SystemExit("balx needs --winners")
