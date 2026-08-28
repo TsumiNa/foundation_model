@@ -394,6 +394,47 @@ stage may be placed beside it.
 
 ---
 
+## Early stopping: 24 vs 40, re-verified on the base that was actually adopted
+
+| arm | vs untuned anchor | 2SE | σ | wall clock, 6 steps |
+|---|---|---|---|---|
+| ES40 | +2.143% | 0.358% | 0.400% | 3.75 h |
+| **ES24** | +1.891% | 0.185% | 0.207% | **3.38 h** |
+
+Difference +0.252% against a resolvable threshold of 0.403% — **not separated**, and only just:
+six seeds would have separated it and there were five. In absolute terms it is ~0.0017 R², well
+under the 1e-2 practical threshold. ES40 costs **11% more wall clock**.
+
+**Adopted patience 24.** Paying 11% more compute for a difference that is neither resolvable nor
+practically meaningful is not a trade worth making.
+
+The point of re-running this: the original a2 was measured on the configuration leading at the
+time, and the 25-seed finals replaced that leader. An early-stopping result obtained on a
+configuration that is no longer adopted does not carry over. This is the recurring error of the
+campaign — **any experiment run "on the current best" has to be redone when the best changes** —
+and it also hit the 24-task ceilings.
+
+## The training pipeline is bit-deterministic given a seed
+
+a2b's ES24 arm sets `early_stopping.patience=24`, which is already the config default, so it is the
+SAME configuration as B's default-head arm. The two were launched separately, into different
+stages, into different output directories. Their per-seed scores:
+
+    a2b ES24     [0.016840, 0.017383, 0.018238, 0.020363, 0.021724]
+    B' default   [0.016840, 0.017383, 0.018238, 0.020363, 0.021724]
+
+Identical to full float precision. `num_workers = 0` and a fixed seed are enough to make the whole
+pipeline reproducible here.
+
+Two consequences worth carrying:
+
+* every σ in this campaign is **configuration-level variance across seeds**, not run-to-run
+  flakiness — which is what makes the seed arithmetic legitimate;
+* an accidental duplicate arm is free to detect and free to reconcile, so a stage that re-measures
+  a configuration another stage already covered is a cross-check rather than waste.
+
+---
+
 ## A range is not a σ, and comparing two ranges compares two seed counts
 
 v1 published its probe noise as a **band of 8.48%** — the range of three seeds. v2 measures

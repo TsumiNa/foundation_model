@@ -368,6 +368,35 @@ def slide_a4():
 
 
 @slide_guard
+def slide_a2b():
+    a = load("stage_a2b.json")
+    arms = a["arms"]
+    rows = []
+    for name, arm in sorted(arms.items(), key=lambda kv: -kv[1]["score"]["mean"]):
+        s = arm["score"]
+        rows.append([name.split("_")[-1], pct(s["mean"]), f"{2 * s['sem'] * 100:.3f}%",
+                     f"{s['sigma'] * 100:.3f}%"])
+    s_ = new("A2b：早停 patience 24 还是 40（在采纳后的基座上复核）",
+             "最初的 a2 跑在“当时的榜首”上，而 25 seed 决赛把榜首换掉了 —— 所以这是复核，不是初测")
+    table(s_, 0.6, 1.5, 7.4, ["臂", "相对未调锚点", "2SE", "σ"], rows,
+          col_w=[1.6, 2.2, 1.8, 1.8], colour_col=1)
+    pair = a["pairwise"][0] if a.get("pairwise") else None
+    lines = []
+    if pair:
+        lines += [f"差 {pct(pair['delta'])}，可分辨阈值 {pct(pair['resolvable_at_this_n'])[1:]}",
+                  f"→ {'可分辨' if pair['separated'] else '不可分辨'}"
+                  + (f"（要分开需 {list(a['seeds_that_would_resolve_the_ties'].values())[0]} 个 seed，"
+                     f"我们有 5 个）" if a.get("seeds_that_would_resolve_the_ties") else ""), ""]
+    lines += ["折合绝对 R² 约 0.0017 —— 远低于 1e-2 的实用门槛。",
+              "而 ES40 的墙钟是 3.75 h，ES24 是 3.38 h：多花 11%。", "",
+              "采纳 patience 24。多付 11% 算力买一个既不可分辨、",
+              "又低于实用门槛的差异，不划算。", "",
+              "教训：凡是“在当前最优上”做的实验，",
+              "最优一变就必须重做。"]
+    txt(s_, 8.4, 1.5, 4.6, 5.0, lines, size=12)
+
+
+@slide_guard
 def slide_stage_b():
     import math
 
@@ -681,6 +710,7 @@ def main() -> None:
     slide_finals()
     slide_finals_sigma()
     slide_a4()
+    slide_a2b()
     slide_stage_b()
     slide_stage_c()
     slide_ceiling_fig()
