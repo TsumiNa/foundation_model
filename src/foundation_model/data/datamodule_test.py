@@ -3,14 +3,11 @@
 
 """Tests for the composition-keyed CompoundDataModule (refactor PR3)."""
 
-from unittest.mock import patch
-
 import numpy as np
 import pandas as pd
 import pytest
 import torch
 from loguru import logger
-from torch.utils.data.distributed import DistributedSampler
 
 from foundation_model.data.composition_sources import PrecomputedDescriptorSource
 from foundation_model.data.datamodule import CompoundDataModule
@@ -513,50 +510,3 @@ def test_mixed_tasks_batch_structure(descriptors_df):
     x, y_dict, masks, t_seqs = next(iter(dm.test_dataloader()))
     assert x.shape == (4, 2)
     assert "reg_task" in y_dict
-
-
-# --- DistributedSampler coverage --------------------------------------------
-
-
-def _ddp_dm(descriptors_df):
-    split = ["train"] * 10 + ["val"] * 5 + ["test"] * 5
-    return build_dm(
-        descriptors_df,
-        task_frames=_reg_cls_frames(split=split),
-        configs=[RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1])],
-        batch_size=4,
-    )
-
-
-def test_single_gpu_no_distributed_sampler(descriptors_df):
-    with patch("torch.distributed.is_available", return_value=False):
-        with patch("torch.distributed.is_initialized", return_value=False):
-            dm = _ddp_dm(descriptors_df)
-            dm.setup(stage="fit")
-            loader = dm.train_dataloader()
-            assert not isinstance(loader.sampler, DistributedSampler)
-
-
-def test_multi_gpu_uses_distributed_sampler(descriptors_df):
-    with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
-        with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
-            with patch("torch.distributed.get_rank", return_value=0):
-                with patch("torch.distributed.get_world_size", return_value=2):
-                    dm = _ddp_dm(descriptors_df)
-                    dm.setup(stage="fit")
-                    loader = dm.train_dataloader()
-                    assert isinstance(loader.sampler, DistributedSampler)
-                    assert loader.sampler.shuffle is True
-                    assert loader.sampler.drop_last is False
-
-
-def test_multi_gpu_val_sampler_no_shuffle(descriptors_df):
-    with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
-        with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
-            with patch("torch.distributed.get_rank", return_value=0):
-                with patch("torch.distributed.get_world_size", return_value=2):
-                    dm = _ddp_dm(descriptors_df)
-                    dm.setup(stage="fit")
-                    loader = dm.val_dataloader()
-                    assert isinstance(loader.sampler, DistributedSampler)
-                    assert loader.sampler.shuffle is False

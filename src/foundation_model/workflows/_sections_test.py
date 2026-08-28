@@ -132,3 +132,9 @@ def test_unknown_keys_are_named_in_the_error():
 def test_optimizer_config_is_a_plain_optimizer_config():
     cfg = TrainingSectionConfig().optimizer_config(lr=5e-3, weight_decay=1e-3)
     assert isinstance(cfg, OptimizerConfig)
+
+
+def test_learnable_loss_balancer_is_off_by_default_and_settable():
+    """The flag existed on the model but had no route from TOML, so it had never been switched on."""
+    assert build_training_section({}).learnable_loss_balancer is False
+    assert build_training_section({"learnable_loss_balancer": True}).learnable_loss_balancer is True

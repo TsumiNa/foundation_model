@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import re
+
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -32,24 +34,72 @@ def validate_positive_int(where: str, value: Any) -> None:
         raise ValueError(f"{where} must be a positive int, got {value!r}.")
 
 
+_INT_STRING = re.compile(r"-?\d+")
+
+MULTI_DEVICE_HELP = (
+    "Distributed training is removed (see ARCHITECTURE.md, 'Distributed training'): the "
+    "sampler and metric half was built but the output half never was, so ranks would concurrently "
+    "overwrite the same checkpoint and results. Until it is restored, more than one device is "
+    "rejected rather than run — every rank would feed its own shard's train_final_loss_epoch to "
+    "ReduceLROnPlateau, so the learning rates would diverge even though the gradients are synced."
+)
+
+
 def validate_devices(value: Any) -> None:
-    """Lightning-compatible ``Trainer(devices=...)``: an int count (``-1`` = all, else ``>= 1``), a
-    non-empty list of non-negative device indices (``[1, 3]``), or a non-empty string (``"auto"`` /
-    ``"1,3"`` / ``"0-3"``). Lightning validates that the indices/string map to real devices at fit.
+    """One device. ``1``, ``"auto"``, or a single index (``[0]`` / ``"0"``).
+
+    The shape Lightning accepts is wider — an int count, a list of indices, a range string — and
+    this used to accept all of it, which left the configuration surface pointing at a code path
+    that no longer exists. See :data:`MULTI_DEVICE_HELP`.
     """
     if isinstance(value, bool):  # bool is an int subclass — reject it explicitly
         raise ValueError(f"training.devices must be an int, list of ints, or str, got bool {value!r}.")
     if isinstance(value, int):
-        if value == -1 or value >= 1:
+        if value == 1:
             return
+        if value == -1 or value > 1:
+            raise ValueError(
+                f"training.devices must be 1 while distributed training is out, got {value}. {MULTI_DEVICE_HELP}"
+            )
         raise ValueError(f"training.devices int must be -1 (all) or >= 1, got {value}.")
     if isinstance(value, list):
         if not value or any(isinstance(d, bool) or not isinstance(d, int) or d < 0 for d in value):
             raise ValueError(f"training.devices list must be non-empty non-negative int indices, got {value!r}.")
+        if len(value) > 1:
+            raise ValueError(
+                f"training.devices must name one device while distributed training is out, got {value!r}. {MULTI_DEVICE_HELP}"
+            )
         return
     if isinstance(value, str):
-        if not value.strip():
-            raise ValueError('training.devices string must be non-empty (e.g. "auto", "1,3", "0-3").')
+        text = value.strip()
+        if not text:
+            raise ValueError('training.devices string must be non-empty (e.g. "auto", "1", "0,2").')
+        if text == "auto":
+            return  # resolves at fit time; guard_single_device is what catches a multi-GPU node
+        # Lightning reads a BARE numeric string as a COUNT, not an index: devices = "2" is two GPUs
+        # ([0, 1]), exactly like the int 2. Only a string carrying a separator is a list of indices.
+        # Reading "2" as "the GPU at index 2" is the obvious mistake — and the mistake this check
+        # made when it went by punctuation alone — so bare numbers go through the int rule.
+        if _INT_STRING.fullmatch(text):
+            validate_devices(int(text))
+            return
+        indices: list[int] = []
+        for part in (p.strip() for p in text.split(",")):
+            if not part:
+                continue
+            try:
+                if "-" in part[1:]:  # a range like "0-3"
+                    lo, _, hi = part.partition("-")
+                    indices.extend(range(int(lo), int(hi) + 1))
+                else:
+                    indices.append(int(part))
+            except ValueError:
+                raise ValueError(f"training.devices string is not a device list, got {value!r}.") from None
+        if len(indices) != 1:
+            raise ValueError(
+                f"training.devices must name one device while distributed training is out, got "
+                f"{value!r} ({len(indices)} devices). {MULTI_DEVICE_HELP}"
+            )
         return
     raise ValueError(f"training.devices must be an int, list of ints, or str, got {value!r}.")
 
@@ -159,14 +209,20 @@ class OptimizerSectionConfig:
 class SchedulerSectionConfig:
     """``[training.scheduler]`` — ``ReduceLROnPlateau``, applied to every parameter group.
 
-    ``patience`` counts **epochs**. Under manual optimization Lightning does not drive schedulers,
-    so the model steps them itself in ``on_train_epoch_end`` — once per epoch, on the
-    epoch-aggregated ``monitor`` metric. (Before 0.3.1 it stepped inside ``training_step``, i.e.
-    once per *batch*, which made ``patience`` count batches and drove the LR to ``min_lr`` inside
-    the first epoch on a 24k-row task.)
+    ``patience`` counts **epochs**. The model declares one scheduler at ``interval = "epoch"`` and
+    Lightning drives it: once per epoch, on the epoch-aggregated ``monitor`` metric read from
+    ``trainer.callback_metrics``. (The model used to step its own schedulers — it had one per
+    parameter group, which forced manual optimization, under which Lightning drives neither. It did
+    that inside ``training_step``, i.e. once per *batch*, which made ``patience`` count batches and
+    drove the LR to ``min_lr`` inside the first epoch on a 24k-row task.)
 
-    ``interval`` / ``frequency`` are not exposed: stepping is per-epoch by construction, and
-    Lightning's own scheduler cadence does not apply under manual optimization.
+    There is no ``interval`` / ``frequency`` key, and no ``OptimizerConfig`` field behind one:
+    per-batch stepping of a plateau scheduler is the bug above, not a configuration.
+
+    One block, every group. These five settings are the scheduling **decision**, which reads only
+    the monitored metric, so the single scheduler owns them for all parameter groups; ``lr`` /
+    ``weight_decay`` / ``min_lr`` are per-group and stay that way. A model assembled in Python with
+    groups that disagree here is rejected by ``configure_optimizers`` rather than resolved silently.
 
     ``min_lr`` is a FLOOR on the reduced learning rate. A low configured LR plus this floor leaves
     the scheduler almost no room to anneal — at the default ``1e-4``, an ``lr`` of ``2e-4`` can only
@@ -221,6 +277,15 @@ class TrainingSectionConfig:
     kr_weight_decay: float = 5e-5
     ae_lr: float = 5e-3
     ae_weight_decay: float = 1e-3
+    # Kendall/Gal/Cipolla (CVPR 2018) uncertainty weighting: learn one log sigma per supervised
+    # task and combine losses as sum_i [ 0.5 * exp(-2 log sigma_i) * L_i + log sigma_i ]. It exists
+    # to stop multi-task training from collapsing onto whichever tasks descend fastest, which is a
+    # live risk here — the 24-task sequence spans three orders of magnitude in label count.
+    #
+    # The model has implemented this since before this section existed, but nothing ever routed a
+    # value to it, so it has never been switched on in any run. Exposing it does not turn it on;
+    # it makes the comparison runnable.
+    learnable_loss_balancer: bool = False
     accelerator: str = "auto"
     # Passed straight to Lightning's Trainer(devices=...): "auto" (all devices for the accelerator),
     # an int count (-1 = all), a list of device indices ([1, 3]), or a string ("1,3" / "0-3").
