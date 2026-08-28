@@ -398,9 +398,98 @@ def plot_stage_c(summary: dict, out: Path) -> Path:
     return path
 
 
+def plot_ceilings(summary: dict, out: Path) -> Path:
+    """How far the inherited H200 "ceilings" sit from a same-régime measurement of the same thing.
+
+    Drawn as a per-task offset rather than two overlaid ceiling curves, because the claim being
+    made is about the SIZE and the NON-CONSTANCY of the error. Two curves invite the reader to
+    eyeball a gap that is 0.10 in one task and −0.02 in another and call it "a small shift"; one
+    signed bar per task, sorted, makes the spread the subject.
+
+    Sorted by offset, not by N or alphabetically: the ordering is the finding.
+    """
+    from common import CEILING, CEILING_SAME_REGIME, N_TRAIN, size_group
+
+    rows = [(t_, CEILING_SAME_REGIME[t_] - CEILING[t_], size_group(t_))
+            for t_ in CEILING_SAME_REGIME
+            if t_ in CEILING and t_ != "material_type"]  # accuracy vs macro-F1: not a difference
+    rows.sort(key=lambda r: r[1])
+    labels = [f"{t_}  ({N_TRAIN.get(t_, 0):,})" for t_, _, _ in rows]
+    colours = {"big": SERIES[0], "mid": SERIES[1], "small": SERIES[2]}
+
+    fig, ax = plt.subplots(figsize=(7.6, 0.30 * len(rows) + 1.9))
+    ys = range(len(rows))
+    ax.barh(list(ys), [r[1] for r in rows], color=[colours[r[2]] for r in rows],
+            height=0.7, zorder=3, edgecolor="white", linewidth=1.0)
+    ax.axvline(0, color=MUTED, linewidth=1.0, zorder=4)
+    ax.set_yticks(list(ys))
+    ax.set_yticklabels(labels, fontsize=7.5)
+    ax.set_xlabel("same-régime ceiling − inherited H200 ceiling   (positive: the old one was too low)")
+    ax.set_title("The inherited ceilings understate 17 of 23 tasks, and not by a constant",
+                 fontsize=10, loc="left")
+    handles = [plt.Line2D([], [], marker="s", linestyle="", markersize=7, color=c, label=g)
+               for g, c in colours.items()]
+    ax.legend(handles=handles, frameon=False, fontsize=8, loc="lower right", title="task size",
+              title_fontsize=8)
+    tidy(ax, grid_axis="x")
+    fig.tight_layout()
+    path = out / "ceiling_frame_offset.png"
+    fig.savefig(path, dpi=170)
+    plt.close(fig)
+    return path
+
+
+def plot_transfer(summary: dict, out: Path) -> Path:
+    """Per-task transfer with its own resolution, ordered by training-set size.
+
+    Ordered by N because the claim is about the RELATIONSHIP between transfer and data size, and
+    an ordering by effect size would let the reader read that relationship off the sort instead of
+    off the data. The 2SE bar is drawn per task rather than as one shared band: these tasks'
+    seed spreads differ by two orders of magnitude (formation_energy 0.0004, zt 0.032), so a
+    shared band would make the smallest effects look decisive and the largest look like noise.
+    """
+    rows = [r for r in summary["per_task"] if "transfer" in r]
+    rows.sort(key=lambda r: -(r["n_train"] or 0))
+    ys = list(range(len(rows)))
+    fig, ax = plt.subplots(figsize=(7.4, 0.55 * len(rows) + 2.0))
+    for y, r in zip(ys, rows):
+        se2 = 2 * (r["se_of_difference"] or 0.0)
+        resolved = r["separated"]
+        colour = SERIES[0] if r["transfer"] > 0 else SERIES[1]
+        # Unresolved differences are drawn hollow, so "within noise" cannot be misread as a result.
+        style = (dict(color=colour, edgecolor="white")
+                 if resolved else dict(color="white", edgecolor=colour, hatch="///"))
+        ax.barh(y, r["transfer"], height=0.55, zorder=3, linewidth=1.0, **style)
+        ax.errorbar(r["transfer"], y, xerr=se2, fmt="none", ecolor=TEXT, elinewidth=1.2,
+                    capsize=3, zorder=5)
+    ax.axvline(0, color=MUTED, linewidth=1.0, zorder=4)
+    ax.set_yticks(ys)
+    ax.set_yticklabels([f"{r['task']}\n{r['n_train']:,} labels" for r in rows], fontsize=8)
+    ax.invert_yaxis()
+    ax.set_xlabel("multi-task R² − single-task R²   (bars: ±2 SE of the difference)")
+    ax.set_title("Transfer at the adopted configuration — the smallest tasks gain, the largest pay",
+                 fontsize=10, loc="left")
+    # Fill encodes resolution and hue encodes direction; the legend names both so the two
+    # encodings are not read as one.
+    key = lambda fc, ec, lb: plt.Line2D(  # noqa: E731
+        [], [], marker="s", linestyle="", markersize=8, color="white",
+        markerfacecolor=fc, markeredgecolor=ec, label=lb)
+    ax.legend(handles=[key(SERIES[0], SERIES[0], "multi-task better"),
+                       key(SERIES[1], SERIES[1], "single-task better"),
+                       key("white", MUTED, "within noise (either way)")],
+              frameon=False, fontsize=8, loc="lower right")
+    tidy(ax, grid_axis="x")
+    fig.tight_layout()
+    path = out / "transfer_adopted.png"
+    fig.savefig(path, dpi=170)
+    plt.close(fig)
+    return path
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("figure", choices=["stage0", "stage_a", "finals", "stage_c", "a4"])
+    ap.add_argument("figure",
+                    choices=["stage0", "stage_a", "finals", "stage_c", "a4", "ceilings", "transfer"])
     ap.add_argument("--summary", type=Path, required=True)
     ap.add_argument("-o", "--out", type=Path, default=Path("."))
     args = ap.parse_args()
@@ -413,6 +502,8 @@ def main() -> None:
         "finals": plot_finals,
         "stage_c": plot_stage_c,
         "a4": plot_a4,
+        "ceilings": plot_ceilings,
+        "transfer": plot_transfer,
     }[args.figure](summary, args.out)
     for p in (drawn if isinstance(drawn, list) else [drawn]):
         print(p)
