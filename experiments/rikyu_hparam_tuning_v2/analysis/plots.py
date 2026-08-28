@@ -441,43 +441,62 @@ def plot_ceilings(summary: dict, out: Path) -> Path:
 
 
 def plot_transfer(summary: dict, out: Path) -> Path:
-    """Per-task transfer with its own resolution, ordered by training-set size.
+    """Per-task transfer as a RELATIVE percentage, ordered by training-set size.
 
-    Ordered by N because the claim is about the RELATIONSHIP between transfer and data size, and
-    an ordering by effect size would let the reader read that relationship off the sort instead of
-    off the data. The 2SE bar is drawn per task rather than as one shared band: these tasks'
-    seed spreads differ by two orders of magnitude (formation_energy 0.0004, zt 0.032), so a
-    shared band would make the smallest effects look decisive and the largest look like noise.
+    Percentage rather than raw R2 delta because +0.045 does not tell a reader whether that is a
+    lot; +6.9% does. The relative view (delta / single-task R2) is used rather than the error-
+    reduction view (delta / residual), which is more meaningful where a task has headroom and
+    explodes where it does not — formation_energy's residual is 0.0053, so its -0.0036 reads as
+    -68% and would dominate the figure with a task whose change is practically nil.
+
+    Which is exactly why the ABSOLUTE delta is printed on every bar. A percentage hides magnitude,
+    and the campaign's practical threshold is stated in absolute R2 (0.01); showing only the
+    percentage would let a large-looking bar stand for a change nobody would act on.
+
+    Ordered by training-set size because the claim is about the RELATIONSHIP between transfer and
+    data size; sorting by effect size would let that be read off the sort instead of the data.
+
+    Fill = the difference is BOTH resolved and >= 0.01 absolute. Hollow = it fails one of those,
+    and the legend says which, so "statistically real but negligible" cannot be read as a result.
     """
     rows = [r for r in summary["per_task"] if "transfer" in r]
     rows.sort(key=lambda r: -(r["n_train"] or 0))
     ys = list(range(len(rows)))
-    fig, ax = plt.subplots(figsize=(7.4, 0.55 * len(rows) + 2.0))
+    fig, ax = plt.subplots(figsize=(8.0, 0.62 * len(rows) + 2.1))
     for y, r in zip(ys, rows):
-        se2 = 2 * (r["se_of_difference"] or 0.0)
-        resolved = r["separated"]
+        rel = r.get("relative_pct")
+        if rel is None:
+            continue
+        base = abs(r["single_task_r2"]) or 1.0
+        se2_rel = 2 * (r["se_of_difference"] or 0.0) / base * 100.0
+        matters = r.get("matters", r["separated"])
         colour = SERIES[0] if r["transfer"] > 0 else SERIES[1]
-        # Unresolved differences are drawn hollow, so "within noise" cannot be misread as a result.
         style = (dict(color=colour, edgecolor="white")
-                 if resolved else dict(color="white", edgecolor=colour, hatch="///"))
-        ax.barh(y, r["transfer"], height=0.55, zorder=3, linewidth=1.0, **style)
-        ax.errorbar(r["transfer"], y, xerr=se2, fmt="none", ecolor=TEXT, elinewidth=1.2,
+                 if matters else dict(color="white", edgecolor=colour, hatch="///"))
+        ax.barh(y, rel, height=0.55, zorder=3, linewidth=1.0, **style)
+        ax.errorbar(rel, y, xerr=se2_rel, fmt="none", ecolor=TEXT, elinewidth=1.2,
                     capsize=3, zorder=5)
+        # The absolute delta, so the percentage can never stand alone. Anchored past the OUTER
+        # end of the error bar, not the bar end — the whisker overruns short bars and the label
+        # would land on top of its own cap.
+        outer = rel + (se2_rel if rel >= 0 else -se2_rel)
+        ax.annotate(f"{r['transfer']:+.4f}", (outer, y), textcoords="offset points",
+                    xytext=(9 if rel >= 0 else -9, 0), va="center",
+                    ha="left" if rel >= 0 else "right", fontsize=8, color=MUTED)
     ax.axvline(0, color=MUTED, linewidth=1.0, zorder=4)
     ax.set_yticks(ys)
     ax.set_yticklabels([f"{r['task']}\n{r['n_train']:,} labels" for r in rows], fontsize=8)
     ax.invert_yaxis()
-    ax.set_xlabel("multi-task R² − single-task R²   (bars: ±2 SE of the difference)")
+    ax.margins(x=0.20)
+    ax.set_xlabel("relative change in R²  (%)   ·   bars: ±2 SE   ·   grey number: absolute ΔR²")
     ax.set_title("Transfer at the adopted configuration — the smallest tasks gain, the largest pay",
                  fontsize=10, loc="left")
-    # Fill encodes resolution and hue encodes direction; the legend names both so the two
-    # encodings are not read as one.
     key = lambda fc, ec, lb: plt.Line2D(  # noqa: E731
         [], [], marker="s", linestyle="", markersize=8, color="white",
         markerfacecolor=fc, markeredgecolor=ec, label=lb)
     ax.legend(handles=[key(SERIES[0], SERIES[0], "multi-task better"),
                        key(SERIES[1], SERIES[1], "single-task better"),
-                       key("white", MUTED, "within noise (either way)")],
+                       key("white", MUTED, "within noise, or |ΔR²| < 0.01")],
               frameon=False, fontsize=8, loc="lower right")
     tidy(ax, grid_axis="x")
     fig.tight_layout()

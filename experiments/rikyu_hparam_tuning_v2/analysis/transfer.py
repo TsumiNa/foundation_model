@@ -32,7 +32,7 @@ import re
 import statistics
 from pathlib import Path
 
-from common import CEILING, N_TRAIN, PROBE6, final_metrics, fnum, size_group
+from common import CEILING, N_TRAIN, PROBE6, final_metrics, fnum, pct_views, size_group
 
 # The prefix is configurable because two single-task sets exist: one on the config that led
 # the 5-seed grid, and one on the config the 25-seed finals actually adopted. Matching "st_"
@@ -100,6 +100,8 @@ def main() -> None:
         ss = statistics.stdev(s) if len(s) > 1 else 0.0
         sm = statistics.stdev(m) if len(m) > 1 else 0.0
         se = math.sqrt(ss**2 / len(s) + sm**2 / len(m)) if len(s) > 1 and len(m) > 1 else None
+        separated = bool(se) and abs(mm - ms) > 2 * se
+        views = pct_views(mm - ms, ms)
         rows.append({
             "task": t,
             "group": size_group(t),
@@ -107,9 +109,13 @@ def main() -> None:
             "single_task_r2": ms,
             "multi_task_r2": mm,
             "transfer": mm - ms,
+            **views,
+            # Statistical resolution says the effect is REAL; the practical gate says it is worth
+            # acting on. A task needs both to count as transfer that matters.
+            "matters": separated and views["practically_significant"],
             "se_of_difference": se,
             # A difference smaller than its own resolution is not transfer in either direction.
-            "separated": bool(se) and abs(mm - ms) > 2 * se,
+            "separated": separated,
             "n_single": len(s),
             "n_multi": len(m),
             "recorded_ceiling_h200": CEILING.get(t),
@@ -120,6 +126,7 @@ def main() -> None:
     scored = [r for r in rows if "transfer" in r]
     helped = [r for r in scored if r["separated"] and r["transfer"] > 0]
     hurt = [r for r in scored if r["separated"] and r["transfer"] < 0]
+    matters = [r for r in scored if r["matters"]]
     offsets = [r["frame_offset_vs_recorded"] for r in scored if r["frame_offset_vs_recorded"] is not None]
 
     out = {
@@ -129,7 +136,12 @@ def main() -> None:
             "tasks_helped": [r["task"] for r in helped],
             "tasks_hurt": [r["task"] for r in hurt],
             "tasks_unresolved": [r["task"] for r in scored if not r["separated"]],
+            "tasks_that_matter": [r["task"] for r in matters],
+            "resolved_but_negligible": [r["task"] for r in scored
+                                        if r["separated"] and not r["practically_significant"]],
             "mean_transfer": statistics.fmean([r["transfer"] for r in scored]) if scored else None,
+            "mean_relative_pct": statistics.fmean(
+                [r["relative_pct"] for r in scored if r["relative_pct"] is not None]) if scored else None,
             "mean_frame_offset_vs_recorded_ceilings": statistics.fmean(offsets) if offsets else None,
         },
         "notes": [
@@ -145,21 +157,33 @@ def main() -> None:
     args.out.write_text(json.dumps(out, indent=2) + "\n")
 
     print(f"{'task':20s} {'grp':6s} {'N':>7s} {'single':>8s} {'multi':>8s} {'transfer':>9s} "
-          f"{'2SE':>7s}  verdict")
+          f"{'rel%':>8s} {'err.red%':>9s} {'2SE':>7s}  verdict")
     for r in rows:
         if "transfer" not in r:
-            print(f"{r['task']:20s} {'':6s} {'':>7s} {'':>8s} {'':>8s} {'':>9s} {'':>7s}  "
-                  f"{r.get('skipped')} (single={r['n_single']}, multi={r['n_multi']})")
+            print(f"{r['task']:20s} {'':6s} {'':>7s} {'':>8s} {'':>8s} {'':>9s} {'':>8s} {'':>9s} "
+                  f"{'':>7s}  {r.get('skipped')} (single={r['n_single']}, multi={r['n_multi']})")
             continue
         se = r["se_of_difference"] or 0.0
         verdict = ("multi-task better" if r["separated"] and r["transfer"] > 0
                    else "single-task better" if r["separated"] else "unresolved")
+        if r["separated"] and not r["practically_significant"]:
+            verdict += " (negligible)"
+        # An error-reduction figure computed against a residual under 0.05 is not quotable.
+        err = ("n/a*" if r["near_ceiling"] or r["error_reduction_pct"] is None
+               else f"{r['error_reduction_pct']:+.1f}%")
         print(f"{r['task']:20s} {r['group']:6s} {r['n_train']:7d} {r['single_task_r2']:8.4f} "
-              f"{r['multi_task_r2']:8.4f} {r['transfer']:+9.4f} {2 * se:7.4f}  {verdict}")
+              f"{r['multi_task_r2']:8.4f} {r['transfer']:+9.4f} {r['relative_pct']:+7.2f}% "
+              f"{err:>9s} {2 * se:7.4f}  {verdict}")
+    print("  * error reduction suppressed where the single-task residual is under 0.05 — "
+          "a 1e-3 change there moves it by whole percentage points.")
 
     s = out["summary"]
     print(f"\n  helped: {s['tasks_helped'] or 'none'}")
     print(f"  hurt:   {s['tasks_hurt'] or 'none'}")
+    print(f"  resolved AND practically significant (|delta| >= 0.01): "
+          f"{s['tasks_that_matter'] or 'none'}")
+    if s["resolved_but_negligible"]:
+        print(f"  resolved but negligible: {s['resolved_but_negligible']}")
     if s["mean_frame_offset_vs_recorded_ceilings"] is not None:
         print(f"\n  same-regime single-task minus recorded H200 ceiling: "
               f"{s['mean_frame_offset_vs_recorded_ceilings']:+.4f} mean")

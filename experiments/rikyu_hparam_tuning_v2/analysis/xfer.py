@@ -37,7 +37,7 @@ import re
 import statistics
 from pathlib import Path
 
-from common import N_TRAIN, final_metrics, fnum, size_group
+from common import N_TRAIN, final_metrics, fnum, pct_views, size_group
 
 RUNID = re.compile(r"^xf_(?P<task>.+)_o(?P<order>\d+)$")
 
@@ -89,6 +89,8 @@ def main() -> None:
         ratio = (sd_multi / sd_single) if sd_single > 0 and len(values) > 1 else None
         if ratio is not None:
             ratios.append(ratio)
+        separated = bool(se) and abs(transfer) > 2 * se
+        views = pct_views(transfer, base["mean"])
         rows.append({
             "task": task,
             "group": size_group(task),
@@ -96,8 +98,10 @@ def main() -> None:
             "single_task_r2": base["mean"],
             "multi_task_r2": m_multi,
             "transfer": transfer,
+            **views,
+            "matters": separated and views["practically_significant"],
             "se_of_difference": se,
-            "separated": bool(se) and abs(transfer) > 2 * se,
+            "separated": separated,
             "n_orders": len(values),
             "sd_across_orders": sd_multi,
             "sd_across_seeds_single": sd_single,
@@ -108,6 +112,7 @@ def main() -> None:
     scored = [r for r in rows if "transfer" in r]
     helped = [r["task"] for r in scored if r["separated"] and r["transfer"] > 0]
     hurt = [r["task"] for r in scored if r["separated"] and r["transfer"] < 0]
+    matters = [r["task"] for r in scored if r["matters"]]
     ordering = {
         "n_tasks_with_ratio": len(ratios),
         "median_ratio": statistics.median(ratios) if ratios else None,
@@ -128,7 +133,12 @@ def main() -> None:
             "tasks_helped": helped,
             "tasks_hurt": hurt,
             "tasks_unresolved": [r["task"] for r in scored if not r["separated"]],
+            "tasks_that_matter": matters,
+            "resolved_but_negligible": [r["task"] for r in scored
+                                        if r["separated"] and not r["practically_significant"]],
             "mean_transfer": statistics.fmean([r["transfer"] for r in scored]) if scored else None,
+            "mean_relative_pct": statistics.fmean(
+                [r["relative_pct"] for r in scored if r["relative_pct"] is not None]) if scored else None,
             "by_group": {
                 g: statistics.fmean([r["transfer"] for r in scored if r["group"] == g])
                 for g in ("big", "mid", "small")
@@ -149,22 +159,32 @@ def main() -> None:
     args.out.write_text(json.dumps(out, indent=2) + "\n")
 
     print(f"{'task':24s} {'grp':6s} {'N':>7s} {'single':>8s} {'multi':>8s} {'transfer':>9s} "
-          f"{'2SE':>7s} {'sd_ord/sd_seed':>15s}  verdict")
+          f"{'rel%':>8s} {'2SE':>7s} {'sd_ord/sd_seed':>15s}  verdict")
     for r in sorted(rows, key=lambda r: -(r.get("transfer") or -9)):
         if "transfer" not in r:
-            print(f"{r['task']:24s} {'':6s} {'':>7s} {'':>8s} {'':>8s} {'':>9s} {'':>7s} {'':>15s}  "
-                  f"{r['skipped']} (n_orders={r['n_orders']})")
+            print(f"{r['task']:24s} {'':6s} {'':>7s} {'':>8s} {'':>8s} {'':>9s} {'':>8s} {'':>7s} "
+                  f"{'':>15s}  {r['skipped']} (n_orders={r['n_orders']})")
             continue
         verdict = ("multi-task better" if r["separated"] and r["transfer"] > 0
                    else "single-task better" if r["separated"] else "unresolved")
+        if r["separated"] and not r["practically_significant"]:
+            verdict += " (negligible)"
         ratio = r["order_to_seed_sd_ratio"]
+        rel = f"{r['relative_pct']:+.2f}%" if r["relative_pct"] is not None else "-"
         print(f"{r['task']:24s} {r['group']:6s} {r['n_train']:7d} {r['single_task_r2']:8.4f} "
-              f"{r['multi_task_r2']:8.4f} {r['transfer']:+9.4f} {2 * (r['se_of_difference'] or 0):7.4f} "
+              f"{r['multi_task_r2']:8.4f} {r['transfer']:+9.4f} {rel:>8s} "
+              f"{2 * (r['se_of_difference'] or 0):7.4f} "
               f"{(f'{ratio:.2f}' if ratio is not None else '-'):>15s}  {verdict}")
 
     s = out["summary"]
     print(f"\n  helped: {s['tasks_helped'] or 'none'}")
     print(f"  hurt:   {s['tasks_hurt'] or 'none'}")
+    print(f"  resolved AND practically significant (|delta| >= 0.01): "
+          f"{s['tasks_that_matter'] or 'none'}")
+    if s["resolved_but_negligible"]:
+        print(f"  resolved but negligible: {s['resolved_but_negligible']}")
+    if s["mean_relative_pct"] is not None:
+        print(f"  mean relative transfer: {s['mean_relative_pct']:+.2f}%")
     print("  mean transfer by group: " +
           "  ".join(f"{g} {v:+.4f}" for g, v in s["by_group"].items()))
     o = ordering

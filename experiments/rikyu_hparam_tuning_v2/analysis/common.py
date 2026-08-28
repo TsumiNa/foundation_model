@@ -111,6 +111,43 @@ LOWER_IS_BETTER = {"mae"}
 R2_RESOLUTION_FLOOR = 0.005
 
 
+# An R2 difference smaller than this is treated as practically nil regardless of how well the seeds
+# resolve it. The threshold is the user's, stated during the campaign: differences at the 1e-2 level
+# "are worth looking at academically and useless in practice". It is deliberately a fixed absolute
+# number rather than a multiple of sigma — statistical resolution says whether an effect is REAL,
+# and this says whether a real effect is worth acting on. Conflating the two is how a campaign ends
+# up shipping a configuration change that is measurable and pointless.
+PRACTICAL_R2_DELTA = 0.01
+
+
+def pct_views(delta: float, baseline: float) -> dict:
+    """Both percentage framings of an R2 difference, and the practical-significance gate.
+
+    ``relative`` is delta / baseline — "R2 went up by this percent". Stable, intuitive, and the one
+    to lead with.
+
+    ``error_reduction`` is delta / (1 - baseline) — "this fraction of the variance the baseline
+    failed to explain was recovered". It is the more meaningful quantity when a task has real
+    headroom, and it EXPLODES when it does not: formation_energy's single-task R2 is 0.9947, so its
+    residual is 0.0053 and a change of -0.0036 reads as -68%. That number is arithmetically correct
+    and would be grossly misleading as a headline, which is why it is reported beside the relative
+    view and the absolute delta rather than instead of them.
+
+    ``near_ceiling`` marks exactly that case, so a caller can refuse to quote the error-reduction
+    view where it is unstable.
+    """
+    rel = (delta / abs(baseline) * 100.0) if baseline else None
+    residual = 1.0 - baseline
+    err = (delta / residual * 100.0) if residual > 0 else None
+    return {
+        "relative_pct": rel,
+        "error_reduction_pct": err,
+        # Below a residual of 0.05, a 1e-3 change moves error_reduction by whole percentage points.
+        "near_ceiling": residual < 0.05,
+        "practically_significant": abs(delta) >= PRACTICAL_R2_DELTA,
+    }
+
+
 def size_group(task: str) -> str:
     n = N_TRAIN.get(task, 0)
     return "big" if n >= 20000 else ("mid" if n >= 3000 else "small")

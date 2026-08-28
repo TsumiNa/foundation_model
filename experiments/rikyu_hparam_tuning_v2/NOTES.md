@@ -467,6 +467,43 @@ purpose; it is not the arm-vs-arm test, and the arm-vs-arm test was already paid
 
 ## Multi-task transfer is real, and it goes the way the small tasks needed
 
+### Report it as a percentage — and then check the percentage did not lie
+
+An absolute R2 delta does not tell a reader whether it is a lot. +0.045 on zt is +6.85% relative,
+which is the number worth leading with. Two framings exist and they are not interchangeable:
+
+    relative        = delta / single-task R2        "R2 went up by this much"
+    error reduction = delta / (1 - single-task R2)  "this much of the residual was recovered"
+
+Error reduction is the more meaningful one where a task has headroom, and it **explodes where it
+does not**. formation_energy's single-task R2 is 0.9947, so its residual is 0.0053 and a change of
+-0.0036 reads as **-68.2%**. That is arithmetically correct and would be grossly misleading as a
+headline. Both scripts now suppress the error-reduction view below a residual of 0.05 and print a
+footnote saying so.
+
+### Statistically real and practically worth acting on are different questions
+
+The campaign's threshold, from the user: differences at the 1e-2 level "are worth looking at
+academically and useless in practice". Encoded as `PRACTICAL_R2_DELTA = 0.01` and applied ON TOP of
+statistical separation, which changes the answer:
+
+| task | ΔR² | relative | separated? | matters? |
+|---|---|---|---|---|
+| zt | +0.0452 | **+6.85%** | yes | **yes** |
+| magnetization | +0.0335 | **+4.40%** | yes | **yes** |
+| seebeck | −0.0145 | −2.05% | yes | **yes** |
+| formation_energy | −0.0036 | −0.36% | yes | **no — negligible** |
+| magnetic_moment | +0.0093 | +1.33% | no | no |
+| volume | +0.0016 | +0.27% | no | no |
+
+formation_energy is separated only because its seed σ is 0.0004. It is a real regression and
+nobody would change anything for it, so the conclusion covers **three** tasks, not four.
+
+Keeping both gates explicit matters because they fail in opposite directions: resolution alone
+promotes a 0.0036 change to a finding, and an effect-size threshold alone would promote a large
+unresolved difference to one. A result has to clear both.
+
+
 Measured at the adopted configuration (`L384_E0p002_M1e-05_P5`), 25-seed multi-task probe6 runs
 against 5-seed single-task runs that differ only in `pretrain.task_sequence`
 (`summary/transfer_adopted.json`):

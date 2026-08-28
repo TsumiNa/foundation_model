@@ -204,7 +204,11 @@ def slide_summary():
     vc = finals_vs_control(a)
     off = max(v["delta_vs_untuned"] for v in bal["vs_anchor"] if v["arm"].endswith("off"))
     on = max(v["delta_vs_untuned"] for v in bal["vs_anchor"] if v["arm"].endswith("on"))
-    helped = tr["summary"]["tasks_helped"]
+    # Lead with the relative percentage — +0.045 does not tell a reader whether that is a lot.
+    gainers = sorted((r for r in tr["per_task"]
+                      if r.get("matters") and r.get("transfer", 0) > 0),
+                     key=lambda r: -r["relative_pct"])
+    gains = "、".join(f"{r['task']} {r['relative_pct']:+.1f}%" for r in gainers)
     s = new("摘要", "每一条都可在 summary/*.json 中溯源")
     txt(s, 0.6, 1.5, 12.2, 5.4, [
         f"1. 调参收益不大但明确可分辨：采纳配置相对决赛内同为 {vc['n']} seed 的未调对照臂 "
@@ -213,7 +217,7 @@ def slide_summary():
         f"附带：采纳配置的 run 间 σ 是未调配置的 1/{vc['sigma_ratio']:.2f}。",
         "2. 真正的收益来自上游修复（PR #45 调度器节奏），不是调参。v1 的全部数字都在坏节奏下测得。",
         "3. 必须修正 v1 一条结论：其调参臂的负 deficit（“超过单任务天花板”）是天花板测低造成的假象。",
-        f"4. multi-task 对小数据任务确有正迁移：{('、'.join(helped)) or '（无）'} 明确获益，两个最大的任务略亏。",
+        f"4. multi-task 对小数据任务确有正迁移：{gains or '（无）'}；两个最大的任务略亏。",
         f"5. learnable loss balancer 有害且是机制性的：最好的关闭臂 {pct(off)} vs 最好的开启臂 {pct(on)}。不要上线。",
         "6. PCGrad 不适用：直接测量编码器逐任务梯度，未发现该方法赖以生效的方向冲突。",
         "7. 工程发现：两轮 campaign 的 GPU 利用率约 9%，单卡多任务打包实测提速 7.1×。",
@@ -479,16 +483,26 @@ def slide_transfer_fig():
 def slide_transfer_why():
     tr = load("transfer_adopted.json")
     sm = tr["summary"]
+    gainers = sorted((r for r in tr["per_task"]
+                      if r.get("matters") and r.get("transfer", 0) > 0),
+                     key=lambda r: -r["relative_pct"])
+    gains = "、".join(f"{r['task']} {r['relative_pct']:+.1f}%" for r in gainers)
     s = new("为什么这个问题卡住了另外三个",
             "既然存在单任务天花板，multi-task 只有确实让数据少的任务变好时才值得")
     txt(s, 0.6, 1.5, 12.2, 4.6, [
         "否则 loss balancing 和梯度手术都没有可修的东西 —— 小任务的正确答案就是单独训练。",
         "",
-        f"实测：{'、'.join(sm['tasks_helped']) or '无'} 明确获益；"
+        f"实测（相对 R² 提升）：{gains or '无'}；"
         f"{'、'.join(sm['tasks_hurt']) or '无'} 明确受损；其余无法分辨。",
         "",
         "顺序是单调的，而且是需要的那个方向：最小的两个任务和 zt 获益，最大的两个略亏。",
-        "formation_energy 的回退之所以可分辨，只是因为它的 seed σ 只有 0.0004 —— 真实，但可忽略。",
+        "",
+        "两种百分比口径含义不同：相对提升 = ΔR²/单任务R²（稳定，作头条）；",
+        "误差消减 = ΔR²/(1−单任务R²)（有余量时更有意义，接近天花板时会爆炸）。",
+        "formation_energy 残差只有 0.0053，−0.0036 按误差消减算是 −68% —— 算术正确，作头条误导。",
+        "",
+        f"实用门槛 |ΔR²| ≥ 0.01：{'、'.join(sm.get('tasks_that_matter', [])) or '无'} 值得写进结论；"
+        f"{'、'.join(sm.get('resolved_but_negligible', [])) or '无'} 可分辨但可忽略。",
         "",
         "所以多任务这套设置在自己的账上是划算的。不划算的是那个本该保护小任务的 balancer。",
         "",
@@ -503,19 +517,29 @@ def slide_xfer():
     sm = x["summary"]
     s = new("xfer：部署规模上的迁移，以及任务顺序有没有影响",
             "24 个任务各自被放在打乱序列的末尾，每任务 3 组随机顺序")
-    rows = [[r["task"], f"{r['n_train']:,}", f"{r['single_task_r2']:.4f}",
-             f"{r['multi_task_r2']:.4f}", f"{r['transfer']:+.4f}",
-             {"multi": "多任务更好", "single": "单任务更好"}.get(
-                 "multi" if r["transfer"] > 0 else "single", "") if r["separated"] else "无法分辨"]
-            for r in sorted([r for r in x["per_task"] if "transfer" in r],
-                            key=lambda r: -r["transfer"])[:10]]
+    scored = sorted([r for r in x["per_task"] if "transfer" in r],
+                    key=lambda r: -(r.get("relative_pct") or 0))
+    # Ten of twenty-four: the extremes at both ends, which is where the size relationship shows.
+    shown = scored[:6] + scored[-4:] if len(scored) > 10 else scored
+    rows = []
+    for r in shown:
+        verdict = ("多任务更好" if r["transfer"] > 0 else "单任务更好") if r["separated"] else "无法分辨"
+        if r["separated"] and not r.get("practically_significant", True):
+            verdict = "可分辨但可忽略"
+        rows.append([r["task"], f"{r['n_train']:,}", f"{r['single_task_r2']:.4f}",
+                     f"{r['transfer']:+.4f}",
+                     f"{r['relative_pct']:+.2f}%" if r.get("relative_pct") is not None else "-",
+                     verdict])
     table(s, 0.5, 1.45, 11.4,
-          ["任务", "标签数", "单任务", "多任务", "迁移", "判定"], rows,
-          col_w=[2.8, 1.5, 1.6, 1.6, 1.5, 2.4], size=10, head_size=10, colour_col=4)
-    txt(s, 0.5, 1.55 + 0.32 * (len(rows) + 1) + 0.2, 12.3, 1.8, [
+          ["任务", "标签数", "单任务 R²", "ΔR²", "相对提升", "判定"], rows,
+          col_w=[2.8, 1.4, 1.6, 1.5, 1.6, 2.5], size=10, head_size=10, colour_col=4)
+    txt(s, 0.5, 1.55 + 0.32 * (len(rows) + 1) + 0.2, 12.3, 2.0, [
         f"获益 {len(sm['tasks_helped'])} 个 / 受损 {len(sm['tasks_hurt'])} 个 / "
-        f"无法分辨 {len(sm['tasks_unresolved'])} 个。",
-    ], size=13)
+        f"无法分辨 {len(sm['tasks_unresolved'])} 个。"
+        + (f"  按实用门槛 |ΔR²| ≥ 0.01 过滤后，值得写进结论的是 "
+           f"{len(sm.get('tasks_that_matter', []))} 个。" if "tasks_that_matter" in sm else ""),
+    ] + ([f"仅显示 {len(rows)} / {len(scored)} 个任务（相对提升的两端）。"] if len(shown) < len(scored) else []),
+        size=12)
 
 
 @slide_guard
