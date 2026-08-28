@@ -71,7 +71,10 @@ def patch(path: Path, params: dict, runid: str) -> list[str]:
     missing = set(params) - seen
     if missing:
         raise SystemExit(f"{path.name}: keys not found, refusing to write: {sorted(missing)}")
-    header = f"# head block from the B' winner {runid} (applied identically to all three arms)"
+    # "adopted", not "winner": B' left sixteen configurations statistically tied, so the choice
+    # falls to the stated secondary criterion (fewest knobs moved) exactly as A' did — and the
+    # config that criterion selects is not the one that topped the 5-seed grid.
+    header = f"# head block ADOPTED from B' ({runid}); applied identically to all three arms"
     text = "\n".join(lines) + "\n"
     if header not in text:
         text = text.replace("[model]\n", f"[model]\n{header}\n", 1)
@@ -148,13 +151,13 @@ def write_consolidation_grid(configs: Path, runid: str) -> Path:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("runid", help="the winning stage-B runid, e.g. b_H256-128_HL0p001_X128-64_KL0p0001")
+    ap.add_argument("runid", help="the ADOPTED stage-B runid (not necessarily the grid leader)")
     ap.add_argument("--configs", type=Path, default=Path(__file__).resolve().parent.parent / "configs")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
     params = parse_runid(args.runid)
-    print(f"winner {args.runid} decodes to:")
+    print(f"adopted head block {args.runid} decodes to:")
     for k, v in params.items():
         print(f"  {k} = {v}")
     if args.dry_run:

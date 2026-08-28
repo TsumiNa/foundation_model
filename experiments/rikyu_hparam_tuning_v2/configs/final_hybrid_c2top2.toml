@@ -197,6 +197,7 @@ column = "Material type (label)"
 num_classes = 5
 
 [model]
+# head block ADOPTED from B' (b_H64_HL0p005_X128-64_KL0p0005); applied identically to all three arms
 latent_dim = 384
 encoder_hidden_dims = [256]
 head_hidden_dims = [64]
@@ -207,8 +208,8 @@ n_kernel = 15
 [training]
 max_epochs = 150
 encoder_lr = 0.001003
-head_lr = 5e-3
-kr_lr = 5e-4
+head_lr = 0.005
+kr_lr = 0.0005
 kr_weight_decay = 5e-5
 ae_lr = 5e-3
 accelerator = "gpu"

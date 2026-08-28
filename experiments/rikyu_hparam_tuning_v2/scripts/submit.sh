@@ -34,7 +34,10 @@ shift || true
 
 TIME=""
 THROTTLE=200
-PACK=1
+# ${PACK:-1}, not 1: a bare assignment silently discards `PACK=8 bash submit.sh <stage>`, which
+# reads as a working invocation and submits one GPU per run. That misfire actually happened — 100
+# GPUs requested for work that needs 13 — and the only signal was `pack=1` in the echoed summary.
+PACK=${PACK:-1}
 EXTRA_SBATCH=()
 while [ $# -gt 0 ]; do
     case "$1" in

@@ -312,24 +312,60 @@ def stage_a1r(n_points: int, n_seeds: int, rng_seed: int) -> tuple[list[tuple[st
     return rows, skipped
 
 
+# Longest prefix first: "HL0p001" must not be read as tag "H" with value "L0p001".
+_TAGS: list[tuple[str, str, object]] = [
+    ("HL", "training__head_lr", float),
+    ("KL", "training__kr_lr", float),
+    ("L", "model__latent_dim", int),
+    ("E", "training__encoder_lr", float),
+    ("M", "training__scheduler__min_lr", float),
+    ("P", "training__scheduler__patience", int),
+    ("F", "training__scheduler__factor", float),
+    ("H", "model__head_hidden_dims", "dims"),
+    ("X", "model__kr_x_hidden_dims", "dims"),
+]
+
+
 def parse_point(runid: str) -> dict:
-    """Recover the settings a stage-A runid encodes (inverse of ``point_label``)."""
+    """Recover the settings a runid encodes (inverse of ``point_label`` and stage_b's label).
+
+    Handles BOTH the stage-A tags (L/E/M/P/F) and the stage-B head tags (H/HL/X/KL).
+
+    It used to handle only the first set, and it SKIPPED anything it did not recognise. That made
+    ``parse_point("b_H64_HL0p005_X128-64_KL0p0005")`` return an empty dict — so a b3 finals built
+    from stage-B winners would have expanded into a hundred runs of the untuned baseline, all
+    identical, with no error anywhere. Unrecognised uppercase-led tokens now raise: a tag this
+    function cannot read is a bug, not a value to drop.
+
+    Lowercase tokens are stage prefixes and anchor names ("a1r129", "b", "base", "v1enc") and are
+    still skipped, which is what lets a full runid be passed in.
+
+    NOTE a stage-B label carries head settings ONLY — the encoder and scheduler it was measured on
+    come from the A'-adopted base and must be merged by the caller.
+    """
     point: dict = {}
     for bit in runid.split("_"):
+        if not bit or bit[0].islower():
+            continue  # stage prefix, anchor name
         if bit.startswith("s") and bit[1:].isdigit():
             continue  # seed suffix
-        key, _, raw = bit[0], None, bit[1:]
-        val = raw.replace("p", ".")
-        if key == "L":
-            point["model__latent_dim"] = int(raw)
-        elif key == "E":
-            point["training__encoder_lr"] = float(val)
-        elif key == "M":
-            point["training__scheduler__min_lr"] = float(val)
-        elif key == "P" and raw.isdigit():
-            point["training__scheduler__patience"] = int(raw)
-        elif key == "F":
-            point["training__scheduler__factor"] = float(val)
+        for tag, key, kind in _TAGS:
+            if not bit.startswith(tag):
+                continue
+            raw = bit[len(tag):]
+            if kind == "dims":
+                point[key] = [int(v) for v in raw.split("-")]
+            elif kind is int:
+                if not raw.isdigit():
+                    break  # e.g. a future "P" tag carrying a non-integer: fall through to raise
+                point[key] = int(raw)
+            else:
+                point[key] = float(raw.replace("p", "."))
+            break
+        else:
+            raise SystemExit(f"parse_point: unrecognised tag {bit!r} in runid {runid!r}")
+        if key not in point and bit.startswith(tag):
+            raise SystemExit(f"parse_point: bad value in token {bit!r} of runid {runid!r}")
     return point
 
 
@@ -559,7 +595,8 @@ def stage_bal(bases: list[str], n_seeds: int) -> tuple[list[tuple[str, str]], li
     return rows, skipped
 
 
-def stage_finals(prefix: str, winners: list[str], n_seeds: int, include_anchors: bool):
+def stage_finals(prefix: str, winners: list[str], n_seeds: int, include_anchors: bool,
+                 base_point: dict | None = None):
     """The decisive step: promoted configurations re-measured at many seeds.
 
     v1's ranking failed here and said so honestly — its top three were 1.5-1.8% apart while three
@@ -570,7 +607,9 @@ def stage_finals(prefix: str, winners: list[str], n_seeds: int, include_anchors:
     rows: list[tuple[str, str]] = []
     skipped: list[str] = []
     for w in winners:
-        point = parse_point(w)
+        # base_point carries the axes the label does not: a stage-B head label says nothing about
+        # the encoder or scheduler it was measured on.
+        point = dict(base_point or {}, **parse_point(w))
         bad = validate_point(point)
         label = f"{prefix}_" + w.split("_", 1)[1] if "_" in w else f"{prefix}_{w}"
         if bad:
@@ -703,7 +742,13 @@ def main() -> None:
     elif args.stage == "b3":
         if not args.winners:
             raise SystemExit("b3 needs --winners")
-        rows, skipped = stage_finals("b3", args.winners, n or 25, not args.no_anchors)
+        if not args.base:
+            raise SystemExit(
+                "b3 needs --base (the adopted A' runid): a stage-B label encodes head settings "
+                "only, so without it every arm would collapse to the untuned baseline"
+            )
+        rows, skipped = stage_finals("b3", args.winners, n or 25, not args.no_anchors,
+                                     base_point=parse_point(args.base))
 
     write(args.stage, rows, skipped)
 
