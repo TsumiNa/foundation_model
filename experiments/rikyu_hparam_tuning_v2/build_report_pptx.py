@@ -654,30 +654,41 @@ def slide_packing():
 def slide_adopt():
     a = load("finals_a.json")
     s = new("采纳与否决", "")
-    txt(s, 0.6, 1.4, 6.2, 3.4, [
-        "采纳配置（粗体为实际改动的三个值）",
+    txt(s, 0.5, 1.35, 6.6, 4.2, [
+        "采纳配置 —— 实际改动的只有三个数",
         "",
-        "  model.latent_dim        = 384      (was 128)",
-        "  training.encoder_lr     = 2e-3     (was 5e-3)",
-        "  scheduler.min_lr        = 1e-5     (was 1e-4)",
-        "  scheduler.patience      = 5        = 默认值",
-        "  scheduler.factor        = 0.5      = 默认值",
+        "  model.latent_dim        = 384       <- 改了 (128)",
+        "  training.encoder_lr     = 2e-3      <- 改了 (5e-3)",
+        "  scheduler.min_lr        = 1e-5      <- 改了 (1e-4)",
+        "  scheduler.patience      = 5         = 默认",
+        "  scheduler.factor        = 0.5       = 默认",
+        "  model.head_hidden_dims  = [64]      = 默认",
+        "  training.head_lr        = 5e-3      = 默认",
+        "  model.kr_x_hidden_dims  = [128,64]  = 默认",
+        "  training.kr_lr          = 5e-4      = 默认",
+        "  early_stopping.patience = 24        = 默认",
         "  learnable_loss_balancer = false",
-    ], size=12, mono=True)
-    table(s, 6.9, 1.4, 5.9, ["项目", "判定"],
+    ], size=11, mono=True)
+    table(s, 7.4, 1.35, 5.5, ["项目", "判定"],
           [["learnable loss balancer", "否决"],
            ["PCGrad", "不引入"],
+           ["调 head（容量/LR/KR 分支）", "不采纳"],
+           ["早停 patience 24 → 40", "不采纳"],
            ["向下扩展 LR 搜索范围", "不需要"],
            ["关闭 LR 调度", "否决"]],
-          col_w=[3.9, 2.0], size=12)
-    txt(s, 0.6, 4.9, 12.2, 2.2, [
+          col_w=[3.6, 1.9], size=11)
+    txt(s, 7.4, 4.1, 5.5, 0.9,
+        ["每一个“停在默认”都是测出来的，不是没测。"], size=11, color=MUT)
+    txt(s, 0.5, 5.15, 12.4, 2.2, [
         "本轮确立了什么：",
         "  1. 探针必须覆盖大/中/小三档 —— σ 从 8.48% 降到 2.05%，campaign 才有判断力。",
         "  2. 名次要用 seed 买，不是用网格点买 —— 5 seed 的榜首在 25 seed 下掉到第 10。",
         "  3. 继承来的基线必须在当前régime重测 —— 这一条撤回了 v1 的一个已发布结论。",
         "  4. 分组均值不能当结论 —— 两个任务一正一负相消，看起来像“接近天花板”。",
         "  5. “半接上、静默失效”的功能是系统性问题：DDP、checkpoint dict、loss balancer 三例。",
-    ], size=13)
+        "  6. 凡是“在当前最优上”做的实验，最优一变就必须重做 —— 本轮踩了两次。",
+        "  7. 管线在固定 seed 下位级确定，所以本报告所有 σ 都是配置级方差，而非运行抖动。",
+    ], size=12)
     return a
 
 
