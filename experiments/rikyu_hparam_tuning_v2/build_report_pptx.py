@@ -437,6 +437,60 @@ def slide_stage_b():
 
 
 @slide_guard
+def slide_b_finals():
+    import math
+    import statistics
+
+    b5 = load("stage_b.json")
+    b25 = load("finals_b.json")
+    five = {e["config"]: e["score_mean"] for e in b5["ranking"]}
+    default = "H64_HL0p005_X128-64_KL0p0005"
+    rows, xs, ys = [], [], []
+    entries = []
+    for name, arm in b25["arms"].items():
+        short = name.replace("b3_", "")
+        f5 = five.get("b_" + short)
+        s = arm["score"]
+        entries.append((short, f5, s["mean"], s["sigma"]))
+    entries.sort(key=lambda r: -(r[1] or 0))
+    for short, f5, m25, sg in entries:
+        tag = "  ← 默认" if short == default else ""
+        rows.append([short + tag, pct(f5) if f5 is not None else "-", pct(m25),
+                     pct(m25 - f5) if f5 is not None else "-", f"{sg * 100:.3f}%"])
+        if f5 is not None:
+            xs.append(sg)
+            ys.append(-(m25 - f5))
+    s_ = new("b3 决赛：采纳决定从“按规则选的”变成“测出来的”",
+             f"4 个臂 × 25 seed = {b25['n_runs']} run，220/220 通过训练校验")
+    table(s_, 0.5, 1.45, 9.4,
+          ["配置", "5 seed", "25 seed", "跌幅", "σ(25)"], rows,
+          col_w=[4.4, 1.2, 1.2, 1.2, 1.2], size=10, head_size=10, colour_col=3)
+    lead = entries[0]
+    dflt = next(e for e in entries if e[0] == default)
+    e5, e25 = lead[1] - dflt[1], lead[2] - dflt[2]
+    need = b25.get("seeds_that_would_resolve_the_ties", {})
+    pair = next((v for k, v in need.items() if default in k), None)
+    r = None
+    if len(xs) > 2:
+        mx, my = statistics.fmean(xs), statistics.fmean(ys)
+        den = math.sqrt(sum((x - mx) ** 2 for x in xs) * sum((y - my) ** 2 for y in ys))
+        r = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den if den else None
+    lines = ["答案：没有任何 head 配置胜过“什么都不改”。", "",
+             f"榜首对默认的优势：{pct(e5)} → {pct(e25)}",
+             f"    坍缩 {(1 - abs(e25) / abs(e5)) * 100:.0f}%"]
+    if pair:
+        lines.append(f"    分开这两者需要 {pair:,} 个 seed")
+    lines += ["", "默认 head 块几乎没动（跌 0.060%），",
+              "三个调过的都掉了 0.5–0.66%；σ 也最小。"]
+    if r is not None:
+        lines += ["", f"σ 与跌幅的相关系数 {r:+.3f}", "—— 与 A′ 测到的是同一个机制。"]
+    lines += ["", "同一轮 campaign 内第二次独立复现 winner’s curse：",
+              "A′ 的 5 seed 榜首掉到第 10，B′ 的 5 seed 榜首",
+              "优势全部蒸发。处方都一样：加 seed，不是加网格点。"]
+    txt(s_, 10.1, 1.45, 2.9, 5.6, lines, size=10)
+
+
+@slide_guard
 def slide_stage_c():
     c = load("stage_c.json")
     rows = []
@@ -723,6 +777,7 @@ def main() -> None:
     slide_a4()
     slide_a2b()
     slide_stage_b()
+    slide_b_finals()
     slide_stage_c()
     slide_ceiling_fig()
     slide_ceiling_retraction()

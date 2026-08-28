@@ -394,6 +394,40 @@ stage may be placed beside it.
 
 ---
 
+## The winner's curse, reproduced a second time — and the adoption rule vindicated
+
+B' promoted four configurations to 25 seeds: the 5-seed grid leader, the two best single-knob
+changes, and the default head block (i.e. "change nothing", which is IN the grid).
+
+| config | 5 seeds | 25 seeds | drop | σ at 25 |
+|---|---|---|---|---|
+| grid leader `H64_HL0p001_X256-128-64_KL0p0001` | +2.499% | +1.838% | **−0.661%** | 2.089% |
+| `H512-256-128_HL0p005_X128-64_KL0p0005` | +2.139% | +1.574% | −0.565% | 1.072% |
+| `H64_HL0p001_X128-64_KL0p0005` | +2.100% | +1.595% | −0.505% | 1.628% |
+| **default head block** | +1.891% | **+1.831%** | **−0.060%** | **0.853%** |
+
+* the leader's edge over changing nothing went from **+0.608% to +0.007% — a 99% collapse**;
+* separating those two would take **172 360 seeds**, which is the honest way to write "identical";
+* the default barely moved (−0.060%) while all three tuned configs fell 0.5–0.66%;
+* correlation(σ, drop from 5→25 seeds) = **+0.748**.
+
+This is the SECOND independent reproduction of the winner's curse inside one campaign. A' had it
+too: the 5-seed grid leader `a1r129` finished tenth of ten at 25 seeds, with the second-largest σ
+of the finalists. Same mechanism both times — **a high-σ configuration wins a small-sample lottery**
+— and the same prescription: buy seeds, not grid points. More grid points sell more lottery tickets.
+
+**What makes this the useful version of the lesson**: the adoption decision was made BEFORE b3 ran,
+from the stated rule (when the top is tied, take the fewest knobs moved). b3 did not change the
+answer, it changed its status — from a judgement call to a measurement. A rule that only looks
+right after the confirming experiment is not a rule; this one was committed to in advance and then
+held.
+
+**Corollary for future campaigns**: put the do-nothing configuration IN the grid as a scored point
+rather than treating it as an implicit baseline. It cost one config slot out of 24 and it is the
+reason "the heads need no tuning" is a ranked result instead of an argument.
+
+---
+
 ## Early stopping: 24 vs 40, re-verified on the base that was actually adopted
 
 | arm | vs untuned anchor | 2SE | σ | wall clock, 6 steps |
