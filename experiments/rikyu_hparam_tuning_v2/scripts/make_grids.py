@@ -513,7 +513,14 @@ def stage_xfer(base: str, n_orders: int, rng_seed: int, tasks: list[str]):
             order.append(task)  # the task under test always arrives last
             rows.append((
                 f"xf_{task}_o{k}",
-                overrides(pretrain__task_sequence=order, **point) + f" --seed {SEED0 + k}",
+                # --resume, unlike the probe stages. Those omit it because a probe run is short
+                # enough that a walltime kill is cheaper to redo than the partial
+                # metrics_table.csv it leaves behind. An xfer run is a full 24-task sequence —
+                # stage-C length — and it writes a per-step checkpoint.pt exactly as stage C
+                # does, so a kill without this flag throws away up to a day of work that was
+                # already recoverable.
+                overrides(pretrain__task_sequence=order, **point)
+                + f" --seed {SEED0 + k} --resume",
             ))
     return rows, []
 
