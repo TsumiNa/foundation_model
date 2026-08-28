@@ -173,19 +173,43 @@ def slide_title(date: str):
     ], size=13, color=MUT)
 
 
+def finals_vs_control(a: dict) -> dict:
+    """Leader vs the finals' OWN 25-seed untuned control, on each arm's measured sigma.
+
+    The `vs_anchor` field in the summary compares against the stage-0 reference, which has nine
+    seeds; quoting a 25-seed arm against it mixes seed counts in the standard error. The finals
+    deliberately include an untuned arm at the same seed count, and that is the honest baseline.
+    """
+    import math
+
+    arms = a["arms"]
+    control = next((k for k in arms if k.endswith("_base")), None)
+    if control is None:
+        raise Missing("no untuned control arm in the finals")
+    lead, base = arms[a["leader"]]["score"], arms[control]["score"]
+    delta = lead["mean"] - base["mean"]
+    se = math.sqrt(lead["sigma"] ** 2 / lead["n"] + base["sigma"] ** 2 / base["n"])
+    return {"delta": delta, "two_se": 2 * se, "resolved": abs(delta) > 2 * se,
+            "lead_sigma": lead["sigma"], "base_sigma": base["sigma"],
+            "sigma_ratio": base["sigma"] / lead["sigma"] if lead["sigma"] else None,
+            "control": control, "n": lead["n"]}
+
+
 @slide_guard
 def slide_summary():
     a = load("finals_a.json")
     bal = load("stage_bal.json")
     tr = load("transfer_adopted.json")
-    lead = next(v for v in a["vs_anchor"] if v["arm"] == a["leader"])
+    vc = finals_vs_control(a)
     off = max(v["delta_vs_untuned"] for v in bal["vs_anchor"] if v["arm"].endswith("off"))
     on = max(v["delta_vs_untuned"] for v in bal["vs_anchor"] if v["arm"].endswith("on"))
     helped = tr["summary"]["tasks_helped"]
     s = new("摘要", "每一条都可在 summary/*.json 中溯源")
     txt(s, 0.6, 1.5, 12.2, 5.4, [
-        f"1. 调参收益小且刚好可分辨：采纳配置相对未调锚点 {pct(lead['delta_vs_untuned'])}；"
-        f"前 {1 + len(a['statistically_tied_with_leader'])} 名统计上无法区分。",
+        f"1. 调参收益不大但明确可分辨：采纳配置相对决赛内同为 {vc['n']} seed 的未调对照臂 "
+        f"{pct(vc['delta'])}（2SE {vc['two_se'] * 100:.2f}%，阈值的 {abs(vc['delta']) / vc['two_se']:.1f} 倍）；"
+        f"但前 {1 + len(a['statistically_tied_with_leader'])} 名彼此统计上无法区分。"
+        f"附带：采纳配置的 run 间 σ 是未调配置的 1/{vc['sigma_ratio']:.2f}。",
         "2. 真正的收益来自上游修复（PR #45 调度器节奏），不是调参。v1 的全部数字都在坏节奏下测得。",
         "3. 必须修正 v1 一条结论：其调参臂的负 deficit（“超过单任务天花板”）是天花板测低造成的假象。",
         f"4. multi-task 对小数据任务确有正迁移：{('、'.join(helped)) or '（无）'} 明确获益，两个最大的任务略亏。",
@@ -271,28 +295,32 @@ def slide_grid():
 @slide_guard
 def slide_finals():
     a = load("finals_a.json")
-    byarm = {v["arm"]: v for v in a["vs_anchor"]}
-    rows = [[arm.replace("a3_", ""), pct(byarm[arm]["delta_vs_untuned"])]
-            for arm in a["ranking"][:6] if arm in byarm]
-    s = new(f"Stage A′ 决赛（25 seed，{a['n_runs']} run）",
-            "前几名统计上并列 —— 采纳规则因此落到公开声明的次级判据")
-    table(s, 0.6, 1.5, 8.4, ["配置", "相对未调锚点"], rows, col_w=[6.0, 2.4], colour_col=1)
+    vc = finals_vs_control(a)
+    ranked = sorted(a["arms"].items(), key=lambda kv: -kv[1]["score"]["mean"])
+    rows = [[k.replace("a3_", ""), pct(v["score"]["mean"]), f"{v['score']['sigma'] * 100:.2f}%"]
+            for k, v in ranked]
+    s = new(f"Stage A′ 决赛（{vc['n']} seed，{a['n_runs']} run）",
+            "决赛内含同 seed 数的未调对照臂 —— 增益在同一 seed 数下比出，不是 25 seed 比 9 seed")
+    table(s, 0.6, 1.45, 7.6, ["配置", "相对 stage-0 参考", "run 间 σ"], rows,
+          col_w=[4.6, 1.6, 1.4], size=10, head_size=10, colour_col=1)
     tied = a["statistically_tied_with_leader"]
-    need_seeds = a["seeds_that_would_resolve_the_ties"]
-    top_pairs = [f"    {k.replace('a3_', '')} → 需 {v} seed"
-                 for k, v in list(need_seeds.items())[:3]]
-    txt(s, 9.2, 1.5, 3.9, 5.0, [
-        f"与榜首并列：{len(tied)} 个",
+    need_seeds = list(a["seeds_that_would_resolve_the_ties"].items())[:2]
+    txt(s, 8.5, 1.45, 4.5, 5.6, [
+        f"采纳 vs 未调对照：{pct(vc['delta'])}",
+        f"2SE {vc['two_se'] * 100:.2f}% → "
+        f"{'可分辨' if vc['resolved'] else '不可分辨'}（阈值的 {abs(vc['delta']) / vc['two_se']:.1f} 倍）",
         "",
-        "要把它们分开所需的 seed 数：",
-        *top_pairs,
+        f"但前 {1 + len(tied)} 名彼此并列。分开所需 seed：",
+        *[f"    {k.split(' vs ')[1].replace('a3_', '')[:26]} → {v}" for k, v in need_seeds],
         "",
-        "采纳：",
-        a["leader"].replace("a3_", ""),
+        "好配置有一部分好在“稳”：",
+        f"    采纳 σ {vc['lead_sigma'] * 100:.2f}%  vs  未调 σ {vc['base_sigma'] * 100:.2f}%",
+        f"    （1/{vc['sigma_ratio']:.2f}）",
         "",
-        "理由（次级判据，公开声明）：",
-        "四者中最简单 —— 网格点、整数 patience、无自定义 factor。",
-    ], size=12)
+        "winner’s curse：5 seed 的榜首 a1r129 在",
+        "25 seed 下掉到最后一名，而它的 σ 是十个臂",
+        "里第二大的 —— σ 大的配置更容易赢小样本抽签。",
+    ], size=11)
 
 
 @slide_guard

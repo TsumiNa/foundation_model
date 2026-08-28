@@ -394,6 +394,49 @@ stage may be placed beside it.
 
 ---
 
+## Tuning bought reproducibility as much as it bought a mean
+
+Two corrections to how the A' finals were being read, both found by looking at the arms' own
+statistics instead of the `vs_anchor` field.
+
+**1. The right baseline was already in the finals.** `vs_anchor` compares each arm to the stage-0
+reference, which has NINE seeds; quoting a 25-seed arm against it mixes seed counts inside the
+standard error. The finals deliberately include an untuned arm (`a3_base`) at the same 25 seeds,
+and against that:
+
+    adopted  +1.83%   untuned control  +0.28%   ->  delta +1.56%, 2SE 0.84%, RESOLVED
+
+1.9x the resolution threshold, not the "barely resolvable" the anchor comparison suggested.
+
+**2. σ is not noise here, it is part of the result.** Per-arm run-to-run σ over the ten finalists:
+
+| rank | arm | mean | σ |
+|---|---|---|---|
+| 1 | `L384_E0p002_M1e-05_P5` | +1.83% | **0.85%** |
+| 2 | `L384_E0p001003_M1p023e-06_P4_F0p3` | +1.44% | 0.54% |
+| 3 | `L384_E0p0042_M4p975e-08_P4_F0p37` | +1.35% | 0.53% |
+| 4 | `L384_E0p003_M1e-06_P5` | +1.34% | 1.06% |
+| 9 | `a3_base` (untuned control) | +0.28% | 1.93% |
+| 10 | `a1r129` (the 5-seed grid leader) | +0.19% | 3.03% |
+
+**correlation(σ, 25-seed mean) = −0.844.** The top four average σ 0.75%; the bottom six run
+1.93–3.56%. The adopted configuration is **2.26× more reproducible** than the untuned one — a
+practical benefit the mean delta does not show, and one worth quoting when +1.56% on its own looks
+like a thin return for 1080 runs.
+
+It also completes the winner's-curse story mechanistically rather than anecdotally. `a1r129` won
+the 5-seed grid at +2.305% and finished LAST at 25 seeds (+0.192%) — and its σ, 3.03%, is the
+second largest of the ten. High-σ configurations win small-sample lotteries. Adding grid points
+makes that worse (more lottery tickets); adding seeds is the only thing that treats it.
+
+### Methodology lesson
+
+When a summary offers a convenient pre-computed comparison, check what it is comparing against
+before quoting it. `vs_anchor` exists for continuity with v1's scale and is correct for that
+purpose; it is not the arm-vs-arm test, and the arm-vs-arm test was already paid for.
+
+---
+
 ## Multi-task transfer is real, and it goes the way the small tasks needed
 
 Measured at the adopted configuration (`L384_E0p002_M1e-05_P5`), 25-seed multi-task probe6 runs
