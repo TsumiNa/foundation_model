@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 from pptx import Presentation
@@ -232,11 +233,18 @@ def slide_probe():
               ("magnetization", 1160, "small"), ("magnetic_moment", 851, "small")]],
           col_w=[2.6, 1.7, 1.7])
     need_seeds = cal["seeds_needed_to_resolve"]
-    txt(s, 7.0, 1.5, 5.8, 4.6, [
-        f"单run σ = {cal['sigma_per_run'] * 100:.2f}%   （v1: {cal['v1_probe3_band_for_reference'] * 100:.2f}% 带宽）",
+    # v1 published a RANGE at n=3, not a sigma. E[range] = d2(n)*sigma, d2(3)=1.693 — putting the
+    # two side by side without that conversion reads as a 4x noise gap where the real one is 2.4x.
+    v1_sigma = cal["v1_probe3_band_for_reference"] / 1.693
+    v1_seeds_1pct = math.ceil((2 * v1_sigma / 0.01) ** 2)
+    txt(s, 7.0, 1.5, 5.8, 4.8, [
+        f"v2 单 run σ = {cal['sigma_per_run'] * 100:.2f}%   （9 seed 实测）",
+        f"v1 σ ≈ {v1_sigma * 100:.2f}%   ← 由其 3 seed 极差 "
+        f"{cal['v1_probe3_band_for_reference'] * 100:.2f}% 换算（E[极差] = d₂(n)·σ，d₂(3)=1.693）",
         "",
-        "要分辨这么大的真实差异，需要的 seed 数：",
+        "要分辨这么大的真实差异，v2 需要的 seed 数：",
         *[f"    {float(k) * 100:.1f}%  →  {v} seed" for k, v in need_seeds.items()],
+        f"        （同样分辨 1.0%，v1 需要 {v1_seeds_1pct} 个）",
         "",
         "排除 electrical_resistivity（天花板 0.162，无分辨力）",
         "排除 magnetic_susceptibility（58 个标签）",

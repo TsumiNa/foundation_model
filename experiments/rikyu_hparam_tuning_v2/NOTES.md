@@ -394,6 +394,34 @@ stage may be placed beside it.
 
 ---
 
+## A range is not a σ, and comparing two ranges compares two seed counts
+
+v1 published its probe noise as a **band of 8.48%** — the range of three seeds. v2 measures
+**σ = 2.05%** over nine. Putting those two numbers side by side is the mistake, and a draft of the
+merged report made it: it quoted "v1 would need 288 seeds to resolve 1%, v2 needs 17", a 17×
+difference that is mostly an artefact of the units.
+
+`n ≈ (2σ/target)²` takes a σ. Feeding it a range inflates n by the square of `d₂(n)`, the expected
+range of a normal sample in units of σ — 1.693 at n=3, 2.970 at n=9. Converting first:
+
+    v1  range 8.48% at n=3  ->  σ ≈ 5.01%  ->  101 seeds to resolve 1%
+    v2  σ 2.05% at n=9                     ->   17 seeds
+
+The real gap is **5.9×**, still the headline that justified probe6, but not 17×.
+
+The trap is worse than a unit slip because `d₂` GROWS with the seed count. Comparing v1's 3-seed
+range to v2's 9-seed range would have shown v2's noise as 6.68% against v1's 8.48% — a 21%
+improvement — when the underlying σ actually more than halved. **Measuring more seeds makes the
+range go up.** Any figure or sentence that compares bands across different seed counts is
+comparing seed counts.
+
+`analysis/common.py:band()` already returns `sigma` and `resolves` alongside `range`, and its
+docstring says why. The lesson is that carrying the safe quantity is not enough if the unsafe one
+is the one that gets quoted — so both the report and the deck now show the conversion inline rather
+than the two raw numbers.
+
+---
+
 ## Tuning bought reproducibility as much as it bought a mean
 
 Two corrections to how the A' finals were being read, both found by looking at the arms' own
