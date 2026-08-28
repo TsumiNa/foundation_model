@@ -38,7 +38,7 @@ import json
 import statistics
 from pathlib import Path
 
-from common import CEILING, N_TRAIN, final_metrics
+from common import CEILING, CEILING_SAME_REGIME, N_TRAIN, final_metrics
 
 GROUPS = {
     "big": [t for t, n in N_TRAIN.items() if n >= 20000 and t != "material_type"],
@@ -51,6 +51,40 @@ ACCURACY_TASKS = {"material_type"}
 EXCLUDED = {"magnetic_susceptibility"}
 
 
+def read_arm(path: Path) -> tuple[dict[str, dict], int | str]:
+    """Metrics for one arm, from whichever layout the arm's workflow produced.
+
+    A pretrain arm writes ``training/stepNN_<task>/<task>_metrics.json`` and is read at its last
+    step. A consolidation arm is a FINETUNE, not a sequence, so it writes one flat
+    ``training/finetune/<task>_metrics.json`` per task and has no steps at all. Both are legitimate
+    stage-C arms and the report compares them side by side, so this dispatches rather than treating
+    the second layout as a missing run — which is what it looked like until v1's consolidated arms
+    were re-read and reported themselves as "no step directories".
+    """
+    try:
+        return final_metrics(path)
+    except FileNotFoundError:
+        finetune = path / "training" / "finetune"
+        files = sorted(finetune.glob("*_metrics.json"))
+        if not files:
+            raise
+        metrics = {f.name[: -len("_metrics.json")]: json.load(open(f)) for f in files}
+        return metrics, "finetune"
+
+
+def deficits_against(r2: dict[str, float], ceiling: dict[str, float]) -> dict:
+    """Mean (ceiling − achieved) per size group, plus the worst group and the overall mean."""
+    out: dict[str, float | None] = {}
+    for group, tasks in GROUPS.items():
+        vals = [ceiling[t] - r2[t] for t in tasks if t in r2 and t in ceiling]
+        out[group] = statistics.fmean(vals) if vals else None
+    grouped = [v for v in out.values() if v is not None]
+    out["worst_group"] = max(grouped) if grouped else None
+    every = [ceiling[t] - r2[t] for t in r2 if t in ceiling]
+    out["all"] = statistics.fmean(every) if every else None
+    return out
+
+
 def score(metrics: dict[str, dict]) -> dict:
     r2 = {
         t: m["r2"]
@@ -61,17 +95,9 @@ def score(metrics: dict[str, dict]) -> dict:
         "n_tasks": len(r2),
         "mean_r2": statistics.fmean(r2.values()) if r2 else float("nan"),
         "per_task": {t: round(v, 4) for t, v in sorted(r2.items())},
-        "deficit": {},
+        "deficit": deficits_against(r2, CEILING_SAME_REGIME),
+        "deficit_vs_recorded_h200": deficits_against(r2, CEILING),
     }
-    for group, tasks in GROUPS.items():
-        deficits = [CEILING[t] - r2[t] for t in tasks if t in r2 and t in CEILING]
-        result["deficit"][group] = statistics.fmean(deficits) if deficits else None
-    all_def = [CEILING[t] - r2[t] for t in r2 if t in CEILING]
-    result["deficit"]["worst_group"] = (
-        max(v for v in result["deficit"].values() if v is not None)
-        if any(v is not None for v in result["deficit"].values()) else None
-    )
-    result["deficit"]["all"] = statistics.fmean(all_def) if all_def else None
     for task in ACCURACY_TASKS:
         if task in metrics:
             result[task] = {k: metrics[task].get(k) for k in ("accuracy", "macro_f1")}
@@ -119,7 +145,7 @@ def main() -> None:
     for spec in args.arm:
         label, _, path = spec.partition("=")
         try:
-            metrics, last_step = final_metrics(Path(path))
+            metrics, last_step = read_arm(Path(path))
         except FileNotFoundError as exc:
             missing.append(f"{label}: {exc}")
             continue
@@ -164,9 +190,14 @@ def main() -> None:
         "attribution": attribution,
         "transfer": transfer_check(arms, probe_ranking),
         "notes": [
-            "deficit = single-task ceiling (H200, untuned arch) − final R², averaged in the group. "
-            "The ceilings come from other hardware and another container, so they are a reference "
-            "frame shared with REPORT_20260809, never a target.",
+            "deficit = single-task ceiling − final R², averaged in the group. The headline "
+            "`deficit` uses CEILING_SAME_REGIME: single-task runs made in THIS campaign — 0.3.2 "
+            "container, adopted configuration, five seeds, differing from an arm only in "
+            "pretrain.task_sequence.",
+            "`deficit_vs_recorded_h200` repeats it against the inherited H200 ceilings so the "
+            "merged report can line up with REPORT_20260809. Those are too low in 17 of 23 tasks "
+            "(+0.0275 mean, up to +0.104), so they understate every deficit — that frame, not "
+            "the model, is what produced v1's negative mid/small deficits.",
             "groups: big >=20k (6 tasks) · mid 3k-8.1k (14) · small <=1.2k (2). "
             "material_type is an accuracy task and is reported separately; magnetic_susceptibility "
             "(58 labels) is excluded, as in the replay campaign.",
@@ -177,15 +208,18 @@ def main() -> None:
     }
 
     width = max(len(a["label"]) for a in arms)
+    print("deficit vs same-regime ceilings; the '(old frame)' row repeats it vs the H200 set\n")
     print(f"{'arm':{width}s}  {'tasks':>5s}  {'mean R2':>8s}  {'big':>7s}  {'mid':>7s}  {'small':>7s}  material_type")
     for a in arms:
         clf = a.get("material_type") or {}
         clf_text = (f"acc {clf['accuracy']:.3f} / F1 {clf['macro_f1']:.3f}"
                     if clf.get("accuracy") is not None else "-")
-        d = a["deficit"]
+        d, h = a["deficit"], a["deficit_vs_recorded_h200"]
         fmt = lambda v: f"{v:7.4f}" if v is not None else "      -"  # noqa: E731
         print(f"{a['label']:{width}s}  {a['n_tasks']:5d}  {a['mean_r2']:8.4f}  "
               f"{fmt(d['big'])}  {fmt(d['mid'])}  {fmt(d['small'])}  {clf_text}")
+        print(f"{'':{width}s}  {'':>5s}  {'(old frame)':>8s}  "
+              f"{fmt(h['big'])}  {fmt(h['mid'])}  {fmt(h['small'])}")
     print()
     for name, entry in attribution.items():
         v = entry["delta_mean_r2"]

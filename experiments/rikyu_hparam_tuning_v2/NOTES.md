@@ -394,6 +394,72 @@ stage may be placed beside it.
 
 ---
 
+## The inherited ceilings were a broken measurement frame
+
+Every deficit either campaign has published was computed against single-task "ceilings" taken from
+the replay campaign's warm-restart control. Those were measured in July, **before PR #45**, i.e.
+under the per-batch scheduler cadence that drove the LR to its floor inside the first epoch. They
+are not ceilings; they are what single-task training reaches when its LR stops annealing.
+
+Re-measured in this régime — 24 tasks, five seeds each, 0.3.2 container, the adopted configuration,
+differing from a campaign run only in `pretrain.task_sequence` (`CEILING_SAME_REGIME`):
+
+* the old ceiling is **too low in 17 of 23** regression / KR tasks, by **+0.0275** on average;
+* the error is **not a constant** — seebeck understated by 0.104, dielectric_ionic overstated by
+  0.017 — so no offset correction was possible and re-measurement was the only route;
+* it **grows as tasks shrink** (big +0.022, mid +0.027, small +0.040), the signature of an LR that
+  never anneals: least data needs most optimisation;
+* `material_type` is excluded and must stay excluded — the old entry is accuracy (0.984), the new
+  one macro-F1 (0.571); differencing them yields a meaningless −0.41.
+
+**This retracts a v1 conclusion.** v1's tuned arm reported negative mid/small deficits (−0.021,
+−0.028), read as passing the single-task ceiling. Rescored against the same-régime ceilings, with
+v2's task set for comparability (`summary/stage_c_v1_rescored.json`):
+
+| v1 arm | big | mid | small | (old frame) |
+|---|---|---|---|---|
+| `c_base` | +0.0477 | +0.0423 | +0.0505 | +0.026 / +0.015 / +0.014 |
+| `c_tuned` | +0.0248 | +0.0068 | +0.0086 | +0.003 / **−0.021** / **−0.028** |
+| `c_base_cons` | +0.0526 | +0.0368 | +0.0897 | +0.031 / +0.009 / +0.054 |
+| `c_tuned_cons` | +0.0301 | −0.0035 | −0.0190 | +0.009 / **−0.031** / **−0.055** |
+
+`c_tuned` no longer passes the ceiling anywhere. `c_tuned_cons` still reads negative on mid and
+small — but that is a group mean, and the group means are the next thing that had to be unpacked.
+
+### Group means hid the actual result
+
+`c_tuned_cons`'s small group is two tasks whose ceilings have very different seed spread, so
+`analysis/ceiling_gap.py` tests each task against its own (`summary/ceiling_gap.json`):
+
+* magnetization **+0.0595** (2SE 0.053) — genuinely beats single-task training
+* magnetic_moment **−0.0216** (2SE 0.015) — genuinely below it
+
+The group mean of −0.019 is those two cancelling, and it means neither thing. Across all 22 scored
+tasks `c_tuned_cons` is **below** single-task on 8, **above** on 3 (klat, power_factor,
+magnetization), and unresolved on 11; mean gap −0.0043. The honest v1 headline is therefore *"at or
+slightly below single-task training on most tasks, ahead on a few"* — not *"past the ceiling"*.
+
+Consolidation is what moves it: mean gap −0.0119 → −0.0043, with seebeck recovering from −0.082
+(below) to −0.012 (unresolved) and curie from −0.036 to −0.016. It is not free — volume degrades
+further, −0.081 → −0.110.
+
+**The test is deliberately optimistic and labelled as such.** A stage-C arm is one seed, so σ_arm is
+unmeasured and assumed equal to the ceiling's (SE = σ·√(1+1/n)). If multi-task training is noisier
+per task than single-task training — the expected direction with 24 tasks sharing an encoder — the
+real SE is larger and some "separated" calls would not survive. These are hypotheses for the
+ordering experiment (`xfer`, three orderings per task) to confirm.
+
+### Methodology lesson
+
+A deficit is a difference between two measurements, and it inherits the frame of BOTH. Carrying a
+baseline across a code change that alters optimisation — here a scheduler-cadence fix — silently
+converts every deficit into "model change plus frame shift" with no way to separate them after the
+fact. The 120 runs that fixed this cost ~230 GPU-h, ~6% of the campaign, and they retracted a
+published claim. Re-measuring an inherited baseline in the current régime should be a standing line
+item, not a contingency.
+
+---
+
 ## Compute budget
 
 Approved: 2750 GPU-h (the user's response to the pessimistic estimate). Projected on measured
