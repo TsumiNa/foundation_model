@@ -394,6 +394,35 @@ stage may be placed beside it.
 
 ---
 
+## A median step time is the wrong estimator when steps grow
+
+Replay makes every task step cost more than the last — the encoder is rehearsing an ever-longer
+history. Measured on c2base:
+
+    s12:17m   s13:35m   s14:48m   s15:74m   s16:65m   s17:103m      (+15.5 min per step)
+
+A median or mean over ALL of a run's steps is dominated by the cheap early ones. Using it to
+project the remainder under-reported stage C by an order of magnitude: **1.3h by the median, 11–17h
+by a least-squares fit on the recent window.** Same error shape as quoting a range where a σ is
+meant — a summary statistic imported into a formula that assumes a different one.
+
+The estimator now fits duration against step index over the last six steps and sums the
+extrapolation, and the ETA it gives is the one to quote.
+
+### It surfaced a real risk, not just a bad number
+
+At the corrected rates the slowest xfer runs finish past their 48h walltime (median 22h remaining,
+p90 40h, worst 71h, against 39.5h left). xfer's grid lines carried no `--resume`, so a kill would
+have discarded up to a day of work **that was already recoverable** — those runs write a per-step
+`checkpoint.pt` exactly as stage C does. Fixed at the generator; regeneration reproduces all 72
+shuffled sequences bit-for-bit with only the flag appended.
+
+The general lesson: `--resume` belongs to runs whose LENGTH makes a kill expensive, not to a
+particular stage. xfer inherited "probe stages don't resume", which was reasoned about probe-length
+runs and silently wrong for a stage-C-length one.
+
+---
+
 ## The winner's curse, reproduced a second time — and the adoption rule vindicated
 
 B' promoted four configurations to 25 seeds: the 5-seed grid leader, the two best single-knob
