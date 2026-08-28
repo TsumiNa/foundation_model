@@ -324,6 +324,13 @@ def slide_finals():
 
 
 @slide_guard
+def slide_finals_sigma():
+    pic_slide("好配置有一部分好在“稳”",
+              "σ 与 25 seed 成绩的相关系数 −0.844 —— σ 大的配置更容易赢小样本抽签，样本一加就落回原形",
+              RES / "finals_sigma_vs_mean.png")
+
+
+@slide_guard
 def slide_a4():
     a4 = load("stage_a4.json")
     h = a4["head_to_head"]
@@ -622,6 +629,7 @@ def main() -> None:
     slide_anchor()
     slide_grid()
     slide_finals()
+    slide_finals_sigma()
     slide_a4()
     slide_stage_b()
     slide_stage_c()

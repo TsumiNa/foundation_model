@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import statistics
 from pathlib import Path
 
 import matplotlib
@@ -486,10 +487,71 @@ def plot_transfer(summary: dict, out: Path) -> Path:
     return path
 
 
+def plot_finals_sigma(summary: dict, out: Path) -> Path:
+    """Each finalist arm's run-to-run σ against its 25-seed mean.
+
+    A scatter because the claim is a RELATIONSHIP between two measured quantities, and because
+    with ten arms every point can be shown rather than summarised. The regression line is left
+    off deliberately: ten points do not earn a fitted line, and drawing one would invite reading
+    a slope off a sample this small. The correlation is stated in the title instead, where it
+    carries its own n.
+
+    Labels are English like every other figure here — matplotlib's DejaVu Sans has no CJK
+    glyphs, so Chinese would render as boxes; the Chinese prose lives in the report and deck.
+
+    Two arms are labelled and the rest are not. Labelling all ten would collide and would also
+    flatten the figure's argument, which is about those two: the untuned control, and the
+    configuration that won the 5-seed grid and finished last here.
+    """
+    arms = summary["arms"]
+    control = next((k for k in arms if k.endswith("_base")), None)
+    leader = summary.get("leader")
+    # The 5-seed grid leader is the arm the finals demoted furthest; identified by lowest mean.
+    fell = min(arms, key=lambda k: arms[k]["score"]["mean"])
+
+    fig, ax = plt.subplots(figsize=(7.2, 4.8))
+    for name, arm in arms.items():
+        s = arm["score"]
+        highlight = name in (control, leader, fell)
+        ax.scatter(s["sigma"] * 100, s["mean"] * 100, s=90 if highlight else 55,
+                   color=(SERIES[1] if name == control else
+                          SERIES[0] if name == leader else
+                          SERIES[3] if name == fell else MUTED),
+                   zorder=4, edgecolor="white", linewidth=1.4,
+                   alpha=1.0 if highlight else 0.75)
+    for name, label, dx, dy in ((leader, "adopted", 0.12, 0.10),
+                                (control, "untuned control", 0.12, 0.06),
+                                (fell, "led the 5-seed grid", -0.10, 0.12)):
+        if name not in arms:
+            continue
+        s = arms[name]["score"]
+        ax.annotate(label, (s["sigma"] * 100, s["mean"] * 100),
+                    textcoords="offset points", xytext=(dx * 60, dy * 60),
+                    fontsize=9, color=TEXT,
+                    ha="left" if dx > 0 else "right")
+    n = len(arms)
+    xs = [a["score"]["sigma"] for a in arms.values()]
+    ys = [a["score"]["mean"] for a in arms.values()]
+    mx, my = statistics.fmean(xs), statistics.fmean(ys)
+    denom = math.sqrt(sum((x - mx) ** 2 for x in xs) * sum((y - my) ** 2 for y in ys))
+    r = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / denom if denom else float("nan")
+    ax.set_xlabel("run-to-run σ  (%)")
+    ax.set_ylabel("mean score over 25 seeds  (%)")
+    ax.set_title(f"Good configurations are good partly by being stable  —  r = {r:+.3f}, n = {n} arms",
+                 fontsize=10, loc="left")
+    tidy(ax, grid_axis="both")
+    fig.tight_layout()
+    path = out / "finals_sigma_vs_mean.png"
+    fig.savefig(path, dpi=170)
+    plt.close(fig)
+    return path
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("figure",
-                    choices=["stage0", "stage_a", "finals", "stage_c", "a4", "ceilings", "transfer"])
+                    choices=["stage0", "stage_a", "finals", "stage_c", "a4", "ceilings", "transfer",
+                             "finals_sigma"])
     ap.add_argument("--summary", type=Path, required=True)
     ap.add_argument("-o", "--out", type=Path, default=Path("."))
     args = ap.parse_args()
@@ -504,6 +566,7 @@ def main() -> None:
         "a4": plot_a4,
         "ceilings": plot_ceilings,
         "transfer": plot_transfer,
+        "finals_sigma": plot_finals_sigma,
     }[args.figure](summary, args.out)
     for p in (drawn if isinstance(drawn, list) else [drawn]):
         print(p)
