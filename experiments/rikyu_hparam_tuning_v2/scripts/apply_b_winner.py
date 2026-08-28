@@ -79,6 +79,73 @@ def patch(path: Path, params: dict, runid: str) -> list[str]:
     return changed
 
 
+def flatten(section: dict, prefix: str) -> dict[str, object]:
+    """{'model.latent_dim': 384, ...} for the scalar/list leaves under one TOML table."""
+    out: dict[str, object] = {}
+    for key, value in section.items():
+        path = f"{prefix}.{key}"
+        if isinstance(value, dict):
+            out |= flatten(value, path)
+        else:
+            out[path] = value
+    return out
+
+
+def render(value) -> str:
+    """A --set value the CLI parses back to what the TOML held."""
+    if isinstance(value, list):
+        return "[" + ",".join(render(v) for v in value) + "]"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def write_consolidation_grid(configs: Path, runid: str) -> Path:
+    """Emit grid_c2con.txt, deriving the tuned arm's overrides by DIFFING the two configs.
+
+    `fm finetune` rebuilds every head before loading the checkpoint, so a consolidation run whose
+    architecture does not match the checkpoint it warm-starts from is not a slightly different
+    run — it is a wrong one. final_consolidate_v2.toml carries the UNTUNED [model]/[training]
+    baseline (shared with the control arm), so the tuned line has to restate every value
+    final_hybrid_c2top1.toml changed.
+
+    Restating them by hand is the failure this function exists to prevent: miss one and the run
+    still starts. So the override list is computed from the two files rather than typed, and any
+    later edit to c2top1 propagates here automatically.
+    """
+    import tomllib
+
+    tuned = tomllib.loads((configs / "final_hybrid_c2top1.toml").read_text())
+    base = tomllib.loads((configs / "final_consolidate_v2.toml").read_text())
+    diff = {}
+    for table in ("model", "training"):
+        a = flatten(tuned.get(table, {}), table)
+        b = flatten(base.get(table, {}), table)
+        for key, value in a.items():
+            # Keys present only in the tuned file are also overrides — [training.scheduler] is
+            # exactly that case, and dropping it would consolidate at the wrong annealing floor.
+            if key not in b or b[key] != value:
+                diff[key] = value
+    # early_stopping / logging / max_epochs belong to the finetune régime, not the checkpoint's
+    # architecture, and the consolidation config sets them deliberately.
+    drop = {"training.max_epochs", "training.seed"}
+    diff = {k: v for k, v in diff.items() if k not in drop and not k.startswith("training.early_stopping")
+            and not k.startswith("training.logging")}
+
+    sets = " ".join(f"--set {k}={render(v)}" for k, v in sorted(diff.items()))
+    lines = [
+        "c2base_consolidated\t--checkpoint /out/c2base/training/final_model.pt",
+        f"c2top1_consolidated\t--checkpoint /out/c2top1/training/final_model.pt {sets}",
+    ]
+    path = configs / "grid_c2con.txt"
+    path.write_text("\n".join(lines) + "\n")
+    print(f"\ngrid_c2con.txt: {len(diff)} overrides derived by diffing c2top1 against the "
+          f"consolidation baseline")
+    for k, v in sorted(diff.items()):
+        print(f"  --set {k}={render(v)}")
+    return path
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("runid", help="the winning stage-B runid, e.g. b_H256-128_HL0p001_X128-64_KL0p0001")
@@ -99,6 +166,7 @@ def main() -> None:
         print(f"\n{name}:")
         for line in patch(path, params, args.runid):
             print(f"  {line}")
+    write_consolidation_grid(args.configs, args.runid)
 
 
 if __name__ == "__main__":
