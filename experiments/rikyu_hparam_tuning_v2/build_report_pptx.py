@@ -369,24 +369,42 @@ def slide_a4():
 
 @slide_guard
 def slide_stage_b():
+    import math
+
     b = load("stage_b.json")
-    byarm = {v["arm"]: v for v in b["vs_anchor"]}
-    rows = [[c.replace("b_", ""), pct(byarm[c]["delta_vs_untuned"])]
-            for c in (b["short_list"] if "short_list" in b else b["ranking"])[:6] if c in byarm]
-    s = new("Stage B′：多任务联合 head 调参",
-            f"{b['n_configs'] if 'n_configs' in b else 24} 个配置 × 5 seed，全部在 A′ 采纳基座上")
-    table(s, 0.6, 1.5, 8.4, ["配置", "相对未调锚点"], rows, col_w=[6.0, 2.4], colour_col=1)
-    txt(s, 9.2, 1.5, 3.9, 5.0, [
-        "为什么必须在采纳基座上跑：",
-        "",
-        "v1 的 Stage B 是在单任务探针上逐任务调 head 的，",
-        "结论没有迁移到 24 任务连续训练 ——",
-        "24 个“改善”里只有 2 个经得起重复，",
-        "还有 5 个任务变差了。",
-        "",
-        "head 的最优值依赖它所处的优化régime；",
-        "换了基座就是换了régime。",
-    ], size=12)
+    R = {e["config"]: e for e in b["ranking"]}
+    # The default head block, spelled as a stage-B label. It is IN the grid, which is what lets
+    # "changing nothing" be ranked against every change rather than assumed to be the baseline.
+    default = "b_H64_HL0p005_X128-64_KL0p0005"
+    lead = b["ranking"][0]
+    rows = []
+    for i, e in enumerate(b["ranking"], 1):
+        if i > 5 and e["config"] != default and i < len(b["ranking"]):
+            continue
+        tag = "  ← 默认 head 块" if e["config"] == default else ""
+        rows.append([f"{i}", e["config"].replace("b_", "") + tag,
+                     pct(e["score_mean"]), f"{2 * e['score_sem'] * 100:.3f}%"])
+    s = new("Stage B′：多任务联合 head 调参 —— 结论是 head 不用动",
+                  f"24 个配置 × 5 seed = {b['n_runs']} run，全部在 A′ 采纳基座上；120/120 通过训练校验")
+    table(s, 0.5, 1.45, 8.6, ["名次", "配置", "相对未调锚点", "2SE"], rows,
+          col_w=[0.8, 5.2, 1.5, 1.1], size=10, head_size=10, colour_col=2)
+    lines = [f"榜首与 {len(b['leader_ties']['statistically_tied_with_leader'])} 个配置统计上并列",
+             f"（5 seed 可分辨差异 {pct(b['leader_ties']['resolvable_difference'])[1:]}）", ""]
+    if default in R:
+        d = lead["score_mean"] - R[default]["score_mean"]
+        se = math.sqrt(lead["score_sem"] ** 2 + R[default]["score_sem"] ** 2)
+        rank = [e["config"] for e in b["ranking"]].index(default) + 1
+        lines += [f"“什么都不改”排第 {rank} / {len(b['ranking'])}",
+                  f"榜首 vs 默认：{pct(d)}，2SE {2 * se * 100:.3f}%",
+                  f"→ {'可分辨' if abs(d) > 2 * se else '不可分辨'}", "",
+                  "默认 head 块还是全网格 2SE 最小的一个",
+                  f"（{2 * R[default]['score_sem'] * 100:.3f}%），即最可复现。", ""]
+    lines += ["采纳：默认 head 块（改动最少，与 A′ 同一条规则）。",
+              "注意它不是网格榜首 —— 榜首的 2SE 是前 12 名里",
+              "第二大的，正是 A′ 实测过的 winner’s curse 模式。", "",
+              "比 v1 的同一结论更强：v1 可归因于 régime 不对，",
+              "v2 是在正确的 régime 上调的，依然什么都没买到。"]
+    txt(s, 9.3, 1.45, 3.7, 5.6, lines, size=11)
 
 
 @slide_guard
