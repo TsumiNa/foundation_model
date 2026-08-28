@@ -583,16 +583,16 @@ def slide_packing():
 def slide_adopt():
     a = load("finals_a.json")
     s = new("采纳与否决", "")
-    txt(s, 0.6, 1.4, 6.0, 3.2, [
-        "采纳配置",
+    txt(s, 0.6, 1.4, 6.2, 3.4, [
+        "采纳配置（粗体为实际改动的三个值）",
         "",
-        "  model.latent_dim        = 384",
-        "  training.encoder_lr     = 2e-3",
-        "  scheduler.min_lr        = 1e-5",
-        "  scheduler.patience      = 5",
-        "  scheduler.factor        = 0.5",
+        "  model.latent_dim        = 384      (was 128)",
+        "  training.encoder_lr     = 2e-3     (was 5e-3)",
+        "  scheduler.min_lr        = 1e-5     (was 1e-4)",
+        "  scheduler.patience      = 5        = 默认值",
+        "  scheduler.factor        = 0.5      = 默认值",
         "  learnable_loss_balancer = false",
-    ], size=13, mono=True)
+    ], size=12, mono=True)
     table(s, 6.9, 1.4, 5.9, ["项目", "判定"],
           [["learnable loss balancer", "否决"],
            ["PCGrad", "不引入"],
