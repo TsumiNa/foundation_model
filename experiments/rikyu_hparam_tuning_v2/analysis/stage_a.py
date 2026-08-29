@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics
 import sys
 from pathlib import Path
@@ -193,11 +194,21 @@ def main() -> None:
 
     # A margin the seeds cannot resolve is not a ranking. Report how far down the list the
     # ordering is actually supported, rather than presenting all of it as if it were.
-    top_sem = scored[0]["score_sem"] if scored else 0.0
-    resolvable = 2 * (top_sem or 0.0)
-    tied_with_leader = [
-        r["config"] for r in scored[1:] if abs(scored[0]["score_mean"] - r["score_mean"]) < resolvable
-    ]
+    #
+    # The threshold is PER PAIR and uses BOTH arms' standard errors — 2*sqrt(sem_leader^2 +
+    # sem_candidate^2). An earlier version used 2*sem_leader alone, which understates the
+    # uncertainty of a difference whenever the candidate is noisier than the leader, and so
+    # under-reports ties: the ranking looked more resolved than the seeds could support. That
+    # matters most exactly where it is least welcome, on the high-variance configurations a
+    # small-sample maximum tends to favour.
+    leader = scored[0] if scored else None
+    tied_with_leader = []
+    for r in scored[1:] if leader else []:
+        se = math.sqrt((leader["score_sem"] or 0.0) ** 2 + (r["score_sem"] or 0.0) ** 2)
+        if abs(leader["score_mean"] - r["score_mean"]) < 2 * se:
+            tied_with_leader.append(r["config"])
+    # Quoted for continuity, but it is a per-pair quantity now; the list above is authoritative.
+    resolvable = 2 * math.sqrt(2) * (leader["score_sem"] or 0.0) if leader else 0.0
 
     edge_bound = {name: e for name, e in edges.items() if e["edge_bound"]}
     out = {

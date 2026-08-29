@@ -5,9 +5,21 @@ Two numbers per stage, and the difference between them is the point:
 
 * **run-hours** — the wall clock every run consumed, summed. This is what the campaign would have
   cost at one run per GPU, and it is what a naive read of ``_timing.tsv`` gives you.
-* **card-hours** — what was actually billed. A packed task holds ONE GPU while N runs share it, so
-  its N runs cost the card once, not N times. This is the number that matters, because the cluster
-  bills GPUs and nothing else (``TRESBillingWeights = CPU=0.0, Mem=0.0, GRES/gpu=1.0``).
+* **card-hours** — a LOWER BOUND on what was billed, not the bill. A packed task holds ONE GPU
+  while N runs share it, so its N runs cost the card once rather than N times; the cluster bills
+  GPUs and nothing else (``TRESBillingWeights = CPU=0.0, Mem=0.0, GRES/gpu=1.0``).
+
+  It is a bound rather than the figure because Slurm bills the ALLOCATION — one GPU held for the
+  array task's elapsed time, however many runs were inside and whenever each finished — while this
+  script divides each run's own elapsed time by its pack size. That differs from the bill twice,
+  both downward: a partially filled task (two runs left in a PACK=8 slot) still holds a whole GPU
+  but is charged an eighth per run here, and runs in one task finish at different times while the
+  allocation is held until the last does.
+
+  For the real figure take the array job's elapsed time from ``sacct`` and multiply by its GPU
+  count. On the transfer stage that route gave ~6.0 card-h per run against the ~4.8 this
+  arithmetic implies — a 25% undercount. Use this output to compare stages, never as the number
+  reported to an allocation holder.
 
 The worker records the pack size as a fifth column, so the split is read from the data rather than
 inferred from which stages were launched with ``--pack``.
