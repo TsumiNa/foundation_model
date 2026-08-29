@@ -37,7 +37,7 @@ import statistics
 from pathlib import Path
 
 from common import N_TRAIN, pct_views, size_group
-from stage_c import ACCURACY_TASKS, EXCLUDED, read_arm
+from stage_c import ACCURACY_TASKS, EXCLUDED, Incomplete, read_arm
 
 
 def gaps_for_arm(metrics: dict[str, dict], ceilings: dict[str, dict]) -> list[dict]:
@@ -80,6 +80,8 @@ def main() -> None:
     ap.add_argument("--arm", action="append", required=True, metavar="LABEL=DIR")
     ap.add_argument("--ceilings", type=Path, required=True, help="summary/ceilings_adopted.json")
     ap.add_argument("-o", "--output", type=Path, required=True)
+    ap.add_argument("--allow-incomplete", action="store_true",
+                    help="score arms with no DONE marker (previews only)")
     args = ap.parse_args()
 
     ceilings = json.loads(args.ceilings.read_text())
@@ -87,8 +89,8 @@ def main() -> None:
     for spec in args.arm:
         label, _, path = spec.partition("=")
         try:
-            metrics, _ = read_arm(Path(path))
-        except FileNotFoundError as exc:
+            metrics, _ = read_arm(Path(path), require_done=not args.allow_incomplete)
+        except (FileNotFoundError, Incomplete) as exc:
             missing.append(f"{label}: {exc}")
             continue
         rows = gaps_for_arm(metrics, ceilings)

@@ -51,8 +51,18 @@ ACCURACY_TASKS = {"material_type"}
 EXCLUDED = {"magnetic_susceptibility"}
 
 
-def read_arm(path: Path) -> tuple[dict[str, dict], int | str]:
+class Incomplete(Exception):
+    """The arm's run has not finished, so its metrics are a partial sequence, not a result."""
+
+
+def read_arm(path: Path, require_done: bool = True) -> tuple[dict[str, dict], int | str]:
     """Metrics for one arm, from whichever layout the arm's workflow produced.
+
+    Refuses an arm without its DONE marker unless ``require_done`` is cleared. A pretrain that is
+    still on step 23 of 24 reads perfectly well — `final_metrics` just returns step 23 — and scores
+    as a slightly worse configuration rather than as an unfinished one. That is the failure mode
+    this whole campaign keeps meeting: a component that cannot fail loudly. An arm is either
+    finished or it is not a data point.
 
     A pretrain arm writes ``training/stepNN_<task>/<task>_metrics.json`` and is read at its last
     step. A consolidation arm is a FINETUNE, not a sequence, so it writes one flat
@@ -61,6 +71,8 @@ def read_arm(path: Path) -> tuple[dict[str, dict], int | str]:
     the second layout as a missing run — which is what it looked like until v1's consolidated arms
     were re-read and reported themselves as "no step directories".
     """
+    if require_done and not (path / "DONE").exists():
+        raise Incomplete(f"{path.name}: no DONE marker — the run has not finished")
     try:
         return final_metrics(path)
     except FileNotFoundError:
@@ -138,6 +150,9 @@ def main() -> None:
     ap.add_argument("--arm", action="append", required=True, metavar="LABEL=DIR")
     ap.add_argument("--probe-ranking", type=Path, help="summary/finals_a.json, for the transfer check")
     ap.add_argument("-o", "--output", type=Path, required=True)
+    ap.add_argument("--allow-incomplete", action="store_true",
+                    help="score arms that have no DONE marker (previews only — a partial arm "
+                         "scores as a worse configuration, not as an unfinished one)")
     args = ap.parse_args()
 
     arms = []
@@ -145,8 +160,8 @@ def main() -> None:
     for spec in args.arm:
         label, _, path = spec.partition("=")
         try:
-            metrics, last_step = read_arm(Path(path))
-        except FileNotFoundError as exc:
+            metrics, last_step = read_arm(Path(path), require_done=not args.allow_incomplete)
+        except (FileNotFoundError, Incomplete) as exc:
             missing.append(f"{label}: {exc}")
             continue
         arms.append({"label": label, "dir": path, "last_step": last_step} | score(metrics))
@@ -230,6 +245,9 @@ def main() -> None:
         print(f"\n  probe order {t['probe_order']} -> deployed {t['deployed_order']}: "
               f"{'PRESERVED' if t['order_preserved'] else 'SCRAMBLED'} "
               f"(spread {t['mean_r2_spread_across_promoted_arms']:.4f})")
+    if args.allow_incomplete:
+        print("  WARNING --allow-incomplete: unfinished arms are scored on their last completed "
+              "step; this output is a preview, not a result.\n")
     if missing:
         print("\n  MISSING ARMS (reported, not silently dropped):")
         for m in missing:
