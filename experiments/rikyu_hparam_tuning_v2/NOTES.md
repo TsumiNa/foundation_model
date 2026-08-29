@@ -394,6 +394,36 @@ stage may be placed beside it.
 
 ---
 
+## A long-lived ssh waiter is a silent failure waiting to happen
+
+Three stage-completion waiters were built as ONE ssh session holding a
+`while squeue ...; do sleep; done` loop for hours, then running the analysis on the far side. Two
+of them died together to a single network blip on the login node:
+
+    Read from remote host login.rikyu.r-ccs.riken.jp: Operation timed out
+    client_loop: send disconnect: Broken pipe
+    [exited with code 0]
+
+**Exit code 0.** The broken pipe is reported on stderr and ssh still exits 0, so the task shows as
+"completed" and the analysis it was supposed to run simply never happened. Without reading the
+output the campaign would have sat waiting for a result that was never coming.
+
+Two things were wrong and both are worth carrying:
+
+* **Hold no connection longer than a command needs.** Poll from the local side, one short-lived
+  connection per attempt: a blip then costs one iteration instead of the whole watch. The Slurm
+  jobs are unaffected either way — they run on compute nodes and do not care whether anyone is
+  watching.
+* **`exit 0` is not evidence of success for a wrapper.** A waiter must assert what it actually
+  achieved (the summary JSON exists, the job left the queue *and* the analysis wrote output), not
+  merely terminate.
+
+This is the same shape as the campaign's other silent failures — the half-wired loss balancer,
+`parse_point` dropping unknown tags, `PACK=1` overwriting the environment. Each looked like it
+worked. The pattern to distrust is **a component that cannot fail loudly**.
+
+---
+
 ## The headline: the upstream fix is 5x the tuning that follows it
 
 Stage C', at 24 tasks, with all four arms of the attribution complete:
