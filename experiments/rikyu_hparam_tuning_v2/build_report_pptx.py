@@ -332,12 +332,17 @@ def slide_grid():
         "  （patience、latent_dim）上误报，因此增加了“至少 3 个取值”的前提。",
     ], size=13)
     ties = a["leader_ties"]
-    txt(s, 0.6, 3.7, 12.2, 2.6, [
-        f"5 seed 排不出名次：{len(ties['statistically_tied_with_leader'])} 个配置与榜首统计上并列"
-        f"（可分辨差异 {pct(ties['resolvable_difference'])}）。",
+    n_tied = len(ties["statistically_tied_with_leader"])
+    short = set(a["short_list"])
+    excluded = [c for c in ties["statistically_tied_with_leader"] if c not in short]
+    txt(s, 0.6, 3.7, 12.2, 2.8, [
+        f"5 seed 排不出名次：{n_tied} 个配置与榜首统计上并列",
+        "（阈值按每一对的 2·√(sem₁²+sem₂²) 算 —— 两个臂的标准误都计入）。",
         "",
-        "所以短名单取前 8，进 25 seed 决赛 —— 算力花在 seed 上，而不是更多网格点上。",
-    ], size=15)
+        "短名单取前 8 进 25 seed 决赛。但这是**预算截断**，不是噪声感知的筛选：",
+        f"{n_tied} 个并列配置里有 {len(excluded)} 个没进决赛，仅因含噪的样本均值排在第 8 之后。",
+        "所以决赛冠军是这 8 个里最好的，不是 " + str(n_tied) + " 个里最好的。",
+    ], size=13)
 
 
 @slide_guard
