@@ -125,7 +125,11 @@ def transfer_check(arms: list[dict], probe_ranking: list[str] | None) -> dict:
     when the arms land close together is "the probe could not be shown to mispredict", not "the
     probe transfers".
     """
-    ranked = [a for a in arms if a["label"].startswith("c2_top")]
+    # Pretrain arms only. "c2_top1_cons" also starts with "c2_top" but it is a CONSOLIDATED arm —
+    # a finetune applied on top — so including it compares two different treatments and would
+    # report a scramble that is really just consolidation doing its job.
+    ranked = [a for a in arms
+              if a["label"].startswith("c2_top") and not a["label"].endswith("_cons")]
     if len(ranked) < 2:
         return {"checked": False, "reason": "fewer than two promoted arms"}
     deployed = [a["label"] for a in sorted(ranked, key=lambda a: a["mean_r2"], reverse=True)]

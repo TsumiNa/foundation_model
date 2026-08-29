@@ -1,0 +1,551 @@
+{
+  "stage": "stage_c",
+  "arms": [
+    {
+      "label": "c_base",
+      "dir": "/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning/stage_c/c_base",
+      "last_step": 24,
+      "n_tasks": 22,
+      "mean_r2": 0.6783508930574371,
+      "per_task": {
+        "curie": 0.7294,
+        "density": 0.9798,
+        "dielectric_electronic": 0.8467,
+        "dielectric_ionic": 0.61,
+        "dielectric_total": 0.6407,
+        "dos_density": 0.5702,
+        "efermi": 0.8984,
+        "electrical_resistivity": 0.1562,
+        "final_energy": 0.6733,
+        "formation_energy": 0.9764,
+        "klat": 0.6745,
+        "kp": 0.6448,
+        "magnetic_moment": 0.6264,
+        "magnetization": 0.7317,
+        "neel": 0.6561,
+        "power_factor": 0.6563,
+        "seebeck": 0.606,
+        "tc": 0.752,
+        "thermal_conductivity": 0.6413,
+        "total_magnetization": 0.7084,
+        "volume": 0.4807,
+        "zt": 0.6645
+      },
+      "deficit": {
+        "big": 0.04769399149271212,
+        "mid": 0.04233054990540407,
+        "small": 0.05049435255222684,
+        "worst_group": 0.05049435255222684,
+        "all": 0.04453547057892652
+      },
+      "deficit_vs_recorded_h200": {
+        "big": 0.026060658159378785,
+        "mid": 0.014951978476832653,
+        "small": 0.014444352552226869,
+        "worst_group": 0.026060658159378785,
+        "all": 0.017935470578926527
+      },
+      "material_type": {
+        "accuracy": 0.99079754601227,
+        "macro_f1": 0.5833933175657846
+      }
+    },
+    {
+      "label": "c_tuned",
+      "dir": "/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning/stage_c/c_tuned",
+      "last_step": 24,
+      "n_tasks": 22,
+      "mean_r2": 0.7109784902902295,
+      "per_task": {
+        "curie": 0.7669,
+        "density": 0.988,
+        "dielectric_electronic": 0.8632,
+        "dielectric_ionic": 0.6193,
+        "dielectric_total": 0.6916,
+        "dos_density": 0.6017,
+        "efermi": 0.9103,
+        "electrical_resistivity": 0.2067,
+        "final_energy": 0.7278,
+        "formation_energy": 0.9841,
+        "klat": 0.7197,
+        "kp": 0.6977,
+        "magnetic_moment": 0.6499,
+        "magnetization": 0.7921,
+        "neel": 0.7027,
+        "power_factor": 0.6917,
+        "seebeck": 0.6243,
+        "tc": 0.7703,
+        "thermal_conductivity": 0.6995,
+        "total_magnetization": 0.7052,
+        "volume": 0.5386,
+        "zt": 0.6902
+      },
+      "deficit": {
+        "big": 0.02484532083855721,
+        "mid": 0.006841383544635373,
+        "small": 0.00856095947935559,
+        "worst_group": 0.02484532083855721,
+        "all": 0.011907873346134074
+      },
+      "deficit_vs_recorded_h200": {
+        "big": 0.0032119875052238713,
+        "mid": -0.020537187883936048,
+        "small": -0.02748904052064438,
+        "worst_group": 0.0032119875052238713,
+        "all": -0.014692126653865918
+      },
+      "material_type": {
+        "accuracy": 0.9932259713701431,
+        "macro_f1": 0.5946702501535919
+      }
+    },
+    {
+      "label": "c_base_cons",
+      "dir": "/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning/stage_c/c_base_consolidated",
+      "last_step": "finetune",
+      "n_tasks": 22,
+      "mean_r2": 0.6769788798708558,
+      "per_task": {
+        "curie": 0.7411,
+        "density": 0.9794,
+        "dielectric_electronic": 0.8435,
+        "dielectric_ionic": 0.5915,
+        "dielectric_total": 0.6485,
+        "dos_density": 0.5744,
+        "efermi": 0.8967,
+        "electrical_resistivity": 0.1692,
+        "final_energy": 0.6304,
+        "formation_energy": 0.9786,
+        "klat": 0.6877,
+        "kp": 0.6589,
+        "magnetic_moment": 0.5719,
+        "magnetization": 0.7079,
+        "neel": 0.6617,
+        "power_factor": 0.6867,
+        "seebeck": 0.6203,
+        "tc": 0.7547,
+        "thermal_conductivity": 0.6181,
+        "total_magnetization": 0.704,
+        "volume": 0.4982,
+        "zt": 0.6702
+      },
+      "deficit": {
+        "big": 0.052639942974773944,
+        "mid": 0.03677125945614335,
+        "small": 0.08966367630326144,
+        "worst_group": 0.08966367630326144,
+        "all": 0.045907483765507885
+      },
+      "deficit_vs_recorded_h200": {
+        "big": 0.031006609641440603,
+        "mid": 0.009392688027571936,
+        "small": 0.05361367630326147,
+        "worst_group": 0.05361367630326147,
+        "all": 0.019307483765507893
+      },
+      "material_type": {
+        "accuracy": 0.9891359918200409,
+        "macro_f1": 0.6037600229322596
+      }
+    },
+    {
+      "label": "c_tuned_cons",
+      "dir": "/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning/stage_c/c_tuned_consolidated",
+      "last_step": "finetune",
+      "n_tasks": 22,
+      "mean_r2": 0.7186085858300025,
+      "per_task": {
+        "curie": 0.7864,
+        "density": 0.9881,
+        "dielectric_electronic": 0.8679,
+        "dielectric_ionic": 0.6324,
+        "dielectric_total": 0.6891,
+        "dos_density": 0.5916,
+        "efermi": 0.9106,
+        "electrical_resistivity": 0.2028,
+        "final_energy": 0.719,
+        "formation_energy": 0.9847,
+        "klat": 0.7347,
+        "kp": 0.7044,
+        "magnetic_moment": 0.6764,
+        "magnetization": 0.8207,
+        "neel": 0.704,
+        "power_factor": 0.7109,
+        "seebeck": 0.694,
+        "tc": 0.7774,
+        "thermal_conductivity": 0.6937,
+        "total_magnetization": 0.7107,
+        "volume": 0.5092,
+        "zt": 0.7007
+      },
+      "deficit": {
+        "big": 0.030139370222978763,
+        "mid": -0.0034836491449754914,
+        "small": -0.018977010784135884,
+        "worst_group": 0.030139370222978763,
+        "all": 0.004277777806361088
+      },
+      "deficit_vs_recorded_h200": {
+        "big": 0.008506036889645427,
+        "mid": -0.03086222057354691,
+        "small": -0.055027010784135855,
+        "worst_group": 0.008506036889645427,
+        "all": -0.022322222193638906
+      },
+      "material_type": {
+        "accuracy": 0.9932259713701431,
+        "macro_f1": 0.6760275834300492
+      }
+    },
+    {
+      "label": "c2_base",
+      "dir": "/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning_v2/stage_c/c2base",
+      "last_step": 24,
+      "n_tasks": 22,
+      "mean_r2": 0.7155025261217235,
+      "per_task": {
+        "curie": 0.7687,
+        "density": 0.9826,
+        "dielectric_electronic": 0.868,
+        "dielectric_ionic": 0.6165,
+        "dielectric_total": 0.7066,
+        "dos_density": 0.5888,
+        "efermi": 0.9088,
+        "electrical_resistivity": 0.1884,
+        "final_energy": 0.7098,
+        "formation_energy": 0.9809,
+        "klat": 0.7299,
+        "kp": 0.7108,
+        "magnetic_moment": 0.7165,
+        "magnetization": 0.7998,
+        "neel": 0.732,
+        "power_factor": 0.7043,
+        "seebeck": 0.6044,
+        "tc": 0.7821,
+        "thermal_conductivity": 0.6749,
+        "total_magnetization": 0.7151,
+        "volume": 0.5779,
+        "zt": 0.6741
+      },
+      "deficit": {
+        "big": 0.021353346208186907,
+        "mid": 0.006542715202882095,
+        "small": -0.028636832383693744,
+        "worst_group": 0.021353346208186907,
+        "all": 0.007383837514640149
+      },
+      "deficit_vs_recorded_h200": {
+        "big": -0.0002799871251464303,
+        "mid": -0.020835856225689325,
+        "small": -0.06468683238369372,
+        "worst_group": -0.0002799871251464303,
+        "all": -0.019216162485359845
+      },
+      "material_type": {
+        "accuracy": 0.9947597137014315,
+        "macro_f1": 0.6817974876479245
+      }
+    },
+    {
+      "label": "c2_top1",
+      "dir": "/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning_v2/stage_c/c2top1",
+      "last_step": 24,
+      "n_tasks": 22,
+      "mean_r2": 0.7229434722721604,
+      "per_task": {
+        "curie": 0.7876,
+        "density": 0.986,
+        "dielectric_electronic": 0.8902,
+        "dielectric_ionic": 0.6346,
+        "dielectric_total": 0.716,
+        "dos_density": 0.6026,
+        "efermi": 0.9103,
+        "electrical_resistivity": 0.2146,
+        "final_energy": 0.7086,
+        "formation_energy": 0.9856,
+        "klat": 0.7412,
+        "kp": 0.7235,
+        "magnetic_moment": 0.7281,
+        "magnetization": 0.7797,
+        "neel": 0.7272,
+        "power_factor": 0.6934,
+        "seebeck": 0.6488,
+        "tc": 0.7719,
+        "thermal_conductivity": 0.7011,
+        "total_magnetization": 0.707,
+        "volume": 0.5592,
+        "zt": 0.6874
+      },
+      "deficit": {
+        "big": 0.02438941861062588,
+        "mid": -0.007064008492389487,
+        "small": -0.024348391378914536,
+        "worst_group": 0.02438941861062588,
+        "all": -5.7108635796664214e-05
+      },
+      "deficit_vs_recorded_h200": {
+        "big": 0.0027560852772925415,
+        "mid": -0.034442579920960906,
+        "small": -0.06039839137891451,
+        "worst_group": 0.0027560852772925415,
+        "all": -0.026657108635796657
+      },
+      "material_type": {
+        "accuracy": 0.9947597137014315,
+        "macro_f1": 0.663457615107671
+      }
+    },
+    {
+      "label": "c2_top2",
+      "dir": "/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning_v2/stage_c/c2top2",
+      "last_step": 24,
+      "n_tasks": 22,
+      "mean_r2": 0.7224846210236694,
+      "per_task": {
+        "curie": 0.7836,
+        "density": 0.9864,
+        "dielectric_electronic": 0.8763,
+        "dielectric_ionic": 0.6432,
+        "dielectric_total": 0.7145,
+        "dos_density": 0.6029,
+        "efermi": 0.9083,
+        "electrical_resistivity": 0.2105,
+        "final_energy": 0.7148,
+        "formation_energy": 0.9839,
+        "klat": 0.7094,
+        "kp": 0.7002,
+        "magnetic_moment": 0.6599,
+        "magnetization": 0.8144,
+        "neel": 0.7283,
+        "power_factor": 0.6981,
+        "seebeck": 0.6824,
+        "tc": 0.786,
+        "thermal_conductivity": 0.7087,
+        "total_magnetization": 0.7202,
+        "volume": 0.5711,
+        "zt": 0.6915
+      },
+      "deficit": {
+        "big": 0.01973548659457658,
+        "mid": -0.006744321763510441,
+        "small": -0.007577038699519201,
+        "worst_group": 0.01973548659457658,
+        "all": 0.0004017426126943136
+      },
+      "deficit_vs_recorded_h200": {
+        "big": -0.0018978467387567588,
+        "mid": -0.03412289319208186,
+        "small": -0.04362703869951917,
+        "worst_group": -0.0018978467387567588,
+        "all": -0.02619825738730568
+      },
+      "material_type": {
+        "accuracy": 0.9923312883435583,
+        "macro_f1": 0.5993789941214975
+      }
+    },
+    {
+      "label": "c2_top3",
+      "dir": "/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning_v2/stage_c/c2top3",
+      "last_step": 24,
+      "n_tasks": 22,
+      "mean_r2": 0.7261973980537225,
+      "per_task": {
+        "curie": 0.7847,
+        "density": 0.9855,
+        "dielectric_electronic": 0.8717,
+        "dielectric_ionic": 0.6342,
+        "dielectric_total": 0.7,
+        "dos_density": 0.6151,
+        "efermi": 0.9112,
+        "electrical_resistivity": 0.1973,
+        "final_energy": 0.7361,
+        "formation_energy": 0.9862,
+        "klat": 0.7359,
+        "kp": 0.7197,
+        "magnetic_moment": 0.6813,
+        "magnetization": 0.8167,
+        "neel": 0.7247,
+        "power_factor": 0.7076,
+        "seebeck": 0.6668,
+        "tc": 0.7852,
+        "thermal_conductivity": 0.7076,
+        "total_magnetization": 0.7247,
+        "volume": 0.5936,
+        "zt": 0.6903
+      },
+      "deficit": {
+        "big": 0.010944563549912134,
+        "mid": -0.007119863929100338,
+        "small": -0.019416021736981814,
+        "worst_group": 0.010944563549912134,
+        "all": -0.0033110344173588892
+      },
+      "deficit_vs_recorded_h200": {
+        "big": -0.010688769783421204,
+        "mid": -0.03449843535767176,
+        "small": -0.055466021736981785,
+        "worst_group": -0.010688769783421204,
+        "all": -0.029911034417358883
+      },
+      "material_type": {
+        "accuracy": 0.9939928425357873,
+        "macro_f1": 0.6312699269848334
+      }
+    },
+    {
+      "label": "c2_base_cons",
+      "dir": "/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning_v2/stage_c/c2base_consolidated",
+      "last_step": "finetune",
+      "n_tasks": 22,
+      "mean_r2": 0.7189313960306655,
+      "per_task": {
+        "curie": 0.7735,
+        "density": 0.9823,
+        "dielectric_electronic": 0.8662,
+        "dielectric_ionic": 0.6181,
+        "dielectric_total": 0.708,
+        "dos_density": 0.5935,
+        "efermi": 0.9079,
+        "electrical_resistivity": 0.1941,
+        "final_energy": 0.6988,
+        "formation_energy": 0.9816,
+        "klat": 0.7229,
+        "kp": 0.7142,
+        "magnetic_moment": 0.7039,
+        "magnetization": 0.7988,
+        "neel": 0.726,
+        "power_factor": 0.6998,
+        "seebeck": 0.6714,
+        "tc": 0.7868,
+        "thermal_conductivity": 0.6792,
+        "total_magnetization": 0.7311,
+        "volume": 0.576,
+        "zt": 0.6825
+      },
+      "deficit": {
+        "big": 0.020901713535501742,
+        "mid": 0.00037270972984680684,
+        "small": -0.02180946505275322,
+        "worst_group": 0.020901713535501742,
+        "all": 0.003954967605698151
+      },
+      "deficit_vs_recorded_h200": {
+        "big": -0.0007316197978315953,
+        "mid": -0.027005861698724615,
+        "small": -0.05785946505275319,
+        "worst_group": -0.0007316197978315953,
+        "all": -0.022645032394301844
+      },
+      "material_type": {
+        "accuracy": 0.9928425357873211,
+        "macro_f1": 0.6037850039910245
+      }
+    },
+    {
+      "label": "c2_top1_cons",
+      "dir": "/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning_v2/stage_c/c2top1_consolidated",
+      "last_step": "finetune",
+      "n_tasks": 22,
+      "mean_r2": 0.7273737879555147,
+      "per_task": {
+        "curie": 0.7881,
+        "density": 0.9863,
+        "dielectric_electronic": 0.8821,
+        "dielectric_ionic": 0.6338,
+        "dielectric_total": 0.7126,
+        "dos_density": 0.6,
+        "efermi": 0.9095,
+        "electrical_resistivity": 0.2132,
+        "final_energy": 0.7105,
+        "formation_energy": 0.988,
+        "klat": 0.7373,
+        "kp": 0.7136,
+        "magnetic_moment": 0.7291,
+        "magnetization": 0.7865,
+        "neel": 0.7284,
+        "power_factor": 0.7151,
+        "seebeck": 0.6906,
+        "tc": 0.7849,
+        "thermal_conductivity": 0.7083,
+        "total_magnetization": 0.7094,
+        "volume": 0.5755,
+        "zt": 0.6993
+      },
+      "deficit": {
+        "big": 0.020630224593671236,
+        "mid": -0.011852551133212904,
+        "small": -0.028284483359184487,
+        "worst_group": 0.020630224593671236,
+        "all": -0.00448742431915101
+      },
+      "deficit_vs_recorded_h200": {
+        "big": -0.0010031087396621026,
+        "mid": -0.03923112256178433,
+        "small": -0.06433448335918446,
+        "worst_group": -0.0010031087396621026,
+        "all": -0.031087424319151003
+      },
+      "material_type": {
+        "accuracy": 0.995782208588957,
+        "macro_f1": 0.7032921068777365
+      }
+    }
+  ],
+  "missing_arms": [],
+  "attribution": {
+    "upgrade_alone": {
+      "from": "c_base",
+      "to": "c2_base",
+      "delta_mean_r2": 0.03715163306428637,
+      "what_it_isolates": "the LR-scheduler cadence fix (#45), with no tuning at all"
+    },
+    "tuning_on_top": {
+      "from": "c2_base",
+      "to": "c2_top1",
+      "delta_mean_r2": 0.007440946150436889,
+      "what_it_isolates": "v2's tuning, measured against the SAME image and scheduler"
+    },
+    "v1_headline_for_reference": {
+      "from": "c_base",
+      "to": "c_tuned",
+      "delta_mean_r2": 0.032627597232792405,
+      "what_it_isolates": "v1's reported gain \u2014 tuning and a broken scheduler, entangled"
+    }
+  },
+  "transfer": {
+    "checked": true,
+    "probe_order": [
+      "c2_top1",
+      "c2_top2",
+      "c2_top3"
+    ],
+    "deployed_order": [
+      "c2_top3",
+      "c2_top1",
+      "c2_top2"
+    ],
+    "order_preserved": false,
+    "mean_r2_spread_across_promoted_arms": 0.003712777030053127,
+    "probe_ranking_source": [
+      "a3_L384_E0p002_M1e-05_P5",
+      "a3_L384_E0p001003_M1p023e-06_P4_F0p3",
+      "a3_L384_E0p0042_M4p975e-08_P4_F0p37",
+      "a3_L384_E0p003_M1e-06_P5",
+      "a3_L384_E0p002_M0p0001_P5",
+      "a3_L384_E0p005_M0p0001_P5",
+      "a3_v1enc",
+      "a3_L384_E0p001762_M1p375e-07_P8_F0p31",
+      "a3_base",
+      "a3_L384_E0p001671_M2p426e-07_P7_F0p62"
+    ],
+    "caveat": "One seed per arm. A spread smaller than the probe's own resolved margin is not evidence either way; report it as unresolved rather than as transfer."
+  },
+  "notes": [
+    "deficit = single-task ceiling \u2212 final R\u00b2, averaged in the group. The headline `deficit` uses CEILING_SAME_REGIME: single-task runs made in THIS campaign \u2014 0.3.2 container, adopted configuration, five seeds, differing from an arm only in pretrain.task_sequence.",
+    "`deficit_vs_recorded_h200` repeats it against the inherited H200 ceilings so the merged report can line up with REPORT_20260809. Those are too low in 17 of 23 tasks (+0.0275 mean, up to +0.104), so they understate every deficit \u2014 that frame, not the model, is what produced v1's negative mid/small deficits.",
+    "groups: big >=20k (6 tasks) \u00b7 mid 3k-8.1k (14) \u00b7 small <=1.2k (2). material_type is an accuracy task and is reported separately; magnetic_susceptibility (58 labels) is excluded, as in the replay campaign.",
+    "read from per-step metrics JSONs, which stay complete across a --resume.",
+    "ONE seed per arm \u2014 stage C' cannot be repeated at the seed counts the probe stages use, so differences here carry no seed band and small gaps are unresolved."
+  ]
+}

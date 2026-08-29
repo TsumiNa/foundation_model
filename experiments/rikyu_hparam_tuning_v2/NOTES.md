@@ -394,6 +394,50 @@ stage may be placed beside it.
 
 ---
 
+## The probe ranking did not transfer — and that is the useful version of the answer
+
+v2 promoted its top THREE A' configurations into stage C' instead of one, specifically so that
+"a probe ranking predicts deployment rank" could be falsified rather than assumed.
+
+    probe (25 seeds) said:  c2_top1 > c2_top2 > c2_top3
+    24 tasks delivered:     c2_top3 > c2_top1 > c2_top2
+
+The probe's THIRD choice came first. But the honest conclusion is weaker and more useful than "the
+probe misranks": the three arms span **0.0037 (0.51% relative)**, below the 1e-2 practical
+threshold, at one seed each.
+
+**So probe rank carries no actionable information at deployment scale** — not because it ordered
+them wrongly, but because the configurations it ordered do not differ enough at 24 tasks for the
+order to matter. Anything that reads a decision off that ranking is reading noise.
+
+Promoting one arm instead of three would have shown "the tuned arm beats the baseline" and hidden
+"the three promoted arms are indistinguishable". v1's stage B paid this exact price on heads.
+
+### Consolidation earns a place, not a headline
+
+    c2_base  -> c2_base_cons   +0.0034  (+0.48%)
+    c2_top1  -> c2_top1_cons   +0.0045  (+0.62%)
+
+Consistent in sign, and both below the practical threshold at one seed. Worth keeping as a closing
+step; not worth quoting as a gain.
+
+### Final standing, 22 scored tasks
+
+    c2_top1_cons  0.7274   +7.23% vs v1's control      <- best
+    c2_top3       0.7262   +7.05%
+    c2_top1       0.7229   +6.57%
+    c2_top2       0.7225   +6.51%
+    c2_base_cons  0.7189   +5.98%
+    c_tuned_cons  0.7186   +5.93%   (v1's best)
+    c2_base       0.7155   +5.48%   <- UNTUNED, on fixed code
+    c_tuned       0.7110   +4.81%   (v1's tuned arm)
+    c_base        0.6784    ±0
+    c_base_cons   0.6770   -0.20%
+
+The line that matters is the seventh: untuned on fixed code beats v1's tuned arm.
+
+---
+
 ## A long-lived ssh waiter is a silent failure waiting to happen
 
 Three stage-completion waiters were built as ONE ssh session holding a
