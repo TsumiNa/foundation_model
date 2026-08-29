@@ -645,33 +645,39 @@ def slide_transfer_why():
 
 @slide_guard
 def slide_xfer():
-    x = load("transfer_xfer.json")
-    sm = x["summary"]
-    s = new("xfer：部署规模上的迁移，以及任务顺序有没有影响",
-            "24 个任务各自被放在打乱序列的末尾，每任务 3 组随机顺序")
-    scored = sorted([r for r in x["per_task"] if "transfer" in r],
-                    key=lambda r: -(r.get("relative_pct") or 0))
-    # Ten of twenty-four: the extremes at both ends, which is where the size relationship shows.
-    shown = scored[:6] + scored[-4:] if len(scored) > 10 else scored
+    """The campaign's headline question, answered at deployment scale.
+
+    Reads matched_xfer.json, not transfer_xfer.json: the report quotes the comparison restricted to
+    the rows both arms share, and a deck showing the uncorrected figures beside a report showing the
+    corrected ones is how two documents start disagreeing.
+    """
+    x = load("matched_xfer.json")
+    rows_all = [r for r in x["per_task"] if "transfer" in r]
+    better = [r for r in rows_all if r["separated"] and r["transfer"] > 0]
+    worse = [r for r in rows_all if r["separated"] and r["transfer"] < 0]
+    unres = [r for r in rows_all if not r["separated"]]
+    ranked = sorted(rows_all, key=lambda r: -(r.get("relative_pct") or 0))
+    shown = ranked[:5] + ranked[-5:]
     rows = []
     for r in shown:
         verdict = ("多任务更好" if r["transfer"] > 0 else "单任务更好") if r["separated"] else "无法分辨"
-        if r["separated"] and not r.get("practically_significant", True):
-            verdict = "可分辨但可忽略"
-        rows.append([r["task"], f"{r['n_train']:,}", f"{r['single_task_r2']:.4f}",
-                     f"{r['transfer']:+.4f}",
-                     f"{r['relative_pct']:+.2f}%" if r.get("relative_pct") is not None else "-",
-                     verdict])
-    table(s, 0.5, 1.45, 11.4,
-          ["任务", "标签数", "单任务 R²", "ΔR²", "相对提升", "判定"], rows,
-          col_w=[2.8, 1.4, 1.6, 1.5, 1.6, 2.5], size=10, head_size=10, colour_col=4)
-    txt(s, 0.5, 1.55 + 0.32 * (len(rows) + 1) + 0.2, 12.3, 2.0, [
-        f"获益 {len(sm['tasks_helped'])} 个 / 受损 {len(sm['tasks_hurt'])} 个 / "
-        f"无法分辨 {len(sm['tasks_unresolved'])} 个。"
-        + (f"  按实用门槛 |ΔR²| ≥ 0.01 过滤后，值得写进结论的是 "
-           f"{len(sm.get('tasks_that_matter', []))} 个。" if "tasks_that_matter" in sm else ""),
-    ] + ([f"仅显示 {len(rows)} / {len(scored)} 个任务（相对提升的两端）。"] if len(shown) < len(scored) else []),
-        size=12)
+        rows.append([r["task"], f"{r['n_train']:,}", f"{r['single_task']:.4f}",
+                     f"{r['multi_task']:.4f}", f"{r['relative_pct']:+.2f}%", verdict])
+    s = new("部署规模的迁移测量：结论是负的",
+            "24 任务 × 3 组打乱顺序 = 72 run，待测任务排最后；两边限制在共同测试集上")
+    table(s, 0.5, 1.45, 11.6,
+          ["任务", "标签数", "单任务", "多任务", "相对", "判定"], rows,
+          col_w=[3.0, 1.4, 1.5, 1.5, 1.5, 2.7], size=10, head_size=10, colour_col=4)
+    y = 1.55 + 0.32 * (len(rows) + 1) + 0.15
+    txt(s, 0.5, y, 12.4, 2.4, [
+        f"多任务更好 {len(better)}（{'、'.join(r['task'] for r in better) or '无'}）　│　"
+        f"单任务更好 {len(worse)}　│　无法分辨 {len(unres)}",
+        f"（表中只列相对变化的两端各 5 个，共 {len(rows_all)} 个任务）",
+        "",
+        "探针高估了迁移：zt 从 +6.85%「多任务更好」变成 +3.16%「无法分辨」；",
+        "magnetization 从 +4.40% 变成 +1.72%；magnetic_moment 从「无法分辨」变成 −6.33%「单任务更好」。",
+        "三个判定全部朝不利方向移动 —— 6 个任务的探针不能预测 24 个任务。",
+    ], size=12)
 
 
 def slide_descriptor_limit():
