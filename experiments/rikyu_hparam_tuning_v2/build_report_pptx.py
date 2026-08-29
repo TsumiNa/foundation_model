@@ -196,6 +196,37 @@ def finals_vs_control(a: dict) -> dict:
             "control": control, "n": lead["n"]}
 
 
+def slide_glossary():
+    s = new("名词对照表", "正文用全称；这些是 RIKYU 上的目录名 / 作业名，读原始输出时会遇到")
+    table(s, 0.5, 1.35, 5.9, ["标识符", "是什么"],
+          [["stage0", "锚点：未调参 + 新镜像"],
+           ["a1 / a1r", "编码器×LR×调度器 网格 / 随机搜索"],
+           ["a3", "A′ 决赛（8 配置 × 25 seed）"],
+           ["a4", "调度器是否值得 / 下界是否要外扩"],
+           ["a2b", "早停复核：patience 24 对 40"],
+           ["b", "head 网格（24 配置 × 5 seed）"],
+           ["b3", "head 决赛（4 配置 × 25 seed）"],
+           ["bal / balx", "损失平衡器 开关 / 排除 AE"],
+           ["single (stA_*)", "同régime单任务天花板"],
+           ["xfer", "迁移测试：24 任务 × 3 组随机顺序"]],
+          col_w=[1.9, 4.0], size=10, head_size=10)
+    table(s, 6.9, 1.35, 6.0, ["Stage C 臂", "是什么"],
+          [["c_base", "v1 未调参 + 坏调度器"],
+           ["c_tuned", "v1 调参 + 坏调度器"],
+           ["c_tuned_cons", "上一行 + consolidation（v1 最好）"],
+           ["c2_base", "v2 未调参 + 修好的调度器"],
+           ["c2_top1", "v2，A′ 决赛第 1 名配置"],
+           ["c2_top2 / c2_top3", "v2，决赛第 2 / 3 名"],
+           ["c2_top1_cons", "c2_top1 + consolidation（本轮最好）"]],
+          col_w=[2.0, 4.0], size=10, head_size=10)
+    txt(s, 0.5, 5.2, 12.4, 1.8, [
+        "命名规则：c = v1 / c2 = v2  ｜  中间是配置  ｜  _cons = 做过 consolidation",
+        "",
+        "consolidation：24 任务顺序训练跑完后，把全部 24 个 head 连同编码器再联合微调一遍",
+        "（fm finetune）—— 是收尾步骤，不是另一套超参。",
+    ], size=12, color=MUT)
+
+
 @slide_guard
 def slide_summary():
     a = load("finals_a.json")
@@ -769,6 +800,7 @@ def main() -> None:
 
     slide_title(args.date)
     slide_summary()
+    slide_glossary()
     slide_probe()
     slide_anchor()
     slide_grid()
