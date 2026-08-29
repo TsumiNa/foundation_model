@@ -499,7 +499,6 @@ def stage_xfer(base: str, n_orders: int, rng_seed: int, tasks: list[str]):
 
     Shuffling is seeded, so the 72 sequences are reproducible from this file alone.
     """
-    rng = random.Random(rng_seed)
     point = parse_point(base)
     bad = validate_point(point)
     if bad:
@@ -508,8 +507,16 @@ def stage_xfer(base: str, n_orders: int, rng_seed: int, tasks: list[str]):
     for task in tasks:
         others = [t for t in ALL24 if t != task]
         for k in range(n_orders):
+            # Seeded PER (task, repeat), not from one shared stream. A shared stream is consumed
+            # task-major, so raising n_orders from 3 to 5 would make the first task draw two extra
+            # shuffles and shift every later task's orderings — silently invalidating runs already
+            # completed. Deriving the seed from (rng_seed, task, k) makes each ordering a pure
+            # function of its own identity, so extending the repeat count APPENDS rather than
+            # rewrites. The repeat count is expected to grow: n=3 is the minimum that yields a
+            # per-task mean/sd, chosen to get a first answer cheaply, with n=5 or 10 to follow for
+            # whichever tasks the first pass shows are worth it.
             order = others[:]
-            rng.shuffle(order)
+            random.Random(f"{rng_seed}:{task}:{k}").shuffle(order)
             order.append(task)  # the task under test always arrives last
             rows.append((
                 f"xf_{task}_o{k}",
@@ -688,6 +695,9 @@ def main() -> None:
     ap.add_argument("--prefix", default="st", help="single: runid prefix, so two bases do not collide")
     ap.add_argument("--points", type=int, default=200, help="a1r: number of random points")
     ap.add_argument("--rng-seed", type=int, default=20260827, help="a1r: sampling seed")
+    ap.add_argument("--append-to", type=Path,
+                    help="xfer: keep an existing grid's lines and emit only new (task, repeat) "
+                         "combinations — for raising the repeat count without re-running")
     ap.add_argument("--lrs", type=float, nargs="+", default=[], help="a1b: extra encoder LRs")
     ap.add_argument("--min-lrs", type=float, nargs="+", default=[], help="a1b: extra min_lrs")
     ap.add_argument("--base", help="b: adopted A' runid whose settings every head point inherits")
@@ -720,6 +730,17 @@ def main() -> None:
             raise SystemExit("xfer needs --winners (the adopted base)")
         rows, skipped = stage_xfer(args.winners[0], args.orders, args.rng_seed,
                                    args.tasks if args.tasks != PROBE6 else ALL24)
+        if args.append_to:
+            # Extending the repeat count: keep every line already on disk verbatim — those runs
+            # exist and their orderings are the record of what ran — and emit only the runids that
+            # are new. Regenerating from scratch would be fine given the per-(task, k) seeding,
+            # but reading the existing file makes that a guarantee rather than a property to trust.
+            existing = [tuple(line.split("\t", 1))
+                        for line in args.append_to.read_text().splitlines() if line.strip()]
+            have = {runid for runid, _ in existing}
+            added = [r for r in rows if r[0] not in have]
+            print(f"append mode: {len(existing)} kept, {len(added)} new")
+            rows = existing + added
     elif args.stage == "single":
         if not args.winners:
             raise SystemExit("single needs --winners (one adopted base)")

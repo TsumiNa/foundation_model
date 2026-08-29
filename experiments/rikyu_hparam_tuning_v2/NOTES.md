@@ -468,6 +468,68 @@ worked. The pattern to distrust is **a component that cannot fail loudly**.
 
 ---
 
+## The descriptor cannot see how many atoms are in the cell
+
+Raised by the user while reading the partial transfer results: `final_energy` (0.774) and `volume`
+(0.619) have implausibly low single-task ceilings for tasks with ~23 700 labels, when
+`formation_energy` and `density` reach 0.995 and 0.990 on the same rows. Dataset size is clearly
+not the axis.
+
+**Confirmed in code, not inferred.** `TaskCatalog.descriptor_fn` calls
+`formula_to_composition(key)`, whose contract is "element-aligned **atomic-fraction** vector", and
+feeds it to `KMD.transform`, which computes `weight @ K` and normalises nothing. Verified directly:
+
+    formula_to_composition("Fe2O3") == formula_to_composition("Fe4O6")   -> True (both sum to 1.0)
+
+So cell **scale** is absent from the model's input. The composition KEY preserves absolute
+stoichiometry on purpose — `composition_sources.normalize_composition` says amounts are not reduced
+"because some descriptors aggregate by sum rather than by mean" — but the KMD path divides it out
+at the entrance.
+
+### It is a generalisation gap, not label noise
+
+The obvious worry is that two rows collide: same descriptor, different target. Measured on the
+33 829 volume-labelled rows, **7 reduced formulas out of 33 822 appear more than once (0.02%)** —
+essentially one stable compound per composition, as the user expected. So there is no contradiction
+in the training data.
+
+Those seven are a natural experiment for the mechanism, though:
+
+    AgSO4       12 vs 48 atoms   volume  162.0 vs  616.1
+    U(PO3)4     34 vs 136 atoms  volume  450.1 vs 1929.9
+    Ba(FeAs)2    5 vs 10 atoms   volume   98.0 vs  216.5
+
+Same descriptor input, ~4x the volume.
+
+The model must therefore INFER cell size from chemistry, and on the labelled rows
+
+    corr(Volume, atoms per cell) = +0.868   ->  75.3% of volume's variance
+    atoms per cell: min 1, median 17, p95 80, max 320
+
+Single-task training reaches 0.619, so it recovers much of that scale from chemical regularities
+but not all of it. The remainder is the missing axis.
+
+### Which tasks this explains, and which it does not
+
+    volume                corr with atom count +0.868  ->  YES, this is the cause
+    final_energy          corr +0.162                  ->  no; it is per-atom, already intensive
+    total_magnetization   corr +0.023                  ->  no; magnetism is just hard from composition
+
+So it accounts for exactly one of the three low ceilings. `final_energy` and `total_magnetization`
+remain unexplained and are not a descriptor-scale problem.
+
+### What it does and does not affect
+
+It does **not** affect any comparison in this campaign. Every arm shares the descriptor, so
+multi-task vs single-task and tuned vs untuned stay like-for-like. What changes is the reading of
+volume's absolute ceiling: 0.619 is not undertraining, it is where a scale-free input tops out.
+
+**Actionable, and out of scope for v2**: add total atom count (or an equivalent extensivity
+feature) to the descriptor and re-measure the extensive targets. Recorded for HANDOFF rather than
+acted on — it is a model change, not a tuning result.
+
+---
+
 ## The headline: the upstream fix is 5x the tuning that follows it
 
 Stage C', at 24 tasks, with all four arms of the attribution complete:

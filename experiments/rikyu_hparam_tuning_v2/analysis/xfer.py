@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
-"""Transfer at deployment scale, and whether task ORDER matters — summary/transfer_xfer.json
+"""Transfer at deployment scale, per task — summary/transfer_xfer.json
 
 Each of the 24 tasks was trained as the LAST step of a 24-task sequence whose other 23 tasks were
-shuffled independently, three times. Two questions come out of that one set of runs.
+shuffled independently, and that was repeated ``n`` times per task.
 
-**1. Does arriving last, after an encoder shaped by 23 other tasks, beat training alone?**
-The probe answered this for six tasks (analysis/transfer.py). This answers it for all 24, in the
-régime that ships. Each task's three runs are compared against its same-régime single-task
-baseline (five seeds, adopted configuration, differing only in ``pretrain.task_sequence``).
+**The unit of analysis is the task, not the campaign.** Tasks here differ by two orders of
+magnitude in labels (851 to 33 556) and by a factor of six in single-task ceiling (0.18 to 0.99);
+whether a task benefits from sharing an encoder is a property OF THAT TASK. So this reports, for
+every task separately: n, mean, sd, min and max over its repeats, the same for its single-task
+baseline, and the difference between them.
 
-**2. Does the order of the preceding 23 matter?**
-The three runs per task differ in BOTH the shuffle and the seed, so their spread contains ordering
-effects plus seed noise. If ordering contributes nothing, that spread should look like the seed
-spread already measured on the single-task runs.
+Nothing is pooled into a campaign-level headline. An average over 24 tasks that transfer
+differently is a number with no referent — the action it would inform (train this task jointly, or
+alone) is taken per task.
 
-Per task that comparison is hopeless — three points against five estimate a variance ratio with
-enormous error bars, and an F-test on n=3 would be theatre. So it is POOLED: the ratio
-sd(orders) / sd(seeds) is computed for every task and the distribution across all 24 is reported.
-Ordering that mattered would push that distribution above 1 systematically; twenty-four weak
-estimates of the same quantity make a usable one, where any single task's would not.
+``n = 3`` is the deliberate starting point: the smallest count that yields a mean and a spread at
+all, chosen to get a first per-task answer cheaply. It is expected to grow to 5 or 10 for whichever
+tasks the first pass shows are worth it, so nothing here assumes n = 3 —
+``scripts/make_grids.py xfer --orders N --append-to`` extends the set without disturbing runs that
+already exist, and this script reports whatever n it finds, per task.
 
-The comparison is one-sided in interpretation but not in construction: a median ratio well BELOW 1
-would be just as suspicious (it would mean the multi-task runs are implausibly stable) and is
-reported rather than rounded to "no effect".
+The repeats vary the shuffle AND the seed together, so a task's spread across them covers ordering
+effects and seed noise jointly. Its single-task baseline's spread (five seeds, no ordering to vary)
+is printed beside it as the reference: a task whose repeat spread is much wider than its seed
+spread is one where ordering plausibly matters, and at n = 3 that is a flag for more repeats rather
+than a conclusion.
 
     python analysis/xfer.py --runs <outroot>/stage_xfer --ceilings summary/ceilings_adopted.json \\
         -o summary/transfer_xfer.json
@@ -72,7 +74,7 @@ def main() -> None:
     got = collect(args.runs)
     single = json.loads(args.ceilings.read_text())
 
-    rows, ratios = [], []
+    rows: list[dict] = []
     for task in sorted(set(got) | set(single)):
         orders = got.get(task, {})
         base = single.get(task)
@@ -86,9 +88,9 @@ def main() -> None:
         sd_single, n_single = base["sd"], base["n"]
         se = math.sqrt(sd_multi**2 / len(values) + sd_single**2 / n_single) if len(values) > 1 else None
         transfer = m_multi - base["mean"]
+        # Kept per task, never averaged across tasks: it says whether THIS task's spread over
+        # shuffled orderings looks like its own seed noise.
         ratio = (sd_multi / sd_single) if sd_single > 0 and len(values) > 1 else None
-        if ratio is not None:
-            ratios.append(ratio)
         separated = bool(se) and abs(transfer) > 2 * se
         views = pct_views(transfer, base["mean"])
         rows.append({
@@ -102,33 +104,39 @@ def main() -> None:
             "matters": separated and views["practically_significant"],
             "se_of_difference": se,
             "separated": separated,
-            "n_orders": len(values),
-            "sd_across_orders": sd_multi,
-            "sd_across_seeds_single": sd_single,
-            "order_to_seed_sd_ratio": ratio,
-            "per_order_r2": {str(k): orders[k] for k in sorted(orders)},
+            "n_repeats": len(values),
+            "multi_task_sd": sd_multi,
+            "multi_task_min": min(values),
+            "multi_task_max": max(values),
+            "multi_task_range": max(values) - min(values),
+            "single_task_sd": sd_single,
+            "single_task_n": n_single,
+            "single_task_min": base.get("min"),
+            "single_task_max": base.get("max"),
+            "repeat_to_seed_sd_ratio": ratio,
+            # At n=3 a spread is barely an estimate; flag for more repeats, do not conclude.
+            "spread_wider_than_seed_noise": bool(ratio is not None and ratio > 2.0),
+            "per_repeat_r2": {str(k): orders[k] for k in sorted(orders)},
         })
 
     scored = [r for r in rows if "transfer" in r]
     helped = [r["task"] for r in scored if r["separated"] and r["transfer"] > 0]
     hurt = [r["task"] for r in scored if r["separated"] and r["transfer"] < 0]
     matters = [r["task"] for r in scored if r["matters"]]
-    ordering = {
-        "n_tasks_with_ratio": len(ratios),
-        "median_ratio": statistics.median(ratios) if ratios else None,
-        "mean_ratio": statistics.fmean(ratios) if ratios else None,
-        "tasks_above_1": sum(1 for r in ratios if r > 1),
-        "interpretation": (
-            "sd across three shuffled orders divided by sd across five seeds of the same "
-            "single-task configuration. A median near 1 means shuffling the preceding 23 tasks "
-            "adds nothing beyond seed noise. Pooled across tasks because n=3 per task cannot "
-            "estimate a variance ratio on its own."
-        ),
-    }
+    # Deliberately NOT a pooled ordering statistic. An earlier version reported the median of
+    # sd(repeats)/sd(seeds) across all 24 tasks as a single "does order matter" number; that
+    # averages over tasks whose difficulty and data scale differ by orders of magnitude, so it
+    # answers a question nobody asks. The per-task ratio lives in each row instead, and the only
+    # thing collected here is WHICH tasks look worth more repeats.
+    wide = [r["task"] for r in scored if r.get("spread_wider_than_seed_noise")]
 
     out = {
         "question": "at 24 tasks, does arriving last beat training alone — and does the order matter?",
         "per_task": rows,
+        # Lists, not averages: these enumerate which tasks landed where. There is deliberately no
+        # mean transfer, no mean relative percent and no by-size-group mean — averaging over tasks
+        # that differ by two orders of magnitude in labels and six-fold in ceiling produces a
+        # number with no referent, and the decision it would inform is taken per task anyway.
         "summary": {
             "tasks_helped": helped,
             "tasks_hurt": hurt,
@@ -136,16 +144,16 @@ def main() -> None:
             "tasks_that_matter": matters,
             "resolved_but_negligible": [r["task"] for r in scored
                                         if r["separated"] and not r["practically_significant"]],
-            "mean_transfer": statistics.fmean([r["transfer"] for r in scored]) if scored else None,
-            "mean_relative_pct": statistics.fmean(
-                [r["relative_pct"] for r in scored if r["relative_pct"] is not None]) if scored else None,
-            "by_group": {
-                g: statistics.fmean([r["transfer"] for r in scored if r["group"] == g])
-                for g in ("big", "mid", "small")
-                if any(r["group"] == g for r in scored)
-            },
         },
-        "ordering": ordering,
+        "tasks_worth_more_repeats": {
+            "tasks": wide,
+            "criterion": "sd across repeats > 2x the task's own single-task seed sd",
+            "note": (
+                "At n=3 a standard deviation is barely an estimate, so this is a flag for "
+                "extending that task's repeat count (make_grids.py xfer --orders N --append-to), "
+                "not a finding about task ordering."
+            ),
+        },
         "notes": [
             "The task under test is always the LAST step; the other 23 are shuffled independently "
             "per repeat, so the three repeats differ in order AND seed.",
@@ -158,41 +166,33 @@ def main() -> None:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out, indent=2) + "\n")
 
-    print(f"{'task':24s} {'grp':6s} {'N':>7s} {'single':>8s} {'multi':>8s} {'transfer':>9s} "
-          f"{'rel%':>8s} {'2SE':>7s} {'sd_ord/sd_seed':>15s}  verdict")
-    for r in sorted(rows, key=lambda r: -(r.get("transfer") or -9)):
+    print(f"{'task':22s} {'grp':6s} {'N':>7s} | {'multi mean':>10s} {'sd':>7s} {'min':>7s} "
+          f"{'max':>7s} {'n':>2s} | {'single':>7s} {'sd':>7s} | {'transfer':>9s} {'rel%':>8s} "
+          f"{'2SE':>7s}  verdict")
+    for r in sorted(rows, key=lambda r: -(r.get("transfer") if "transfer" in r else -9)):
         if "transfer" not in r:
-            print(f"{r['task']:24s} {'':6s} {'':>7s} {'':>8s} {'':>8s} {'':>9s} {'':>8s} {'':>7s} "
-                  f"{'':>15s}  {r['skipped']} (n_orders={r['n_orders']})")
+            print(f"{r['task']:22s} {'':6s} {'':>7s} | {r['skipped']} (n_repeats={r['n_repeats']})")
             continue
         verdict = ("multi-task better" if r["separated"] and r["transfer"] > 0
                    else "single-task better" if r["separated"] else "unresolved")
         if r["separated"] and not r["practically_significant"]:
             verdict += " (negligible)"
-        ratio = r["order_to_seed_sd_ratio"]
-        rel = f"{r['relative_pct']:+.2f}%" if r["relative_pct"] is not None else "-"
-        print(f"{r['task']:24s} {r['group']:6s} {r['n_train']:7d} {r['single_task_r2']:8.4f} "
-              f"{r['multi_task_r2']:8.4f} {r['transfer']:+9.4f} {rel:>8s} "
-              f"{2 * (r['se_of_difference'] or 0):7.4f} "
-              f"{(f'{ratio:.2f}' if ratio is not None else '-'):>15s}  {verdict}")
+        if r.get("spread_wider_than_seed_noise"):
+            verdict += "  [wide spread: more repeats]"
+        print(f"{r['task']:22s} {r['group']:6s} {r['n_train']:7d} | "
+              f"{r['multi_task_r2']:10.4f} {r['multi_task_sd']:7.4f} {r['multi_task_min']:7.4f} "
+              f"{r['multi_task_max']:7.4f} {r['n_repeats']:2d} | "
+              f"{r['single_task_r2']:7.4f} {r['single_task_sd']:7.4f} | "
+              f"{r['transfer']:+9.4f} {r['relative_pct']:+7.2f}% "
+              f"{2 * (r['se_of_difference'] or 0):7.4f}  {verdict}")
 
     s = out["summary"]
-    print(f"\n  helped: {s['tasks_helped'] or 'none'}")
-    print(f"  hurt:   {s['tasks_hurt'] or 'none'}")
-    print(f"  resolved AND practically significant (|delta| >= 0.01): "
-          f"{s['tasks_that_matter'] or 'none'}")
-    if s["resolved_but_negligible"]:
-        print(f"  resolved but negligible: {s['resolved_but_negligible']}")
-    if s["mean_relative_pct"] is not None:
-        print(f"  mean relative transfer: {s['mean_relative_pct']:+.2f}%")
-    print("  mean transfer by group: " +
-          "  ".join(f"{g} {v:+.4f}" for g, v in s["by_group"].items()))
-    o = ordering
-    if o["median_ratio"] is not None:
-        print(f"\n  DOES ORDER MATTER? sd(orders)/sd(seeds) over {o['n_tasks_with_ratio']} tasks: "
-              f"median {o['median_ratio']:.2f}, mean {o['mean_ratio']:.2f}, "
-              f"{o['tasks_above_1']} of {o['n_tasks_with_ratio']} above 1")
-        print("  (a median near 1 means shuffling the preceding 23 adds nothing beyond seed noise)")
+    print(f"\n  multi-task better: {s['tasks_helped'] or 'none'}")
+    print(f"  single-task better: {s['tasks_hurt'] or 'none'}")
+    print(f"  unresolved at this repeat count: {len(s['tasks_unresolved'])} task(s)")
+    w = out["tasks_worth_more_repeats"]["tasks"]
+    print(f"  spread wider than the task's own seed noise -> worth more repeats: {w or 'none'}")
+    print("  (no campaign-level average is reported: transfer is a per-task property)")
     print(f"  wrote {args.out}")
 
 
