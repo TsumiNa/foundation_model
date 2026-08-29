@@ -566,11 +566,134 @@ def plot_finals_sigma(summary: dict, out: Path) -> Path:
     return path
 
 
+def plot_material_type(summary: dict, out: Path) -> Path:
+    """material_type: every individual run, on both of its metrics.
+
+    A dot plot showing each run, not bars with error caps. The multi-task arm has one completed
+    repeat of three at the time of writing, and a bar with a whisker would render n=1 and n=5 as
+    visually equivalent objects. Points make the sample count part of the picture.
+
+    Both metrics are drawn because they disagree in a way that IS the finding: accuracy sits at
+    ~0.99 in both arms — five classes, heavily imbalanced, so predicting the majority already
+    scores well and there is no headroom left — while macro-F1 weights every class equally. A
+    change visible only in macro-F1 is a change in the minority classes.
+
+    Panels do not share a y-axis, and each says so: forcing accuracy's 0.98-1.00 range onto
+    macro-F1's 0.5-0.8 range would flatten the panel that carries the result.
+    """
+    single = summary["single_task"]
+    multi = summary["multi_task"]
+    metrics = [("macro_f1", "macro-F1  (every class weighted equally)"),
+               ("accuracy", "accuracy  (already saturated — no headroom)")]
+
+    fig, axes = plt.subplots(1, 2, figsize=(9.6, 4.4))
+    for ax, (key, title) in zip(axes, metrics):
+        for i, (rows, label, colour) in enumerate(
+                ((single, f"single-task\nn={len(single)}", SERIES[1]),
+                 (multi, f"multi-task, trained LAST\nn={len(multi)}"
+                         f" of {summary.get('multi_repeats_planned', '?')}", SERIES[0]))):
+            vals = [r[key] for r in rows]
+            if not vals:
+                continue
+            ax.scatter([i] * len(vals), vals, s=70, color=colour, zorder=4,
+                       edgecolor="white", linewidth=1.2, label=None)
+            mean = statistics.fmean(vals)
+            ax.plot([i - 0.18, i + 0.18], [mean, mean], color=colour, linewidth=2.2, zorder=5)
+            ax.annotate(f"{mean:.3f}", (i + 0.22, mean), fontsize=9, color=TEXT, va="center")
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels([f"single-task\nn={len(single)}",
+                            f"multi-task (last)\nn={len(multi)} of "
+                            f"{summary.get('multi_repeats_planned', '?')}"], fontsize=9)
+        ax.set_xlim(-0.5, 1.6)
+        ax.set_title(title, fontsize=10, loc="left")
+        tidy(ax)
+    axes[0].set_ylabel("score")
+    fig.suptitle("material_type — the gain is entirely in the minority classes",
+                 fontsize=11, x=0.02, ha="left")
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    path = out / "material_type_transfer.png"
+    fig.savefig(path, dpi=170)
+    plt.close(fig)
+    return path
+
+
+def plot_confusion(summary: dict, out: Path) -> Path:
+    """material_type confusion, both arms, as counts PER RUN.
+
+    Per run, not summed, because the two arms have different run counts (five single-task seeds
+    against however many transfer repeats have finished) and summed matrices would make the arm
+    with more runs look worse at everything.
+
+    Colour encodes the ROW fraction — of the true class, where did it go — on one hue, light to
+    dark. Raw counts cannot drive colour here: "others" holds 48 667 of 49 034 rows, so a
+    count-scaled ramp paints one cell black and the other twenty-four white, hiding the entire
+    result. The counts are printed in the cells instead, which is where the small numbers need to
+    be legible.
+
+    Recall is appended on the right and precision underneath, because the finding lives in
+    precision: recall on the rare classes is already ~1.0 in both arms.
+    """
+    names = [summary["class_names"][k] for k in sorted(summary["class_names"], key=int)]
+    fig, axes = plt.subplots(1, 2, figsize=(12.4, 5.0))
+    for ax, key, title in ((axes[0], "single", "single-task"),
+                           (axes[1], "multi", "multi-task — trained LAST in a 24-task sequence")):
+        arm = summary[key]
+        n = arm["n_runs"]
+        M = [[c / n for c in row] for row in arm["matrix"]]
+        frac = [[(c / sum(row) if sum(row) else 0.0) for c in row] for row in M]
+        ax.imshow(frac, cmap="Blues", vmin=0, vmax=1, aspect="auto")
+        for i in range(len(names)):
+            for j in range(len(names)):
+                v = M[i][j]
+                if v == 0:
+                    label = "·"
+                elif v >= 100:
+                    label = f"{v:,.0f}"
+                else:
+                    label = f"{v:.1f}"
+                ax.text(j, i, label, ha="center", va="center", fontsize=9,
+                        color="white" if frac[i][j] > 0.55 else TEXT)
+        ax.set_xticks(range(len(names)))
+        ax.set_xticklabels(names, fontsize=9)
+        ax.set_yticks(range(len(names)))
+        ax.set_yticklabels(names, fontsize=9)
+        ax.set_xlabel("predicted")
+        if key == "single":
+            ax.set_ylabel("true")
+        ax.set_title(f"{title}\n(n={n}, counts per run)", fontsize=10, loc="left", pad=10)
+        for side in ("top", "right", "bottom", "left"):
+            ax.spines[side].set_visible(False)
+        # Recall to the right of the grid and precision below it — both OUTSIDE the cells, with
+        # the axis limits opened up to make the room. Placed inside, they land on the tick labels.
+        k = len(names)
+        ax.set_xlim(-1.6, k + 0.55)
+        ax.set_ylim(k + 0.15, -1.05)
+        for i, row in enumerate(M):
+            r = row[i] / sum(row) if sum(row) else float("nan")
+            ax.text(k - 0.35, i, f"{r:.3f}", ha="left", va="center", fontsize=8.5, color=MUTED)
+        for j in range(k):
+            col = sum(M[i][j] for i in range(k))
+            pr = M[j][j] / col if col else float("nan")
+            ax.text(j, k - 0.28, f"{pr:.3f}", ha="center", va="top", fontsize=8.5,
+                    color=SERIES[0] if key == "multi" else MUTED)
+        ax.text(k - 0.35, -0.62, "recall", fontsize=8.5, color=MUTED, ha="left")
+        ax.text(-0.62, k - 0.28, "precision", fontsize=8.5, color=MUTED, va="top", ha="right")
+    fig.suptitle("material_type — recall on the rare classes is already ~1.0; "
+                 "the gain is fewer false positives from “others”",
+                 fontsize=11, x=0.01, ha="left")
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    path = out / "material_type_confusion.png"
+    fig.savefig(path, dpi=170)
+    plt.close(fig)
+    return path
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("figure",
                     choices=["stage0", "stage_a", "finals", "stage_c", "a4", "ceilings", "transfer",
-                             "finals_sigma"])
+                             "finals_sigma", "material_type",
+                             "confusion"])
     ap.add_argument("--summary", type=Path, required=True)
     ap.add_argument("-o", "--out", type=Path, default=Path("."))
     args = ap.parse_args()
@@ -586,6 +709,8 @@ def main() -> None:
         "ceilings": plot_ceilings,
         "transfer": plot_transfer,
         "finals_sigma": plot_finals_sigma,
+        "material_type": plot_material_type,
+        "confusion": plot_confusion,
     }[args.figure](summary, args.out)
     for p in (drawn if isinstance(drawn, list) else [drawn]):
         print(p)
