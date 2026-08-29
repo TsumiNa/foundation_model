@@ -38,7 +38,6 @@ from common import (
     exceeds_band,
     group_by_config,
     load_runs,
-    pick_metric_per_task,
     relative_score,
     size_group,
     task_values,

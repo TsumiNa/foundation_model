@@ -48,10 +48,15 @@ CLASSIFICATION = {"material_type"}
 
 def last_pred(run: str, task: str) -> pd.DataFrame | None:
     """The task's predictions at the run's final step, or from the finetune directory."""
-    steps = sorted(
-        glob.glob(f"{run}/training/step*_*"),
-        key=lambda p: int(re.match(r"step(\d+)_", os.path.basename(p)).group(1)),
-    )
+    # Skip anything the glob catches but the pattern cannot parse, rather than crashing on it —
+    # common.py:final_metrics guards this the same way, and an analysis that dies on one odd
+    # directory name loses the whole comparison.
+    numbered = []
+    for path in glob.glob(f"{run}/training/step*_*"):
+        m = re.match(r"step(\d+)_", os.path.basename(path))
+        if m:
+            numbered.append((int(m.group(1)), path))
+    steps = [path for _, path in sorted(numbered)]
     for step in reversed(steps):
         path = f"{step}/{task}_pred.parquet"
         if os.path.exists(path):
