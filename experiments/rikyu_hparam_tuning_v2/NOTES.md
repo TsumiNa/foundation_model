@@ -394,6 +394,49 @@ stage may be placed beside it.
 
 ---
 
+## The headline: the upstream fix is 5x the tuning that follows it
+
+Stage C', at 24 tasks, with all four arms of the attribution complete:
+
+| from → to | Δ mean R² | relative | isolates |
+|---|---|---|---|
+| `c_base` → `c2_base` | **+0.0371** | **+5.47%** | the #45 scheduler-cadence fix, NO tuning |
+| `c2_base` → `c2_top1` | +0.0074 | +1.03% | v2's tuning, same image and scheduler |
+| `c_base` → `c_tuned` | +0.0326 | +4.81% | v1's reported gain, fix and tuning entangled |
+
+**The fix alone is 5.0× the tuning that follows it, and larger than v1's entire reported gain.**
+The blunter reading: the UNTUNED model on fixed code (0.7155) already beats v1's TUNED arm (0.7110)
+by +0.0045, and comes close to v1's tuned-plus-consolidated 0.7186.
+
+So v1 booked +0.0326 to hyper-parameter tuning, and most of it was a recoverable loss from the
+LR-scheduler bug — available to anyone who merged #45, at zero tuning cost. This is the single most
+important thing v2 was built to find out, and it is the reason a campaign must carry an
+untuned-on-current-code control. v1 had no such arm, so it had no way to see this.
+
+### Per task, multi-task at deployment scale is a REDISTRIBUTION
+
+`c2_top1` against the same-régime single-task ceilings: **mean gap exactly +0.0000** (mean relative
++0.82%). Six tasks beat single-task training, eight are below it, eight unresolved.
+
+| gains | | losses | |
+|---|---|---|---|
+| electrical_resistivity | **+21.5%** | volume | −9.7% |
+| dielectric_total | +8.7% | final_energy | −8.4% |
+| dielectric_ionic | +7.4% | seebeck | −8.1% |
+| magnetic_moment (851 labels) | +4.3% | tc | −5.3% |
+
+The mean absolute gap being 0.0000 while the mean relative gap is +0.82% is not a contradiction:
+the gains land on tasks with low baselines, where a given ΔR² is a larger relative move.
+
+Direction matches what probe6 measured — small/hard tasks gain, large well-fit tasks pay — but at
+24 tasks the paying side is more visible.
+
+**Not yet final**: one seed per arm, c2top3 and the consolidation arms still running, and
+`ceiling_gap`'s test assumes σ_arm = σ_ceiling, which errs toward claiming separation. The xfer
+stage (24 tasks × 3 orderings) is what turns this from a hypothesis into a result.
+
+---
+
 ## A median step time is the wrong estimator when steps grow
 
 Replay makes every task step cost more than the last — the encoder is rehearsing an ever-longer
