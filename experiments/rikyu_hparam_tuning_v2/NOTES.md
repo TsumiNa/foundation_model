@@ -748,6 +748,66 @@ purpose; it is not the arm-vs-arm test, and the arm-vs-arm test was already paid
 
 ---
 
+## At 24 tasks the transfer result reverses — the probe overstated it
+
+The campaign's central question, answered at deployment scale: each of the 24 tasks trained as the
+LAST step of a 24-task sequence whose other 23 were shuffled, three independent repeats each, 72
+runs, all verified. Compared against same-régime single-task baselines (five seeds), **both arms
+restricted to the rows they share**.
+
+    multi-task better   1   (material_type, +22.4%)
+    single-task better  19
+    unresolved          4   (zt, magnetization, klat, electrical_resistivity)
+
+Worst: magnetic_susceptibility −145% (58 labels, never scored anyway), final_energy −23.7%,
+volume −16.1%, dos_density −9.0%, total_magnetization −7.4%.
+
+**This reverses what the six-task probe said**, and the reversal is systematic:
+
+| task | probe6 | 24 tasks, trained last |
+|---|---|---|
+| zt | **+6.85%** multi better | +3.16% unresolved |
+| magnetization | **+4.40%** multi better | +1.72% unresolved |
+| magnetic_moment | +1.33% unresolved | **−6.33% single better** |
+
+All three verdicts moved against multi-task. A six-task probe does not predict what 24 tasks do.
+That is the same lesson stage B' taught about head tuning and stage C' about probe ranking, now on
+the campaign's headline question: **the probe is a cheap screen, never a substitute for the real
+régime.**
+
+### Why — not established, and not worth guessing
+
+Differencing xfer (task last) against c2_top1 (fixed order, each task at its own position) to price
+"being last": correlation between position and cost is only **+0.216**; tasks from positions 1–8
+lose 7.48% on average and tasks from 17–24 lose 4.86%, when a position-driven effect would cost the
+already-late tasks nearly nothing. **Position is not the driver.**
+
+And that difference confounds three things at once — c2_top1 is one seed with a hand-DESIGNED order,
+xfer is three repeats with RANDOM orders. Separating them needs its own experiment (one task pinned
+at one position, only the preceding 23 shuffled). Out of scope; recorded for handoff.
+
+### Does order matter: nine tasks flagged, none concluded
+
+Nine tasks have a spread across their three repeats exceeding twice their own single-task seed sd:
+density, final_energy, formation_energy, klat, magnetic_moment, material_type, power_factor, tc,
+thermal_conductivity. At n=3 a standard deviation is barely an estimate, so this is a flag for more
+repeats, not a finding. Agreed follow-up: extend to **n=10** at PACK=24, ~338 GPU-hours.
+
+### The comparison had a defect, and it was fixable exactly
+
+Raised by the user: the two arms were not scored on the same test rows. The datamodule splits by
+composition over the union of loaded tasks, so a single-task run draws from a smaller universe —
+the multi-task test set is 3–7% larger for every task. Target variances agree to within a few
+percent, so nothing was biased, but different rows is not a defensible comparison in a write-up.
+
+Containment turned out to be total: the single-task test set is a strict SUBSET of the multi-task
+one for every task. Restricting both arms to the shared rows costs the single-task side nothing.
+The correction moves transfer by at most 0.0195 (median 0.0055) and flips no verdict — but every
+number quoted above is the corrected one, with the uncorrected figure kept beside it in
+`summary/matched_xfer.json` so the size of the defect stays on the record.
+
+---
+
 ## Multi-task transfer is real, and it goes the way the small tasks needed
 
 ### Report it as a percentage — and then check the percentage did not lie

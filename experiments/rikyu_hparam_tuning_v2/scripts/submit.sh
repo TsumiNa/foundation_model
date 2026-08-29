@@ -64,6 +64,12 @@ case "$STAGE" in
     # configurations rather than against an average over a different set of points. 12h because a
     # packed run is expected to be slower in wall clock even as throughput rises.
     packcal)    CONFIG=probe6.toml; OUT=packcal;  DEFTIME=12:00:00 ;;
+    # Packing calibration on the REAL workload: 24-task sequences, not probe6. The 7.1x figure was
+    # measured on probe6, whose data-loading pressure is a sixth of this, so it cannot be assumed to
+    # carry over. Each level puts P runs on ONE GPU and is killed at the walltime; throughput is
+    # steps-completed per GPU-hour, which needs no run to finish.
+    packcal6|packcal12|packcal24|packcal32)
+                CONFIG=final_hybrid_v2.toml; OUT=packcal_c; DEFTIME=08:00:00 ;;
     # Stage A' (encoder x LR x scheduler, jointly) and stage B' (joint head tuning on A's base).
     #
     # Six hours, not the three a probe6 run needs. Probe grid lines carry no `--resume` — probe
