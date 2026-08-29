@@ -1,0 +1,3 @@
+smoke_base	
+smoke_sched	--set training.encoder_lr=0.03 --set training.scheduler.min_lr=1e-06 --set training.scheduler.patience=15 --set training.scheduler.factor=0.3
+smoke_wide	--set model.latent_dim=384 --set training.encoder_lr=0.001

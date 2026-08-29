@@ -1,0 +1,90 @@
+{
+  "class_names": {
+    "0": "DAC",
+    "1": "DQC",
+    "2": "IAC",
+    "3": "IQC",
+    "4": "others"
+  },
+  "note": "material_type has five classes with 13/15/126/213/48667 rows in the full dataset. Counts are summed over runs; divide by n_runs to compare the arms.",
+  "single": {
+    "n_runs": 5,
+    "matrix": [
+      [
+        5,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        15,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        114,
+        6,
+        0
+      ],
+      [
+        4,
+        8,
+        10,
+        118,
+        0
+      ],
+      [
+        38,
+        24,
+        253,
+        107,
+        36068
+      ]
+    ]
+  },
+  "multi": {
+    "n_runs": 2,
+    "matrix": [
+      [
+        2,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        6,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        46,
+        2,
+        0
+      ],
+      [
+        1,
+        4,
+        4,
+        48,
+        1
+      ],
+      [
+        7,
+        4,
+        42,
+        33,
+        15448
+      ]
+    ]
+  }
+}

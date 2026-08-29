@@ -1,0 +1,1128 @@
+{
+  "stage": "balancer",
+  "pattern": "bal*",
+  "n_runs": 45,
+  "seed_band_from_stage0": {
+    "n": 9,
+    "mean": -2.0142067026619593e-17,
+    "min": -0.05061329954433073,
+    "max": 0.016184462300932036,
+    "range": 0.06679776184526276,
+    "sigma": 0.020463997308445503,
+    "sem": 0.006821332436148501,
+    "resolves": 0.013642664872297003,
+    "values": [
+      -0.05061329954433073,
+      -0.005827842017857145,
+      -0.0036917704645074508,
+      0.002849756474219102,
+      0.007125524940191745,
+      0.008758017072581841,
+      0.00903919660630013,
+      0.016175954632470287,
+      0.016184462300932036
+    ]
+  },
+  "metric_by_task": {
+    "volume": "r2",
+    "formation_energy": "r2",
+    "seebeck": "r2",
+    "zt": "r2",
+    "magnetization": "r2",
+    "magnetic_moment": "r2"
+  },
+  "ranking": [
+    "bal1off",
+    "bal2off",
+    "bal0off",
+    "balx2on",
+    "bal2on",
+    "bal1on",
+    "balx1on",
+    "bal0on",
+    "balx0on"
+  ],
+  "arms": {
+    "bal0off": {
+      "n_seeds": 5,
+      "score": {
+        "n": 5,
+        "mean": 0.016194447486572804,
+        "min": 0.003122475821837075,
+        "max": 0.028989185276767044,
+        "range": 0.02586670945492997,
+        "sigma": 0.010986280235530587,
+        "sem": 0.004913213885301759,
+        "resolves": 0.009826427770603517,
+        "values": [
+          0.003122475821837075,
+          0.0087074209170841,
+          0.01450817495926354,
+          0.025644980457912248,
+          0.028989185276767044
+        ]
+      },
+      "per_seed": {
+        "2025": 0.01450817495926354,
+        "2026": 0.028989185276767044,
+        "2027": 0.025644980457912248,
+        "2028": 0.003122475821837075,
+        "2029": 0.0087074209170841
+      },
+      "per_task": {
+        "volume": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.6156383400212266,
+          "mae_mean": 0.4380205053702886,
+          "r2_sigma": 0.0063776602008414176
+        },
+        "formation_energy": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.9908560991517401,
+          "mae_mean": 0.06915417724429052,
+          "r2_sigma": 0.0011899185914655784
+        },
+        "seebeck": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6870007385462038,
+          "mae_mean": 0.33915467553333123,
+          "r2_sigma": 0.013915654466163172
+        },
+        "zt": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.7019574915492014,
+          "mae_mean": 0.38785265650747747,
+          "r2_sigma": 0.010636052272632462
+        },
+        "magnetization": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.8025278674907412,
+          "mae_mean": 0.2654058585359274,
+          "r2_sigma": 0.020435425708210303
+        },
+        "magnetic_moment": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.7055990019504825,
+          "mae_mean": 0.37202474539575286,
+          "r2_sigma": 0.025612716879940184
+        }
+      }
+    },
+    "bal0on": {
+      "n_seeds": 5,
+      "score": {
+        "n": 5,
+        "mean": -0.039543872211184196,
+        "min": -0.06636535075914114,
+        "max": -0.0014023841086844644,
+        "range": 0.06496296665045667,
+        "sigma": 0.027290488075056074,
+        "sem": 0.012204677294994552,
+        "resolves": 0.024409354589989104,
+        "values": [
+          -0.06636535075914114,
+          -0.06569137138934197,
+          -0.03450701546852311,
+          -0.02975323933023027,
+          -0.0014023841086844644
+        ]
+      },
+      "per_seed": {
+        "2025": -0.06569137138934197,
+        "2026": -0.06636535075914114,
+        "2027": -0.0014023841086844644,
+        "2028": -0.03450701546852311,
+        "2029": -0.02975323933023027
+      },
+      "per_task": {
+        "volume": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.5938025656522202,
+          "mae_mean": 0.472756145447543,
+          "r2_sigma": 0.01856423834170869
+        },
+        "formation_energy": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.9929472997096254,
+          "mae_mean": 0.05917433067287473,
+          "r2_sigma": 0.0014578851401245577
+        },
+        "seebeck": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6060117861428809,
+          "mae_mean": 0.4055584506618336,
+          "r2_sigma": 0.037574619724477225
+        },
+        "zt": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6575254781656688,
+          "mae_mean": 0.4325476567696621,
+          "r2_sigma": 0.029908926599907116
+        },
+        "magnetization": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.7657641290754043,
+          "mae_mean": 0.318157210210262,
+          "r2_sigma": 0.027151857850280292
+        },
+        "magnetic_moment": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.6581511667113844,
+          "mae_mean": 0.43309196284702534,
+          "r2_sigma": 0.038037225667001184
+        }
+      }
+    },
+    "bal1off": {
+      "n_seeds": 5,
+      "score": {
+        "n": 5,
+        "mean": 0.021450604749910254,
+        "min": 0.012651207836650967,
+        "max": 0.032381695507035964,
+        "range": 0.019730487670384995,
+        "sigma": 0.007063158869001911,
+        "sem": 0.003158740673393761,
+        "resolves": 0.006317481346787522,
+        "values": [
+          0.012651207836650967,
+          0.0201973216238631,
+          0.020429076298198675,
+          0.021593722483802563,
+          0.032381695507035964
+        ]
+      },
+      "per_seed": {
+        "2025": 0.021593722483802563,
+        "2026": 0.012651207836650967,
+        "2027": 0.020429076298198675,
+        "2028": 0.0201973216238631,
+        "2029": 0.032381695507035964
+      },
+      "per_task": {
+        "volume": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.6236231891755722,
+          "mae_mean": 0.43647001630757193,
+          "r2_sigma": 0.0043819977267673576
+        },
+        "formation_energy": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.9903123015563138,
+          "mae_mean": 0.07134752350400003,
+          "r2_sigma": 0.0002239154077226147
+        },
+        "seebeck": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6878596025889063,
+          "mae_mean": 0.3392048106203864,
+          "r2_sigma": 0.008889210757848985
+        },
+        "zt": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.7036477996446311,
+          "mae_mean": 0.387393632783643,
+          "r2_sigma": 0.004979007878483264
+        },
+        "magnetization": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.7961214101840152,
+          "mae_mean": 0.26576896485877466,
+          "r2_sigma": 0.00630740723996798
+        },
+        "magnetic_moment": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.7217026202748843,
+          "mae_mean": 0.3537323845542816,
+          "r2_sigma": 0.018527787954933282
+        }
+      }
+    },
+    "bal1on": {
+      "n_seeds": 5,
+      "score": {
+        "n": 5,
+        "mean": -0.030396227680101296,
+        "min": -0.051856336264544826,
+        "max": 0.011522082491511687,
+        "range": 0.06337841875605651,
+        "sigma": 0.02477208474827687,
+        "sem": 0.01107841308830657,
+        "resolves": 0.02215682617661314,
+        "values": [
+          -0.051856336264544826,
+          -0.04455886781019608,
+          -0.03642031859002675,
+          -0.030667698227250507,
+          0.011522082491511687
+        ]
+      },
+      "per_seed": {
+        "2025": -0.04455886781019608,
+        "2026": -0.051856336264544826,
+        "2027": 0.011522082491511687,
+        "2028": -0.030667698227250507,
+        "2029": -0.03642031859002675
+      },
+      "per_task": {
+        "volume": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.5941179369614502,
+          "mae_mean": 0.4732742995287711,
+          "r2_sigma": 0.018205533807909496
+        },
+        "formation_energy": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.9937549381347781,
+          "mae_mean": 0.05536772728883571,
+          "r2_sigma": 0.001084623923702027
+        },
+        "seebeck": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6225436086758745,
+          "mae_mean": 0.3945246103399895,
+          "r2_sigma": 0.035998602629018654
+        },
+        "zt": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6661877556547975,
+          "mae_mean": 0.4224620867003767,
+          "r2_sigma": 0.02129183811138179
+        },
+        "magnetization": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.7760709921491,
+          "mae_mean": 0.30840493029261046,
+          "r2_sigma": 0.020570876637199986
+        },
+        "magnetic_moment": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.6603988425894938,
+          "mae_mean": 0.42846949205805085,
+          "r2_sigma": 0.023396486354787333
+        }
+      }
+    },
+    "bal2off": {
+      "n_seeds": 5,
+      "score": {
+        "n": 5,
+        "mean": 0.016881044376584175,
+        "min": 0.007949807271278224,
+        "max": 0.023100730125827692,
+        "range": 0.015150922854549468,
+        "sigma": 0.0057369257569410284,
+        "sem": 0.002565631194877915,
+        "resolves": 0.00513126238975583,
+        "values": [
+          0.007949807271278224,
+          0.01511842197741542,
+          0.018915858673228394,
+          0.019320403835171147,
+          0.023100730125827692
+        ]
+      },
+      "per_seed": {
+        "2025": 0.018915858673228394,
+        "2026": 0.023100730125827692,
+        "2027": 0.019320403835171147,
+        "2028": 0.01511842197741542,
+        "2029": 0.007949807271278224
+      },
+      "per_task": {
+        "volume": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.6209158177708616,
+          "mae_mean": 0.43963686515013556,
+          "r2_sigma": 0.0021187550265464546
+        },
+        "formation_energy": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.990410353447842,
+          "mae_mean": 0.0705229444587715,
+          "r2_sigma": 0.0001920019639823378
+        },
+        "seebeck": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6879186899920426,
+          "mae_mean": 0.34442835731213883,
+          "r2_sigma": 0.007458735137082602
+        },
+        "zt": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6996768683033198,
+          "mae_mean": 0.39357651139095023,
+          "r2_sigma": 0.002760117064793005
+        },
+        "magnetization": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.803937046989082,
+          "mae_mean": 0.26264058277624713,
+          "r2_sigma": 0.010509094692130025
+        },
+        "magnetic_moment": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.7029412806552152,
+          "mae_mean": 0.374983624817832,
+          "r2_sigma": 0.02236562374620981
+        }
+      }
+    },
+    "bal2on": {
+      "n_seeds": 5,
+      "score": {
+        "n": 5,
+        "mean": -0.017088418514148336,
+        "min": -0.029611120052097793,
+        "max": -0.0060459175651844214,
+        "range": 0.02356520248691337,
+        "sigma": 0.009484613836062028,
+        "sem": 0.004241648255553948,
+        "resolves": 0.008483296511107895,
+        "values": [
+          -0.029611120052097793,
+          -0.023196605779828707,
+          -0.0160305497384929,
+          -0.010557899435137859,
+          -0.0060459175651844214
+        ]
+      },
+      "per_seed": {
+        "2025": -0.023196605779828707,
+        "2026": -0.0060459175651844214,
+        "2027": -0.029611120052097793,
+        "2028": -0.0160305497384929,
+        "2029": -0.010557899435137859
+      },
+      "per_task": {
+        "volume": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.6136391626241849,
+          "mae_mean": 0.44670360080100757,
+          "r2_sigma": 0.009530340428442944
+        },
+        "formation_energy": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.9945269969488824,
+          "mae_mean": 0.05036510944348367,
+          "r2_sigma": 0.00044518237647015526
+        },
+        "seebeck": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6439080613540377,
+          "mae_mean": 0.3749917701223373,
+          "r2_sigma": 0.008656621543287306
+        },
+        "zt": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.675227843783991,
+          "mae_mean": 0.4151639221351628,
+          "r2_sigma": 0.011054579184735912
+        },
+        "magnetization": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.7651271485864273,
+          "mae_mean": 0.29956403221415384,
+          "r2_sigma": 0.007594927070747338
+        },
+        "magnetic_moment": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.6716585213391562,
+          "mae_mean": 0.4167668653870905,
+          "r2_sigma": 0.023559852827547897
+        }
+      }
+    },
+    "balx0on": {
+      "n_seeds": 5,
+      "score": {
+        "n": 5,
+        "mean": -0.0435573755485584,
+        "min": -0.07268187344374863,
+        "max": -0.017887103384604586,
+        "range": 0.05479477005914404,
+        "sigma": 0.024224568066722057,
+        "sem": 0.010833556184552236,
+        "resolves": 0.02166711236910447,
+        "values": [
+          -0.07268187344374863,
+          -0.0653957562199463,
+          -0.03556653697449418,
+          -0.02625560771999832,
+          -0.017887103384604586
+        ]
+      },
+      "per_seed": {
+        "2025": -0.03556653697449418,
+        "2026": -0.0653957562199463,
+        "2027": -0.07268187344374863,
+        "2028": -0.017887103384604586,
+        "2029": -0.02625560771999832
+      },
+      "per_task": {
+        "volume": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.5966715618285316,
+          "mae_mean": 0.4683543176476924,
+          "r2_sigma": 0.018197172206376545
+        },
+        "formation_energy": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.9929450472624815,
+          "mae_mean": 0.05787599599097178,
+          "r2_sigma": 0.0023016004552953153
+        },
+        "seebeck": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6093355977470907,
+          "mae_mean": 0.4005791153134296,
+          "r2_sigma": 0.020751023137251048
+        },
+        "zt": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6481732860436461,
+          "mae_mean": 0.435841860376756,
+          "r2_sigma": 0.024894119296613174
+        },
+        "magnetization": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.7724353651703703,
+          "mae_mean": 0.31101229805272873,
+          "r2_sigma": 0.027282517191711826
+        },
+        "magnetic_moment": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.6385186711388665,
+          "mae_mean": 0.4416068086983153,
+          "r2_sigma": 0.020182552070022973
+        }
+      }
+    },
+    "balx1on": {
+      "n_seeds": 5,
+      "score": {
+        "n": 5,
+        "mean": -0.033865954541561494,
+        "min": -0.07794015793245597,
+        "max": -0.009665405420836921,
+        "range": 0.06827475251161905,
+        "sigma": 0.029976716023791837,
+        "sem": 0.01340599495428115,
+        "resolves": 0.0268119899085623,
+        "values": [
+          -0.07794015793245597,
+          -0.05217806917470019,
+          -0.015722284578850148,
+          -0.013823855600964233,
+          -0.009665405420836921
+        ]
+      },
+      "per_seed": {
+        "2025": -0.015722284578850148,
+        "2026": -0.07794015793245597,
+        "2027": -0.05217806917470019,
+        "2028": -0.013823855600964233,
+        "2029": -0.009665405420836921
+      },
+      "per_task": {
+        "volume": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.60794535869983,
+          "mae_mean": 0.4603770384017002,
+          "r2_sigma": 0.02602230683085582
+        },
+        "formation_energy": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.9943181290377441,
+          "mae_mean": 0.05283233753538891,
+          "r2_sigma": 0.0005640354827351781
+        },
+        "seebeck": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.607339697592229,
+          "mae_mean": 0.3929215514018435,
+          "r2_sigma": 0.03622691438972265
+        },
+        "zt": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6636828287583869,
+          "mae_mean": 0.4232970746703676,
+          "r2_sigma": 0.01675655397444274
+        },
+        "magnetization": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.7703593652090088,
+          "mae_mean": 0.30730394907132413,
+          "r2_sigma": 0.018158607319276387
+        },
+        "magnetic_moment": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.6533500772635286,
+          "mae_mean": 0.43980127665675744,
+          "r2_sigma": 0.03471077166679966
+        }
+      }
+    },
+    "balx2on": {
+      "n_seeds": 5,
+      "score": {
+        "n": 5,
+        "mean": -0.014605556621596119,
+        "min": -0.03394491350707368,
+        "max": 0.0009947704627776578,
+        "range": 0.03493968396985134,
+        "sigma": 0.01589559461442684,
+        "sem": 0.007108726020127593,
+        "resolves": 0.014217452040255187,
+        "values": [
+          -0.03394491350707368,
+          -0.027939020949273728,
+          -0.011976190453049651,
+          -0.00016242866136119836,
+          0.0009947704627776578
+        ]
+      },
+      "per_seed": {
+        "2025": -0.027939020949273728,
+        "2026": -0.011976190453049651,
+        "2027": -0.03394491350707368,
+        "2028": -0.00016242866136119836,
+        "2029": 0.0009947704627776578
+      },
+      "per_task": {
+        "volume": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.6220168917844372,
+          "mae_mean": 0.4414781389495258,
+          "r2_sigma": 0.007754343086722059
+        },
+        "formation_energy": {
+          "metric": "r2",
+          "group": "big",
+          "r2_mean": 0.9949203665298387,
+          "mae_mean": 0.04741877537779483,
+          "r2_sigma": 0.00023121534562690763
+        },
+        "seebeck": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6371127255192618,
+          "mae_mean": 0.3777631237763524,
+          "r2_sigma": 0.01638796684908981
+        },
+        "zt": {
+          "metric": "r2",
+          "group": "mid",
+          "r2_mean": 0.6735089157730825,
+          "mae_mean": 0.4184600852019072,
+          "r2_sigma": 0.00779091099469359
+        },
+        "magnetization": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.7773321005885696,
+          "mae_mean": 0.296193371225558,
+          "r2_sigma": 0.008175987987684994
+        },
+        "magnetic_moment": {
+          "metric": "r2",
+          "group": "small",
+          "r2_mean": 0.6702055477762666,
+          "mae_mean": 0.42405102220546526,
+          "r2_sigma": 0.04275054902242043
+        }
+      }
+    }
+  },
+  "pairwise": [
+    {
+      "better": "bal1off",
+      "worse": "bal2off",
+      "delta": 0.004569560373326079,
+      "se_of_difference": 0.0040694110224801265,
+      "resolvable_at_this_n": 0.008138822044960253,
+      "t": 1.1229046041510777,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "bal1off",
+      "worse": "bal0off",
+      "delta": 0.00525615726333745,
+      "se_of_difference": 0.0058410027670318795,
+      "resolvable_at_this_n": 0.011682005534063759,
+      "t": 0.8998724145457613,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "bal1off",
+      "worse": "balx2on",
+      "delta": 0.03605616137150637,
+      "se_of_difference": 0.007778922050708002,
+      "resolvable_at_this_n": 0.015557844101416004,
+      "t": 4.635110255183069,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal1off",
+      "worse": "bal2on",
+      "delta": 0.038539023264058586,
+      "se_of_difference": 0.0052885936283284165,
+      "resolvable_at_this_n": 0.010577187256656833,
+      "t": 7.287196932209697,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal1off",
+      "worse": "bal1on",
+      "delta": 0.05184683243001155,
+      "se_of_difference": 0.011519933992732526,
+      "resolvable_at_this_n": 0.023039867985465052,
+      "t": 4.500618880517864,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal1off",
+      "worse": "balx1on",
+      "delta": 0.05531655929147175,
+      "se_of_difference": 0.013773102168936516,
+      "resolvable_at_this_n": 0.027546204337873033,
+      "t": 4.016274519202452,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal1off",
+      "worse": "bal0on",
+      "delta": 0.060994476961094446,
+      "se_of_difference": 0.012606815240841267,
+      "resolvable_at_this_n": 0.025213630481682535,
+      "t": 4.838214552672719,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal1off",
+      "worse": "balx0on",
+      "delta": 0.06500798029846866,
+      "se_of_difference": 0.011284661370444487,
+      "resolvable_at_this_n": 0.022569322740888974,
+      "t": 5.760738241444288,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal2off",
+      "worse": "bal0off",
+      "delta": 0.0006865968900113713,
+      "se_of_difference": 0.005542755101107452,
+      "resolvable_at_this_n": 0.011085510202214904,
+      "t": 0.1238728533891364,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "bal2off",
+      "worse": "balx2on",
+      "delta": 0.03148660099818029,
+      "se_of_difference": 0.007557542527658696,
+      "resolvable_at_this_n": 0.015115085055317392,
+      "t": 4.166248603027676,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal2off",
+      "worse": "bal2on",
+      "delta": 0.03396946289073251,
+      "se_of_difference": 0.004957221333769003,
+      "resolvable_at_this_n": 0.009914442667538007,
+      "t": 6.852520919195136,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal2off",
+      "worse": "bal1on",
+      "delta": 0.04727727205668547,
+      "se_of_difference": 0.011371618177871301,
+      "resolvable_at_this_n": 0.022743236355742602,
+      "t": 4.157479728670902,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal2off",
+      "worse": "balx1on",
+      "delta": 0.05074699891814567,
+      "se_of_difference": 0.013649291708449283,
+      "resolvable_at_this_n": 0.027298583416898566,
+      "t": 3.7179217795405384,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal2off",
+      "worse": "bal0on",
+      "delta": 0.05642491658776837,
+      "se_of_difference": 0.012471431806456155,
+      "resolvable_at_this_n": 0.02494286361291231,
+      "t": 4.524333489804961,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal2off",
+      "worse": "balx0on",
+      "delta": 0.06043841992514258,
+      "se_of_difference": 0.011133211712348807,
+      "resolvable_at_this_n": 0.022266423424697614,
+      "t": 5.428659894979371,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal0off",
+      "worse": "balx2on",
+      "delta": 0.030800004108168924,
+      "se_of_difference": 0.008641392035543875,
+      "resolvable_at_this_n": 0.01728278407108775,
+      "t": 3.5642410368007824,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal0off",
+      "worse": "bal2on",
+      "delta": 0.03328286600072114,
+      "se_of_difference": 0.006490859003750263,
+      "resolvable_at_this_n": 0.012981718007500526,
+      "t": 5.127651976647636,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal0off",
+      "worse": "bal1on",
+      "delta": 0.0465906751666741,
+      "se_of_difference": 0.012119030787892417,
+      "resolvable_at_this_n": 0.024238061575784835,
+      "t": 3.844422543527224,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal0off",
+      "worse": "balx1on",
+      "delta": 0.0500604020281343,
+      "se_of_difference": 0.014277968041599396,
+      "resolvable_at_this_n": 0.028555936083198792,
+      "t": 3.5061292953087886,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal0off",
+      "worse": "bal0on",
+      "delta": 0.055738319697757,
+      "se_of_difference": 0.01315651240100041,
+      "resolvable_at_this_n": 0.02631302480200082,
+      "t": 4.236557379257949,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal0off",
+      "worse": "balx0on",
+      "delta": 0.059751823035131206,
+      "se_of_difference": 0.011895613068966726,
+      "resolvable_at_this_n": 0.02379122613793345,
+      "t": 5.023013331781256,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "balx2on",
+      "worse": "bal2on",
+      "delta": 0.0024828618925522173,
+      "se_of_difference": 0.00827801700608805,
+      "resolvable_at_this_n": 0.0165560340121761,
+      "t": 0.2999343792995595,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "balx2on",
+      "worse": "bal1on",
+      "delta": 0.01579067105850518,
+      "se_of_difference": 0.013163024811357055,
+      "resolvable_at_this_n": 0.02632604962271411,
+      "t": 1.1996232845265924,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "balx2on",
+      "worse": "balx1on",
+      "delta": 0.019260397919965373,
+      "se_of_difference": 0.015174145324974674,
+      "resolvable_at_this_n": 0.030348290649949348,
+      "t": 1.2692904613392135,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "balx2on",
+      "worse": "bal0on",
+      "delta": 0.024938315589588075,
+      "se_of_difference": 0.014124026816180812,
+      "resolvable_at_this_n": 0.028248053632361624,
+      "t": 1.7656661173298087,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "balx2on",
+      "worse": "balx0on",
+      "delta": 0.028951818926962282,
+      "se_of_difference": 0.012957620353795257,
+      "resolvable_at_this_n": 0.025915240707590513,
+      "t": 2.234346904482532,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal2on",
+      "worse": "bal1on",
+      "delta": 0.01330780916595296,
+      "se_of_difference": 0.01186266481356555,
+      "resolvable_at_this_n": 0.0237253296271311,
+      "t": 1.1218229103746415,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "bal2on",
+      "worse": "balx1on",
+      "delta": 0.016777536027413158,
+      "se_of_difference": 0.014061019900350597,
+      "resolvable_at_this_n": 0.028122039800701194,
+      "t": 1.1931948141965738,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "bal2on",
+      "worse": "bal0on",
+      "delta": 0.02245545369703586,
+      "se_of_difference": 0.012920747958179489,
+      "resolvable_at_this_n": 0.025841495916358977,
+      "t": 1.7379376000303774,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "bal2on",
+      "worse": "balx0on",
+      "delta": 0.026468957034410066,
+      "se_of_difference": 0.011634325056817598,
+      "resolvable_at_this_n": 0.023268650113635197,
+      "t": 2.275074566435594,
+      "separated": true,
+      "verdict": "ordering is supported"
+    },
+    {
+      "better": "bal1on",
+      "worse": "balx1on",
+      "delta": 0.0034697268614601977,
+      "se_of_difference": 0.017391145369680918,
+      "resolvable_at_this_n": 0.034782290739361836,
+      "t": 0.19951111831364435,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "bal1on",
+      "worse": "bal0on",
+      "delta": 0.0091476445310829,
+      "se_of_difference": 0.0164828815572435,
+      "resolvable_at_this_n": 0.032965763114487,
+      "t": 0.5549784786909977,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "bal1on",
+      "worse": "balx0on",
+      "delta": 0.013161147868457106,
+      "se_of_difference": 0.015495069414462534,
+      "resolvable_at_this_n": 0.030990138828925068,
+      "t": 0.8493765027069172,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "balx1on",
+      "worse": "bal0on",
+      "delta": 0.005677917669622702,
+      "se_of_difference": 0.01812939184278301,
+      "resolvable_at_this_n": 0.03625878368556602,
+      "t": 0.3131885348864022,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "balx1on",
+      "worse": "balx0on",
+      "delta": 0.009691421006996909,
+      "se_of_difference": 0.017236201446898376,
+      "resolvable_at_this_n": 0.03447240289379675,
+      "t": 0.5622712775117201,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    },
+    {
+      "better": "bal0on",
+      "worse": "balx0on",
+      "delta": 0.0040135033373742066,
+      "se_of_difference": 0.016319316391283232,
+      "resolvable_at_this_n": 0.032638632782566464,
+      "t": 0.24593575129887005,
+      "separated": false,
+      "verdict": "TIED \u2014 ordering is not supported"
+    }
+  ],
+  "leader": "bal1off",
+  "statistically_tied_with_leader": [
+    "bal2off",
+    "bal0off"
+  ],
+  "ranking_is_fully_resolved": false,
+  "seeds_that_would_resolve_the_ties": {
+    "bal1off vs bal2off": 58,
+    "bal1off vs bal0off": 44,
+    "bal2off vs bal0off": 2531,
+    "balx2on vs bal2on": 194,
+    "balx2on vs bal1on": 5,
+    "balx2on vs balx1on": 4,
+    "balx2on vs bal0on": 2,
+    "bal2on vs bal1on": 7,
+    "bal2on vs balx1on": 5,
+    "bal2on vs bal0on": 3,
+    "bal1on vs balx1on": 100,
+    "bal1on vs bal0on": 15,
+    "bal1on vs balx0on": 7,
+    "balx1on vs bal0on": 38,
+    "balx1on vs balx0on": 13,
+    "bal0on vs balx0on": 75
+  },
+  "vs_anchor": [
+    {
+      "arm": "bal1off",
+      "delta_vs_untuned": 0.021450604749910254,
+      "vs_band": 0.32112759705333616,
+      "exceeds_band": false
+    },
+    {
+      "arm": "bal2off",
+      "delta_vs_untuned": 0.016881044376584175,
+      "vs_band": 0.25271871257736406,
+      "exceeds_band": false
+    },
+    {
+      "arm": "bal0off",
+      "delta_vs_untuned": 0.016194447486572804,
+      "vs_band": 0.24243997162790118,
+      "exceeds_band": false
+    },
+    {
+      "arm": "balx2on",
+      "delta_vs_untuned": -0.014605556621596119,
+      "vs_band": -0.2186533832590071,
+      "exceeds_band": false
+    },
+    {
+      "arm": "bal2on",
+      "delta_vs_untuned": -0.017088418514148336,
+      "vs_band": -0.25582321985179257,
+      "exceeds_band": false
+    },
+    {
+      "arm": "bal1on",
+      "delta_vs_untuned": -0.030396227680101296,
+      "vs_band": -0.4550485950489518,
+      "exceeds_band": false
+    },
+    {
+      "arm": "balx1on",
+      "delta_vs_untuned": -0.033865954541561494,
+      "vs_band": -0.5069923543248663,
+      "exceeds_band": false
+    },
+    {
+      "arm": "bal0on",
+      "delta_vs_untuned": -0.039543872211184196,
+      "vs_band": -0.5919939698397038,
+      "exceeds_band": false
+    },
+    {
+      "arm": "balx0on",
+      "delta_vs_untuned": -0.0435573755485584,
+      "vs_band": -0.6520783682761588,
+      "exceeds_band": false
+    }
+  ]
+}

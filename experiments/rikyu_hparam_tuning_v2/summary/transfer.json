@@ -1,0 +1,110 @@
+{
+  "question": "does multi-task training beat training each task alone, in this regime?",
+  "per_task": [
+    {
+      "task": "volume",
+      "group": "big",
+      "n_train": 23678,
+      "single_task_r2": 0.6051859188047161,
+      "multi_task_r2": 0.6200591156558868,
+      "transfer": 0.014873196851170722,
+      "se_of_difference": 0.004229112391599701,
+      "separated": true,
+      "n_single": 5,
+      "n_multi": 15,
+      "recorded_ceiling_h200": 0.5685,
+      "frame_offset_vs_recorded": 0.036685918804716056
+    },
+    {
+      "task": "formation_energy",
+      "group": "big",
+      "n_train": 23180,
+      "single_task_r2": 0.9938376982905919,
+      "multi_task_r2": 0.9905262513852987,
+      "transfer": -0.0033114469052931694,
+      "se_of_difference": 0.0005594936529553382,
+      "separated": true,
+      "n_single": 5,
+      "n_multi": 15,
+      "recorded_ceiling_h200": 0.995,
+      "frame_offset_vs_recorded": -0.00116230170940812
+    },
+    {
+      "task": "seebeck",
+      "group": "mid",
+      "n_train": 8072,
+      "single_task_r2": 0.661058511209569,
+      "multi_task_r2": 0.6875930103757176,
+      "transfer": 0.026534499166148584,
+      "se_of_difference": 0.010387737888965486,
+      "separated": true,
+      "n_single": 5,
+      "n_multi": 15,
+      "recorded_ceiling_h200": 0.6026,
+      "frame_offset_vs_recorded": 0.05845851120956902
+    },
+    {
+      "task": "zt",
+      "group": "mid",
+      "n_train": 3445,
+      "single_task_r2": 0.6613657466042736,
+      "multi_task_r2": 0.7017607198323841,
+      "transfer": 0.040394973228110476,
+      "se_of_difference": 0.00596620803295634,
+      "separated": true,
+      "n_single": 5,
+      "n_multi": 15,
+      "recorded_ceiling_h200": 0.6532,
+      "frame_offset_vs_recorded": 0.008165746604273605
+    },
+    {
+      "task": "magnetization",
+      "group": "small",
+      "n_train": 1160,
+      "single_task_r2": 0.7606412236700663,
+      "multi_task_r2": 0.8008621082212795,
+      "transfer": 0.0402208845512132,
+      "se_of_difference": 0.004942059873639468,
+      "separated": true,
+      "n_single": 5,
+      "n_multi": 15,
+      "recorded_ceiling_h200": 0.7462,
+      "frame_offset_vs_recorded": 0.014441223670066283
+    },
+    {
+      "task": "magnetic_moment",
+      "group": "small",
+      "n_train": 851,
+      "single_task_r2": 0.6909505303556407,
+      "multi_task_r2": 0.7100809676268607,
+      "transfer": 0.01913043727121999,
+      "se_of_difference": 0.013416628702758551,
+      "separated": false,
+      "n_single": 5,
+      "n_multi": 15,
+      "recorded_ceiling_h200": 0.6408,
+      "frame_offset_vs_recorded": 0.050150530355640655
+    }
+  ],
+  "summary": {
+    "tasks_helped": [
+      "volume",
+      "seebeck",
+      "zt",
+      "magnetization"
+    ],
+    "tasks_hurt": [
+      "formation_energy"
+    ],
+    "tasks_unresolved": [
+      "magnetic_moment"
+    ],
+    "mean_transfer": 0.0229737573604283,
+    "mean_frame_offset_vs_recorded_ceilings": 0.027789938155809584
+  },
+  "notes": [
+    "single-task runs differ from the multi-task arm ONLY in pretrain.task_sequence \u2014 same image, same config, same adopted hyper-parameters, same seeds.",
+    "frame_offset_vs_recorded is single-task-here minus the recorded H200 ceiling. A large consistent offset means the inherited ceilings cannot be used to judge transfer, which is why these runs exist.",
+    "A task whose difference is not separated is reported as unresolved, not as zero."
+  ]
+}

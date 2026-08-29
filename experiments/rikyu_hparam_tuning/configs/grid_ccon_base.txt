@@ -1,0 +1,1 @@
+c_base_consolidated	--checkpoint /out/c_base/training/final_model.pt

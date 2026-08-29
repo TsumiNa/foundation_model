@@ -1,0 +1,47 @@
+{
+  "task": "material_type",
+  "note": "Classification task: primary metric is macro-F1. Accuracy is reported alongside because the two move very differently \u2014 accuracy is already ~0.99 in both arms, so it has no headroom, while macro-F1 weights every class equally and is where the difference lives.",
+  "single_task": [
+    {
+      "run": "stA_material_type_s2025",
+      "macro_f1": 0.5761431651234872,
+      "accuracy": 0.9908893119390808,
+      "samples": 7354
+    },
+    {
+      "run": "stA_material_type_s2026",
+      "macro_f1": 0.5535523360143494,
+      "accuracy": 0.9888496056567854,
+      "samples": 7354
+    },
+    {
+      "run": "stA_material_type_s2027",
+      "macro_f1": 0.5940422954062614,
+      "accuracy": 0.9921131357084579,
+      "samples": 7354
+    },
+    {
+      "run": "stA_material_type_s2028",
+      "macro_f1": 0.6035300810282508,
+      "accuracy": 0.9914332336143595,
+      "samples": 7354
+    },
+    {
+      "run": "stA_material_type_s2029",
+      "macro_f1": 0.5275751481935703,
+      "accuracy": 0.9755235246124558,
+      "samples": 7354
+    }
+  ],
+  "multi_task": [
+    {
+      "run": "xf_material_type_o2",
+      "macro_f1": 0.7389104296933121,
+      "accuracy": 0.9947597137014315,
+      "samples": 7824
+    }
+  ],
+  "n_single": 5,
+  "n_multi": 1,
+  "multi_repeats_planned": 3
+}

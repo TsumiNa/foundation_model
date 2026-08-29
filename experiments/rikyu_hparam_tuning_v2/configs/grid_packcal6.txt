@@ -1,0 +1,6 @@
+pc6_00	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --set training.scheduler.factor=0.5 --set training.max_epochs=10 --seed 2025
+pc6_01	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --set training.scheduler.factor=0.5 --set training.max_epochs=10 --seed 2026
+pc6_02	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --set training.scheduler.factor=0.5 --set training.max_epochs=10 --seed 2027
+pc6_03	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --set training.scheduler.factor=0.5 --set training.max_epochs=10 --seed 2028
+pc6_04	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --set training.scheduler.factor=0.5 --set training.max_epochs=10 --seed 2029
+pc6_05	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --set training.scheduler.factor=0.5 --set training.max_epochs=10 --seed 2030

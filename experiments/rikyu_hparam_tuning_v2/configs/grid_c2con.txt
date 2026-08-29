@@ -1,0 +1,2 @@
+c2base_consolidated	--checkpoint /out/c2base/training/final_model.pt
+c2top1_consolidated	--checkpoint /out/c2top1/training/final_model.pt --set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.factor=0.5 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5
