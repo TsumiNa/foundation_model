@@ -674,6 +674,45 @@ def slide_xfer():
         size=12)
 
 
+def slide_descriptor_limit():
+    s = new("上线前该知道的一条模型限制：描述符看不见晶胞尺度",
+            "volume 0.619 / final_energy 0.774 对 ~23 700 标签的任务太低，而同批行上 formation_energy 0.995")
+    txt(s, 0.5, 1.5, 7.4, 4.6, [
+        "在代码层面确认，不是推测：",
+        "  descriptor_fn → formula_to_composition（契约是 atomic-FRACTION 向量，和为 1）",
+        "  → KMD.transform 做 weight @ K，不再归一化",
+        "",
+        "  formula_to_composition(\"Fe2O3\") == formula_to_composition(\"Fe4O6\")  →  True",
+        "",
+        "即晶胞尺度不在模型输入里。成分键本身特意保留了绝对化学计量，",
+        "但 KMD 这条路径在入口就把它除掉了。",
+        "",
+        "是泛化缺口，不是标签噪声：33 822 个约化式里只有 7 个重复（0.02%），",
+        "训练数据没有矛盾 —— 模型只是必须从化学成分反推尺度。",
+        "",
+        "corr(Volume, 晶胞原子数) = +0.868  →  75.3% 的方差",
+        "原子数跨度 1–320（中位 17）。单任务到 0.619，推回了大部分但推不全。",
+    ], size=12)
+    table(s, 8.2, 1.5, 4.7, ["约化式", "原子数", "体积"],
+          [["AgSO4", "12 / 48", "162 / 616"],
+           ["U(PO3)4", "34 / 136", "450 / 1930"],
+           ["Ba(FeAs)2", "5 / 10", "98 / 217"],
+           ["MnIr", "2 / 4", "26 / 56"]],
+          col_w=[1.7, 1.4, 1.6], size=10, head_size=10)
+    txt(s, 8.2, 3.4, 4.7, 3.2, [
+        "↑ 同一个描述符输入，体积差约 4 倍",
+        "",
+        "只解释三个低天花板中的一个：",
+        "  volume            +0.868  ✓ 是",
+        "  final_energy      +0.162  ✗ 本就是每原子量",
+        "  total_magnetization +0.023 ✗ 磁性本就难",
+        "",
+        "不影响本报告任何比较（各臂共用描述符）。",
+        "改进项：给描述符补晶胞原子总数 —— 属模型",
+        "改动，列入交接，不在 v2 范围。",
+    ], size=11, color=MUT)
+
+
 @slide_guard
 def slide_balancer():
     b = load("stage_bal.json")
@@ -817,6 +856,7 @@ def main() -> None:
     slide_transfer_fig()
     slide_transfer_why()
     slide_xfer()
+    slide_descriptor_limit()
     slide_balancer()
     slide_pcgrad()
     slide_packing()
