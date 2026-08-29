@@ -32,7 +32,9 @@ IMAGE=${IMAGE:-$HOME/containers/foundation-model_rikyu-$VERSION.sif}
 STAGE=${1:?usage: submit.sh <stage> [--time HH:MM:SS] [--throttle N] [extra sbatch args...]}
 shift || true
 
-TIME=""
+# ${TIME:-} rather than "": a bare assignment silently discards `TIME=72:00:00 bash submit.sh …`,
+# the same footgun PACK had. The --time flag still wins over the environment.
+TIME=${TIME:-}
 THROTTLE=200
 # ${PACK:-1}, not 1: a bare assignment silently discards `PACK=8 bash submit.sh <stage>`, which
 # reads as a working invocation and submits one GPU per run. That misfire actually happened — 100

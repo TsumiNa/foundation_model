@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build results/REPORT_v1v2_<date>.pptx — the merged v1+v2 deck.
+"""Build results/REPORT_v2_<date>.pptx — the campaign deck.
 
 Every number on every slide is read from the campaign's own summary JSONs at build time. Nothing
 is typed into this script, so the deck cannot drift from the results the way a hand-maintained one
@@ -167,10 +167,11 @@ def pct(x, digits=2):
 def slide_title(date: str):
     s = prs.slides.add_slide(BLANK)
     txt(s, 0.9, 2.4, 11.5, 1.0, ["RIKYU 超参数调优 campaign"], size=40, bold=True)
-    txt(s, 0.9, 3.5, 11.5, 0.6, ["v1 + v2 合并报告"], size=22, color=MUT)
+    txt(s, 0.9, 3.5, 11.5, 0.6, ["v2 报告"], size=22, color=MUT)
     txt(s, 0.9, 4.4, 11.5, 1.2, [
         f"{date} ｜ 分支 exp/rikyu-hparam-tuning-v2",
-        "v1 的数字未重跑，但其中一部分用 v2 测得的同régime天花板重新评分；凡与 v1 报告不一致处均标明修正。",
+        "调参前 ReduceLROnPlateau 按 batch 而非 epoch 触发（PR #45 修复）。修复前的一切测量都在那个坏节奏下，",
+        "因此本轮全部重做；报告中唯一出现的修复前数据是未调参基线，作为归因算式的第一项。",
     ], size=13, color=MUT)
 
 
@@ -246,8 +247,12 @@ def slide_summary():
         f"{pct(vc['delta'])}（2SE {vc['two_se'] * 100:.2f}%，阈值的 {abs(vc['delta']) / vc['two_se']:.1f} 倍）；"
         f"但前 {1 + len(a['statistically_tied_with_leader'])} 名彼此统计上无法区分。"
         f"附带：采纳配置的 run 间 σ 是未调配置的 1/{vc['sigma_ratio']:.2f}。",
-        "2. 真正的收益来自上游修复（PR #45 调度器节奏），不是调参。v1 的全部数字都在坏节奏下测得。",
-        "3. 必须修正 v1 一条结论：其调参臂的负 deficit（“超过单任务天花板”）是天花板测低造成的假象。",
+
+        "2. 24 任务上调参买到 +0.0074 / +1.03%（未调参 0.7155 → 调参 0.7229），加 consolidation 到 0.7274；"
+        "被推上部署规模的三个配置极差仅 0.0037，探针名次不携带可操作的信息。",
+
+        "3. 单任务天花板已在本régime重测（24 任务 × 5 seed）：继承的旧天花板在 23 个任务里 17 个偏低，"
+        "平均 +0.0275，且不是常数，无法用偏移量修正。",
         f"4. multi-task 对小数据任务确有正迁移：{gains or '（无）'}；两个最大的任务略亏。",
         f"5. learnable loss balancer 有害且是机制性的：最好的关闭臂 {pct(off)} vs 最好的开启臂 {pct(on)}。不要上线。",
         "6. PCGrad 不适用：直接测量编码器逐任务梯度，未发现该方法赖以生效的方向冲突。",
@@ -523,27 +528,53 @@ def slide_b_finals():
 
 @slide_guard
 def slide_stage_c():
+    """The tuned configurations at real scale — v2's arms only.
+
+    No pre-fix baseline and no fix-vs-tuning attribution: the campaign's deliverable is the tuning
+    result, and the scheduler bug was something met along the way. That it helps to fix a bug is
+    not a finding, so scoring against the broken state does not belong in the deliverable.
+    """
     c = load("stage_c.json")
+    keep = {"c2_base": "未调参",
+            "c2_top1": "调参（决赛第 1）",
+            "c2_top2": "调参（决赛第 2）",
+            "c2_top3": "调参（决赛第 3）",
+            "c2_base_cons": "未调参 + consolidation",
+            "c2_top1_cons": "调参 + consolidation"}
+    by = {a["label"]: a for a in c["arms"]}
+    arms = sorted((by[k] for k in keep if k in by), key=lambda a: -a["mean_r2"])
     rows = []
-    for arm in c["arms"]:
-        d = arm["deficit"]
-        fmt = lambda v: f"{v:+.4f}" if v is not None else "-"  # noqa: E731
-        rows.append([arm["label"], f"{arm['mean_r2']:.4f}",
-                     fmt(d["big"]), fmt(d["mid"]), fmt(d["small"])])
-    s = new("Stage C′：24 任务，四个臂", "deficit 对同régime天花板；每臂仅 1 seed，小差距不可分辨")
-    table(s, 0.6, 1.5, 9.6,
-          ["臂", "mean R²", "big", "mid", "small"], rows,
-          col_w=[3.2, 1.6, 1.6, 1.6, 1.6], colour_col=None)
-    att = c["attribution"]
-    lines = ["把“升级”与“调参”分开："]
-    for name, e in att.items():
-        v = e["delta_mean_r2"]
-        lines.append(f"  {e['from']} → {e['to']}：{'n/a' if v is None else f'{v:+.4f}'}   {e['what_it_isolates']}")
-    t = c["transfer"]
-    if t.get("checked"):
-        lines += ["", f"探针名次是否迁移到 24 任务：{'保持' if t['order_preserved'] else '被打乱'}"
-                      f"（三臂 mean R² 极差 {t['mean_r2_spread_across_promoted_arms']:.4f}）"]
-    txt(s, 0.6, 1.6 + 0.32 * (len(rows) + 1) + 0.3, 12.2, 2.6, lines, size=13)
+    for a in arms:
+        d = a["deficit"]
+        f = lambda v: f"{v:+.4f}" if v is not None else "-"  # noqa: E731
+        rows.append([keep[a["label"]], f"{a['mean_r2']:.4f}",
+                     f(d["big"]), f(d["mid"]), f(d["small"])])
+    s = new("Stage C′：24 任务最终运行", "deficit 对同régime单任务天花板；每臂 1 seed，小差距不可分辨")
+    table(s, 0.5, 1.45, 9.4, ["臂", "mean R²", "big", "mid", "small"], rows,
+          col_w=[3.8, 1.5, 1.4, 1.4, 1.3], size=10, head_size=10)
+
+    def delta(a, b):
+        if a in by and b in by:
+            d = by[b]["mean_r2"] - by[a]["mean_r2"]
+            return d, d / by[a]["mean_r2"] * 100
+        return None, None
+    lines = ["调参在 24 任务上买到多少：", ""]
+    for a, b, label in (("c2_base", "c2_top1", "调参"),
+                        ("c2_top1", "c2_top1_cons", "+ consolidation"),
+                        ("c2_base", "c2_base_cons", "未调参 + consolidation")):
+        d, rel = delta(a, b)
+        if d is not None:
+            lines.append(f"  {label:16s} {d:+.4f}  = {rel:+.2f}%")
+    lines += ["", "与探针上的 +1.56% 同量级、方向一致，",
+              "但每臂只有 1 seed，三个数都不可分辨。"]
+    tr = c.get("transfer", {})
+    if tr.get("checked"):
+        lines += ["", "探针名次是否迁移到 24 任务：",
+                  f"  探针说 {' > '.join(x.replace('c2_', '') for x in tr['probe_order'])}",
+                  f"  实际是 {' > '.join(x.replace('c2_', '') for x in tr['deployed_order'])}",
+                  f"  极差仅 {tr['mean_r2_spread_across_promoted_arms']:.4f}",
+                  "  → 名次不携带可操作的信息。"]
+    txt(s, 10.1, 1.45, 3.0, 5.6, lines, size=10)
 
 
 @slide_guard
@@ -551,57 +582,6 @@ def slide_ceiling_fig():
     pic_slide("天花板是一个坏掉的测量框架",
               "旧天花板测于 PR #45 之前 —— LR 在第一个 epoch 内就落到地板，那不是天花板",
               RES / "ceiling_frame_offset.png")
-
-
-@slide_guard
-def slide_ceiling_retraction():
-    v1 = load("stage_c_v1_rescored.json")
-    rows = []
-    for arm in v1["arms"]:
-        d, h = arm["deficit"], arm["deficit_vs_recorded_h200"]
-        f = lambda v: f"{v:+.4f}" if v is not None else "-"  # noqa: E731
-        rows.append([arm["label"], f"{arm['mean_r2']:.4f}",
-                     f(d["big"]), f(d["mid"]), f(d["small"]),
-                     f"{f(h['big'])} / {f(h['mid'])} / {f(h['small'])}"])
-    s = new("对 v1 的修正：负 deficit 是假象",
-            "用 v2 的任务口径重新评分；v1 原始产物未改动（summary/stage_c_v1_rescored.json）")
-    table(s, 0.5, 1.45, 12.3,
-          ["v1 臂", "mean R²", "big", "mid", "small", "旧框架 big / mid / small"],
-          rows, col_w=[2.4, 1.4, 1.3, 1.3, 1.3, 4.6], size=10, head_size=10)
-    txt(s, 0.5, 1.55 + 0.32 * (len(rows) + 1) + 0.2, 12.3, 2.4, [
-        "c_tuned 在任何一档上都不再超过天花板。“超过单任务天花板”这条结论撤回。",
-        "",
-        "旧天花板在 23 个回归/KR 任务里的 17 个上偏低，平均 +0.0275；且不是常数（seebeck 低 0.104，",
-        "dielectric_ionic 反而高 0.017），无法用偏移量修正，只能重测。任务越小偏差越大：big +0.022 /",
-        "mid +0.027 / small +0.040 —— 正是“LR 不退火”该有的形状。",
-    ], size=13)
-
-
-@slide_guard
-def slide_ceiling_gap():
-    g = load("ceiling_gap.json")
-    arm = next((a for a in g["arms"] if a["label"].endswith("cons")), g["arms"][0])
-    small = [r for r in arm["per_task"] if r["group"] == "small"]
-    s = new("分组均值把真正的结果盖住了",
-            f"{arm['label']} 的 small 组只有两个任务，而它们的天花板 seed 噪声相差三倍以上")
-    table(s, 0.6, 1.5, 10.6,
-          ["任务", "臂 R²", "天花板", "差值", "2SE", "判定"],
-          [[r["task"], f"{r['arm_r2']:.4f}", f"{r['ceiling_mean']:.4f}",
-            f"{r['gap']:+.4f}", f"{2 * (r['se_of_difference'] or 0):.4f}",
-            {"beats single-task": "超过单任务", "below single-task": "低于单任务"}.get(r["verdict"], "无法分辨")]
-           for r in small],
-          col_w=[2.8, 1.5, 1.5, 1.5, 1.5, 1.8], colour_col=3)
-    txt(s, 0.6, 3.0, 12.2, 3.4, [
-        "分组均值把这两个相互抵消的结果压成了一个数字，它两件事都不代表。",
-        "",
-        f"22 个任务整体：低于单任务 {len(arm['below_single_task'])} 个、"
-        f"高于 {len(arm['beats_single_task'])} 个（{'、'.join(arm['beats_single_task']) or '无'}）、"
-        f"无法分辨 {len(arm['unresolved'])} 个，平均 {arm['mean_gap']:+.4f}。",
-        "",
-        "这个检验偏乐观：Stage C 每臂只有 1 个 seed，臂自身的噪声没测到，只能假设它等于单任务的",
-        "（SE = σ·√(1+1/n)）。若多任务的逐任务噪声更大（24 任务共享编码器，这是预期方向），",
-        "真实 SE 更大，其中一些“可分辨”的判定就不成立 —— 应读作待确认的假设。",
-    ], size=13)
 
 
 @slide_guard
@@ -857,8 +837,6 @@ def main() -> None:
     slide_b_finals()
     slide_stage_c()
     slide_ceiling_fig()
-    slide_ceiling_retraction()
-    slide_ceiling_gap()
     slide_transfer_fig()
     slide_transfer_why()
     slide_xfer()
@@ -869,7 +847,7 @@ def main() -> None:
     slide_adopt()
     slide_limits()
 
-    out = args.out or RES / f"REPORT_v1v2_{args.date.replace('-', '')}.pptx"
+    out = args.out or RES / f"REPORT_v2_{args.date.replace('-', '')}.pptx"
     out.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(out))
     print(f"{out}  ({len(prs.slides.__iter__.__self__._sldIdLst)} slides)")
