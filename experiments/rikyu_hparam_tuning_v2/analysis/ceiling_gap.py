@@ -36,7 +36,7 @@ import math
 import statistics
 from pathlib import Path
 
-from common import N_TRAIN, size_group
+from common import N_TRAIN, pct_views, size_group
 from stage_c import ACCURACY_TASKS, EXCLUDED, read_arm
 
 
@@ -52,6 +52,8 @@ def gaps_for_arm(metrics: dict[str, dict], ceilings: dict[str, dict]) -> list[di
         # sigma_arm is unmeasured (one seed); assumed equal to the ceiling's. See module docstring.
         se = sigma * math.sqrt(1.0 + 1.0 / n) if sigma > 0 and n else 0.0
         gap = float(got) - stats["mean"]
+        separated = bool(se) and abs(gap) > 2 * se
+        views = pct_views(gap, stats["mean"])
         rows.append({
             "task": task,
             "group": size_group(task),
@@ -60,8 +62,10 @@ def gaps_for_arm(metrics: dict[str, dict], ceilings: dict[str, dict]) -> list[di
             "ceiling_mean": round(stats["mean"], 4),
             "ceiling_sd": round(sigma, 4),
             "gap": round(gap, 4),
+            **views,
+            "matters": separated and views["practically_significant"],
             "se_of_difference": round(se, 4) if se else None,
-            "separated": bool(se) and abs(gap) > 2 * se,
+            "separated": separated,
             "verdict": (
                 "beats single-task" if se and gap > 2 * se
                 else "below single-task" if se and gap < -2 * se
@@ -90,6 +94,7 @@ def main() -> None:
         rows = gaps_for_arm(metrics, ceilings)
         beats = [r["task"] for r in rows if r["verdict"] == "beats single-task"]
         below = [r["task"] for r in rows if r["verdict"] == "below single-task"]
+        matters = [r["task"] for r in rows if r["matters"]]
         out_arms.append({
             "label": label,
             "dir": path,
@@ -97,7 +102,10 @@ def main() -> None:
             "beats_single_task": beats,
             "below_single_task": below,
             "unresolved": [r["task"] for r in rows if r["verdict"] == "unresolved"],
+            "separated_and_practically_significant": matters,
             "mean_gap": round(statistics.fmean([r["gap"] for r in rows]), 4) if rows else None,
+            "mean_relative_pct": round(statistics.fmean(
+                [r["relative_pct"] for r in rows if r["relative_pct"] is not None]), 3) if rows else None,
         })
 
     out = {
@@ -114,14 +122,22 @@ def main() -> None:
     args.output.write_text(json.dumps(out, indent=2) + "\n")
 
     for arm in out_arms:
-        print(f"\n=== {arm['label']}   mean gap {arm['mean_gap']:+.4f}")
-        print(f"{'task':24s} {'grp':6s} {'arm':>8s} {'ceiling':>8s} {'gap':>8s} {'2SE':>7s}  verdict")
+        print(f"\n=== {arm['label']}   mean gap {arm['mean_gap']:+.4f}  "
+              f"(mean relative {arm['mean_relative_pct']:+.2f}%)")
+        print(f"{'task':24s} {'grp':6s} {'arm':>8s} {'ceiling':>8s} {'gap':>8s} {'rel%':>8s} "
+              f"{'2SE':>7s}  verdict")
         for r in sorted(arm["per_task"], key=lambda r: r["gap"]):
             se2 = 2 * (r["se_of_difference"] or 0.0)
+            verdict = r["verdict"]
+            if r["separated"] and not r["practically_significant"]:
+                verdict += " (negligible)"
+            rel = f"{r['relative_pct']:+.2f}%" if r["relative_pct"] is not None else "-"
             print(f"{r['task']:24s} {r['group']:6s} {r['arm_r2']:8.4f} {r['ceiling_mean']:8.4f} "
-                  f"{r['gap']:+8.4f} {se2:7.4f}  {r['verdict']}")
+                  f"{r['gap']:+8.4f} {rel:>8s} {se2:7.4f}  {verdict}")
         print(f"  beats single-task: {arm['beats_single_task'] or 'none'}")
         print(f"  below single-task: {arm['below_single_task'] or 'none'}")
+        print(f"  separated AND |gap| >= 0.01: "
+              f"{arm['separated_and_practically_significant'] or 'none'}")
     if missing:
         print("\n  MISSING ARMS:", "; ".join(missing))
     print(f"\n  wrote {args.output}")
