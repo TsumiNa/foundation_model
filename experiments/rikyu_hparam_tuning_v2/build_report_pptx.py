@@ -157,6 +157,23 @@ def table(slide, x, y, w, headers, rows, col_w=None, size=11, head_size=11, colo
     return tbl
 
 
+# Run identifiers carry history the deck does not: "v1enc" is simply the encoder configuration
+# inherited from the earlier campaign. Relabel at the presentation layer; the summary JSONs keep
+# the original names so every figure stays traceable to its runs.
+DISPLAY = {
+    "s0_v1enc": "继承的编码器配置",
+    "v1enc": "继承的编码器配置",
+    "a3_v1enc": "继承的编码器配置",
+    "s0_base": "未调参",
+    "a3_base": "未调参",
+    "base": "未调参",
+}
+
+
+def label(name: str) -> str:
+    return DISPLAY.get(name, name)
+
+
 def pct(x, digits=2):
     return f"{x * 100:+.{digits}f}%"
 
@@ -212,16 +229,16 @@ def slide_glossary():
            ["xfer", "迁移测试：24 任务 × 3 组随机顺序"]],
           col_w=[1.9, 4.0], size=10, head_size=10)
     table(s, 6.9, 1.35, 6.0, ["Stage C 臂", "是什么"],
-          [["c_base", "v1 未调参 + 坏调度器"],
-           ["c_tuned", "v1 调参 + 坏调度器"],
-           ["c_tuned_cons", "上一行 + consolidation（v1 最好）"],
-           ["c2_base", "v2 未调参 + 修好的调度器"],
-           ["c2_top1", "v2，A′ 决赛第 1 名配置"],
-           ["c2_top2 / c2_top3", "v2，决赛第 2 / 3 名"],
-           ["c2_top1_cons", "c2_top1 + consolidation（本轮最好）"]],
+          [["c2_base", "未调参（对照）"],
+           ["c2_top1", "A′ 决赛第 1 名配置"],
+           ["c2_top2 / c2_top3", "决赛第 2 / 3 名"],
+           ["c2_base_cons", "未调参 + consolidation"],
+           ["c2_top1_cons", "调参 + consolidation（本轮最好）"],
+           ["stA_*", "同régime单任务基线（5 seed）"],
+           ["xf_<任务>_o<k>", "迁移测量：该任务排在打乱序列最后，第 k 次重复"]],
           col_w=[2.0, 4.0], size=10, head_size=10)
     txt(s, 0.5, 5.2, 12.4, 1.8, [
-        "命名规则：c = v1 / c2 = v2  ｜  中间是配置  ｜  _cons = 做过 consolidation",
+        "命名规则：中间是配置  ｜  _cons = 做过 consolidation（全任务 + 全数据的收尾后训练）",
         "",
         "consolidation：24 任务顺序训练跑完后，把全部 24 个 head 连同编码器再联合微调一遍",
         "（fm finetune）—— 是收尾步骤，不是另一套超参。",
@@ -260,11 +277,97 @@ def slide_summary():
     ], size=15)
 
 
+def slide_design_flow():
+    """The pipeline as a dependency chain: what each stage consumes and what decision it emits.
+
+    Placed before any result, because a reader who does not know that the finals inherit their
+    metric axis and their seed budget from the anchor cannot tell a designed campaign from a pile
+    of runs. Every arrow is a real dependency in the code, not a narrative one.
+    """
+    s = new("调参流程：每一步消费什么、产出什么决定",
+            "箭头是代码里真实的依赖，不是叙述顺序")
+    table(s, 0.4, 1.35, 12.5,
+          ["阶段", "规模", "变量", "消费上一步的", "产出的决定"],
+          [["① 锚点 stage0", "18 run / 9 seed", "无（未调参重复）",
+            "—", "参考点 + 单run σ"],
+           ["② A′ 网格 + 随机", "296 配置 × 5 seed", "latent_dim × encoder_lr × min_lr × patience × factor",
+            "参考点、度量轴、σ", "短名单（8）+ 边界是否用尽"],
+           ["③ A′ 决赛", "10 臂 × 25 seed", "同上，仅短名单",
+            "短名单", "**采纳编码器 / 调度器**"],
+           ["④ A4 调度器价值", "60 run", "有调度 vs 固定 LR",
+            "σ", "保留调度器；下界无需外扩"],
+           ["⑤ a2b 早停", "2 臂 × 5 seed", "patience 24 vs 40",
+            "**采纳基座**", "保留 24"],
+           ["⑥ B′ head 网格", "24 配置 × 5 seed", "head 容量/LR × KR 分支容量/LR",
+            "**采纳基座**", "短名单（4）"],
+           ["⑦ B′ 决赛", "4 臂 × 25 seed", "同上",
+            "短名单", "**head 不用动**"],
+           ["⑧ 天花板重测", "24 任务 × 5 seed", "单任务训练",
+            "采纳配置", "deficit 的分母"],
+           ["⑨ Stage C′", "6 臂 × 24 任务", "采纳 vs 未调；决赛前 3 名",
+            "③⑦ 的采纳值", "部署规模验证；名次是否迁移"],
+           ["⑩ 迁移测量 xfer", "24 任务 × n 组顺序", "待测任务排最后",
+            "采纳配置、天花板", "**迁移是否成立**"]],
+          col_w=[2.3, 2.0, 3.6, 2.2, 2.4], size=9, head_size=9)
+    txt(s, 0.4, 5.55, 12.5, 1.6, [
+        "旁支（不进主链，各自回答一个二元问题）：损失平衡器开/关 · PCGrad 的前提是否存在 · 打包倍数标定",
+        "",
+        "两处关键依赖容易被忽略：① 的 σ 决定后面每一步需要多少 seed；③ 的采纳基座是 ⑤⑥ 的前提 —— "
+        "在别的基座上测出的 head 或早停结论不能迁移过来。",
+    ], size=11, color=MUT)
+
+
+def slide_design_why():
+    """Why each step is shaped the way it is. The decisions, not the numbers."""
+    s = new("每一步为什么这么设计", "同样的算力可以花在别处，这里是选择的理由")
+    txt(s, 0.4, 1.3, 6.3, 5.6, [
+        "为什么先做锚点，而不是直接搜索",
+        "  所有增益都是相对量，需要一个同镜像、同代码的参考点；",
+        "  它同时给出 σ，而 σ 决定后面每一步买多少 seed 才够。",
+        "",
+        "为什么用 6 任务探针而不是 24",
+        "  24 任务一轮要一天多，296 个配置跑不起。探针覆盖大/中/小",
+        "  三档把 σ 从 5.01% 压到 2.05%，分辨 1% 所需 seed 从 101 降到 17。",
+        "",
+        "为什么网格和随机搜索都要",
+        "  网格给可读的边际效应图（每个轴的单独影响），",
+        "  随机给内部覆盖（网格点之间的空隙）。两者答同一个问题的不同面。",
+        "",
+        "为什么分「5 seed 筛选 + 25 seed 决赛」两段",
+        "  296 配置 × 25 seed = 7400 个 run，跑不起；",
+        "  但 5 seed 的榜首不可信 —— 本轮两次实测到 winner's curse。",
+        "  所以先用便宜的 seed 数筛，再用贵的 seed 数定名次。",
+    ], size=11)
+    txt(s, 6.9, 1.3, 6.0, 5.6, [
+        "为什么要检查网格边界",
+        "  最优点落在搜索范围的端点上，说明范围不够，不是找到了最优。",
+        "",
+        "为什么早停要在「采纳之后」重测",
+        "  最初是在当时的榜首上测的，而决赛换了榜首 ——",
+        "  在已不采纳的配置上得到的结论不能沿用。",
+        "",
+        "为什么 head 要在采纳基座上调",
+        "  head 的最优值依赖它所处的优化régime。换了基座就是换了régime。",
+        "",
+        "为什么把「什么都不改」放进 head 网格",
+        "  只占 24 个格点里的 1 个，却让「head 不需要调」成为**排名结果**",
+        "  而不是论证。它最后排第 8，且 2SE 最小。",
+        "",
+        "为什么 Stage C′ 推三个配置而不是一个",
+        "  只推一个，就只能看到「调参臂比基线好」；",
+        "  推三个才能看到「被推上去的三个彼此没区别」—— 这是可证伪点。",
+        "",
+        "为什么天花板要重测",
+        "  继承的那批测于不同régime，用它算 deficit 等于把",
+        "  「模型变化」和「测量框架变化」加在一起，事后无法拆开。",
+    ], size=11)
+
+
 @slide_guard
 def slide_probe():
     s0 = load("stage0.json")
     cal = s0["calibration"]
-    s = new("方法：probe6 探针", "v1 用 3 任务探针，噪声带 8.48%，前三名相差 1.5–1.8% —— 排不出名次")
+    s = new("② 探针 probe6：把噪声压到可判定的水平", "早先的 3 任务探针噪声带 8.48%，前三名相差 1.5–1.8% —— 排不出名次")
     table(s, 0.6, 1.5, 6.0,
           ["探针任务", "标签数", "档位"],
           [[t, f"{n:,}", g] for t, n, g in [
@@ -279,12 +382,12 @@ def slide_probe():
     v1_seeds_1pct = math.ceil((2 * v1_sigma / 0.01) ** 2)
     txt(s, 7.0, 1.5, 5.8, 4.8, [
         f"v2 单 run σ = {cal['sigma_per_run'] * 100:.2f}%   （9 seed 实测）",
-        f"v1 σ ≈ {v1_sigma * 100:.2f}%   ← 由其 3 seed 极差 "
+        f"3 任务探针 σ ≈ {v1_sigma * 100:.2f}%   ← 由其 3 seed 极差 "
         f"{cal['v1_probe3_band_for_reference'] * 100:.2f}% 换算（E[极差] = d₂(n)·σ，d₂(3)=1.693）",
         "",
         "要分辨这么大的真实差异，v2 需要的 seed 数：",
         *[f"    {float(k) * 100:.1f}%  →  {v} seed" for k, v in need_seeds.items()],
-        f"        （同样分辨 1.0%，v1 需要 {v1_seeds_1pct} 个）",
+        f"        （同样分辨 1.0%，3 任务探针需要 {v1_seeds_1pct} 个）",
         "",
         "排除 electrical_resistivity（天花板 0.162，无分辨力）",
         "排除 magnetic_susceptibility（58 个标签）",
@@ -298,24 +401,26 @@ def slide_probe():
 def slide_anchor():
     s0 = load("stage0.json")
     c = s0["comparisons"][0]
-    s = new("上游修复：v1 的全部数字都在坏节奏下",
-            "PR #45 之前 ReduceLROnPlateau 按 batch 而非 epoch 触发，LR 在第一个 epoch 内就落到下限")
-    txt(s, 0.6, 1.6, 12.2, 3.0, [
-        "这不是影响小数点的 bug，它改变了优化过程本身。因此：",
+    s = new("① 锚点：所有增益的参考点，以及噪声有多大",
+            "未调参配置 × 9 seed，同镜像同代码 —— 后面每一个「+x%」都是相对它报的")
+    txt(s, 0.6, 1.6, 12.2, 3.2, [
+        "锚点做两件事，缺一不可：",
         "",
-        "  • v1 的调参结论是在坏节奏下选出来的，不能直接搬到修好的代码上 —— 这是 v2 重做 Stage A 的理由；",
-        "  • v1 引用的单任务“天花板”同样测于坏节奏，所以它们不是天花板（见后）。",
+        "  • 给出**参考点**。增益是相对量，没有同régime的未调参基准就没有分母。",
+        "  • 给出**单run σ = 2.05%**，而 σ 决定后面每一步买多少 seed 才够 ——",
+        "    分辨 1% 需要 17 个 seed，分辨 2% 只要 5 个。整轮的 seed 预算由此定下。",
         "",
-        "Stage 0 锚点（未调参 + 新镜像 0.3.2）实测：",
-    ], size=15)
+        "顺带检验了一个继承来的配置在当前代码上还有没有优势：",
+    ], size=14)
     verdict = "无法分辨" if abs(c["delta_score"]) <= c["resolvable_at_this_n"] else "可分辨"
     table(s, 0.6, 4.6, 9.0,
           ["比较", "差值", "可分辨阈值 (2SE)", "判定"],
-          [[f"{c['from']} → {c['to']}", pct(c["delta_score"]),
+          [[f"{label(c['from'])} → {label(c['to'])}", pct(c["delta_score"]),
             pct(c["resolvable_at_this_n"]), verdict]],
           col_w=[3.4, 1.8, 2.2, 1.6])
     txt(s, 0.6, 5.5, 12.2, 0.8,
-        ["即：v1 选出的编码器配置在修好的代码上不再有可见优势。"], size=14, color=MUT)
+        ["即：那套继承来的编码器配置在当前代码上不再有可见优势 —— 所以 Stage A′ 从头重搜。"],
+        size=13, color=MUT)
 
 
 @slide_guard
@@ -350,7 +455,7 @@ def slide_finals():
     a = load("finals_a.json")
     vc = finals_vs_control(a)
     ranked = sorted(a["arms"].items(), key=lambda kv: -kv[1]["score"]["mean"])
-    rows = [[k.replace("a3_", ""), pct(v["score"]["mean"]), f"{v['score']['sigma'] * 100:.2f}%"]
+    rows = [[label(k.replace("a3_", "")), pct(v["score"]["mean"]), f"{v['score']['sigma'] * 100:.2f}%"]
             for k, v in ranked]
     s = new(f"Stage A′ 决赛（{vc['n']} seed，{a['n_runs']} run）",
             "决赛内含同 seed 数的未调对照臂 —— 增益在同一 seed 数下比出，不是 25 seed 比 9 seed")
@@ -472,8 +577,8 @@ def slide_stage_b():
     lines += ["采纳：默认 head 块（改动最少，与 A′ 同一条规则）。",
               "注意它不是网格榜首 —— 榜首的 2SE 是前 12 名里",
               "第二大的，正是 A′ 实测过的 winner’s curse 模式。", "",
-              "比 v1 的同一结论更强：v1 可归因于 régime 不对，",
-              "v2 是在正确的 régime 上调的，依然什么都没买到。"]
+              "比早先的同一结论更强：那次可归因于 régime 不对，",
+              "本轮是在正确的 régime 上调的，依然什么都没买到。"]
     txt(s, 9.3, 1.45, 3.7, 5.6, lines, size=11)
 
 
@@ -798,7 +903,7 @@ def slide_adopt():
         "本轮确立了什么：",
         "  1. 探针必须覆盖大/中/小三档 —— σ 从 8.48% 降到 2.05%，campaign 才有判断力。",
         "  2. 名次要用 seed 买，不是用网格点买 —— 5 seed 的榜首在 25 seed 下掉到第 10。",
-        "  3. 继承来的基线必须在当前régime重测 —— 这一条撤回了 v1 的一个已发布结论。",
+        "  3. 继承来的基线必须在当前régime重测 —— 旧天花板在 23 个任务里 17 个偏低，且偏差不是常数。",
         "  4. 分组均值不能当结论 —— 两个任务一正一负相消，看起来像“接近天花板”。",
         "  5. “半接上、静默失效”的功能是系统性问题：DDP、checkpoint dict、loss balancer 三例。",
         "  6. 凡是“在当前最优上”做的实验，最优一变就必须重做 —— 本轮踩了两次。",
@@ -831,6 +936,8 @@ def main() -> None:
     slide_title(args.date)
     slide_summary()
     slide_glossary()
+    slide_design_flow()
+    slide_design_why()
     slide_probe()
     slide_anchor()
     slide_grid()
