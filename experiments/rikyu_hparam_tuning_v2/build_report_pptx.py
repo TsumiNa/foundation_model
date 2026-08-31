@@ -770,6 +770,59 @@ def slide_xfer():
     ], size=12)
 
 
+@slide_guard
+def slide_position():
+    """The position curve — obtained by re-reading data the stage already wrote.
+
+    Kept separate from slide_xfer because it answers a different question: xfer asks "is multi-task
+    better for a task placed last", this asks "does it matter WHERE the task sits". The second is
+    what explains part of the first.
+    """
+    d = load("position.json")
+    rows_all = [r for r in d["per_task"] if r.get("early_1_8") and r.get("late_17_24")]
+    ranked = sorted(rows_all, key=lambda r: (r["position_effect"] or {}).get("delta_late_minus_early", 0))
+
+    def cell(x):
+        if not x:
+            return "-"
+        star = "*" if x.get("matters") else ("·" if x.get("separated") else "")
+        return f"{x['delta']:+.4f} / {x['relative_pct']:+.1f}%{star}"
+
+    def pcell(pe):
+        if not pe:
+            return "-"
+        star = "*" if pe.get("matters") else ("·" if pe.get("separated") else "")
+        return f"{pe['delta_late_minus_early']:+.4f} / {pe['relative_pct']:+.1f}%{star}"
+
+    shown = ranked[:5] + ranked[-3:]
+    rows = [[r["task"], f"{r['n_train']:,}", cell(r["early_1_8"]), cell(r["late_17_24"]),
+             pcell(r["position_effect"])] for r in shown]
+    s = new("把视点固定在单个任务上：位置的影响",
+            "每个 step 目录都记录了到该步为止所有任务的指标 —— 每个任务在所有位置的分数早已在磁盘上，零算力")
+    table(s, 0.4, 1.5, 12.5,
+          ["任务", "标签数", "早期（位置 1–8）", "晚期（位置 17–24）", "位置效应（晚 − 早）"],
+          rows, col_w=[2.8, 1.4, 2.8, 2.8, 2.7], size=10, head_size=10)
+    n_pos = sum(1 for r in rows_all if (r["position_effect"] or {}).get("matters"))
+    n_ret = sum(1 for r in d["per_task"]
+                if r.get("retention") and r["retention"]["separated_from_zero"]
+                and r["retention"]["mean"] > 0)
+    y = 1.6 + 0.32 * (len(rows) + 1) + 0.2
+    txt(s, 0.4, y, 12.5, 3.0, [
+        f"位置对 {n_pos} / {len(rows_all)} 个任务可分辨。magnetic_moment 与 total_magnetization "
+        "在早期位置根本不吃亏（不可分辨），排到最后才掉 ——",
+        "所以迁移测量里 magnetic_moment 的 −6.33% 是位置造成的，不是多任务训练本身造成的。",
+        "",
+        f"另一条：{n_ret} / 24 个任务在训完自己那一步之后分数还会再涨。但检验否定了「replay 持续获益」的解释 ——",
+        "保持度与剩余步数的相关系数只有 +0.038（n=1656），增益在头 3–4 步内就到位；",
+        "排最后的任务保持度恰好 +0.0000（69 个样本），这是测量正确的健全性检查。",
+        "读作：每个任务在自己那一步没训够，后面两三步的 replay 补回约 +0.02。",
+        "（早停监控的是全任务总损失，当前任务的进展被已收敛的旧任务稀释 —— 假设，待验证。）",
+    ], size=11)
+    txt(s, 0.4, 6.6, 12.5, 0.5,
+        ["* = 可分辨且 ≥0.01    · = 可分辨但低于实用门槛    位置与「前面是哪些任务」混淆，每位置 3–6 个样本"],
+        size=9, color=MUT)
+
+
 def slide_descriptor_limit():
     s = new("上线前该知道的一条模型限制：描述符看不见晶胞尺度",
             "volume 0.619 / final_energy 0.774 对 ~23 700 标签的任务太低，而同批行上 formation_energy 0.995")
@@ -952,6 +1005,7 @@ def main() -> None:
     slide_transfer_fig()
     slide_transfer_why()
     slide_xfer()
+    slide_position()
     slide_descriptor_limit()
     slide_balancer()
     slide_pcgrad()
