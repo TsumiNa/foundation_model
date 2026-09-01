@@ -29,21 +29,24 @@ DATE=${DATE:-$(date +%Y%m%d)}
 
 cd "$EXP" || exit 1
 fail() { echo "ABORT: $*" >&2; exit 1; }
-remote() { ssh -o ConnectTimeout=30 "$HOST" "bash -lc '$1'"; }
+# The remote script arrives on stdin, not as an argument. Passing it as `bash -lc '...'` makes the
+# outer quotes strip the inner ones, which silently broke a sed expression in the completeness check.
+remote() { ssh -o ConnectTimeout=30 "$HOST" "bash -l -s"; }
 
 # ---- 0. the stage must actually be finished ---------------------------------------------------
 echo "== checking the stage is complete =="
-state=$(remote "
-  X=$X
-  done_n=\$(ls -d \$X/*/DONE 2>/dev/null | wc -l)
-  short=0
-  for d in \$X/*/; do
-    [ -e \"\$d/DONE\" ] || continue
-    n=\$(ls \$d/training 2>/dev/null | sed -n 's/^step0*\([0-9]*\)_.*/\1/p' | sort -n | tail -1)
-    [ \"\${n:-0}\" -lt 24 ] && short=\$((short+1))
-  done
-  echo \"\$done_n \$short\"
-") || fail "cannot reach $HOST"
+state=$(remote <<REMOTE
+X=$X
+done_n=\$(ls -d \$X/*/DONE 2>/dev/null | wc -l)
+short=0
+for d in \$X/*/; do
+  [ -e "\$d/DONE" ] || continue
+  n=\$(ls \$d/training 2>/dev/null | sed -n 's/^step0*\([0-9]*\)_.*/\1/p' | sort -n | tail -1)
+  [ "\${n:-0}" -lt 24 ] && short=\$((short+1))
+done
+echo "\$done_n \$short"
+REMOTE
+) || fail "cannot reach $HOST"
 done_n=$(echo "$state" | awk '{print $1+0}')
 short=$(echo "$state" | awk '{print $2+0}')
 echo "  $done_n / $EXPECT runs carry a DONE marker; $short of them have fewer than 24 steps"
@@ -53,18 +56,23 @@ echo "  $done_n / $EXPECT runs carry a DONE marker; $short of them have fewer th
 
 # ---- 1. stdlib-only analyses, run where the data is -------------------------------------------
 echo "== transfer and position, on $HOST =="
-remote "cd ~/projects/foundation_model_v2/experiments/rikyu_hparam_tuning_v2 &&
-  python3 analysis/xfer.py --runs $X --ceilings summary/ceilings_adopted.json \
-      -o summary/transfer_xfer.json &&
-  python3 analysis/position.py --runs $X --ceilings summary/ceilings_adopted.json \
-      -o summary/position.json" || fail "remote analyses"
+remote <<REMOTE || fail "remote analyses"
+set -e
+cd ~/projects/foundation_model_v2/experiments/rikyu_hparam_tuning_v2
+python3 analysis/xfer.py --runs $X --ceilings summary/ceilings_adopted.json \
+    -o summary/transfer_xfer.json
+python3 analysis/position.py --runs $X --ceilings summary/ceilings_adopted.json \
+    -o summary/position.json
+REMOTE
 
 echo "== model library, on $HOST =="
 # --copy so the library is self-contained: referencing checkpoints in place leaves it broken the
 # moment the run tree is pruned.
-remote "cd ~/projects/foundation_model_v2/experiments/rikyu_hparam_tuning_v2 &&
-  python3 scripts/build_model_library.py --runs $X -o $OUT/model_library --copy" \
-  || fail "model library"
+remote <<REMOTE || fail "model library"
+set -e
+cd ~/projects/foundation_model_v2/experiments/rikyu_hparam_tuning_v2
+python3 scripts/build_model_library.py --runs $X -o $OUT/model_library --copy
+REMOTE
 
 echo "== pulling results back =="
 for f in transfer_xfer.json position.json; do
