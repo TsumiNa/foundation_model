@@ -78,11 +78,15 @@ That is exactly the value of promoting three rather than one: promoting one woul
 
 **2. Transfer is negative at deployment scale, and it retracts the probe's conclusion.**
 
-24 tasks, the task under test placed last, 3 shuffled repeats, matched test rows: **19 of 24 tasks
-do worse than training alone**, and only `material_type` does better (+22.4%). On the six-task probe,
-zt +6.85% and magnetization +4.40% looked like positive transfer; at 24 tasks both fall back to
-unresolved, and magnetic_moment even turns to -6.33%. **A probe is a cheap sieve, not a substitute
-for the real regime.**
+24 tasks, the task under test placed last, **10 shuffled repeats**, matched test rows: **18 of 24
+tasks do worse than training alone**, 5 are unresolved, and only `material_type` does better
+(+13.41%). On the six-task probe, zt +6.85% and magnetization +4.40% looked like positive transfer;
+at 24 tasks both fall back to unresolved, and magnetic_moment turns to -5.75%. **A probe is a cheap
+sieve, not a substitute for the real regime.**
+
+Tripling the repeats from 3 to 10 moved tasks in one direction only: the split went from 1 / 15 / 8
+to 1 / 18 / 5, with all three newly-resolved tasks landing on the single-task side. Nothing moved
+the other way.
 
 **3. The single-task ceilings were remeasured in this regime; the inherited set cannot be reused.**
 The old ceilings predate PR #45 and are **too low for 17 of 23 regression/KR tasks, by +0.0275 on
@@ -124,15 +128,19 @@ position is not the main driver. But the comparison confounds three things — 1
 hand-designed vs random ordering, and position. It needs a dedicated experiment: hold one task at a
 fixed position and vary only the order of the other 23.
 
-**3. Extend xfer to n=10.** Agreed: 168 new runs at **PACK=24, about 338 GPU-hours**, roughly 48
-hours of wall clock. Use `make_grids.py xfer --orders 10 --append-to configs/grid_xfer.txt` — the
-existing 72 lines were verified unchanged. The nine tasks whose spread across repeats exceeds twice
-their own seed noise are exactly the ones needing more repeats.
+**3. Extend xfer to n=10.** **Done.** 240 runs complete, all carrying 24 steps. It took two
+walltime handovers (`74033` -> `76757` -> `78201`, chained with `--dependency=afterany` so no time
+was idled) plus one three-hour login-node outage that did not touch the running jobs. Eleven tasks
+now show spread wider than their own seed noise, up from nine at n=3 — expected, since an sd from 3
+samples underestimates spread.
 
-**4. The pre-trained model library.** 240 models x 6.6 MiB is about 1.6 GB. Each model is an encoder
-trained continuously on all 24 tasks and finished on one particular task, and for downstream transfer
-learning "which task it finished on" is a usable prior — so the task under test and the full ordering
-must be in the metadata.
+**4. The pre-trained model library.** **Built**: 240 models, 1.56 GiB, at
+`$OUTBASE/model_library/` with `MANIFEST.json` and `INDEX.md`. Each model is an encoder trained
+continuously on all 24 tasks and finished on one particular task, and for downstream transfer
+learning "which task it finished on" is a usable prior — so the task under test, the executed
+ordering, the seed, the hyper-parameters and every model's score on all 24 tasks are in the
+manifest. Note the caveat in the investigation section below: **warm-starting a new task from this
+library has never been measured**, and the nearest evidence runs against it.
 
 ## Methodology worth reusing beyond this project
 
@@ -188,7 +196,7 @@ must be in the metadata.
 
 ## The next round's first investigation: why only material_type gains
 
-The cost-side measurement is unambiguous: of the 24 tasks, **15 are materially worse, 8 are
+The cost-side measurement is unambiguous: of the 24 tasks, **18 are materially worse, 5 are
 unresolved, and only material_type gains** — and **the smaller a task's dataset, the larger its
 relative loss** (corr(log rows, relative change) = **+0.636**, n=23), the exact opposite of the
 premise that a shared encoder helps data-poor tasks. That deserves a real investigation. Below are
