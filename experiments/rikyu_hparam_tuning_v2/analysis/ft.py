@@ -94,6 +94,13 @@ def main() -> None:
         ftf_vs_ftz = None
         if ftf and len(ftz) > 1:
             ftf_vs_ftz = diff(ftf, statistics.fmean(ftz), statistics.stdev(ftz), len(ftz))
+        xfer_vs_single = None
+        if xr:
+            views = pct_views(xr["transfer"], base["mean"])
+            xfer_vs_single = {"delta": xr["transfer"], "relative_pct": xr["relative_pct"],
+                              "separated": bool(xr["separated"]),
+                              "practically_significant": views["practically_significant"],
+                              "matters": bool(xr["separated"]) and views["practically_significant"]}
         rows.append({
             "task": task, "group": size_group(task), "n_train": N_TRAIN[task],
             "metric": "macro_f1" if task == "material_type" else "r2",
@@ -103,6 +110,7 @@ def main() -> None:
                     "n": len(ftz)} if ftz else None,
             "ftf": {"mean": statistics.fmean(ftf), "sd": statistics.stdev(ftf) if len(ftf) > 1 else 0.0,
                     "n": len(ftf)} if ftf else None,
+            "xfer_vs_single": xfer_vs_single,
             "ftz_vs_single": diff(ftz, base["mean"], base["sd"], base["n"]),
             "ftf_vs_single": diff(ftf, base["mean"], base["sd"], base["n"]),
             "ftf_vs_xfer": ftf_vs_xfer,
@@ -123,7 +131,7 @@ def main() -> None:
         "counts": {
             key: {v: sum(1 for r in rows if verdict(r[key]) == v)
                   for v in ("better", "worse", "unresolved", "better (negligible)", "worse (negligible)")}
-            for key in ("ftz_vs_single", "ftf_vs_single", "ftf_vs_xfer")
+            for key in ("xfer_vs_single", "ftz_vs_single", "ftf_vs_single", "ftf_vs_xfer")
         },
         "notes": [
             "fm finetune loads only the target task, so the test split is the single-task universe and "
@@ -135,25 +143,31 @@ def main() -> None:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out, indent=2) + "\n")
 
-    def cell(d):
+    def pc(d):
+        """relative % against single-task, with the significance marker; blank when unavailable."""
         if not d:
-            return f"{'-':>18s}"
+            return f"{'-':>8s}"
         star = "*" if d["matters"] else ("·" if d["separated"] else " ")
-        return f"{d['delta']:+7.4f} {d['relative_pct']:+6.1f}%{star}"
+        return f"{d['relative_pct']:+6.1f}%{star}"
 
-    print(f"{'task':22s} {'N':>6s} {'single':>7s} {'xfer':>7s} {'ftz':>7s} {'ftf':>7s} | "
-          f"{'ftz-single':>18s} | {'ftf-single':>18s} | {'ftf-xfer':>18s}")
+    def v(x):
+        return f"{x:6.4f}" if x is not None else f"{'-':>6s}"
+
+    print(f"{'task':22s} {'N':>6s} {'single':>6s} | {'xfer':>6s} {'vs':>8s} | "
+          f"{'frozen':>6s} {'vs':>8s} | {'warm':>6s} {'vs':>8s}")
     for r in rows:
-        f = lambda x: f"{x:7.4f}" if x is not None else f"{'-':>7s}"  # noqa: E731
-        print(f"{r['task']:22s} {r['n_train']:6d} {f(r['single_task'])} {f(r['xfer_with_replay'])} "
-              f"{f(r['ftz']['mean'] if r['ftz'] else None)} {f(r['ftf']['mean'] if r['ftf'] else None)} | "
-              f"{cell(r['ftz_vs_single'])} | {cell(r['ftf_vs_single'])} | {cell(r['ftf_vs_xfer'])}")
-    print("\n  * = separated AND |delta| >= 0.01    · = separated but below the practical threshold")
-    for key, label in (("ftf_vs_single", "warm-start vs training alone"),
-                       ("ftz_vs_single", "frozen encoder vs training alone"),
+        print(f"{r['task']:22s} {r['n_train']:6d} {v(r['single_task'])} | "
+              f"{v(r['xfer_with_replay'])} {pc(r['xfer_vs_single'])} | "
+              f"{v(r['ftz']['mean'] if r['ftz'] else None)} {pc(r['ftz_vs_single'])} | "
+              f"{v(r['ftf']['mean'] if r['ftf'] else None)} {pc(r['ftf_vs_single'])}")
+    print("\n  vs = relative change against the single-task baseline")
+    print("  * = separated AND |delta| >= 0.01    · = separated but below the practical threshold")
+    for key, label in (("xfer_vs_single", "xfer (replay, placed last) vs alone"),
+                       ("ftz_vs_single", "frozen encoder vs alone"),
+                       ("ftf_vs_single", "warm-start vs alone"),
                        ("ftf_vs_xfer", "warm-start vs the replay step")):
         c = out["counts"][key]
-        print(f"  {label:34s} better {c['better']:2d}  worse {c['worse']:2d}  unresolved {c['unresolved']:2d}")
+        print(f"  {label:38s} better {c['better']:2d}  worse {c['worse']:2d}  unresolved {c['unresolved']:2d}")
     print(f"  wrote {args.out}")
 
 
