@@ -85,6 +85,10 @@ case "$STAGE" in
     bal|balx)         CONFIG=probe6.toml; OUT=stage_bal; DEFTIME=12:00:00 ;;
     # Same-regime single-task ceilings — the control the recorded H200 ceilings cannot be.
     single)           CONFIG=probe6.toml; OUT=stage_single; DEFTIME=06:00:00 ;;
+    # Re-baseline for the two KR tasks whose single-task runs hit the 150-epoch cap (power_factor
+    # 5/5 and still improving, seebeck 4/5). Same config and output root, prefix stB, cap raised
+    # to 400 so early stopping — not the cap — decides when they are done.
+    singlex)          CONFIG=probe6.toml; OUT=stage_single; DEFTIME=06:00:00 ;;
     # Transfer at deployment scale: 24-task sequences with the task under test last.
     # 48h because these are full stage-C-length runs, and packed co-tenants contend.
     xfer)             CONFIG=final_hybrid_v2.toml; OUT=stage_xfer; DEFTIME=48:00:00 ;;
