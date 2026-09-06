@@ -194,13 +194,36 @@ library has never been measured**, and the nearest evidence runs against it.
 **The report and figures are not in git** (`experiments/**/results/` is ignored) and travel by rsync
 — but the summary JSON is in git, so every figure can be redrawn.
 
-## The next round's first investigation: why only material_type gains
+## Why only material_type gained — and what the warm-start stage found
 
-The cost-side measurement is unambiguous: of the 24 tasks, **18 are materially worse, 5 are
-unresolved, and only material_type gains** — and **the smaller a task's dataset, the larger its
-relative loss** (corr(log rows, relative change) = **+0.636**, n=23), the exact opposite of the
-premise that a shared encoder helps data-poor tasks. That deserves a real investigation. Below are
-the leads that already have evidence and the experiments that would settle them.
+The transfer stage said 18 of 24 tasks are materially worse when they arrive last, and that the
+smaller a task's dataset, the larger its relative loss (corr(log rows, relative change) = +0.636).
+**The warm-start stage (`stage_ft`, 480 + 40 runs) resolves most of that.** At step 24 of a
+continual sequence the new task shares the encoder with replay from 23 others and owns about 1% of
+the gradient if it is small; early stopping watches the sum over all 24 and fires when the replayed
+tasks stop improving, so the new task gets ~60 epochs where alone it takes 90-150. Taking the same
+final checkpoint and training the same task with replay removed:
+
+| Comparison | Better | Worse | Unresolved |
+|---|---|---|---|
+| xfer (replay, placed last) vs alone | 1 | 19 | 4 |
+| frozen encoder vs alone | 4 | 12 | 7 |
+| **warm-start (encoder + head) vs alone** | **4** | **4** | **14** |
+| warm-start vs the replay step | **19** | **0** | 2 |
+
+So the loss in the transfer stage was mostly **replay dilution at the task's own step**, not a bad
+representation. Warm-starting from the 24-task encoder is roughly break-even against training alone:
+material_type +21.9%, zt +6.7%, magnetization +4.9%, dielectric_total +3.4% gain; final_energy -9.1%,
+volume -6.9%, dos_density -4.2% lose. zt and magnetization are the probe's original winners, back as
+real ones. The frozen encoder is not a drop-in feature extractor (12 worse) — except for
+material_type, where frozen (0.7245) beats warm-start (0.6960): it wants the shared "ordinary
+material" representation left alone.
+
+Full table: `summary/ft.json`. Baselines and both fine-tune arms were audited for convergence; the
+two KR tasks that hit the 150-epoch cap (seebeck, power_factor) were rerun at 400 in every arm and
+the ceilings patched (`summary/ceilings_adopted_v2.json`); no verdict changed.
+
+What remains unexplained, and the leads for it:
 
 ### Lead one: extensive vs intensive properties (a mechanism, not just a correlation)
 
@@ -248,15 +271,17 @@ converts into score. So material_type's path to a gain **structurally cannot tra
 4. **Measure task-specificity of the encoder's representation per task**: compare linear separability
    or CKA similarity between the single-task and multi-task encoders, testing the hypothesis that
    multi-task training pulls the representation into a shared subspace.
-5. **Measure warm-starting a new task directly** — never done. Take an encoder from the model library,
-   fine-tune it on a task outside these 24, compare against training from scratch, and sweep **low
-   data volumes**. This is the library's intended use, and the existing evidence (the less data, the
-   larger the loss) runs **against** it, so it must be measured rather than assumed.
+5. **Measure warm-starting directly** — **done for the 24 in-distribution tasks** (`stage_ft`,
+   table above). Still open: a task *outside* the 24, and a sweep over **low data volumes**, which
+   is where a warm start should matter most and where nothing has been measured yet.
 
-### What cannot be said right now
+### What can and cannot be said now
 
-- Not "multi-task training helps data-poor tasks" — this round's data says the opposite.
-- Not "the shared encoder learned a general materials representation" — not one of the 23 tasks
-  improved because of it.
-- Not "warm-starting from the model library will do better" — **that case has never been measured**,
-  and the nearest evidence points the other way.
+- "Multi-task training hurts data-poor tasks" was a replay artefact: with replay removed the small
+  tasks are level or better (magnetization +4.9%, magnetic_moment unresolved).
+- "The shared encoder is a general feature extractor" still cannot be said — frozen, it is worse for
+  12 of 24 tasks.
+- "Warm-starting from the model library beats training alone" can be said for four tasks and
+  denied for three; for the rest it is a wash. The library is a reasonable starting point, not a
+  free win, and the extensive properties (final_energy, volume) should not be warm-started from it
+  until the descriptor can see cell scale.
