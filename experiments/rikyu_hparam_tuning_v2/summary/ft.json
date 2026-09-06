@@ -1,0 +1,1573 @@
+{
+  "question": "with replay removed, does the transfer checkpoint beat training the task alone?",
+  "arms": {
+    "ftz": "frozen encoder, head only",
+    "ftf": "encoder + head (warm-start)"
+  },
+  "per_task": [
+    {
+      "task": "material_type",
+      "group": "big",
+      "n_train": 33556,
+      "metric": "macro_f1",
+      "single_task": 0.5709686051531838,
+      "single_task_sd": 0.030845337984718,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.6988221439956743,
+      "ftz": {
+        "mean": 0.7244689827332746,
+        "sd": 0.018321703778141202,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.696042756920901,
+        "sd": 0.03581817084942787,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.7244689827332746,
+        "sd": 0.018321703778141202,
+        "delta": 0.15350037758009083,
+        "relative_pct": 26.88420627591399,
+        "se_of_difference": 0.01496179995895189,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.696042756920901,
+        "sd": 0.03581817084942787,
+        "delta": 0.1250741517677172,
+        "relative_pct": 21.905609281995698,
+        "se_of_difference": 0.01784884061719914,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.696042756920901,
+        "sd": 0.03581817084942787,
+        "delta": -0.0027793870747733207,
+        "relative_pct": -0.39772452814410597,
+        "se_of_difference": 0.011326700150524002,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.696042756920901,
+        "sd": 0.03581817084942787,
+        "delta": -0.02842622581237364,
+        "relative_pct": -3.9237326220823494,
+        "se_of_difference": 0.012722524090496972,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "density",
+      "group": "big",
+      "n_train": 23678,
+      "metric": "r2",
+      "single_task": 0.9897580056427758,
+      "single_task_sd": 0.0002215055667268253,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.9785550752242383,
+      "ftz": {
+        "mean": 0.9811809111284535,
+        "sd": 0.0009065317597658919,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.9892566246058567,
+        "sd": 0.0006848676117227212,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.9811809111284535,
+        "sd": 0.0009065317597658919,
+        "delta": -0.008577094514322314,
+        "relative_pct": -0.8665850102169282,
+        "se_of_difference": 0.0003033033569953008,
+        "separated": true,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.9892566246058567,
+        "sd": 0.0006848676117227212,
+        "delta": -0.0005013810369191019,
+        "relative_pct": -0.05065693170054142,
+        "se_of_difference": 0.00023815395813816073,
+        "separated": true,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.9892566246058567,
+        "sd": 0.0006848676117227212,
+        "delta": 0.01070154938161838,
+        "relative_pct": 1.0936072636653684,
+        "se_of_difference": 0.0002165741548723633,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.9892566246058567,
+        "sd": 0.0006848676117227212,
+        "delta": 0.008075713477403212,
+        "relative_pct": 0.8230605982861362,
+        "se_of_difference": 0.0003592831024486163,
+        "separated": true,
+        "practically_significant": false,
+        "matters": false
+      }
+    },
+    {
+      "task": "final_energy",
+      "group": "big",
+      "n_train": 23678,
+      "metric": "r2",
+      "single_task": 0.773908325858961,
+      "single_task_sd": 0.009630377828053023,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.5904048533336658,
+      "ftz": {
+        "mean": 0.60421998371143,
+        "sd": 0.013647532838187149,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.7033360147148343,
+        "sd": 0.016322576492960674,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.60421998371143,
+        "sd": 0.013647532838187149,
+        "delta": -0.16968834214753092,
+        "relative_pct": -21.92615539562697,
+        "se_of_difference": 0.006097077224305979,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.7033360147148343,
+        "sd": 0.016322576492960674,
+        "delta": -0.07057231114412665,
+        "relative_pct": -9.118949723896359,
+        "se_of_difference": 0.006722461287286546,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.7033360147148343,
+        "sd": 0.016322576492960674,
+        "delta": 0.11293116138116854,
+        "relative_pct": 19.127749499942844,
+        "se_of_difference": 0.005161651900007907,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.7033360147148343,
+        "sd": 0.016322576492960674,
+        "delta": 0.09911603100340427,
+        "relative_pct": 16.403964396308545,
+        "se_of_difference": 0.0067281621260040165,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "total_magnetization",
+      "group": "big",
+      "n_train": 23678,
+      "metric": "r2",
+      "single_task": 0.7183309240269364,
+      "single_task_sd": 0.019765029677547757,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.6649594362564315,
+      "ftz": {
+        "mean": 0.6606311033929009,
+        "sd": 0.012730772200524761,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.7049286540278903,
+        "sd": 0.015726894166883363,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.6606311033929009,
+        "sd": 0.012730772200524761,
+        "delta": -0.05769982063403556,
+        "relative_pct": -8.032484570004659,
+        "se_of_difference": 0.009712802670343619,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.7049286540278903,
+        "sd": 0.015726894166883363,
+        "delta": -0.013402269999046146,
+        "relative_pct": -1.8657515012598258,
+        "se_of_difference": 0.010142228534424954,
+        "separated": false,
+        "practically_significant": true,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.7049286540278903,
+        "sd": 0.015726894166883363,
+        "delta": 0.03996921777145879,
+        "relative_pct": 6.010775333376165,
+        "se_of_difference": 0.004973280608776765,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.7049286540278903,
+        "sd": 0.015726894166883363,
+        "delta": 0.04429755063498941,
+        "relative_pct": 6.705338335946329,
+        "se_of_difference": 0.00639849795622382,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "volume",
+      "group": "big",
+      "n_train": 23678,
+      "metric": "r2",
+      "single_task": 0.6191167236702663,
+      "single_task_sd": 0.007880788883268914,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.5191877393806674,
+      "ftz": {
+        "mean": 0.5166221432282586,
+        "sd": 0.022396259622188892,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.5766742203400984,
+        "sd": 0.014640547577606891,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.5166221432282586,
+        "sd": 0.022396259622188892,
+        "delta": -0.10249458044200765,
+        "relative_pct": -16.554968800454333,
+        "se_of_difference": 0.007910790806928207,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.5766742203400984,
+        "sd": 0.014640547577606891,
+        "delta": -0.04244250333016786,
+        "relative_pct": -6.8553314274179105,
+        "se_of_difference": 0.0058185848813734845,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.5766742203400984,
+        "sd": 0.014640547577606891,
+        "delta": 0.057486480959430986,
+        "relative_pct": 11.072388001304862,
+        "se_of_difference": 0.004629747653729856,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.5766742203400984,
+        "sd": 0.014640547577606891,
+        "delta": 0.0600520771118398,
+        "relative_pct": 11.62398435664943,
+        "se_of_difference": 0.008461312418512034,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "efermi",
+      "group": "big",
+      "n_train": 23668,
+      "metric": "r2",
+      "single_task": 0.9072925750844908,
+      "single_task_sd": 0.0023071457749187013,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.8950289617696096,
+      "ftz": {
+        "mean": 0.8941495190612295,
+        "sd": 0.003973396621323532,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.9030343209781397,
+        "sd": 0.0026595942229129116,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.8941495190612295,
+        "sd": 0.003973396621323532,
+        "delta": -0.013143056023261268,
+        "relative_pct": -1.4486017393052437,
+        "se_of_difference": 0.001625845132963029,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.9030343209781397,
+        "sd": 0.0026595942229129116,
+        "delta": -0.004258254106351056,
+        "relative_pct": -0.46933637762377917,
+        "se_of_difference": 0.0013311380350663174,
+        "separated": true,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.9030343209781397,
+        "sd": 0.0026595942229129116,
+        "delta": 0.008005359208530183,
+        "relative_pct": 0.8944245997026017,
+        "se_of_difference": 0.0008410375396230381,
+        "separated": true,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.9030343209781397,
+        "sd": 0.0026595942229129116,
+        "delta": 0.008884801916910212,
+        "relative_pct": 0.9936595309292784,
+        "se_of_difference": 0.001511996102537867,
+        "separated": true,
+        "practically_significant": false,
+        "matters": false
+      }
+    },
+    {
+      "task": "formation_energy",
+      "group": "big",
+      "n_train": 23180,
+      "metric": "r2",
+      "single_task": 0.9947341038978464,
+      "single_task_sd": 0.00040729791718201793,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.9811991043707048,
+      "ftz": {
+        "mean": 0.9845010829447146,
+        "sd": 0.0019795226629583202,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.9945358575039623,
+        "sd": 0.00035550984383394527,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.9845010829447146,
+        "sd": 0.0019795226629583202,
+        "delta": -0.010233020953131833,
+        "relative_pct": -1.028719223864341,
+        "se_of_difference": 0.0006519427244664381,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.9945358575039623,
+        "sd": 0.00035550984383394527,
+        "delta": -0.00019824639388410503,
+        "relative_pct": -0.019929586520385734,
+        "se_of_difference": 0.000214049161583141,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.9945358575039623,
+        "sd": 0.00035550984383394527,
+        "delta": 0.01333675313325755,
+        "relative_pct": 1.3592300557399224,
+        "se_of_difference": 0.00011242208371260343,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.9945358575039623,
+        "sd": 0.00035550984383394527,
+        "delta": 0.010034774559247728,
+        "relative_pct": 1.019275116410536,
+        "se_of_difference": 0.000635995064621451,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "seebeck",
+      "group": "mid",
+      "n_train": 8072,
+      "metric": "r2",
+      "single_task": 0.7062033847896325,
+      "single_task_sd": 0.009204126541652102,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.6804695518190456,
+      "ftz": {
+        "mean": 0.7058897997068194,
+        "sd": 0.01637762307720016,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.7150871040264566,
+        "sd": 0.00816972110399,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.7058897997068194,
+        "sd": 0.01637762307720016,
+        "delta": -0.00031358508281309483,
+        "relative_pct": -0.044404358513023434,
+        "se_of_difference": 0.0066155757757607805,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.7150871040264566,
+        "sd": 0.00816972110399,
+        "delta": 0.008883719236824072,
+        "relative_pct": 1.2579547801899025,
+        "se_of_difference": 0.004859796638815959,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.7150871040264566,
+        "sd": 0.00816972110399,
+        "delta": 0.03461755220741103,
+        "relative_pct": 5.087303629511513,
+        "se_of_difference": 0.0025834926536953727,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.7150871040264566,
+        "sd": 0.00816972110399,
+        "delta": 0.009197304319637167,
+        "relative_pct": 1.30293769983036,
+        "se_of_difference": 0.005787666892417175,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      }
+    },
+    {
+      "task": "tc",
+      "group": "mid",
+      "n_train": 7207,
+      "metric": "r2",
+      "single_task": 0.8152928137216454,
+      "single_task_sd": 0.002556063590770086,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.802098723545046,
+      "ftz": {
+        "mean": 0.7999417376895173,
+        "sd": 0.009356330391318063,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.811727844569951,
+        "sd": 0.008874652544604919,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.7999417376895173,
+        "sd": 0.009356330391318063,
+        "delta": -0.015351076032128153,
+        "relative_pct": -1.8828911249755313,
+        "se_of_difference": 0.003171873902784014,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.811727844569951,
+        "sd": 0.008874652544604919,
+        "delta": -0.0035649691516944637,
+        "relative_pct": -0.43726242789030684,
+        "se_of_difference": 0.0030302867842430933,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.811727844569951,
+        "sd": 0.008874652544604919,
+        "delta": 0.009629121024904985,
+        "relative_pct": 1.2004907553458055,
+        "se_of_difference": 0.0028064115483560598,
+        "separated": true,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.811727844569951,
+        "sd": 0.008874652544604919,
+        "delta": 0.011786106880433689,
+        "relative_pct": 1.4733706625279566,
+        "se_of_difference": 0.004077994313127037,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "dos_density",
+      "group": "mid",
+      "n_train": 7009,
+      "metric": "r2",
+      "single_task": 0.625012253458048,
+      "single_task_sd": 0.00500513064912446,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.5688709075986723,
+      "ftz": {
+        "mean": 0.5732350234790984,
+        "sd": 0.007616825548298246,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.5987935082183082,
+        "sd": 0.006428042718882009,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.5732350234790984,
+        "sd": 0.007616825548298246,
+        "delta": -0.051777229978949624,
+        "relative_pct": -8.284194380586653,
+        "se_of_difference": 0.003288140767406696,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.5987935082183082,
+        "sd": 0.006428042718882009,
+        "delta": -0.02621874523973977,
+        "relative_pct": -4.1949169947753076,
+        "se_of_difference": 0.003023613712519873,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.5987935082183082,
+        "sd": 0.006428042718882009,
+        "delta": 0.02992260061963592,
+        "relative_pct": 5.259998396814792,
+        "se_of_difference": 0.002032725588852859,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.5987935082183082,
+        "sd": 0.006428042718882009,
+        "delta": 0.025558484739209852,
+        "relative_pct": 4.458639771186587,
+        "se_of_difference": 0.0031517576783277753,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "curie",
+      "group": "mid",
+      "n_train": 6272,
+      "metric": "r2",
+      "single_task": 0.8026638223574954,
+      "single_task_sd": 0.014054162509521123,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.7580917477919206,
+      "ftz": {
+        "mean": 0.767559126734178,
+        "sd": 0.011095075762819035,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.790607504331393,
+        "sd": 0.010005395503536615,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.767559126734178,
+        "sd": 0.011095075762819035,
+        "delta": -0.03510469562331742,
+        "relative_pct": -4.373524088853511,
+        "se_of_difference": 0.007198191952641667,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.790607504331393,
+        "sd": 0.010005395503536615,
+        "delta": -0.012056318026102408,
+        "relative_pct": -1.5020382992585768,
+        "se_of_difference": 0.007036667583950864,
+        "separated": false,
+        "practically_significant": true,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.790607504331393,
+        "sd": 0.010005395503536615,
+        "delta": 0.03251575653947247,
+        "relative_pct": 4.289158486974762,
+        "se_of_difference": 0.0031639838681982993,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.790607504331393,
+        "sd": 0.010005395503536615,
+        "delta": 0.02304837759721501,
+        "relative_pct": 3.0028146099026385,
+        "se_of_difference": 0.004724496220390965,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "electrical_resistivity",
+      "group": "mid",
+      "n_train": 5051,
+      "metric": "r2",
+      "single_task": 0.1767031589981176,
+      "single_task_sd": 0.013045728877167,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.17380151779344585,
+      "ftz": {
+        "mean": 0.19185916790698454,
+        "sd": 0.01006176270004193,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.18772325134577186,
+        "sd": 0.011429151822251552,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.19185916790698454,
+        "sd": 0.01006176270004193,
+        "delta": 0.015156008908866953,
+        "relative_pct": 8.577101278097924,
+        "se_of_difference": 0.006645458242326506,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.18772325134577186,
+        "sd": 0.011429151822251552,
+        "delta": 0.011020092347654276,
+        "relative_pct": 6.2364999076058805,
+        "se_of_difference": 0.006862999309698158,
+        "separated": false,
+        "practically_significant": true,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.18772325134577186,
+        "sd": 0.011429151822251552,
+        "delta": 0.01392173355232601,
+        "relative_pct": 8.010133472408034,
+        "se_of_difference": 0.0036142151482178807,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.18772325134577186,
+        "sd": 0.011429151822251552,
+        "delta": -0.004135916561212677,
+        "relative_pct": -2.1557044192007626,
+        "se_of_difference": 0.004815231874043357,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      }
+    },
+    {
+      "task": "thermal_conductivity",
+      "group": "mid",
+      "n_train": 4272,
+      "metric": "r2",
+      "single_task": 0.7193560370834421,
+      "single_task_sd": 0.004730489906525034,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.6993468179802345,
+      "ftz": {
+        "mean": 0.7196764505768078,
+        "sd": 0.008348443604776584,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.7187475484910534,
+        "sd": 0.019913840821882897,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.7196764505768078,
+        "sd": 0.008348443604776584,
+        "delta": 0.00032041349336575653,
+        "relative_pct": 0.04454171187119543,
+        "se_of_difference": 0.0033830693184385904,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.7187475484910534,
+        "sd": 0.019913840821882897,
+        "delta": -0.0006084885923887118,
+        "relative_pct": -0.08458795937207514,
+        "se_of_difference": 0.006643162844539942,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.7187475484910534,
+        "sd": 0.019913840821882897,
+        "delta": 0.01940073051081892,
+        "relative_pct": 2.7741215105331674,
+        "se_of_difference": 0.006297309395918941,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.7187475484910534,
+        "sd": 0.019913840821882897,
+        "delta": -0.0009289020857544683,
+        "relative_pct": -0.1290721802846223,
+        "se_of_difference": 0.006828305550438006,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      }
+    },
+    {
+      "task": "kp",
+      "group": "mid",
+      "n_train": 3875,
+      "metric": "r2",
+      "single_task": 0.6957007822972004,
+      "single_task_sd": 0.011636369499911007,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.6761908058874911,
+      "ftz": {
+        "mean": 0.6909842220702596,
+        "sd": 0.010523725482095708,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.6857984194455164,
+        "sd": 0.013771648246967806,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.6909842220702596,
+        "sd": 0.010523725482095708,
+        "delta": -0.004716560226940891,
+        "relative_pct": -0.6779581605998535,
+        "se_of_difference": 0.006177046124964819,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.6857984194455164,
+        "sd": 0.013771648246967806,
+        "delta": -0.009902362851683999,
+        "relative_pct": -1.423365202923367,
+        "se_of_difference": 0.006785782826727729,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.6857984194455164,
+        "sd": 0.013771648246967806,
+        "delta": 0.009607613558025307,
+        "relative_pct": 1.42084356580617,
+        "se_of_difference": 0.0043549775595083315,
+        "separated": true,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.6857984194455164,
+        "sd": 0.013771648246967806,
+        "delta": -0.005185802624743108,
+        "relative_pct": -0.7504950849971526,
+        "se_of_difference": 0.00548094055305038,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      }
+    },
+    {
+      "task": "klat",
+      "group": "mid",
+      "n_train": 3863,
+      "metric": "r2",
+      "single_task": 0.7220245679675547,
+      "single_task_sd": 0.004389890887448161,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.7222550253325181,
+      "ftz": {
+        "mean": 0.7123306357105029,
+        "sd": 0.023162453482277495,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.7155198170545807,
+        "sd": 0.019712221020899985,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.7123306357105029,
+        "sd": 0.023162453482277495,
+        "delta": -0.00969393225705173,
+        "relative_pct": -1.3426042114244707,
+        "se_of_difference": 0.007583149314935515,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.7155198170545807,
+        "sd": 0.019712221020899985,
+        "delta": -0.006504750912973978,
+        "relative_pct": -0.9009043738337558,
+        "se_of_difference": 0.00653539548599939,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.7155198170545807,
+        "sd": 0.019712221020899985,
+        "delta": -0.006735208277937388,
+        "relative_pct": -0.9325249450270803,
+        "se_of_difference": 0.006233551616669355,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.7155198170545807,
+        "sd": 0.019712221020899985,
+        "delta": 0.0031891813440777517,
+        "relative_pct": 0.4477108219410995,
+        "se_of_difference": 0.0096180606615652,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      }
+    },
+    {
+      "task": "power_factor",
+      "group": "mid",
+      "n_train": 3638,
+      "metric": "r2",
+      "single_task": 0.6935833200116516,
+      "single_task_sd": 0.002434821880247103,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.677523011345107,
+      "ftz": {
+        "mean": 0.7125879601144588,
+        "sd": 0.01232117053373702,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.7048074142908352,
+        "sd": 0.019963367206650293,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.7125879601144588,
+        "sd": 0.01232117053373702,
+        "delta": 0.019004640102807224,
+        "relative_pct": 2.7400659090948096,
+        "se_of_difference": 0.004045589678878587,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.7048074142908352,
+        "sd": 0.019963367206650293,
+        "delta": 0.011224094279183583,
+        "relative_pct": 1.6182762698207662,
+        "se_of_difference": 0.006406190329709385,
+        "separated": false,
+        "practically_significant": true,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.7048074142908352,
+        "sd": 0.019963367206650293,
+        "delta": 0.027284402945728203,
+        "relative_pct": 4.027081366809911,
+        "se_of_difference": 0.006312971013932824,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.7048074142908352,
+        "sd": 0.019963367206650293,
+        "delta": -0.007780545823623641,
+        "relative_pct": -1.0918716367834642,
+        "se_of_difference": 0.0074185394354211644,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      }
+    },
+    {
+      "task": "neel",
+      "group": "mid",
+      "n_train": 3466,
+      "metric": "r2",
+      "single_task": 0.7175898459330744,
+      "single_task_sd": 0.012286837271574333,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.6958741971453307,
+      "ftz": {
+        "mean": 0.6924933626373332,
+        "sd": 0.025699868347103156,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.7243674697776489,
+        "sd": 0.01585984791511445,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.6924933626373332,
+        "sd": 0.025699868347103156,
+        "delta": -0.025096483295741212,
+        "relative_pct": -3.497329768247839,
+        "se_of_difference": 0.009810280186287908,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.7243674697776489,
+        "sd": 0.01585984791511445,
+        "delta": 0.006777623844574476,
+        "relative_pct": 0.9444982928599839,
+        "se_of_difference": 0.00743953974494966,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.7243674697776489,
+        "sd": 0.01585984791511445,
+        "delta": 0.028493272632318156,
+        "relative_pct": 4.094601114570058,
+        "se_of_difference": 0.005015324275563448,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.7243674697776489,
+        "sd": 0.01585984791511445,
+        "delta": 0.03187410714031569,
+        "relative_pct": 4.602803270044991,
+        "se_of_difference": 0.009549963397568573,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "zt",
+      "group": "mid",
+      "n_train": 3445,
+      "metric": "r2",
+      "single_task": 0.6599955284985206,
+      "single_task_sd": 0.031689070797737945,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.68087692851483,
+      "ftz": {
+        "mean": 0.7031208394362926,
+        "sd": 0.011193727623545747,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.7045340061025029,
+        "sd": 0.011197308371846626,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.7031208394362926,
+        "sd": 0.011193727623545747,
+        "delta": 0.04312531093777194,
+        "relative_pct": 6.534182289974198,
+        "se_of_difference": 0.01460716931564164,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.7045340061025029,
+        "sd": 0.011197308371846626,
+        "delta": 0.04453847760398233,
+        "relative_pct": 6.748299902168528,
+        "se_of_difference": 0.014607443755915413,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.7045340061025029,
+        "sd": 0.011197308371846626,
+        "delta": 0.023657077587672992,
+        "relative_pct": 3.4745012787076286,
+        "se_of_difference": 0.0035408998118306957,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.7045340061025029,
+        "sd": 0.011197308371846626,
+        "delta": 0.0014131666662103859,
+        "relative_pct": 0.2009848929158966,
+        "se_of_difference": 0.005006787921256079,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      }
+    },
+    {
+      "task": "dielectric_total",
+      "group": "mid",
+      "n_train": 3124,
+      "metric": "r2",
+      "single_task": 0.6586888281847633,
+      "single_task_sd": 0.014077043029978923,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.636944960104641,
+      "ftz": {
+        "mean": 0.6525096892579307,
+        "sd": 0.010721716907622733,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.6807675730875811,
+        "sd": 0.010845391840352426,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.6525096892579307,
+        "sd": 0.010721716907622733,
+        "delta": -0.006179138926832528,
+        "relative_pct": -0.9380968163466816,
+        "se_of_difference": 0.00715039505470124,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.6807675730875811,
+        "sd": 0.010845391840352426,
+        "delta": 0.022078744902817804,
+        "relative_pct": 3.351923390542868,
+        "se_of_difference": 0.007169022284151022,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.6807675730875811,
+        "sd": 0.010845391840352426,
+        "delta": 0.0438226129829401,
+        "relative_pct": 6.880125556804888,
+        "se_of_difference": 0.00342961403325189,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.6807675730875811,
+        "sd": 0.010845391840352426,
+        "delta": 0.028257883829650332,
+        "relative_pct": 4.330645857808904,
+        "se_of_difference": 0.0048226314146738,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "dielectric_ionic",
+      "group": "mid",
+      "n_train": 3124,
+      "metric": "r2",
+      "single_task": 0.5910229162853301,
+      "single_task_sd": 0.020540892324709466,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.5668172421341695,
+      "ftz": {
+        "mean": 0.5679945903728394,
+        "sd": 0.016373700750965427,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.607622134254111,
+        "sd": 0.020769303890118183,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.5679945903728394,
+        "sd": 0.016373700750965427,
+        "delta": -0.02302832591249071,
+        "relative_pct": -3.8963507637279586,
+        "se_of_difference": 0.010544925752573046,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.607622134254111,
+        "sd": 0.020769303890118183,
+        "delta": 0.016599217968780944,
+        "relative_pct": 2.8085574199236776,
+        "se_of_difference": 0.011292566134721968,
+        "separated": false,
+        "practically_significant": true,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.607622134254111,
+        "sd": 0.020769303890118183,
+        "delta": 0.04080489211994154,
+        "relative_pct": 7.1989504000096645,
+        "se_of_difference": 0.006567830570896895,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.607622134254111,
+        "sd": 0.020769303890118183,
+        "delta": 0.039627543881271654,
+        "relative_pct": 6.976746707263461,
+        "se_of_difference": 0.008363384843245253,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "dielectric_electronic",
+      "group": "mid",
+      "n_train": 3124,
+      "metric": "r2",
+      "single_task": 0.8574152142814084,
+      "single_task_sd": 0.008488646227367252,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.8358888362707875,
+      "ftz": {
+        "mean": 0.8434848948502829,
+        "sd": 0.010320835926061261,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.8657805582964981,
+        "sd": 0.008273022819937088,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.8434848948502829,
+        "sd": 0.010320835926061261,
+        "delta": -0.013930319431125548,
+        "relative_pct": -1.6246876891262558,
+        "se_of_difference": 0.0050063348245944295,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.8657805582964981,
+        "sd": 0.008273022819937088,
+        "delta": 0.008365344015089704,
+        "relative_pct": 0.9756467899978449,
+        "se_of_difference": 0.00461039191529302,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.8657805582964981,
+        "sd": 0.008273022819937088,
+        "delta": 0.029891722025710665,
+        "relative_pct": 3.5760403451574745,
+        "se_of_difference": 0.0026161595245550264,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.8657805582964981,
+        "sd": 0.008273022819937088,
+        "delta": 0.022295663446215253,
+        "relative_pct": 2.6432795160099096,
+        "se_of_difference": 0.004182852624607717,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "magnetization",
+      "group": "small",
+      "n_train": 1160,
+      "metric": "r2",
+      "single_task": 0.7611240441975611,
+      "single_task_sd": 0.024127064674294988,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.7742247144440405,
+      "ftz": {
+        "mean": 0.7730048365622311,
+        "sd": 0.014453180252222407,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.7982804265534845,
+        "sd": 0.01721095452204059,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.7730048365622311,
+        "sd": 0.014453180252222407,
+        "delta": 0.01188079236466999,
+        "relative_pct": 1.5609534944065113,
+        "se_of_difference": 0.011718041299630489,
+        "separated": false,
+        "practically_significant": true,
+        "matters": false
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.7982804265534845,
+        "sd": 0.01721095452204059,
+        "delta": 0.037156382355923445,
+        "relative_pct": 4.881777502522171,
+        "se_of_difference": 0.012084897414355554,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.7982804265534845,
+        "sd": 0.01721095452204059,
+        "delta": 0.024055712109444016,
+        "relative_pct": 3.1070710687294545,
+        "se_of_difference": 0.005442581699522289,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.7982804265534845,
+        "sd": 0.01721095452204059,
+        "delta": 0.025275589991253455,
+        "relative_pct": 3.2697841974263806,
+        "se_of_difference": 0.00710711879007929,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "magnetic_moment",
+      "group": "small",
+      "n_train": 851,
+      "metric": "r2",
+      "single_task": 0.6979547310699011,
+      "single_task_sd": 0.006778155762492842,
+      "single_task_n": 5,
+      "xfer_with_replay": 0.6537992610459853,
+      "ftz": {
+        "mean": 0.6588171184437072,
+        "sd": 0.035030416948584095,
+        "n": 10
+      },
+      "ftf": {
+        "mean": 0.7025117430881969,
+        "sd": 0.026719257563295084,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.6588171184437072,
+        "sd": 0.035030416948584095,
+        "delta": -0.039137612626193974,
+        "relative_pct": -5.6074714997919095,
+        "se_of_difference": 0.011484846114218848,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": 0.7025117430881969,
+        "sd": 0.026719257563295084,
+        "delta": 0.004557012018295725,
+        "relative_pct": 0.6529093959016855,
+        "se_of_difference": 0.008976667064200005,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": 0.7025117430881969,
+        "sd": 0.026719257563295084,
+        "delta": 0.04871248204221157,
+        "relative_pct": 7.450678663092791,
+        "se_of_difference": 0.008449371128869305,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": 0.7025117430881969,
+        "sd": 0.026719257563295084,
+        "delta": 0.0436946246444897,
+        "relative_pct": 6.632284350429065,
+        "se_of_difference": 0.01393215287141707,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "magnetic_susceptibility",
+      "group": "small",
+      "n_train": 58,
+      "metric": "r2",
+      "single_task": 0.1712311161301801,
+      "single_task_sd": 0.10215934622345407,
+      "single_task_n": 5,
+      "xfer_with_replay": -0.07729458591567044,
+      "ftz": {
+        "mean": 0.09445964550067905,
+        "sd": 0.13672725902339264,
+        "n": 10
+      },
+      "ftf": {
+        "mean": -0.00938136358736943,
+        "sd": 0.013351502960870171,
+        "n": 10
+      },
+      "ftz_vs_single": {
+        "n": 10,
+        "mean": 0.09445964550067905,
+        "sd": 0.13672725902339264,
+        "delta": -0.07677147062950106,
+        "relative_pct": -44.8349998321186,
+        "se_of_difference": 0.06290262904017369,
+        "separated": false,
+        "practically_significant": true,
+        "matters": false
+      },
+      "ftf_vs_single": {
+        "n": 10,
+        "mean": -0.00938136358736943,
+        "sd": 0.013351502960870171,
+        "delta": -0.18061247971754954,
+        "relative_pct": -105.47877266666717,
+        "se_of_difference": 0.045881724763702204,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_xfer": {
+        "n": 10,
+        "mean": -0.00938136358736943,
+        "sd": 0.013351502960870171,
+        "delta": 0.067913222328301,
+        "relative_pct": 87.86284514467204,
+        "se_of_difference": 0.004222115954283171,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "ftf_vs_ftz": {
+        "n": 10,
+        "mean": -0.00938136358736943,
+        "sd": 0.013351502960870171,
+        "delta": -0.10384100908804848,
+        "relative_pct": -109.93160998820602,
+        "se_of_difference": 0.043442612710752136,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    }
+  ],
+  "counts": {
+    "ftz_vs_single": {
+      "better": 4,
+      "worse": 12,
+      "unresolved": 7,
+      "better (negligible)": 0,
+      "worse (negligible)": 1
+    },
+    "ftf_vs_single": {
+      "better": 4,
+      "worse": 4,
+      "unresolved": 14,
+      "better (negligible)": 0,
+      "worse (negligible)": 2
+    },
+    "ftf_vs_xfer": {
+      "better": 19,
+      "worse": 0,
+      "unresolved": 2,
+      "better (negligible)": 3,
+      "worse (negligible)": 0
+    }
+  },
+  "notes": [
+    "fm finetune loads only the target task, so the test split is the single-task universe and no row matching is needed against the single-task baseline.",
+    "ftf_vs_xfer compares against matched_xfer's per-task mean only, so its SE counts one arm.",
+    "material_type is scored on macro-F1; its accuracy sits at 0.99 in every arm."
+  ]
+}
