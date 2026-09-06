@@ -108,7 +108,9 @@ def main() -> None:
         rows.append({
             "task": task, "group": size_group(task), "n_train": N_TRAIN[task],
             "metric": "macro_f1" if task == "material_type" else "r2",
-            "ft_source": "rerun_400_epochs" if any((r / "DONE").exists() for r in args.runs.glob(f"ftf x_{task}_o*".replace(" ", ""))) else "original",
+            "ft_source": {arm: ("rerun_400_epochs" if any((r / "DONE").exists()
+                                                          for r in args.runs.glob(f"{arm}x_{task}_o*"))
+                                 else "original") for arm in ("ftz", "ftf")},
             "single_task": base["mean"], "single_task_sd": base["sd"], "single_task_n": base["n"],
             "xfer_with_replay": xr["multi_task"] if xr else None,
             "ftz": {"mean": statistics.fmean(ftz), "sd": statistics.stdev(ftz) if len(ftz) > 1 else 0.0,
