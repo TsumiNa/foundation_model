@@ -110,6 +110,10 @@ case "$STAGE" in
     # Single-task runs took 3-27 min unpacked, so 4h covers a PACK=24 co-tenant with room.
     ftz|ftzs)   CONFIG=ft_frozen.toml;  OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
     ftf|ftfs)   CONFIG=ft_full.toml;    OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
+    # seebeck and power_factor hit the 150-epoch cap in every arm (KR tasks converge slowly), so
+    # their fine-tune rows are rerun at 400 epochs to match the re-baselined single-task runs.
+    ftzx)       CONFIG=ft_frozen.toml;  OUT=stage_ft; DEFTIME=06:00:00; MODE=finetune ;;
+    ftfx)       CONFIG=ft_full.toml;    OUT=stage_ft; DEFTIME=06:00:00; MODE=finetune ;;
     *) echo "unknown stage '$STAGE'" >&2; exit 2 ;;
 esac
 TIME=${TIME:-$DEFTIME}
