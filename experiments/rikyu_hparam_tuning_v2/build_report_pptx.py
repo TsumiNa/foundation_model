@@ -839,6 +839,68 @@ def slide_xfer():
 
 
 @slide_guard
+def slide_ft():
+    """The warm-start stage: the transfer loss was mostly replay dilution.
+
+    Sits right after slide_xfer because it is the answer to the question that slide raises. The
+    table shows every arm's value beside its % against the single-task baseline, which is the
+    layout that was asked for and the only one in which the three arms can be read as one story.
+    """
+    f = load("ft.json")
+    rows_all = f["per_task"]
+    order = ["material_type", "final_energy", "volume", "dos_density", "zt",
+             "dielectric_total", "magnetization", "magnetic_moment"]
+    by = {r["task"]: r for r in rows_all}
+
+    def pc(d):
+        if not d:
+            return "-"
+        star = "*" if d["matters"] else ("·" if d["separated"] else "")
+        return f"{d['relative_pct']:+.1f}%{star}"
+
+    def v(x):
+        return f"{x:.4f}" if x is not None else "-"
+
+    rows = []
+    for tname in order:
+        r = by[tname]
+        rows.append([tname, v(r["single_task"]),
+                     v(r["xfer_with_replay"]), pc(r["xfer_vs_single"]),
+                     v(r["ftz"]["mean"] if r["ftz"] else None), pc(r["ftz_vs_single"]),
+                     v(r["ftf"]["mean"] if r["ftf"] else None), pc(r["ftf_vs_single"])])
+    c = f["counts"]
+    s = new("Same checkpoint, same task, replay removed: the transfer loss was mostly dilution",
+            "240 transfer checkpoints fine-tuned on their own last task, no replay, two arms, "
+            "10 orderings each; vs = change against training alone")
+    table(s, 0.4, 1.4, 12.5,
+          ["Task", "Alone", "xfer", "vs", "Frozen", "vs", "Warm-start", "vs"], rows,
+          col_w=[2.4, 1.2, 1.2, 1.3, 1.2, 1.3, 1.4, 1.3], size=10, head_size=10)
+    y = 1.5 + 0.30 * (len(rows) + 1) + 0.15
+    txt(s, 0.4, y, 12.5, 2.6, [
+        f"Counts over 24 tasks (better / worse / unresolved):   "
+        f"xfer vs alone {c['xfer_vs_single']['better']}/{c['xfer_vs_single']['worse']}/"
+        f"{c['xfer_vs_single']['unresolved']}    "
+        f"frozen vs alone {c['ftz_vs_single']['better']}/{c['ftz_vs_single']['worse']}/"
+        f"{c['ftz_vs_single']['unresolved']}    "
+        f"warm-start vs alone {c['ftf_vs_single']['better']}/{c['ftf_vs_single']['worse']}/"
+        f"{c['ftf_vs_single']['unresolved']}    "
+        f"warm-start vs xfer {c['ftf_vs_xfer']['better']}/{c['ftf_vs_xfer']['worse']}/"
+        f"{c['ftf_vs_xfer']['unresolved']}",
+        "",
+        "At step 24 a small task owns ~1% of the gradient against ~79k replay samples, and early stopping",
+        "on the total loss fires when the replayed tasks stop improving (~60 epochs vs 90-150 alone).",
+        "Remove replay and 19 tasks recover, none get worse. Warm-starting is break-even against training",
+        "alone: zt and magnetization — the probe's original winners — come back as real gains; the extensive",
+        "properties (final_energy, volume) still lose, which is what the scale-blind descriptor predicts.",
+        "The frozen encoder is not a feature extractor (12 worse) — except material_type, where frozen wins.",
+    ], size=11)
+    txt(s, 0.4, 6.75, 12.5, 0.4,
+        ["* = separated at 2SE and |delta| >= 0.01   · = separated but below the threshold   "
+         "Baselines and both arms audited for convergence; the two capped KR tasks rerun at 400 epochs."],
+        size=9, color=MUT)
+
+
+@slide_guard
 def slide_position():
     """The position curve — obtained by re-reading data the stage already wrote.
 
@@ -1102,6 +1164,7 @@ def main() -> None:
     slide_transfer_fig()
     slide_transfer_why()
     slide_xfer()
+    slide_ft()
     slide_position()
     slide_descriptor_limit()
     slide_balancer()
