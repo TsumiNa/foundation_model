@@ -100,6 +100,12 @@ case "$STAGE" in
     c2top2)     CONFIG=final_hybrid_c2top2.toml;   OUT=stage_c; DEFTIME=48:00:00 ;;
     c2top3)     CONFIG=final_hybrid_c2top3.toml;   OUT=stage_c; DEFTIME=48:00:00 ;;
     c2con)      CONFIG=final_consolidate_v2.toml;  OUT=stage_c; DEFTIME=10:00:00; MODE=finetune ;;
+    # Warm-start fine-tune from the transfer stage's final checkpoints, one task, no replay.
+    # Two arms = two configs (freeze_encoder is a bool; bools do not travel through --set safely).
+    # Both write into stage_ft, distinguished by runid prefix; _ckpt there is a copy of model_library.
+    # Single-task runs took 3-27 min unpacked, so 4h covers a PACK=24 co-tenant with room.
+    ftz|ftzs)   CONFIG=ft_frozen.toml;  OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
+    ftf|ftfs)   CONFIG=ft_full.toml;    OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
     *) echo "unknown stage '$STAGE'" >&2; exit 2 ;;
 esac
 TIME=${TIME:-$DEFTIME}
