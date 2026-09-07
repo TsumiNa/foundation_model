@@ -193,7 +193,7 @@ library has never been measured**, and the nearest evidence runs against it.
 | Transferability summary page (trilingual EN / 中 / 日, **in git**) | `summary_page/gen_page.py` + `page.js` → `summary_page/transferability_summary.html`; published as a claude.ai artifact |
 | Per-run scores behind that page's figures | `summary/position_runs.json` (four tasks × 240 runs), `summary/rep_raw.json` |
 | Budget / optimisation checks (experiments 6–7) | `summary/long_budget.json` |
-| Descriptor contrast (experiment 8) | `summary/descriptor.json` once scored |
+| Descriptor contrast (experiment 8) | `summary/descriptor.json`; tables `data/desc_xenonpy_{classic,nosum}_trans.parquet` (gitignored, rebuilt by `scripts/make_comp_descriptors.py`) |
 
 **The report and figures are not in git** (`experiments/**/results/` is ignored) and travel by rsync
 — but the summary JSON is in git, so every figure can be redrawn.
@@ -312,17 +312,45 @@ converts into score. So material_type's path to a gain **structurally cannot tra
    fresh one and generalises worse on exactly the labels that depend on cell scale. What remains to
    separate is exposure at step 24 from the pretrained representation itself — the unseen arms
    (stage_xu → ftzu / ftfu) do that — and whether the descriptor is the reason, which is experiment 8.
-8. **Descriptor contrast on the extensive properties** — **in flight (2026-09-08, jobs 85857 /
-   85858)**. Single task, the stage_single recipe, 5 seeds, three tasks: the classic composition
-   descriptor (weighted sum + average + variance + max + min over the same 58-property element table
-   KMD uses, 290 columns, `stDc_*`) against the same without the weighted-sum block (232 columns,
-   `stDn_*`). The pipeline's canonical composition key is NOT reduced (Fe2O3 ≠ Fe4O6) and the sum
-   block uses the raw cell amounts, so it is the one block that carries cell scale; the other four
-   are scale-free like KMD. Tables from `scripts/make_comp_descriptors.py` (z-scored over all qc
-   compositions; 36 compositions dropped, the same ones KMD drops), configs `probe6_desc_*.toml`,
-   output `stage_desc`, scored by `analysis/descriptor.py` → `summary/descriptor.json`. Reading:
-   classic beats KMD and nosum does not → scale-blindness; both beat KMD → descriptor family; neither
-   → the ceiling is elsewhere.
+8. **Descriptor contrast on the extensive properties** — **done (2026-09-08, jobs 86328 / 86329).**
+   Single task, the stage_single recipe, 5 seeds, three tasks. The descriptors are the ones
+   `data/data/scripts/calculate_compositional_desc.ipynb` produced — XenonPy
+   `Compositions(featurizers="classic")` (weighted sum / average / variance / max / min, 290 columns)
+   followed by StandardScaler → PowerTransformer(yeo-johnson) — re-keyed by the pipeline's canonical,
+   non-reduced composition (`scripts/make_comp_descriptors.py`); `nosum` drops the weighted-sum
+   block, the only block whose raw cell amounts carry scale. Output `stage_desc` (`stXc_*`,
+   `stXn_*`), scored by `analysis/descriptor.py` → `summary/descriptor.json`. R², last-epoch weights:
+
+   | task | KMD | XenonPy classic (vs KMD) | XenonPy without sum (vs KMD) |
+   |---|---|---|---|
+   | volume | 0.6191 | 0.9966 (+61.0%*) | 0.5919 (-4.4%*) |
+   | final_energy | 0.7739 | 0.7677 (-0.8%) | 0.7895 (+2.0%*) |
+   | dos_density | 0.6250 | 0.6241 (-0.1%) | 0.6095 (-2.5%*) |
+
+   - **volume's ceiling was the descriptor.** `Volume (normalized)` is `volume_scaler`
+     (StandardScaler + Yeo-Johnson, λ ≈ 0, i.e. ~log) of the CELL volume, and cells run to 10,000
+     atoms; KMD sees only atomic fractions. With the scale-bearing sum block the single-task R² goes
+     0.62 → 0.997 (five seeds within 0.0002); without it, 0.59. Everything said earlier about volume
+     as a "negative-transfer extensive property" is therefore about a label the descriptor could not
+     see, not about transfer; its transfer behaviour has to be re-measured with a scale-aware
+     descriptor.
+   - **final_energy is not a scale problem.** It is per atom, the sum block does not help, and the
+     descriptor family lands at 0.77–0.79 either way (gradient boosting on the same features: 0.76
+     on the pipeline split and on a random split alike). The label itself is the open question:
+     the dataset's `Final energy per atom` does not match MP's PBE `energy_per_atom` (Si −8.77 vs
+     −5.42; Pt −51.5 vs −6.1; Au −50.6 vs −3.3; NaCl −6.9 vs −3.5), 18.8% of rows lie below −14
+     eV/atom and actinides reach −86, while `Formation energy per atom` looks normal. An element-
+     dependent energy reference of that size dominates the variance and is hard to learn from
+     composition aggregates. **Where this column came from in the 2026-05-15 reformat, and whether
+     it is the same quantity as the earlier final-energy models were trained on, is to be confirmed
+     with the data owner before final_energy is interpreted further.**
+   - dos_density: the family is level with KMD; the sum block adds +2.4%.
+   - First attempt, discarded: a re-implementation of the classic descriptor with plain z-scoring
+     (numerically identical to XenonPy's blocks, but the raw sum block's |z| reaches 83 and the
+     network memorised training rows; volume R² 0.16) and two invented "bounded" variants. Their
+     run directories sit in `stage_desc/_discarded_reimpl/` and are not used anywhere. Lesson kept
+     in the working notes: descriptors and preprocessing come from the data notebooks, never
+     re-implemented.
 
 ### What can and cannot be said now
 
@@ -333,6 +361,10 @@ converts into score. So material_type's path to a gain **structurally cannot tra
 - "The extensive-property losses would close with more training" cannot be said: at 500 epochs
   without early stopping warm-start is still 10–16% below the same-budget single-task control, with
   a lower training loss and a higher validation loss than that control.
+- "volume is an extensive property the shared encoder cannot serve" cannot be said any more: with
+  a descriptor that carries cell scale, training alone reaches R² 0.997. Its transfer verdicts
+  (xfer −16.1%, frozen −16.6%, warm-start −6.9%) were measured on a label the descriptor could not
+  see and have to be re-measured.
 - "The fitting advantage is an optimisation artefact" cannot be said either: a fresh model with the
   learning rate never decayed ends with a higher training loss, not a lower one, and slowing the
   warm-started encoder underfits rather than regularises.

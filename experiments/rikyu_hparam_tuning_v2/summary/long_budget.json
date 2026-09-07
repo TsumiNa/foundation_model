@@ -450,23 +450,24 @@
         "epochs_logged": 500
       },
       "alone_500_constlr": {
-        "mean": 0.6307266850751543,
-        "sd": 0.0021860532541092526,
-        "n": 4,
+        "mean": 0.6308805248924385,
+        "sd": 0.001924176465208293,
+        "n": 5,
         "values": [
           0.6318746426518806,
           0.6283462342144649,
+          0.6314958841615754,
           0.6295273582892928,
           0.6331585051449785
         ]
       },
       "alone_500_constlr_curve": {
-        "best_epoch": 167.5,
-        "epochs_past_best": 331.5,
-        "last_over_best_pct": 1.9261387583672351,
-        "final_train_loss": 0.01208928320556879,
-        "final_val_raw_loss": 0.027264454402029514,
-        "epochs_logged": 500.0
+        "best_epoch": 119,
+        "epochs_past_best": 380,
+        "last_over_best_pct": 2.2266160268450186,
+        "final_train_loss": 0.01197525393217802,
+        "final_val_raw_loss": 0.027309363707900047,
+        "epochs_logged": 500
       },
       "warm_lowlr": {
         "mean": 0.5801352657360568,
@@ -538,23 +539,23 @@
         "matters": false
       },
       "alone_500_constlr_vs_alone_500": {
-        "n": 4,
-        "mean": 0.6307266850751543,
-        "sd": 0.0021860532541092526,
-        "delta": -0.0007886072178561188,
-        "relative_pct": -0.1248753953356716,
-        "se_of_difference": 0.0014244426880962392,
+        "n": 5,
+        "mean": 0.6308805248924385,
+        "sd": 0.001924176465208293,
+        "delta": -0.0006347674005718895,
+        "relative_pct": -0.10051496904644555,
+        "se_of_difference": 0.0012549186340447428,
         "separated": false,
         "practically_significant": false,
         "matters": false
       },
       "alone_500_constlr_vs_alone_early_stop": {
-        "n": 4,
-        "mean": 0.6307266850751543,
-        "sd": 0.0021860532541092526,
-        "delta": 0.005714431617106275,
-        "relative_pct": 0.9142911335721258,
-        "se_of_difference": 0.0024909784765050503,
+        "n": 5,
+        "mean": 0.6308805248924385,
+        "sd": 0.001924176465208293,
+        "delta": 0.005868271434390504,
+        "relative_pct": 0.9389050217692081,
+        "se_of_difference": 0.0023980737221389386,
         "separated": true,
         "practically_significant": false,
         "matters": false

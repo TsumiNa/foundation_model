@@ -3,11 +3,14 @@
 
 volume, final_energy and dos_density sit at R2 0.62-0.77 alone and are the tasks warm-start loses
 on. KMD is built from atomic FRACTIONS, so cell scale never reaches the model, and these are the
-labels that depend on it. Three single-task arms, same recipe (probe6 + the adopted values, 5 seeds):
+labels that depend on it (Volume (normalized) is a Yeo-Johnson transform of the CELL volume, lambda
+~ 0, i.e. essentially its log). Three single-task arms, same recipe (probe6 + the adopted values,
+5 seeds):
 
   kmd      the campaign's descriptor (stage_single, stA / stB — the adopted ceilings)
-  classic  composition descriptor: weighted sum + average + variance + max + min (stage_desc, stDc)
-  nosum    the same without the weighted-sum block, the one block that carries scale (stDn)
+  classic  XenonPy classic composition descriptor, StandardScaler + Yeo-Johnson, exactly as
+           data/data/scripts/calculate_compositional_desc.ipynb produced it (stage_desc, stXc)
+  nosum    the same table without the weighted-sum block, the one block carrying cell scale (stXn)
 
 If classic beats kmd and nosum does not, scale-blindness is what caps these tasks. If both beat
 kmd, it is the descriptor family; if neither does, the ceiling is elsewhere.
@@ -26,7 +29,7 @@ from common import N_TRAIN, final_metrics
 from ft import diff
 
 TASKS = ["volume", "final_energy", "dos_density"]
-ARMS = {"classic": "stDc", "nosum": "stDn"}
+ARMS = {"classic": "stXc", "nosum": "stXn"}
 
 
 def collect(root: Path, prefix: str, task: str) -> tuple[list[float], list[int]]:
@@ -73,21 +76,19 @@ def main() -> None:
             row[key] = stats(vals)
             row[f"{key}_epochs"] = statistics.median(epochs) if epochs else None
             row[f"{key}_vs_kmd"] = diff(vals, base["mean"], base["sd"], base["n"])
-        if arms["classic"] and len(arms["nosum"]) > 1:
-            row["classic_vs_nosum"] = diff(arms["classic"], statistics.fmean(arms["nosum"]),
-                                           statistics.stdev(arms["nosum"]), len(arms["nosum"]))
-        else:
-            row["classic_vs_nosum"] = None
+        for key in ("classic",):
+            row[f"{key}_vs_nosum"] = (diff(arms[key], statistics.fmean(arms["nosum"]), statistics.stdev(arms["nosum"]),
+                                           len(arms["nosum"])) if arms[key] and len(arms["nosum"]) > 1 else None)
         rows.append(row)
 
     out = {"question": "is the ~0.7 R2 ceiling on the extensive properties the descriptor's scale-blindness?",
            "arms": {"kmd": "KMD on atomic fractions (adopted ceilings)",
-                    "classic": "composition descriptor, sum + average + variance + max + min",
-                    "nosum": "composition descriptor without the weighted-sum block"},
+                    "classic": "XenonPy classic composition descriptor, StandardScaler + Yeo-Johnson (the notebook's table)",
+                    "nosum": "the same table without the weighted-sum block"},
            "per_task": rows,
            "notes": ["Single task, 5 seeds per arm, probe6 recipe with the adopted values; early stopping on, "
                      "150-epoch cap — the same recipe as the KMD baselines.",
-                     "Descriptor tables from scripts/make_comp_descriptors.py, z-scored over all qc compositions."]}
+                     "Descriptor tables: data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet re-keyed by composition (scripts/make_comp_descriptors.py)."]}
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out, indent=2) + "\n")
 
@@ -100,11 +101,14 @@ def main() -> None:
     def v(s):
         return f"{s['mean']:6.4f}" if s else f"{'-':>6s}"
 
-    print(f"{'task':14s} {'N':>6s} {'kmd':>6s} | {'classic':>7s} {'vs kmd':>9s} | {'nosum':>6s} {'vs kmd':>9s} | {'classic-nosum':>13s} | epochs c/n")
+    print(f"{'task':14s} {'kmd':>6s} | " + " | ".join(f"{k:>10s} {'vs kmd':>8s} {'vs nosum':>8s}" for k in ARMS))
     for r in rows:
-        print(f"{r['task']:14s} {r['n_train']:6d} {v(r['kmd'])} | {v(r['classic']):>7s} {pc(r['classic_vs_kmd'])} | "
-              f"{v(r['nosum']):>6s} {pc(r['nosum_vs_kmd'])} | {pc(r['classic_vs_nosum']):>13s} | "
-              f"{r['classic_epochs'] or '-'} / {r['nosum_epochs'] or '-'}")
+        cells = []
+        for k in ARMS:
+            vs_n = pc(r[f"{k}_vs_nosum"]) if k != "nosum" else f"{'':>9s}"
+            cells.append(f"{v(r[k]):>10s} {pc(r[f'{k}_vs_kmd'])} {vs_n}")
+        print(f"{r['task']:14s} {v(r['kmd'])} | " + " | ".join(cells))
+    print("  median epochs: " + "; ".join(f"{r['task']} " + "/".join(str(r[f'{k}_epochs'] or '-') for k in ARMS) for r in rows))
     print("\n  R2, last-epoch weights; vs = relative % with both arms' SE; * separated and |delta| >= 0.01   · separated only")
     print(f"  wrote {args.out}")
 

@@ -1,6 +1,6 @@
-# probe6.toml with the classic composition descriptor (classic) instead of KMD. Single-task contrast on the
-# extensive properties: does giving the model cell scale (classic) lift the ~0.7 R2 ceiling, and does
-# taking the scale-bearing sum block away (nosum) put it back?
+# probe6.toml with the XenonPy composition descriptor (xnosum) instead of KMD, for the single-task
+# descriptor contrast on the extensive properties: does giving the model cell scale lift the ~0.7 R2
+# ceiling, and does taking the sum block away put it back?
 # fm pretrain — 6-TASK encoder probe for the v2 hyper-parameter campaign.
 #
 # TWO tasks per size group of REPORT_20260809, of which two are kernel regressions:
@@ -47,9 +47,9 @@ batch_size = 256
 num_workers = 0
 
 [descriptor]
-# weighted sum + average + variance + max + min (290 columns; the sum block carries cell scale); built by scripts/make_comp_descriptors.py, keyed by the canonical (non-reduced) composition
+# the same table without the weighted-sum block (232 columns) — the sum block is the only one carrying cell scale; re-keyed by composition with scripts/make_comp_descriptors.py
 kind = "precomputed"
-path = "data/desc_comp_classic.parquet"
+path = "data/desc_xenonpy_nosum_trans.parquet"
 
 [datasets.qc]
 path = "data/qc_ac_te_mp_dos_reformat_20260515.pd.parquet"
