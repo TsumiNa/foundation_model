@@ -122,6 +122,16 @@ case "$STAGE" in
     # Same two arms on the stage_xu encoders, which never saw the task; the head is created fresh.
     ftzu)       CONFIG=ft_frozen_new.toml; OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
     ftfu)       CONFIG=ft_full_new.toml;   OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
+    # Long-budget check on the resolvable warm-start losers (final_energy, volume, dos_density):
+    # 500 epochs, early stopping OFF, in both the warm-start arm and a single-task control, so the
+    # budget is not the confound. Runs are 3-4x longer than the 150-epoch ones; 12h covers PACK=8.
+    ftfl)       CONFIG=ft_full_long.toml; OUT=stage_ft;     DEFTIME=12:00:00; MODE=finetune ;;
+    singlel)    CONFIG=probe6_long.toml;  OUT=stage_single; DEFTIME=12:00:00 ;;
+    # Follow-ups: alone with the LR schedule effectively off (can a fresh model reach warm-start's
+    # training loss?), and warm-start with the encoder LR 10x lower, early stopping on (is the
+    # overfitting controllable by slowing the encoder?). Grids from scripts/make_grid_long.py.
+    singlec)    CONFIG=probe6_long.toml;  OUT=stage_single; DEFTIME=12:00:00 ;;
+    ftflr)      CONFIG=ft_full.toml;      OUT=stage_ft;     DEFTIME=08:00:00; MODE=finetune ;;
     *) echo "unknown stage '$STAGE'" >&2; exit 2 ;;
 esac
 TIME=${TIME:-$DEFTIME}
