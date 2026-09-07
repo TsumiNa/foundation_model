@@ -1834,6 +1834,13 @@
       "unresolved": 2,
       "better (negligible)": 3,
       "worse (negligible)": 0
+    },
+    "ftf_vs_ftz": {
+      "better": 13,
+      "worse": 2,
+      "unresolved": 7,
+      "better (negligible)": 2,
+      "worse (negligible)": 0
     }
   },
   "notes": [

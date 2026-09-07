@@ -138,7 +138,7 @@ def main() -> None:
         "counts": {
             key: {v: sum(1 for r in rows if verdict(r[key]) == v)
                   for v in ("better", "worse", "unresolved", "better (negligible)", "worse (negligible)")}
-            for key in ("xfer_vs_single", "ftz_vs_single", "ftf_vs_single", "ftf_vs_xfer")
+            for key in ("xfer_vs_single", "ftz_vs_single", "ftf_vs_single", "ftf_vs_xfer", "ftf_vs_ftz")
         },
         "notes": [
             "fm finetune loads only the target task, so the test split is the single-task universe and "
@@ -161,18 +161,20 @@ def main() -> None:
         return f"{x:6.4f}" if x is not None else f"{'-':>6s}"
 
     print(f"{'task':22s} {'N':>6s} {'single':>6s} | {'xfer':>6s} {'vs':>8s} | "
-          f"{'frozen':>6s} {'vs':>8s} | {'warm':>6s} {'vs':>8s}")
+          f"{'frozen':>6s} {'vs':>8s} | {'warm':>6s} {'vs':>8s} | {'warm-frz':>8s}")
     for r in rows:
         print(f"{r['task']:22s} {r['n_train']:6d} {v(r['single_task'])} | "
               f"{v(r['xfer_with_replay'])} {pc(r['xfer_vs_single'])} | "
               f"{v(r['ftz']['mean'] if r['ftz'] else None)} {pc(r['ftz_vs_single'])} | "
-              f"{v(r['ftf']['mean'] if r['ftf'] else None)} {pc(r['ftf_vs_single'])}")
-    print("\n  vs = relative change against the single-task baseline")
+              f"{v(r['ftf']['mean'] if r['ftf'] else None)} {pc(r['ftf_vs_single'])} | "
+              f"{pc(r['ftf_vs_ftz'])}")
+    print("\n  vs = relative change against the single-task baseline; warm-frz = warm-start against frozen")
     print("  * = separated AND |delta| >= 0.01    · = separated but below the practical threshold")
     for key, label in (("xfer_vs_single", "xfer (replay, placed last) vs alone"),
                        ("ftz_vs_single", "frozen encoder vs alone"),
                        ("ftf_vs_single", "warm-start vs alone"),
-                       ("ftf_vs_xfer", "warm-start vs the replay step")):
+                       ("ftf_vs_xfer", "warm-start vs the replay step"),
+                       ("ftf_vs_ftz", "unfreezing the encoder (warm vs frozen)")):
         c = out["counts"][key]
         print(f"  {label:38s} better {c['better']:2d}  worse {c['worse']:2d}  unresolved {c['unresolved']:2d}")
     print(f"  wrote {args.out}")

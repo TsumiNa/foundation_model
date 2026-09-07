@@ -92,6 +92,11 @@ case "$STAGE" in
     # Transfer at deployment scale: 24-task sequences with the task under test last.
     # 48h because these are full stage-C-length runs, and packed co-tenants contend.
     xfer)             CONFIG=final_hybrid_v2.toml; OUT=stage_xfer; DEFTIME=48:00:00 ;;
+    # "Unseen" encoders: the first 23 steps of each transfer ordering with the task under test
+    # dropped, same seed. The pipeline is bit-deterministic at a fixed seed, so this reproduces the
+    # step-23 encoder the pruner discarded — an encoder that has never seen X, for a clean
+    # frozen / warm-start test with a fresh head.
+    xu)               CONFIG=final_hybrid_v2.toml; OUT=stage_xu; DEFTIME=48:00:00 ;;
     b|b3)             CONFIG=probe6.toml; OUT=stage_b; DEFTIME=06:00:00 ;;
     # Stage C': 24 tasks, 4 arms. `fm pretrain --resume` is idempotent, so a walltime kill is
     # recovered by resubmitting the identical command; `fm finetune` has NO resume and gets its

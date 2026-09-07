@@ -867,14 +867,15 @@ def slide_ft():
         rows.append([tname, v(r["single_task"]),
                      v(r["xfer_with_replay"]), pc(r["xfer_vs_single"]),
                      v(r["ftz"]["mean"] if r["ftz"] else None), pc(r["ftz_vs_single"]),
-                     v(r["ftf"]["mean"] if r["ftf"] else None), pc(r["ftf_vs_single"])])
+                     v(r["ftf"]["mean"] if r["ftf"] else None), pc(r["ftf_vs_single"]),
+                     pc(r["ftf_vs_ftz"])])
     c = f["counts"]
     s = new("Same checkpoint, same task, replay removed: the transfer loss was mostly dilution",
             "240 transfer checkpoints fine-tuned on their own last task, no replay, two arms, "
             "10 orderings each; vs = change against training alone")
     table(s, 0.4, 1.4, 12.5,
-          ["Task", "Alone", "xfer", "vs", "Frozen", "vs", "Warm-start", "vs"], rows,
-          col_w=[2.4, 1.2, 1.2, 1.3, 1.2, 1.3, 1.4, 1.3], size=10, head_size=10)
+          ["Task", "Alone", "xfer", "vs", "Frozen", "vs", "Warm-start", "vs", "Warm vs frozen"], rows,
+          col_w=[2.3, 1.1, 1.1, 1.2, 1.1, 1.2, 1.3, 1.2, 1.5], size=10, head_size=10)
     y = 1.5 + 0.30 * (len(rows) + 1) + 0.15
     txt(s, 0.4, y, 12.5, 2.6, [
         f"Counts over 24 tasks (better / worse / unresolved):   "
@@ -885,14 +886,18 @@ def slide_ft():
         f"warm-start vs alone {c['ftf_vs_single']['better']}/{c['ftf_vs_single']['worse']}/"
         f"{c['ftf_vs_single']['unresolved']}    "
         f"warm-start vs xfer {c['ftf_vs_xfer']['better']}/{c['ftf_vs_xfer']['worse']}/"
-        f"{c['ftf_vs_xfer']['unresolved']}",
+        f"{c['ftf_vs_xfer']['unresolved']}    "
+        f"unfreezing {c['ftf_vs_ftz']['better']}/{c['ftf_vs_ftz']['worse']}/"
+        f"{c['ftf_vs_ftz']['unresolved']}",
         "",
         "At step 24 a small task owns ~1% of the gradient against ~79k replay samples, and early stopping",
         "on the total loss fires when the replayed tasks stop improving (~60 epochs vs 90-150 alone).",
         "Remove replay and 19 tasks recover, none get worse. Warm-starting is break-even against training",
         "alone: zt and magnetization — the probe's original winners — come back as real gains; the extensive",
         "properties (final_energy, volume) still lose, which is what the scale-blind descriptor predicts.",
-        "The frozen encoder is not a feature extractor (12 worse) — except material_type, where frozen wins.",
+        "Unfreezing helps 13 tasks, most where frozen was weakest (final_energy +16%, volume +12%); it hurts",
+        "material_type, the one task that wants the shared representation left alone. Caveat: every start",
+        "checkpoint had already seen its task once (step 24, under replay); a clean unseen-task arm is running.",
     ], size=11)
     txt(s, 0.4, 6.75, 12.5, 0.4,
         ["* = separated at 2SE and |delta| >= 0.01   · = separated but below the threshold   "
