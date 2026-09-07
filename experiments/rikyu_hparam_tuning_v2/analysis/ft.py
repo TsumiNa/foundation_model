@@ -91,6 +91,8 @@ def main() -> None:
         if not base:
             continue
         ftz, ftf = collect(args.runs, "ftz", task), collect(args.runs, "ftf", task)
+        # The unseen arms: same two fine-tunes on a 23-task encoder that never saw X, fresh head.
+        ftzu, ftfu = collect(args.runs, "ftzu", task), collect(args.runs, "ftfu", task)
         xr = xfer.get(task)
         # xfer's per-task spread is in transfer_xfer.json; matched_xfer carries only the mean.
         # Against a single number the SE is one-sided, which is the honest reading of that column.
@@ -118,6 +120,15 @@ def main() -> None:
             "ftf": {"mean": statistics.fmean(ftf), "sd": statistics.stdev(ftf) if len(ftf) > 1 else 0.0,
                     "n": len(ftf)} if ftf else None,
             "xfer_vs_single": xfer_vs_single,
+            "ftzu": {"mean": statistics.fmean(ftzu), "sd": statistics.stdev(ftzu) if len(ftzu) > 1 else 0.0,
+                     "n": len(ftzu)} if ftzu else None,
+            "ftfu": {"mean": statistics.fmean(ftfu), "sd": statistics.stdev(ftfu) if len(ftfu) > 1 else 0.0,
+                     "n": len(ftfu)} if ftfu else None,
+            "ftzu_vs_single": diff(ftzu, base["mean"], base["sd"], base["n"]),
+            "ftfu_vs_single": diff(ftfu, base["mean"], base["sd"], base["n"]),
+            # seen-once vs never-seen, frozen: how much of the frozen arm's score was the one exposure?
+            "ftz_vs_ftzu": (diff(ftz, statistics.fmean(ftzu), statistics.stdev(ftzu), len(ftzu))
+                            if ftz and len(ftzu) > 1 else None),
             "ftz_vs_single": diff(ftz, base["mean"], base["sd"], base["n"]),
             "ftf_vs_single": diff(ftf, base["mean"], base["sd"], base["n"]),
             "ftf_vs_xfer": ftf_vs_xfer,
@@ -138,7 +149,8 @@ def main() -> None:
         "counts": {
             key: {v: sum(1 for r in rows if verdict(r[key]) == v)
                   for v in ("better", "worse", "unresolved", "better (negligible)", "worse (negligible)")}
-            for key in ("xfer_vs_single", "ftz_vs_single", "ftf_vs_single", "ftf_vs_xfer", "ftf_vs_ftz")
+            for key in ("xfer_vs_single", "ftz_vs_single", "ftf_vs_single", "ftf_vs_xfer", "ftf_vs_ftz",
+                        "ftzu_vs_single", "ftfu_vs_single", "ftz_vs_ftzu")
         },
         "notes": [
             "fm finetune loads only the target task, so the test split is the single-task universe and "
@@ -160,21 +172,32 @@ def main() -> None:
     def v(x):
         return f"{x:6.4f}" if x is not None else f"{'-':>6s}"
 
-    print(f"{'task':22s} {'N':>6s} {'single':>6s} | {'xfer':>6s} {'vs':>8s} | "
-          f"{'frozen':>6s} {'vs':>8s} | {'warm':>6s} {'vs':>8s} | {'warm-frz':>8s}")
+    has_u = any(r["ftzu"] or r["ftfu"] for r in rows)
+    hdr = (f"{'task':22s} {'N':>6s} {'single':>6s} | {'xfer':>6s} {'vs':>8s} | "
+           f"{'frozen':>6s} {'vs':>8s} | {'warm':>6s} {'vs':>8s} | {'warm-frz':>8s}")
+    if has_u:
+        hdr += f" | {'frz-u':>6s} {'vs':>8s} | {'warm-u':>6s} {'vs':>8s}"
+    print(hdr)
     for r in rows:
-        print(f"{r['task']:22s} {r['n_train']:6d} {v(r['single_task'])} | "
-              f"{v(r['xfer_with_replay'])} {pc(r['xfer_vs_single'])} | "
-              f"{v(r['ftz']['mean'] if r['ftz'] else None)} {pc(r['ftz_vs_single'])} | "
-              f"{v(r['ftf']['mean'] if r['ftf'] else None)} {pc(r['ftf_vs_single'])} | "
-              f"{pc(r['ftf_vs_ftz'])}")
+        line = (f"{r['task']:22s} {r['n_train']:6d} {v(r['single_task'])} | "
+                f"{v(r['xfer_with_replay'])} {pc(r['xfer_vs_single'])} | "
+                f"{v(r['ftz']['mean'] if r['ftz'] else None)} {pc(r['ftz_vs_single'])} | "
+                f"{v(r['ftf']['mean'] if r['ftf'] else None)} {pc(r['ftf_vs_single'])} | "
+                f"{pc(r['ftf_vs_ftz'])}")
+        if has_u:
+            line += (f" | {v(r['ftzu']['mean'] if r['ftzu'] else None)} {pc(r['ftzu_vs_single'])}"
+                     f" | {v(r['ftfu']['mean'] if r['ftfu'] else None)} {pc(r['ftfu_vs_single'])}")
+        print(line)
     print("\n  vs = relative change against the single-task baseline; warm-frz = warm-start against frozen")
     print("  * = separated AND |delta| >= 0.01    · = separated but below the practical threshold")
     for key, label in (("xfer_vs_single", "xfer (replay, placed last) vs alone"),
                        ("ftz_vs_single", "frozen encoder vs alone"),
                        ("ftf_vs_single", "warm-start vs alone"),
                        ("ftf_vs_xfer", "warm-start vs the replay step"),
-                       ("ftf_vs_ftz", "unfreezing the encoder (warm vs frozen)")):
+                       ("ftf_vs_ftz", "unfreezing the encoder (warm vs frozen)"),
+                       ("ftzu_vs_single", "frozen, encoder never saw X, vs alone"),
+                       ("ftfu_vs_single", "warm-start, encoder never saw X, vs alone"),
+                       ("ftz_vs_ftzu", "frozen: seen-once vs never-seen")):
         c = out["counts"][key]
         print(f"  {label:38s} better {c['better']:2d}  worse {c['worse']:2d}  unresolved {c['unresolved']:2d}")
     print(f"  wrote {args.out}")

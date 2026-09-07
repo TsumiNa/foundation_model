@@ -19,6 +19,8 @@ from common import N_TRAIN
 ap = argparse.ArgumentParser()
 ap.add_argument("--orders", type=int, default=10)
 ap.add_argument("--smoke", action="store_true")
+ap.add_argument("--unseen", action="store_true",
+                help="arms ftzu/ftfu on the stage_xu encoders (never saw the task), 3 orderings")
 args = ap.parse_args()
 
 tasks = sorted(N_TRAIN)
@@ -28,11 +30,16 @@ if args.smoke:
 else:
     pairs = [(t, k) for t in tasks for k in range(args.orders)]
 
+if args.unseen:
+    pairs = [(t, k) for t in tasks for k in range(3)]
+ckdir = "_ckpt_u" if args.unseen else "_ckpt"
 for arm in ("ftz", "ftf"):
-    name = f"grid_{arm}{'s' if args.smoke else ''}.txt"
+    suffix = "u" if args.unseen else ("s" if args.smoke else "")
+    name = f"grid_{arm}{suffix}.txt"
     with open(f"configs/{name}", "w") as fh:
         for task, k in pairs:
-            # /out is the stage root inside the container; _ckpt is a copy of the model library
-            fh.write(f"{arm}_{task}_o{k}\t--checkpoint /out/_ckpt/{task}/o{k}.pt "
+            # /out is the stage root inside the container; _ckpt is a copy of the model library,
+            # _ckpt_u the step-23 encoders from stage_xu that never saw the task
+            fh.write(f"{arm}{suffix}_{task}_o{k}\t--checkpoint /out/{ckdir}/{task}/o{k}.pt "
                      f"--set 'finetune.tasks=[\"{task}\"]'\n")
     print(f"  wrote configs/{name}: {len(pairs)} rows")

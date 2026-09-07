@@ -119,6 +119,9 @@ case "$STAGE" in
     # their fine-tune rows are rerun at 400 epochs to match the re-baselined single-task runs.
     ftzx)       CONFIG=ft_frozen.toml;  OUT=stage_ft; DEFTIME=06:00:00; MODE=finetune ;;
     ftfx)       CONFIG=ft_full.toml;    OUT=stage_ft; DEFTIME=06:00:00; MODE=finetune ;;
+    # Same two arms on the stage_xu encoders, which never saw the task; the head is created fresh.
+    ftzu)       CONFIG=ft_frozen_new.toml; OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
+    ftfu)       CONFIG=ft_full_new.toml;   OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
     *) echo "unknown stage '$STAGE'" >&2; exit 2 ;;
 esac
 TIME=${TIME:-$DEFTIME}
