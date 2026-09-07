@@ -132,6 +132,10 @@ case "$STAGE" in
     # overfitting controllable by slowing the encoder?). Grids from scripts/make_grid_long.py.
     singlec)    CONFIG=probe6_long.toml;  OUT=stage_single; DEFTIME=12:00:00 ;;
     ftflr)      CONFIG=ft_full.toml;      OUT=stage_ft;     DEFTIME=08:00:00; MODE=finetune ;;
+    # Descriptor contrast on the extensive properties, single task, same recipe as stage_single:
+    # classic composition descriptor (with the scale-bearing sum block) vs the same without it.
+    descc)      CONFIG=probe6_desc_classic.toml; OUT=stage_desc; DEFTIME=06:00:00 ;;
+    descn)      CONFIG=probe6_desc_nosum.toml;   OUT=stage_desc; DEFTIME=06:00:00 ;;
     *) echo "unknown stage '$STAGE'" >&2; exit 2 ;;
 esac
 TIME=${TIME:-$DEFTIME}
