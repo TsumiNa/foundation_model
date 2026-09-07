@@ -190,6 +190,10 @@ library has never been measured**, and the nearest evidence runs against it.
 | Figures (10) | `results/*.png` (gitignored; redrawable from the summary JSON via `analysis/plots.py`) |
 | Raw run output | RIKYU `/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning_v2/` |
 | Methodology notes | `NOTES.md` |
+| Transferability summary page (trilingual EN / 中 / 日, **in git**) | `summary_page/gen_page.py` + `page.js` → `summary_page/transferability_summary.html`; published as a claude.ai artifact |
+| Per-run scores behind that page's figures | `summary/position_runs.json` (four tasks × 240 runs), `summary/rep_raw.json` |
+| Budget / optimisation checks (experiments 6–7) | `summary/long_budget.json` |
+| Descriptor contrast (experiment 8) | `summary/descriptor.json` once scored |
 
 **The report and figures are not in git** (`experiments/**/results/` is ignored) and travel by rsync
 — but the summary JSON is in git, so every figure can be redrawn.
@@ -274,6 +278,51 @@ converts into score. So material_type's path to a gain **structurally cannot tra
 5. **Measure warm-starting directly** — **done for the 24 in-distribution tasks** (`stage_ft`,
    table above). Still open: a task *outside* the 24, and a sweep over **low data volumes**, which
    is where a warm start should matter most and where nothing has been measured yet.
+6. **Is warm-start's residual loss on the extensive properties just undertraining?** — **done
+   (2026-09-07, jobs 85149 / 85150): no.** Both arms were given 500 epochs with early stopping OFF
+   (`ftfl_<task>_o<k>` in `stage_ft`, 10 orderings; `stL_<task>_s<seed>` in `stage_single`, 5 seeds;
+   configs `ft_full_long.toml` / `probe6_long.toml`, grids from `scripts/make_grid_long.py`, scored
+   by `analysis/long_budget.py` → `summary/long_budget.json`). Training alone is insensitive to the
+   budget (final_energy −0.1%, volume −0.1%, dos_density +1.0% against the early-stopped baseline).
+   Warm-start stays resolvably below the same-budget single-task control: final_energy −10.0%,
+   volume −15.9%, dos_density −9.6%. The per-epoch logs say why: warm-start's validation loss bottoms
+   out early (median best epoch 143 / 72 / 62 against 130 / 101 / 112 alone) and then drifts up
+   (+5% / +22% / +13% by epoch 500), while its training loss ends LOWER than the single-task
+   model's (final_energy 0.011 vs 0.015, volume 0.012 vs 0.063, dos_density 0.0098 vs 0.0120). The
+   pretrained encoder fits the training set faster and more completely and generalises worse — a
+   generalisation gap, not a budget gap. This makes experiment 1 (cell scale in the descriptor)
+   the decisive one rather than a longer schedule.
+7. **Optimisation or representation?** — **done (2026-09-08, jobs 85797 / 85798): the
+   representation.** Two arms on the same three tasks, scored by `analysis/long_budget.py`:
+   - `stC_<task>_s<seed>` — alone, 500 epochs, early stopping off, scheduler patience 100000 so the
+     learning rate never decays. R² 0.7495 / 0.6121 / 0.6307
+     (final_energy / volume / dos_density) against 0.7735 / 0.6187 / 0.6315 with the
+     schedule; the final training loss is HIGHER without annealing (0.052 vs 0.015, 0.090 vs 0.063,
+     0.0121 vs 0.0120). A fresh model does not reach warm-start's training loss (0.011 / 0.012 /
+     0.0098) with or without the schedule, so the low training loss is not an optimisation artefact.
+   - `ftflr_<task>_o<k>` — warm-start with the encoder LR 2e-4 instead of 2e-3, early stopping on,
+     400-epoch cap. Worse than the default warm-start: 0.6261 vs 0.7033 (-11.0%),
+     0.5314 vs 0.5767 (-7.9%), 0.5801 vs 0.5988 (-3.1%). Early stopping fired at epoch
+     51–69 with the training loss still at 0.14 / 0.22 / 0.016: underfitting, landing between the
+     frozen arm and the default warm-start. Slowing the encoder does not help; the more it is allowed
+     to move, the better, and the default still trails training alone.
+
+   Taken with 6: the residual loss is not budget (6), not the LR schedule, and not controllable by
+   slowing the encoder (7). The pretrained encoder fits the training set faster and further than a
+   fresh one and generalises worse on exactly the labels that depend on cell scale. What remains to
+   separate is exposure at step 24 from the pretrained representation itself — the unseen arms
+   (stage_xu → ftzu / ftfu) do that — and whether the descriptor is the reason, which is experiment 8.
+8. **Descriptor contrast on the extensive properties** — **in flight (2026-09-08, jobs 85857 /
+   85858)**. Single task, the stage_single recipe, 5 seeds, three tasks: the classic composition
+   descriptor (weighted sum + average + variance + max + min over the same 58-property element table
+   KMD uses, 290 columns, `stDc_*`) against the same without the weighted-sum block (232 columns,
+   `stDn_*`). The pipeline's canonical composition key is NOT reduced (Fe2O3 ≠ Fe4O6) and the sum
+   block uses the raw cell amounts, so it is the one block that carries cell scale; the other four
+   are scale-free like KMD. Tables from `scripts/make_comp_descriptors.py` (z-scored over all qc
+   compositions; 36 compositions dropped, the same ones KMD drops), configs `probe6_desc_*.toml`,
+   output `stage_desc`, scored by `analysis/descriptor.py` → `summary/descriptor.json`. Reading:
+   classic beats KMD and nosum does not → scale-blindness; both beat KMD → descriptor family; neither
+   → the ceiling is elsewhere.
 
 ### What can and cannot be said now
 
@@ -281,6 +330,12 @@ converts into score. So material_type's path to a gain **structurally cannot tra
   tasks are level or better (magnetization +4.9%, magnetic_moment unresolved).
 - "The shared encoder is a general feature extractor" still cannot be said — frozen, it is worse for
   12 of 24 tasks.
+- "The extensive-property losses would close with more training" cannot be said: at 500 epochs
+  without early stopping warm-start is still 10–16% below the same-budget single-task control, with
+  a lower training loss and a higher validation loss than that control.
+- "The fitting advantage is an optimisation artefact" cannot be said either: a fresh model with the
+  learning rate never decayed ends with a higher training loss, not a lower one, and slowing the
+  warm-started encoder underfits rather than regularises.
 - "Warm-starting from the model library beats training alone" can be said for four tasks and
   denied for three; for the rest it is a wash. The library is a reasonable starting point, not a
   free win, and the extensive properties (final_energy, volume) should not be warm-started from it
