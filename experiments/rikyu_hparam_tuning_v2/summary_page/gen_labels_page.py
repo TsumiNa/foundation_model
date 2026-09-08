@@ -1,0 +1,293 @@
+# -*- coding: utf-8 -*-
+"""Generate "Two ceilings, two causes" — summary_page/mp_labels_summary.html
+
+The page records why final_energy (R² 0.77) and volume (0.62) sat far below every other Materials
+Project task, with the evidence for each cause, what it voids in the transfer conclusions, the standard
+the rebuilt dataset follows, and the update brief for the 2026-09-08 dataset. English is the source
+text; Chinese and Japanese follow it sentence by sentence behind the switch. Figures are drawn by
+labels_page.js from summary/mp_labels_page_data.json; the stylesheet and language switch are shared
+with the transferability page (extracted into summary_page/_shared_*.html/js).
+
+    python summary_page/gen_labels_page.py
+"""
+import json
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+EXP = HERE.parent
+D = json.load(open(EXP / "summary" / "mp_labels_page_data.json"))
+STYLE = (HERE / "_shared_style.html").read_text(encoding="utf-8")
+LANGBAR = (HERE / "_shared_langbar.html").read_text(encoding="utf-8")
+LANGJS = (HERE / "_shared_lang.js").read_text(encoding="utf-8")
+JS = (HERE / "labels_page.js").read_text(encoding="utf-8")
+OUT = HERE / "mp_labels_summary.html"
+
+
+def T(en, zh, ja):
+    return f'<span class="l-en">{en}</span><span class="l-zh">{zh}</span><span class="l-ja">{ja}</span>'
+
+
+def P(en, zh, ja, cls=""):
+    return f'<p class="{cls}">{T(en, zh, ja)}</p>' if cls else f"<p>{T(en, zh, ja)}</p>"
+
+
+def CAP(en, zh, ja):
+    return f"<figcaption>{T(en, zh, ja)}</figcaption>"
+
+
+def H2(kick, en, zh, ja):
+    return f'<div class="col"><p class="kicker">{kick}</p><h2>{T(en, zh, ja)}</h2></div>'
+
+
+def table(head, rows, cls="tablebox", style=""):
+    th = "".join(f"<th>{h}</th>" for h in head)
+    body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
+    return f'<div class="{cls}"{(" style=" + chr(34) + style + chr(34)) if style else ""}><table><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table></div>'
+
+
+R = D["runs"]; L = D["local"]; C6 = D["sample600"]; K = D["consistency"]; DS = D["descriptor"]; MG = L["mixed_minus_gga"]
+def m(v): return sum(v) / len(v)
+def sd(v): mu = m(v); return (sum((x - mu) ** 2 for x in v) / (len(v) - 1)) ** 0.5
+fe_old, fe_new = R["final_energy_old_kmd"], R["final_energy_new_kmd"]
+vol_kmd, vol_c, vol_n, vol_z = R["volume_old_kmd"], R["volume_xenonpy_classic"], R["volume_xenonpy_nosum"], R["volume_zscore_classic_discarded"]
+pos = lambda v: f'<td class="pos">{v}</td>'
+neg = lambda v: f'<td class="neg">{v}</td>'
+
+out = []
+out.append("<title>Two Ceilings, Two Causes</title>\n" + STYLE + "\n<style>.tablebox.wrap td{white-space:normal;font-family:var(--f-body);text-align:left;vertical-align:top;color:var(--ink-2)}.tablebox.wrap td:first-child{color:var(--ink)}</style>\n" + LANGBAR + '<div class="wrap">')
+
+# ---------------- header ----------------
+out.append(f'''<header>
+<p class="eyebrow">{T("Continual multi-task pretraining · Materials Project labels · findings and data update, 2026-09-08","连续多任务预训练 · Materials Project 标签 · 发现与数据更新,2026-09-08","継続的マルチタスク事前学習 · Materials Project ラベル · 知見とデータ更新、2026-09-08")}</p>
+<h1>{T("Two ceilings, two causes","两个上限,两个原因","2つの天井、2つの原因")}</h1>
+<p class="standfirst">{T(
+"Two Materials Project tasks sat far below the rest — final_energy at R² 0.77, volume at 0.62 — and both had been read as limits of the model or of transfer. Neither was. final_energy's label mixed two DFT energy references; volume's label depends on a cell size the descriptor cannot see. Fixing the label lifts final_energy to 0.999 with nothing else changed; giving the descriptor cell scale lifts volume to 0.997. This page lays out the evidence for each, what it voids in earlier conclusions, the standard the rebuilt dataset follows, and what changed in it.",
+"两个 Materials Project 任务远低于其余任务——final_energy 的 R² 只有 0.77,volume 只有 0.62——之前都被解读为模型或迁移的极限。两者都不是。final_energy 的标签混合了两种 DFT 能量参考;volume 的标签依赖描述符看不见的原胞大小。只修标签,final_energy 升到 0.999;给描述符加上原胞尺度,volume 升到 0.997。本页给出各自的证据、由此作废的早期结论、重建数据集遵循的标准,以及数据集的变更内容。",
+"Materials Project の2タスクが他より大きく劣っていた — final_energy は R² 0.77、volume は 0.62 — そしてどちらもモデルや転移の限界と読まれていた。どちらも違う。final_energy のラベルは2種類の DFT エネルギー基準を混ぜており、volume のラベルは記述子に見えない単位胞の大きさに依存する。ラベルを直すだけで final_energy は 0.999 に、記述子に単位胞スケールを与えると volume は 0.997 に上がる。本ページはそれぞれの証拠、無効になる以前の結論、再構築データセットが従う基準、そしてその変更内容を示す。")}</p>
+</header>''')
+
+# ---------------- 1 symptom ----------------
+rows = [[t.replace("_", " "), f"{n:,}", f"{r:.4f}", f"{s:.4f}"] for t, n, r, s in D["ceilings"]]
+out.append(f'''<section class="section">{H2("1 · The symptom", "Six MP tasks, one recipe, two outliers", "六个 MP 任务、同一配方、两个异常值", "MP の6タスク、同一レシピ、2つの外れ値")}
+<div class="col">{P("Every task in the campaign is trained alone as its baseline: the same descriptor (KMD), the same adopted hyper-parameters, five seeds, early stopping. The Materials Project tasks with about 23,000 training rows split cleanly: four train to R² 0.91–0.99, two do not.",
+"campaign 里每个任务都先单独训练作为基线:同一描述符(KMD)、同一套采用的超参数、5 个 seed、早停。训练行数约 23,000 的 Materials Project 任务分成两群:四个训到 R² 0.91–0.99,两个不行。",
+"キャンペーンの各タスクはまず単独で学習し基準とする:同じ記述子(KMD)、同じ採用ハイパーパラメータ、5シード、早期終了。訓練行数約23,000の Materials Project タスクは明確に二分される:4つは R² 0.91–0.99 まで学習でき、2つはできない。")}</div>
+<figure><div class="figbox"><svg id="fig-ceil" width="960" height="320" role="img" aria-label="Single-task R² of the six MP tasks"></svg></div>
+{CAP("Single-task R², mean ± sd over five seeds, on the 2026-05-15 labels. total_magnetization (0.72) is per formula unit and shares volume's dependence on cell size; it is not analysed further here.",
+"单任务 R²,5 个 seed 的均值 ± sd,2026-05-15 标签。total_magnetization(0.72)是每化学式单元的量,和 volume 一样依赖原胞大小;本页不再展开。",
+"単独学習の R²、5シードの平均 ± sd、2026-05-15 ラベル。total_magnetization(0.72)は化学式単位あたりの量で、volume と同じく単位胞の大きさに依存する。本ページでは扱わない。")}</figure>
+{table([T("task","任务","タスク"), "N train", "R²", "sd"], rows, style="max-width:520px")}
+</section>''')
+
+# ---------------- 2 final_energy ----------------
+probe_rows = []
+for label, f, gga, r2s, mixed, old, neu in D["probe"]:
+    probe_rows.append([label, f"{gga:.3f}", f"{r2s:.3f}", f"{mixed:.3f}", f'<span class="c-xfer">{old:.4f}</span>', f'<span class="c-warm">{neu:.3f}</span>'])
+out.append(f'''<section class="section">{H2("2 · final_energy", "The label mixed two DFT energy references", "标签混合了两种 DFT 能量参考", "ラベルが2つの DFT エネルギー基準を混ぜていた")}
+<div class="col">{P("The dataset's <em>Final energy per atom</em> runs from −86.4 to −0.04 eV. A DFT energy per atom on the Materials Project's GGA scale does not go below about −14 eV, and 18.8% of the rows sit below that. Spot checks against known materials show values far off the GGA scale for some elements and on it for others:",
+"数据集里的 <em>Final energy per atom</em> 从 −86.4 到 −0.04 eV。Materials Project 的 GGA 口径下,每原子 DFT 能量不会低于约 −14 eV,而 18.8% 的行低于此值。用已知材料抽查,有的元素远离 GGA 口径,有的又在口径上:",
+"データセットの <em>Final energy per atom</em> は −86.4 から −0.04 eV に広がる。Materials Project の GGA スケールでは原子あたり DFT エネルギーは約 −14 eV を下回らないのに、行の 18.8% がそれより低い。既知物質での抜き取り検査では、GGA スケールから大きく外れる元素もあれば、スケール上にある元素もある:")}</div>
+<figure><div class="figbox"><div class="legend"><span><i class="sw" style="background:var(--warm)"></i> {T("GGA / GGA+U","GGA / GGA+U","GGA / GGA+U")}</span><span><i class="sw" style="background:var(--surface);border:2px solid var(--frz)"></i> r2SCAN</span><span><i class="sw sq" style="background:var(--xfer)"></i> {T("dataset 2026-05-15","数据集 2026-05-15","データセット 2026-05-15")}</span><span><i class="sw" style="background:none;border:1.5px dashed var(--warm)"></i> {T("dataset 2026-09-08","数据集 2026-09-08","データセット 2026-09-08")}</span></div>
+<svg id="fig-probe" width="960" height="360" role="img" aria-label="Energy per atom of six materials under each scheme"></svg></div>
+{CAP("Six materials queried from the Materials Project API on 2026-09-08. The old dataset value (square) sits on the r2SCAN value wherever MP has an r2SCAN calculation, and on the GGA value where it does not (NaCl). The rebuilt dataset (dashed ring) sits on GGA / GGA+U for all of them.",
+"2026-09-08 从 Materials Project API 查询的六种材料。旧数据集的值(方块)在 MP 有 r2SCAN 计算的地方落在 r2SCAN 值上,没有的地方落在 GGA 值上(NaCl)。重建后的数据集(虚线圈)全部落在 GGA / GGA+U 上。",
+"2026-09-08 に Materials Project API から取得した6物質。旧データセットの値(四角)は MP に r2SCAN 計算がある物質では r2SCAN 値に、ない物質(NaCl)では GGA 値に一致する。再構築データセット(破線の輪)は全て GGA / GGA+U 上にある。")}</figure>
+{table([T("material","材料","物質"), T("GGA / GGA+U","GGA / GGA+U","GGA / GGA+U"), "r2SCAN", T("MP summary (mixed)","MP summary(混合)","MP summary(混合)"), T("dataset 2026-05-15","数据集 2026-05-15","データセット 2026-05-15"), T("dataset 2026-09-08","数据集 2026-09-08","データセット 2026-09-08")], probe_rows, style="max-width:900px")}
+<div class="col" style="margin-top:18px">{P("The Materials Project's <em>summary.energy_per_atom</em> is its <em>mixed</em> thermodynamic scheme (thermo_type GGA_GGA+U_R2SCAN): where an r2SCAN calculation exists it reports the r2SCAN total energy, whose zero differs from the GGA one by an element-dependent amount. The 2025-04-10 export copied that field faithfully — 89.7% of a random 600 rows are still bit-identical to today's API value — so this is not a collection bug. Over all 33,159 materials that carry both schemes:",
+"Materials Project 的 <em>summary.energy_per_atom</em> 是它的<em>混合</em>热力学方案(thermo_type GGA_GGA+U_R2SCAN):凡是有 r2SCAN 计算的条目就报 r2SCAN 总能,而它的零点与 GGA 相差一个随元素变化的量。2025-04-10 的导出忠实复制了这个字段——随机 600 行里 89.7% 至今与 API 逐位相同——所以不是采集错误。在同时有两种口径的 33,159 个材料上:",
+"Materials Project の <em>summary.energy_per_atom</em> は<em>混合</em>熱力学スキーム(thermo_type GGA_GGA+U_R2SCAN)である:r2SCAN 計算がある項目では r2SCAN 全エネルギーを返し、その零点は GGA と元素依存の量だけ異なる。2025-04-10 のエクスポートはこの欄を忠実に写した — ランダム600行の 89.7% は今日の API 値とビット単位で同一 — つまり収集バグではない。両スキームを持つ 33,159 物質全体では:")}</div>
+<figure><div class="figbox"><svg id="fig-mixed" width="960" height="300" role="img" aria-label="Mixed-scheme minus GGA energy over all materials"></svg></div>
+{CAP(f"Mixed-scheme energy minus GGA / GGA+U energy per material. {MG['equal_share']*100:.1f}% are equal (no r2SCAN calculation, or GGA preferred); {MG['below_5eV_share']*100:.1f}% sit more than 5 eV per atom below, up to −72 eV. One column, two energy zeros.",
+f"每个材料的混合方案能量减去 GGA / GGA+U 能量。{MG['equal_share']*100:.1f}% 相等(没有 r2SCAN 计算,或以 GGA 为准);{MG['below_5eV_share']*100:.1f}% 低出 5 eV/atom 以上,最多 −72 eV。一列数据,两个能量零点。",
+f"物質ごとの混合スキームエネルギー − GGA / GGA+U エネルギー。{MG['equal_share']*100:.1f}% は等しく(r2SCAN 計算なし、または GGA 優先)、{MG['below_5eV_share']*100:.1f}% は 5 eV/atom 以上低く、最大 −72 eV。1つの列に2つのエネルギー零点。")}</figure>
+<div class="col"><h3>{T("Two checks that rule out the innocent readings","排除两种无害解读的检验","無害な解釈を排除する2つの検証")}</h3></div>
+{table([T("check","检验","検証"), T("result","结果","結果"), T("reading","解读","解釈")], [
+ [T("Is it a total energy per cell? corr(E, atoms per cell)","是不是每原胞总能?corr(E, 原胞原子数)","単位胞あたりの全エネルギーか? corr(E, 原子数)"), f"{K['corr_E_N']:+.3f}; Pt has 1 atom per cell and reads −51.5", T("No — it does not scale with the cell","否——不随原胞大小变化","否 — 単位胞の大きさに比例しない")],
+ [T("Is it a per-atom energy on one reference? E − Σ xᵢ·E(element) vs the dataset's formation energy","是不是单一参考下的每原子能量?E − Σ xᵢ·E(单质) 对比数据集的 formation energy","単一基準の原子あたりエネルギーか? E − Σ xᵢ·E(単体) と formation energy の比較"), f"corr {K['corr_ref_formation']:.2f}; median |diff| {K['median_abs_diff']:.1f} eV, 90th pct {K['p90_abs_diff']:.1f} eV", T("No — a consistent reference would reproduce the formation energy to ~0.1 eV","否——参考一致时应能重现 formation energy 到 ~0.1 eV","否 — 基準が一貫していれば formation energy を ~0.1 eV で再現するはず")],
+ [T("Does composition carry it? gradient boosting on XenonPy features, pipeline split / random split","组成能否表达它?XenonPy 特征上的梯度提升,pipeline 划分 / 随机划分","組成で表せるか? XenonPy 特徴での勾配ブースティング、pipeline 分割 / ランダム分割"), f"R² {D['gbm']['pipeline_split']:.3f} / {D['gbm']['random_split']:.3f}; rows above −14 eV only: {D['gbm']['above_minus14_only']:.3f}", T("No — not the split, not the tail alone; the element-dependent zero dominates the variance","否——不是划分、也不只是尾部;随元素变化的零点主导了方差","否 — 分割でも裾だけでもない。元素依存の零点が分散を支配する")]], cls="tablebox wrap", style="max-width:1000px")}
+<div class="col" style="margin-top:18px"><h3>{T("The fix, and the proof","修正与验证","修正と検証")}</h3>
+{P(f"The GGA / GGA+U scheme (thermo_type GGA_GGA+U) covers {C6['gga_coverage']*100:.1f}% of the entries and runs from −14.2 to −0.01 eV — the scale the earlier final-energy models had been trained on. The dataset was rebuilt on it. Trained alone with the unchanged recipe and descriptor, final_energy goes from R² {m(fe_old):.4f} ± {sd(fe_old):.4f} to <b>{m(fe_new):.4f} ± {sd(fe_new):.4f}</b>.",
+f"GGA / GGA+U 口径(thermo_type GGA_GGA+U)覆盖 {C6['gga_coverage']*100:.1f}% 的条目,范围 −14.2 到 −0.01 eV——正是早先 final energy 模型用的口径。数据集据此重建。配方和描述符不变,单独训练的 final_energy 从 R² {m(fe_old):.4f} ± {sd(fe_old):.4f} 升到 <b>{m(fe_new):.4f} ± {sd(fe_new):.4f}</b>。",
+f"GGA / GGA+U スキーム(thermo_type GGA_GGA+U)は項目の {C6['gga_coverage']*100:.1f}% をカバーし、−14.2 から −0.01 eV の範囲 — 以前の final energy モデルが学習していたスケールである。データセットはこれで再構築した。レシピと記述子を変えずに単独学習すると、final_energy は R² {m(fe_old):.4f} ± {sd(fe_old):.4f} から <b>{m(fe_new):.4f} ± {sd(fe_new):.4f}</b> になる。")}</div>
+<figure><div class="figbox"><div class="legend"><span><i class="sw sq" style="background:var(--xfer)"></i> {T("2026-05-15 label","2026-05-15 标签","2026-05-15 ラベル")}</span><span><i class="sw sq" style="background:var(--warm)"></i> {T("GGA / GGA+U label","GGA / GGA+U 标签","GGA / GGA+U ラベル")}</span></div>
+<svg id="fig-fehist" width="960" height="300" role="img" aria-label="Distribution of the final-energy label before and after"></svg></div>
+{CAP("The label before and after, same 33,166 rows. The long tail below −14 eV is gone; 27.4% of the rows changed by more than 0.05 eV.",
+"修正前后的标签,同一批 33,166 行。−14 eV 以下的长尾消失;27.4% 的行变化超过 0.05 eV。",
+"修正前後のラベル、同じ 33,166 行。−14 eV 以下の長い裾が消え、行の 27.4% が 0.05 eV 以上変化した。")}</figure>
+<figure><div class="figbox"><div class="legend"><span>● {T("one seed","一个 seed","1シード")} · ▬ {T("median","中位数","中央値")}</span></div><svg id="fig-fe-seeds" width="960" height="300" role="img" aria-label="final_energy R² per seed before and after"></svg></div>
+{CAP("Five seeds each. Nothing but the label differs between the two arms.","各 5 个 seed。两臂之间只有标签不同。","各5シード。2つのアームの違いはラベルだけ。")}</figure>
+<figure><div class="figbox"><div class="legend"><span><i class="sw" style="background:var(--xfer)"></i> {T("2026-05-15 label (R² 0.78)","2026-05-15 标签(R² 0.78)","2026-05-15 ラベル(R² 0.78)")}</span><span><i class="sw" style="background:var(--warm)"></i> {T("GGA / GGA+U label (R² 0.999)","GGA / GGA+U 标签(R² 0.999)","GGA / GGA+U ラベル(R² 0.999)")}</span></div><svg id="fig-fecurves" width="960" height="300" role="img" aria-label="Validation loss curves before and after"></svg></div>
+{CAP("Validation loss of one seed under each label. On the old label the loss floors at 0.22 within 100 epochs — the element-dependent offset is simply not learnable from composition aggregates; on the GGA label it keeps falling by two orders of magnitude.",
+"两种标签下同一 seed 的验证损失。旧标签下损失在 100 epoch 内停在 0.22——随元素变化的偏移根本无法从组成聚合特征学到;GGA 标签下损失继续下降两个数量级。",
+"各ラベルでの同一シードの検証損失。旧ラベルでは 100 エポック以内に 0.22 で頭打ち — 元素依存のずれは組成の集約特徴からは学べない。GGA ラベルでは2桁下がり続ける。")}</figure>
+</section>''')
+
+# ---------------- 3 volume ----------------
+ridge = D["ridge"]
+desc_rows = []
+for t in ("volume", "final_energy", "dos_density"):
+    d = DS[t]
+    c = f"{d['classic']:.4f} ({d['classic_vs']:+.1f}%{'*' if d['classic_sep'] else ''})"
+    n = f"{d['nosum']:.4f} ({d['nosum_vs']:+.1f}%{'*' if d['nosum_sep'] else ''})"
+    desc_rows.append([t.replace("_", " "), f"{d['kmd']:.4f}", c, n])
+out.append(f'''<section class="section">{H2("3 · volume", "The label depends on a cell size the descriptor cannot see", "标签依赖描述符看不见的原胞大小", "ラベルは記述子に見えない単位胞の大きさに依存する")}
+<div class="col">{P(f"<em>Volume (normalized)</em> is the dataset's <em>volume_scaler</em> — StandardScaler followed by a Yeo-Johnson transform with λ ≈ 0 — applied to the <em>cell</em> volume, so it is essentially log(cell volume): its correlation with log V is {L['corr_volnorm_logV']:.3f}, with V itself {L['corr_volnorm_V']:.3f}. And the cell is whatever structure Materials Project stored: a median of {L['atoms_per_cell']['quantiles']['0.5']:.0f} atoms, 128 at the 99th percentile, thousands at the extreme. corr(volume, atoms per cell) = {L['corr_volume_atoms']:.3f}: most of the label is the atom count.",
+f"<em>Volume (normalized)</em> 来自数据集的 <em>volume_scaler</em>——StandardScaler 之后接 λ ≈ 0 的 Yeo-Johnson 变换——作用在<em>原胞</em>体积上,所以它本质上是 log(原胞体积):与 log V 的相关 {L['corr_volnorm_logV']:.3f},与 V 本身 {L['corr_volnorm_V']:.3f}。而原胞就是 Materials Project 存的那个结构:原子数中位 {L['atoms_per_cell']['quantiles']['0.5']:.0f},99% 分位 128,极端到数千。corr(体积, 原胞原子数) = {L['corr_volume_atoms']:.3f}:标签的大头是原子数。",
+f"<em>Volume (normalized)</em> はデータセットの <em>volume_scaler</em> — StandardScaler の後に λ ≈ 0 の Yeo-Johnson 変換 — を<em>単位胞</em>体積に適用したもので、本質的に log(単位胞体積) である:log V との相関 {L['corr_volnorm_logV']:.3f}、V 自体とは {L['corr_volnorm_V']:.3f}。そして単位胞は Materials Project が保存した構造そのもの:原子数の中央値 {L['atoms_per_cell']['quantiles']['0.5']:.0f}、99パーセンタイル 128、極端には数千。corr(体積, 原子数) = {L['corr_volume_atoms']:.3f}:ラベルの大半は原子数である。")}</div>
+<figure><div class="figbox"><svg id="fig-atoms" width="960" height="280" role="img" aria-label="Atoms per cell distribution"></svg></div>
+{CAP("Atoms per cell of the composition string the model receives. KMD turns that string into atomic fractions before anything else happens, so Fe₂O₃ and Fe₄O₆ are the same input — verified in code — and the atom count never reaches the model.",
+"模型收到的组成串的原胞原子数。KMD 先把这个串变成原子分数,之后才有别的操作,所以 Fe₂O₃ 和 Fe₄O₆ 是同一个输入——已在代码中验证——原子数从未到达模型。",
+"モデルが受け取る組成文字列の単位胞原子数。KMD はまずその文字列を原子分率に変換するので、Fe₂O₃ と Fe₄O₆ は同一の入力 — コードで検証済み — であり、原子数はモデルに届かない。")}</figure>
+<div class="col"><h3>{T("The contrast experiment: XenonPy classic, with and without its scale-bearing block","对比实验:XenonPy classic,带与不带承载尺度的块","対比実験:XenonPy classic、スケールを担うブロックの有無")}</h3>
+{P("XenonPy's classic composition descriptor — the one the data notebooks compute, weighted sum / average / variance / max / min over 58 element properties, then StandardScaler and Yeo-Johnson — has one block that uses the raw cell amounts: the weighted sum. Dropping it leaves a scale-free descriptor like KMD. A linear ridge fit on the true target already tells the story, and the single-task network confirms it:",
+"XenonPy 的 classic 组成描述符——数据 notebook 算的那一个:58 个元素性质上的 weighted sum / average / variance / max / min,再做 StandardScaler 和 Yeo-Johnson——只有一个块使用原胞的原始原子数:weighted sum。去掉它就是像 KMD 一样尺度无关的描述符。在真实目标上做线性岭回归已能说明问题,单任务网络进一步印证:",
+"XenonPy の classic 組成記述子 — データノートブックが計算するもので、58 の元素物性に対する weighted sum / average / variance / max / min の後に StandardScaler と Yeo-Johnson — で単位胞の生の原子数を使うのは weighted sum の1ブロックだけ。それを外すと KMD と同じスケール非依存の記述子になる。実際の目標に対する線形リッジ回帰がすでに答えを示し、単独学習ネットワークがそれを裏付ける:")}</div>
+{table([T("target","目标","目標"), "KMD", T("XenonPy classic","XenonPy classic","XenonPy classic"), T("without the sum block","去掉 sum 块","sum ブロックなし")], [
+ ["Volume (normalized) — ridge, test R²", f"{ridge['Volume (normalized)']['KMD']:.3f}", f'<span class="c-warm"><b>{ridge["Volume (normalized)"]["classic"]:.3f}</b></span>', f"{ridge['Volume (normalized)']['nosum']:.3f}"],
+ ["Final energy per atom (normalized), 2026-05-15 label — ridge, test R²", f"{ridge['Final energy per atom (normalized)']['KMD']:.3f}", f"{ridge['Final energy per atom (normalized)']['classic']:.3f}", f"{ridge['Final energy per atom (normalized)']['nosum']:.3f}"]], style="max-width:900px")}
+<div style="height:14px"></div>
+{table([T("task · single-task network, 5 seeds","任务 · 单任务网络,5 seed","タスク · 単独学習ネットワーク、5シード"), "KMD", T("XenonPy classic (vs KMD)","XenonPy classic(vs KMD)","XenonPy classic(vs KMD)"), T("without the sum block (vs KMD)","去掉 sum 块(vs KMD)","sum ブロックなし(vs KMD)")], desc_rows, style="max-width:900px")}
+<figure style="margin-top:14px"><div class="figbox"><div class="legend"><span>● {T("one seed","一个 seed","1シード")} · ▬ {T("median","中位数","中央値")}</span></div><svg id="fig-vol-seeds" width="960" height="300" role="img" aria-label="volume R² per seed by descriptor"></svg></div>
+{CAP("volume, single task. With cell scale in the input, R² 0.997 on every seed; without it, 0.59–0.62 whichever scale-free descriptor is used. The fourth strip is the first attempt, discussed below.",
+"volume,单任务。输入里有原胞尺度时每个 seed 都是 R² 0.997;没有时无论哪种尺度无关描述符都是 0.59–0.62。第四列是第一次尝试,见下文。",
+"volume、単独学習。入力に単位胞スケールがあれば全シードで R² 0.997、なければどのスケール非依存記述子でも 0.59–0.62。4本目は最初の試行で、下で述べる。")}</figure>
+<figure><div class="figbox"><div class="legend"><span>● {T("one seed","一个 seed","1シード")} · ▬ {T("median","中位数","中央値")}</span></div><svg id="fig-other-seeds" width="960" height="300" role="img" aria-label="final_energy and dos_density R² per seed by descriptor"></svg></div>
+{CAP("The same three descriptors on final_energy (old label) and dos_density: per-atom and intensive labels do not care about the sum block, and the descriptor family lands within a few percent of KMD. The descriptor was volume's problem, not final_energy's.",
+"同样三种描述符用在 final_energy(旧标签)和 dos_density 上:每原子量和强度量不在乎 sum 块,描述符家族与 KMD 相差不过几个百分点。描述符是 volume 的问题,不是 final_energy 的。",
+"同じ3つの記述子を final_energy(旧ラベル)と dos_density に適用:原子あたり・示強性のラベルは sum ブロックに影響されず、記述子ファミリーは KMD と数%以内。記述子は volume の問題であって final_energy の問題ではない。")}</figure>
+<div class="col"><h3>{T("The first attempt, and why it was discarded","第一次尝试,以及为什么作废","最初の試行と、それを破棄した理由")}</h3>
+{P(f"The first contrast re-implemented the classic blocks by hand (numerically identical to XenonPy's, column correlation 1.000) but scaled them with a plain z-score instead of the notebooks' StandardScaler + Yeo-Johnson. The raw weighted sum is linear in the atom count, so after z-scoring a few compositions sat at |z| = {D['zscore_tails']['sum_max_z']:.0f}. The network memorised them: training loss 0.045 at epoch 1 (0.53 for the scale-free descriptor, 0.59 for KMD), validation loss worse than KMD's from epoch 1 and erratic, early stop at ~41 epochs, R² 0.16 with seeds from −0.12 to 0.43. Same formula, different preprocessing, opposite conclusion. Those runs are set aside and unused; the descriptors and their preprocessing now come from the data notebooks only.",
+f"第一次对比手工重实现了 classic 各块(数值与 XenonPy 逐列相关 1.000),但用普通 z-score 代替了 notebook 的 StandardScaler + Yeo-Johnson。原始 weighted sum 与原子数成线性,z-score 后有些组成的 |z| 达到 {D['zscore_tails']['sum_max_z']:.0f}。网络把它们记住了:第 1 个 epoch 训练损失就是 0.045(尺度无关描述符 0.53、KMD 0.59),验证损失从第 1 个 epoch 起就差于 KMD 且剧烈震荡,约 41 epoch 早停,R² 0.16、seed 间从 −0.12 到 0.43。同一公式、不同预处理、相反结论。这些 run 已搁置不用;描述符及其预处理现在只从数据 notebook 取。",
+f"最初の対比では classic の各ブロックを手で再実装し(XenonPy と数値的に同一、列相関 1.000)、ノートブックの StandardScaler + Yeo-Johnson の代わりに単純な z スコアで標準化した。生の weighted sum は原子数に線形なので、z スコア後に一部の組成が |z| = {D['zscore_tails']['sum_max_z']:.0f} に達した。ネットワークはそれらを暗記した:第1エポックで学習損失 0.045(スケール非依存記述子は 0.53、KMD は 0.59)、検証損失は第1エポックから KMD より悪く不安定、約41エポックで早期終了、R² 0.16、シード間で −0.12 から 0.43。同じ式、異なる前処理、正反対の結論。それらの実行は隔離して未使用とし、記述子と前処理はデータノートブックからのみ取ることにした。")}</div>
+<figure><div class="figbox"><div class="legend"><span><i class="sw" style="background:var(--alone)"></i> KMD</span><span><i class="sw" style="background:var(--warm)"></i> {T("XenonPy classic, notebook transform","XenonPy classic,notebook 变换","XenonPy classic、ノートブック変換")}</span><span><i class="sw" style="background:var(--xfer)"></i> {T("classic, plain z-score (discarded)","classic,普通 z-score(已作废)","classic、単純 z スコア(破棄)")}</span></div>
+<svg id="fig-curves" width="960" height="330" role="img" aria-label="Training and validation loss of three volume runs"></svg></div>
+{CAP("Seed 2025 of each. The discarded run fits the training set instantly and never generalises; the notebook-transformed descriptor fits it steadily and generalises to R² 0.997.",
+"各取 seed 2025。作废的 run 瞬间拟合训练集却始终不泛化;notebook 变换的描述符稳步拟合并泛化到 R² 0.997。",
+"各シード 2025。破棄した実行は訓練データに即座に適合するが全く汎化せず、ノートブック変換の記述子は着実に適合して R² 0.997 まで汎化する。")}</figure>
+</section>''')
+
+# ---------------- 4 what it voids ----------------
+void_rows = [[t.replace("_", " "), neg(f"{a:+.1f}%"), neg(f"{b:+.1f}%"), neg(f"{c:+.1f}%"), T("void — label / descriptor artefact; re-measure on the 2026-09-08 dataset", "作废——标签 / 描述符假象;在 2026-09-08 数据集上重测", "無効 — ラベル / 記述子の人工物。2026-09-08 データセットで再測定")] for t, a, b, c in D["transfer_void"]]
+keep_rows = [[t.replace("_", " "), f"{a:+.1f}%", f"{b:+.1f}%", pos(f"{c:+.1f}%"), T("stands — labels unchanged", "成立——标签未变", "有効 — ラベル不変")] for t, a, b, c in D["transfer_keep"]]
+def strip_td(rows):  # cells built with pos()/neg() already carry <td>; wrap plain ones
+    out_rows = []
+    for r in rows:
+        out_rows.append("".join(c if c.startswith("<td") else f"<td>{c}</td>" for c in r))
+    return out_rows
+def table_raw(head, rows, style=""):
+    th = "".join(f"<th>{h}</th>" for h in head)
+    body = "".join(f"<tr>{r}</tr>" for r in rows)
+    return f'<div class="tablebox wrap"{(" style=" + chr(34) + style + chr(34)) if style else ""}><table><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table></div>'
+out.append(f'''<section class="section">{H2("4 · Consequences", "What this voids, and what stands", "哪些作废,哪些成立", "何が無効になり、何が残るか")}
+<div class="col">{P("Every stage of the campaign — single-task baselines, the transfer stage, the warm-start stage, the running unseen-encoder stage — used the 2026-05-15 labels. The transfer verdicts on the two tasks whose labels were the problem are void; the mechanism found through the other tasks is untouched.",
+"campaign 的每个阶段——单任务基线、迁移阶段、warm-start 阶段、正在跑的未见过编码器阶段——都用的是 2026-05-15 标签。标签有问题的两个任务上的迁移判定作废;通过其他任务发现的机制不受影响。",
+"キャンペーンの全段階 — 単独基準、転移段階、ウォームスタート段階、実行中の未知エンコーダ段階 — は 2026-05-15 ラベルを使った。ラベルが問題だった2タスクの転移判定は無効。他のタスクで見つけた機構は影響を受けない。")}</div>
+{table_raw([T("task","任务","タスク"), T("xfer vs alone","xfer vs 单独","xfer vs 単独"), T("frozen vs alone","冻结 vs 单独","凍結 vs 単独"), T("warm-start vs alone","warm-start vs 单独","ウォームスタート vs 単独"), T("status","状态","状態")], strip_td(void_rows + keep_rows), style="max-width:1000px")}
+<div class="col" style="margin-top:16px">
+{P("<b>Void.</b> final_energy's −9.1% under warm-start, its position curve and its 500-epoch budget check were measured against a label no model can learn; volume's −6.9% was measured with a descriptor that cannot see the label. Neither says anything about transfer.",
+"<b>作废。</b>final_energy 在 warm-start 下的 −9.1%、它的位置曲线和 500 epoch 预算检验,都是对着一个任何模型都学不会的标签测的;volume 的 −6.9% 是用一个看不见标签的描述符测的。两者都说明不了迁移。",
+"<b>無効。</b>final_energy のウォームスタート −9.1%、位置曲線、500 エポック予算検証は、どのモデルにも学べないラベルに対して測定された。volume の −6.9% はラベルが見えない記述子で測定された。どちらも転移については何も語らない。", "callout")}
+{P("<b>Stands.</b> Replay dilution at the last step (19 tasks recover once replay is removed, none get worse), material_type's gain and its preference for a frozen encoder, and the gains on zt, magnetization and dielectric_total: their labels did not change.",
+"<b>成立。</b>末位的 replay 稀释(去掉 replay 后 19 个任务回升、0 个变差)、material_type 的增益及其对冻结编码器的偏好、zt / magnetization / dielectric_total 的增益:它们的标签没有变。",
+"<b>有効。</b>最終ステップでのリプレイ希釈(リプレイを外すと19タスクが回復し悪化はゼロ)、material_type の改善と凍結エンコーダへの選好、zt / magnetization / dielectric_total の改善:これらのラベルは変わっていない。", "callout")}
+{P("<b>Also reopened.</b> The extensive-vs-intensive reading of the warm-start losses rested on final_energy and volume; dos_density (−4.2%) is the only extensive-property loss left, and it is intensive per energy point. The remaining question about the shared encoder's generalisation is now carried by the unseen-encoder arms alone.",
+"<b>同时重开。</b>对 warm-start 损失的“广延量 vs 强度量”解读建立在 final_energy 和 volume 上;剩下的只有 dos_density(−4.2%),而它按能量点算是强度量。关于共享编码器泛化的遗留问题,现在只能由未见过编码器的两臂来回答。",
+"<b>再び開かれた点。</b>ウォームスタート損失の「示量性 vs 示強性」という読みは final_energy と volume に依っていた。残るのは dos_density(−4.2%)だけで、これはエネルギー点ごとには示強性である。共有エンコーダの汎化に関する残された問いは、今や未知エンコーダのアームだけが担う。", "callout")}
+</div></section>''')
+
+# ---------------- 5 the standard ----------------
+rules = [
+ ("One level of theory per column family.", "Energies from the thermo endpoint with thermo_type GGA_GGA+U; structure-derived and magnetic quantities from the GGA / GGA+U entry's own task; electronic-structure values only where MP's origin task is GGA or GGA+U; elastic, dielectric and piezoelectric values from their GGA workflows. Never the summary's mixed fields.",
+  "每个列族只用一种理论水平。", "能量取 thermo 端点 thermo_type GGA_GGA+U;结构类和磁性量取 GGA / GGA+U entry 自己的任务;能带类只在 MP 的来源任务是 GGA / GGA+U 时保留;弹性、介电、压电取各自的 GGA 流程。绝不用 summary 的混合字段。",
+  "列ファミリーごとに理論レベルは1つ。", "エネルギーは thermo エンドポイントの thermo_type GGA_GGA+U から。構造由来と磁性の量は GGA / GGA+U エントリ自身のタスクから。電子構造の値は MP の由来タスクが GGA / GGA+U の場合のみ。弾性・誘電・圧電はそれぞれの GGA ワークフローから。summary の混合欄は決して使わない。"),
+ ("Per-cell quantities live on the dataset's cell.", "Volume and total magnetisation from another calculation's cell are rescaled by the atom-count ratio after checking the reduced formula matches; intensive forms (volume per atom, magnetisation per volume) are stored alongside.",
+  "每原胞的量必须落在数据集的原胞上。", "来自其他计算原胞的体积和总磁矩,先核对约化化学式一致,再按原子数比例换算;同时存储强度量形式(每原子体积、每体积磁化)。",
+  "単位胞あたりの量はデータセットの単位胞上に置く。", "他の計算の単位胞から来た体積と全磁化は、既約化学式の一致を確認した上で原子数比で換算する。示強性の形(原子あたり体積、体積あたり磁化)も併せて保存する。"),
+ ("Provenance travels with the value.", "The new-format MP id, the origin task's run type, and the 31 legacy ids MP no longer resolves are recorded; the build script and its inputs are kept with the data.",
+  "来源随数值一起保存。", "记录新格式 MP id、来源任务的 run type、以及 MP 已不再解析的 31 个旧 id;生成脚本及其输入与数据放在一起。",
+  "来歴は値と共に保存する。", "新形式の MP id、由来タスクの run type、MP がもう解決しない31の旧 id を記録する。生成スクリプトとその入力はデータと共に保管する。"),
+ ("Descriptors and preprocessing come from the data notebooks, never re-implemented.", "XenonPy classic with StandardScaler + Yeo-Johnson as calculate_compositional_desc.ipynb produces it; a variant that is not in a notebook is proposed, not run.",
+  "描述符和预处理只从数据 notebook 取,绝不重实现。", "按 calculate_compositional_desc.ipynb 的做法:XenonPy classic 加 StandardScaler + Yeo-Johnson;notebook 里没有的变体只能提议,不能直接跑。",
+  "記述子と前処理はデータノートブックから取り、再実装しない。", "calculate_compositional_desc.ipynb が生成する通り、XenonPy classic に StandardScaler + Yeo-Johnson。ノートブックにない変種は提案するだけで、実行しない。"),
+ ("A label that depends on cell scale needs a scale-aware descriptor or an intensive form.", "volume, total magnetisation per cell and anything per formula unit are only meaningful to a model whose input carries the atom count; otherwise train the intensive column.",
+  "依赖原胞尺度的标签需要能感知尺度的描述符,或改用强度量形式。", "volume、每原胞总磁矩以及任何每化学式单元的量,只对输入里带原子数的模型有意义;否则训练强度量那一列。",
+  "単位胞スケールに依存するラベルには、スケールを認識する記述子か示強性の形が必要。", "volume、単位胞あたり全磁化、化学式単位あたりの量は、入力に原子数を持つモデルにしか意味がない。そうでなければ示強性の列を学習する。"),
+ ("Four gates before a label is trained on.", "Spot-check against known references (Si, Pt, Fe, NaCl); for energies, E − Σ xᵢ·E(element) must reproduce the formation energy; a ridge or gradient-boosting baseline on the notebook descriptors; and a per-column change report against the previous version.",
+  "标签投入训练前的四道门。", "对已知参考值抽查(Si、Pt、Fe、NaCl);能量类要求 E − Σ xᵢ·E(单质) 能重现 formation energy;在 notebook 描述符上做岭回归或梯度提升基线;与上一版本逐列出变更报告。",
+  "ラベルを学習に使う前の4つの関門。", "既知の基準値(Si、Pt、Fe、NaCl)での抜き取り検査。エネルギーは E − Σ xᵢ·E(単体) が formation energy を再現すること。ノートブック記述子でのリッジ回帰または勾配ブースティング基準。前版との列ごとの変更報告。"),
+ ("Versioned files, never overwritten.", "A new date in the file name, a new preprocessing object, and a CHANGES note; results are never compared across dataset versions for a column whose label changed.",
+  "文件带版本,绝不覆盖。", "文件名带新日期、新的 preprocessing 对象、一份 CHANGES 说明;标签变过的列,结果绝不跨数据集版本比较。",
+  "ファイルはバージョン付きで、上書きしない。", "ファイル名に新しい日付、新しい前処理オブジェクト、CHANGES ノート。ラベルが変わった列については、データセット版をまたいで結果を比較しない。"),
+]
+items = "".join(f"<li><b>{T(a, c, e)}</b> {T(b, d, f)}</li>" for a, b, c, d, e, f in rules)
+out.append(f'''<section class="section">{H2("5 · The standard", "How Materials Project data enters the dataset from now on", "从今往后 Materials Project 数据如何进入数据集", "今後 Materials Project データをデータセットに入れる方法")}
+<div class="col plan"><ol class="plan">{items}</ol></div></section>''')
+
+# ---------------- 6 update brief ----------------
+V = L["validation"]
+val_rows = []
+for col in ("Volume", "Density"):
+    v = V[col]; val_rows.append([col, T("new / old","新 / 旧","新 / 旧"), f"{v['q01']:.3f}", f"{v['med']:.3f}", f"{v['q99']:.3f}", "-", f"{v['n']:,}"])
+for col in ("Final energy per atom", "Formation energy per atom", "Band gap", "Efermi", "Total magnetization"):
+    v = V[col]; val_rows.append([col, T("new − old","新 − 旧","新 − 旧"), f"{v['q01']:+.3f}", f"{v['med']:+.3f}", f"{v['q99']:+.3f}", f"{v['changed_share']*100:.1f}%", f"{v['n']:,}"])
+newcols = [
+ ("Final energy per atom", "GGA / GGA+U thermo energy", "GGA / GGA+U thermo 能量", "GGA / GGA+U thermo エネルギー", "33,166"),
+ ("Formation energy per atom", "GGA / GGA+U thermo scheme", "GGA / GGA+U thermo 方案", "GGA / GGA+U thermo スキーム", "33,166"),
+ ("Energy above hull · Equilibrium reaction energy per atom", "new, GGA / GGA+U", "新增,GGA / GGA+U", "新規、GGA / GGA+U", "33,166 · 30,689"),
+ ("Volume · Density · Density atomic", "GGA entry structure; volume rescaled to the dataset's cell; density atomic is per atom", "GGA entry 的结构;体积换算到数据集原胞;density atomic 为每原子", "GGA エントリの構造。体積はデータセット単位胞に換算。density atomic は原子あたり", "33,166"),
+ ("Total magnetization · per formula unit · per volume", "GGA task OUTCAR, |μB|; per cell rescaled like volume", "GGA 任务 OUTCAR,|μB|;每原胞按体积同样换算", "GGA タスクの OUTCAR、|μB|。単位胞あたりは体積と同様に換算", "33,166"),
+ ("Magnetic ordering (label) · Number of magnetic sites", "pymatgen analyser on the GGA task's site moments: NM 22,257 · FM 7,544 · FiM 2,649 · AFM 716", "pymatgen 分析器作用于 GGA 任务的位点磁矩:NM 22,257 · FM 7,544 · FiM 2,649 · AFM 716", "GGA タスクのサイト磁気モーメントに pymatgen 分析器:NM 22,257 · FM 7,544 · FiM 2,649 · AFM 716", "33,166 · 33,144"),
+ ("Band gap · Efermi · Is metal · Is gap direct", "summary values, kept only where the electronic-structure origin is GGA / GGA+U (2,983 r2SCAN + 56 SCAN origins blanked)", "summary 值,只在能带来源为 GGA / GGA+U 时保留(2,983 个 r2SCAN、56 个 SCAN 来源置空)", "summary 値、電子構造の由来が GGA / GGA+U の場合のみ保持(r2SCAN 由来 2,983、SCAN 由来 56 を空に)", "30,759 · 30,741"),
+ ("CBM · VBM", "new, same gate", "新增,同样门控", "新規、同じ条件", "16,857"),
+ ("Bulk modulus · Shear modulus · Poisson ratio · Universal anisotropy", "new, GGA deformation workflow, physical bounds applied", "新增,GGA 形变流程,加物理范围过滤", "新規、GGA 変形ワークフロー、物理範囲で制限", "6,551 · 6,466 · 6,499 · 6,124"),
+ ("Dielectric total / ionic / electronic · Refractive index", "GGA DFPT; 9 out-of-bound rows dropped", "GGA DFPT;9 行超出范围被去除", "GGA DFPT。範囲外の9行を除外", "4,501 · 4,500"),
+ ("Piezoelectric max", "new, GGA DFPT", "新增,GGA DFPT", "新規、GGA DFPT", "1,362"),
+ ("MP id", "new-format Materials Project id (legacy mp-<n> stays the index; 31 ids no longer resolve)", "新格式 Materials Project id(旧 mp-<n> 仍为索引;31 个 id 已不可解析)", "新形式の Materials Project id(旧 mp-<n> は索引のまま。31 個は解決不能)", "33,798"),
+]
+newcol_rows = [[c, T(a, b, d), n] for c, a, b, d, n in newcols]
+out.append(f'''<section class="section">{H2("6 · Update brief", "Dataset 2026-09-08: what changed", "数据集 2026-09-08:变了什么", "データセット 2026-09-08:何が変わったか")}
+<div class="stats">
+<div class="stat"><p class="label">{T("rows","行数","行数")}</p><p class="value">{L['shape_new'][0]:,}</p><p class="note">{T("unchanged; qa- and starry- rows byte-identical","不变;qa- 与 starry- 行逐字节相同","不変。qa- と starry- 行はバイト単位で同一")}</p></div>
+<div class="stat"><p class="label">{T("columns","列数","列数")}</p><p class="value">{L['shape_old'][1]} → {L['shape_new'][1]}</p><p class="note">{T("18 new properties, their normalised columns and labels","18 个新属性及其归一化列和标签","18の新規物性とその正規化列・ラベル")}</p></div>
+<div class="stat"><p class="label">{T("MP rows on GGA / GGA+U","GGA / GGA+U 口径的 MP 行","GGA / GGA+U 基準の MP 行")}</p><p class="value">33,166</p><p class="note">{T("of 33,829; 663 have no GGA-family calculation and are blank","共 33,829;663 个没有 GGA 族计算,置空","33,829 中。663 は GGA 系計算がなく空欄")}</p></div>
+<div class="stat"><p class="label">{T("final_energy alone","final_energy 单独训练","final_energy 単独学習")}</p><p class="value c-warm">{m(fe_new):.4f}</p><p class="note">{T(f"was {m(fe_old):.4f} on the old label","旧标签下为 " + f"{m(fe_old):.4f}","旧ラベルでは " + f"{m(fe_old):.4f}")}</p></div>
+</div>
+<div class="col">{P("Files: <code>data/qc_ac_te_mp_dos_reformat_20260908.pd.parquet</code>, <code>data/preprocessing_objects_20260908.pkl.z</code>, <code>data/qc_ac_te_mp_dos_reformat_20260908_CHANGES.md</code>; built by <code>data/data/scripts/rebuild_mp_gga_20260908.py</code> from API pulls made on 2026-09-08. The 2026-05-15 files are untouched.",
+"文件:<code>data/qc_ac_te_mp_dos_reformat_20260908.pd.parquet</code>、<code>data/preprocessing_objects_20260908.pkl.z</code>、<code>data/qc_ac_te_mp_dos_reformat_20260908_CHANGES.md</code>;由 <code>data/data/scripts/rebuild_mp_gga_20260908.py</code> 从 2026-09-08 的 API 拉取生成。2026-05-15 的文件未动。",
+"ファイル:<code>data/qc_ac_te_mp_dos_reformat_20260908.pd.parquet</code>、<code>data/preprocessing_objects_20260908.pkl.z</code>、<code>data/qc_ac_te_mp_dos_reformat_20260908_CHANGES.md</code>。<code>data/data/scripts/rebuild_mp_gga_20260908.py</code> が 2026-09-08 の API 取得から生成。2026-05-15 のファイルは未変更。")}</div>
+{table([T("column(s)","列","列"), T("source in the rebuilt dataset","重建数据集中的来源","再構築データセットでの出典"), T("MP rows","MP 行数","MP 行数")], newcol_rows, cls="tablebox wrap")}
+<figure style="margin-top:14px"><div class="figbox"><svg id="fig-cols" width="960" height="660" role="img" aria-label="Non-null rows per column before and after"></svg></div>
+{CAP("Coverage per column. Columns that existed lose the 663 materials without a GGA-family calculation and, for the electronic structure, the 3,039 whose MP origin is not GGA-family; the new columns cover what their GGA workflows cover.",
+"逐列覆盖率。原有列失去 663 个没有 GGA 族计算的材料,能带类再失去 3,039 个 MP 来源不是 GGA 族的;新列覆盖各自 GGA 流程覆盖的范围。",
+"列ごとの網羅率。既存の列は GGA 系計算のない 663 物質を失い、電子構造はさらに MP の由来が GGA 系でない 3,039 を失う。新規列はそれぞれの GGA ワークフローが対象とする範囲を持つ。")}</figure>
+<div class="col"><h3>{T("Validation against the 2026-05-15 dataset","对 2026-05-15 数据集的校验","2026-05-15 データセットとの検証")}</h3></div>
+{table([T("column","列","列"), T("comparison","比较","比較"), "1%", T("median","中位数","中央値"), "99%", T("|Δ| > 0.05","|Δ| > 0.05","|Δ| > 0.05"), T("rows","行数","行数")], val_rows, style="max-width:1000px")}
+<div class="col" style="margin-top:16px">
+{P("Volume moves by +1.4% at the median — GGA lattices are slightly larger than r2SCAN ones — and Density inversely. Final energy changes only where the old value was r2SCAN. Band gap and Efermi differences are Materials Project's own updates to its electronic-structure builder since 2025-04, now consistently GGA-family. Total magnetisation changes where the cell or the functional changed.",
+"Volume 中位变化 +1.4%——GGA 晶格略大于 r2SCAN——Density 反向。Final energy 只在旧值是 r2SCAN 的地方变化。Band gap 和 Efermi 的差异是 Materials Project 自 2025-04 以来对能带构建的更新,现在统一为 GGA 族。总磁矩在原胞或泛函变化的地方变化。",
+"Volume は中央値で +1.4% 動く — GGA 格子は r2SCAN よりわずかに大きい — Density はその逆。Final energy は旧値が r2SCAN だった箇所でのみ変わる。Band gap と Efermi の差は Materials Project 側の 2025-04 以降の電子構造ビルダー更新で、今は一貫して GGA 系。全磁化は単位胞または汎関数が変わった箇所で変わる。")}
+{P("Spot checks on the rebuilt labels: Fe (bcc) −8.470 eV/atom, 2.18 μB per atom, FM; Si −5.425 eV/atom, band gap 0.610 eV; Pt −6.071 eV/atom; Fe₂O₃ formation energy −1.707 eV/atom, AFM — all on the GGA / GGA+U reference values.",
+"重建标签的抽查:Fe(bcc)−8.470 eV/atom、每原子 2.18 μB、FM;Si −5.425 eV/atom、带隙 0.610 eV;Pt −6.071 eV/atom;Fe₂O₃ 生成能 −1.707 eV/atom、AFM——全部落在 GGA / GGA+U 参考值上。",
+"再構築ラベルの抜き取り検査:Fe(bcc)−8.470 eV/atom、原子あたり 2.18 μB、FM。Si −5.425 eV/atom、バンドギャップ 0.610 eV。Pt −6.071 eV/atom。Fe₂O₃ 生成エネルギー −1.707 eV/atom、AFM — すべて GGA / GGA+U の基準値上にある。")}
+<h3 style="margin-top:22px">{T("Next","下一步","次のステップ")}</h3>
+<ol class="plan">
+<li>{T("<b>Re-run the single-task baselines on the 2026-09-08 dataset</b> for every MP-labelled task, and add the new properties as tasks: band gap, per-atom volume, magnetisation per volume, magnetic ordering, is-metal, elastic and dielectric.","<b>在 2026-09-08 数据集上重跑所有 MP 标签任务的单任务基线</b>,并把新属性加为任务:band gap、每原子体积、每体积磁化、磁序、是否金属、弹性、介电。","<b>2026-09-08 データセットで MP ラベルの全タスクの単独基準を再実行</b>し、新規物性をタスクに追加する:バンドギャップ、原子あたり体積、体積あたり磁化、磁気秩序、金属判定、弾性、誘電。")}</li>
+<li>{T("<b>Re-measure transfer on the two voided tasks</b> once the unseen-encoder stage on the old data has closed the 2×2; volume needs the scale-aware descriptor or its per-atom form for that measurement to mean anything.","<b>在旧数据的未见过编码器阶段把 2×2 收尾后,重测两个作废任务的迁移</b>;volume 需要能感知尺度的描述符或其每原子形式,测量才有意义。","<b>旧データでの未知エンコーダ段階が 2×2 を完成させた後、無効になった2タスクの転移を再測定</b>する。volume はスケール認識記述子か原子あたりの形でなければ測定に意味がない。")}</li>
+<li>{T("<b>Choose the descriptor policy</b>: KMD stays invertible (needed for inverse design) but is scale-blind; XenonPy classic sees scale but is not invertible. Either keep both and train per-atom labels with KMD, or carry the atom count as a side input.","<b>决定描述符策略</b>:KMD 可逆(逆向设计需要)但尺度盲;XenonPy classic 看得见尺度但不可逆。要么两者都保留、用 KMD 训练每原子标签,要么把原子数作为旁路输入。","<b>記述子の方針を決める</b>:KMD は可逆(逆設計に必要)だがスケールに盲目。XenonPy classic はスケールが見えるが可逆ではない。両方を保持して KMD で原子あたりラベルを学習するか、原子数を副入力として持たせるか。")}</li>
+</ol></div>
+</section>
+<footer><p>{T("Data: summary/mp_labels_page_data.json (per-seed results, curves, API comparisons, dataset statistics); runs stA_*, stM_final_energy_*, stXc_*, stXn_* and stage_desc/_discarded_reimpl on RIKYU; MP API queries of 2026-09-08. Figure labels stay in English in every language.",
+"数据:summary/mp_labels_page_data.json(逐 seed 结果、曲线、API 比对、数据集统计);RIKYU 上的 stA_*、stM_final_energy_*、stXc_*、stXn_* 与 stage_desc/_discarded_reimpl;2026-09-08 的 MP API 查询。图内标签在各语言下均保留英文。",
+"データ:summary/mp_labels_page_data.json(シードごとの結果、曲線、API 比較、データセット統計)。RIKYU 上の stA_*、stM_final_energy_*、stXc_*、stXn_*、stage_desc/_discarded_reimpl。2026-09-08 の MP API 照会。図中のラベルはどの言語でも英語のまま。")}</p></footer>
+</div>
+<script>
+{LANGJS}
+</script>
+<script>
+const D = {json.dumps(D, separators=(",", ":"))};
+{JS}
+</script>
+''')
+
+OUT.write_text("".join(out), encoding="utf-8")
+print(f"  wrote {OUT} ({len(''.join(out)) // 1024} KB)")
