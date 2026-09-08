@@ -137,6 +137,8 @@ case "$STAGE" in
     # (with its scale-bearing weighted-sum block) vs the same table without that block.
     descxc)     CONFIG=probe6_desc_xclassic.toml; OUT=stage_desc; DEFTIME=06:00:00 ;;
     descxn)     CONFIG=probe6_desc_xnosum.toml;   OUT=stage_desc; DEFTIME=06:00:00 ;;
+    # Single task on the 2026-09-08 dataset (MP labels rebuilt on GGA / GGA+U): does final_energy recover?
+    singlem)    CONFIG=probe6_mp2026.toml;        OUT=stage_single; DEFTIME=06:00:00 ;;
     *) echo "unknown stage '$STAGE'" >&2; exit 2 ;;
 esac
 TIME=${TIME:-$DEFTIME}

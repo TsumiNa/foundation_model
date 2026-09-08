@@ -351,6 +351,25 @@ converts into score. So material_type's path to a gain **structurally cannot tra
      run directories sit in `stage_desc/_discarded_reimpl/` and are not used anywhere. Lesson kept
      in the working notes: descriptors and preprocessing come from the data notebooks, never
      re-implemented.
+9. **The final_energy label itself, traced to its source** — **done (2026-09-08).** With the user's
+   temporary MP API key the column was traced to `summary.energy_per_atom`, which in today's
+   Materials Project is the GGA / GGA+U / r2SCAN *mixed* thermo scheme: ~20% of entries carry an
+   r2SCAN total energy tens of eV below the GGA one (Pt −51.5 vs −6.1, Au −50.6 vs −3.3), so the
+   column mixed two energy references. The 2025-04-10 export copied it faithfully — no collection bug.
+   The same mixing sits behind `formation_energy_per_atom`, and the summary's structure and magnetism
+   come from r2SCAN tasks for ~23k of the 33.8k entries. The dataset was rebuilt on GGA / GGA+U only
+   (`data/qc_ac_te_mp_dos_reformat_20260908.pd.parquet`, script
+   `data/data/scripts/rebuild_mp_gga_20260908.py`, details in `..._CHANGES.md`), with per-cell values
+   rescaled to the dataset's cell, electronic-structure values kept only where MP's own origin task is
+   GGA-family, and the extra MP properties added (band gap and its labels, per-atom volume, per-volume
+   magnetisation, magnetic ordering, elastic, dielectric + refractive index, piezoelectric maxima).
+   **Single-task final_energy on the rebuilt label, same recipe, same descriptor (KMD), 5 seeds:
+   R² 0.9986 ± 0.0001, against 0.7739 ± 0.0096 on the old label** (`stM_final_energy_s*`,
+   `configs/probe6_mp2026.toml`). The 0.77 ceiling, and everything the transfer stages said about
+   final_energy, was a label artefact. Every stage of this campaign used the old dataset; volume,
+   final_energy, formation_energy, density, total_magnetization, efermi and band gap have different
+   labels in the new file, so their verdicts are not comparable across versions and the affected
+   stages have to be re-run on the 2026-09-08 dataset before anything more is concluded about them.
 
 ### What can and cannot be said now
 
@@ -358,6 +377,9 @@ converts into score. So material_type's path to a gain **structurally cannot tra
   tasks are level or better (magnetization +4.9%, magnetic_moment unresolved).
 - "The shared encoder is a general feature extractor" still cannot be said — frozen, it is worse for
   12 of 24 tasks.
+- "final_energy is hard" cannot be said: on the GGA-only label it trains to R² 0.9986 alone. Its −9.1%
+  warm-start loss, its position curve and its ledger were measured on the mixed-scheme label and are
+  void until re-measured on the 2026-09-08 dataset.
 - "The extensive-property losses would close with more training" cannot be said: at 500 epochs
   without early stopping warm-start is still 10–16% below the same-budget single-task control, with
   a lower training loss and a higher validation loss than that control.
