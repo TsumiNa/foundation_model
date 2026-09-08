@@ -296,17 +296,17 @@ function draw(){
 
   // ---- fig-cm: confusion matrices of the three classification tasks ----
   try{(function(){const svg=document.getElementById("fig-cm");if(!svg||!D.baselines)return;svg.textContent="";
-    const tasks=D.baselines.per_task.filter(r=>r.kind==="classification"&&r.confusion); const W=960,H=300; size(svg,W,H);
+    const tasks=D.baselines.per_task.filter(r=>r.kind==="classification"&&r.confusion); const W=960,H=330; size(svg,W,H);
     const panel=W/tasks.length;
-    tasks.forEach((r,i)=>{const M=r.confusion.matrix,k=M.length,cell=Math.min(50,(panel-120)/k),x0=i*panel+70,y0=60;
-      txt(svg,x0,y0-34,r.task.replace(/_/g," ")+` · macro-F1 ${r.macro_f1.mean.toFixed(3)} · acc ${r.accuracy.mean.toFixed(3)}`,"lab",{fill:cInk});
+    tasks.forEach((r,i)=>{const M=r.confusion.matrix,k=M.length,cell=Math.min(50,(panel-120)/k),x0=i*panel+70,y0=84;
+      txt(svg,x0,y0-58,r.task.replace(/_/g," "),"lab",{fill:cInk}); txt(svg,x0,y0-40,`macro-F1 ${r.macro_f1.mean.toFixed(3)} · accuracy ${r.accuracy.mean.toFixed(3)}`,"val",{fill:cMuted});
       r.classes.forEach((c,jx)=>{txt(svg,x0+cell*jx+cell/2,y0-8,c,"axis",{"text-anchor":"middle"});txt(svg,x0-8,y0+cell*jx+cell/2+4,c,"axis",{"text-anchor":"end"});});
       txt(svg,x0+cell*k/2,y0-20,"predicted →","axis",{"text-anchor":"middle",fill:cMuted});
       M.forEach((row,a)=>{const tot=row.reduce((s,v)=>s+v,0);row.forEach((v,b)=>{const f=tot?v/tot:0;
         svg.appendChild(el("rect",{x:x0+cell*b+1,y:y0+cell*a+1,width:cell-2,height:cell-2,rx:2,fill:a===b?C.warm:C.xfer,opacity:f>0?0.08+0.5*Math.sqrt(f):0.03}));
         if(v){txt(svg,x0+cell*b+cell/2,y0+cell*a+cell/2+1,(f*100).toFixed(0)+"%","axis",{"text-anchor":"middle",fill:cInk});txt(svg,x0+cell*b+cell/2,y0+cell*a+cell/2+14,v.toLocaleString(),"axis",{"text-anchor":"middle","font-size":"10",fill:cMuted});}});
         txt(svg,x0+cell*k+8,y0+cell*a+cell/2+4,tot.toLocaleString(),"axis",{fill:cMuted});});
-      txt(svg,x0,y0+cell*k+24,"rows = true class · % of the row · count · right: row total","axis",{fill:cMuted});});
+      if(i===0)txt(svg,x0,y0+cell*k+24,"rows = true class · % of the row · count · right: row total","axis",{fill:cMuted});});
   })();}catch(e){console.error("fig-cm failed",e);}
 }
 draw();
