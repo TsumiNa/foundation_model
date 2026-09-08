@@ -1,6 +1,7 @@
 # probe6.toml on the 2026-09-08 qc dataset, whose Materials Project columns were rebuilt on GGA / GGA+U
 # only (the old Final energy per atom copied MP's mixed GGA/r2SCAN thermo energy and was unlearnable).
-# Same descriptor (KMD), same adopted values via --set, same split column: only the labels changed.
+# Same descriptor (KMD), same adopted values via --set, same split column; the 16 properties added with
+# that dataset are declared as tasks below the original 24.
 # fm pretrain — 6-TASK encoder probe for the v2 hyper-parameter campaign.
 #
 # TWO tasks per size group of REPORT_20260809, of which two are kernel regressions:
@@ -219,6 +220,106 @@ kind = "classification"
 dataset = "qc"
 column = "Material type (label)"
 num_classes = 5
+
+# ---- added with the 2026-09-08 dataset (Materials Project, GGA / GGA+U only) ----
+[[tasks]]
+name = "band_gap"
+kind = "regression"
+dataset = "qc"
+column = "Band gap (normalized)"
+
+[[tasks]]
+name = "density_atomic"
+kind = "regression"
+dataset = "qc"
+column = "Density atomic (normalized)"
+
+[[tasks]]
+name = "magnetization_per_volume"
+kind = "regression"
+dataset = "qc"
+column = "Total magnetization per volume (normalized)"
+
+[[tasks]]
+name = "magnetization_per_fu"
+kind = "regression"
+dataset = "qc"
+column = "Total magnetization per formula unit (normalized)"
+
+[[tasks]]
+name = "reaction_energy"
+kind = "regression"
+dataset = "qc"
+column = "Equilibrium reaction energy per atom (normalized)"
+
+[[tasks]]
+name = "cbm"
+kind = "regression"
+dataset = "qc"
+column = "CBM (normalized)"
+
+[[tasks]]
+name = "vbm"
+kind = "regression"
+dataset = "qc"
+column = "VBM (normalized)"
+
+[[tasks]]
+name = "bulk_modulus"
+kind = "regression"
+dataset = "qc"
+column = "Bulk modulus (normalized)"
+
+[[tasks]]
+name = "shear_modulus"
+kind = "regression"
+dataset = "qc"
+column = "Shear modulus (normalized)"
+
+[[tasks]]
+name = "poisson_ratio"
+kind = "regression"
+dataset = "qc"
+column = "Poisson ratio (normalized)"
+
+[[tasks]]
+name = "universal_anisotropy"
+kind = "regression"
+dataset = "qc"
+column = "Universal anisotropy (normalized)"
+
+[[tasks]]
+name = "refractive_index"
+kind = "regression"
+dataset = "qc"
+column = "Refractive index (normalized)"
+
+[[tasks]]
+name = "piezoelectric_max"
+kind = "regression"
+dataset = "qc"
+column = "Piezoelectric max (normalized)"
+
+[[tasks]]
+name = "magnetic_ordering"
+kind = "classification"
+dataset = "qc"
+column = "Magnetic ordering (label)"
+num_classes = 4
+
+[[tasks]]
+name = "is_metal"
+kind = "classification"
+dataset = "qc"
+column = "Is metal (label)"
+num_classes = 2
+
+[[tasks]]
+name = "is_gap_direct"
+kind = "classification"
+dataset = "qc"
+column = "Is gap direct (label)"
+num_classes = 2
 
 [model]
 latent_dim = 128

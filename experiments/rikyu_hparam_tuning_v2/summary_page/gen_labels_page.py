@@ -219,6 +219,46 @@ items = "".join(f"<li><b>{T(a, c, e)}</b> {T(b, d, f)}</li>" for a, b, c, d, e, 
 out.append(f'''<section class="section">{H2("5 · The standard", "How Materials Project data enters the dataset from now on", "从今往后 Materials Project 数据如何进入数据集", "今後 Materials Project データをデータセットに入れる方法")}
 <div class="col plan"><ol class="plan">{items}</ol></div></section>''')
 
+# ---------------- 7 baselines on the rebuilt dataset (only when scored) ----------------
+BASE = EXP / "summary" / "baselines_mp2026.json"
+def baselines_section():
+    if not BASE.exists():
+        return ""
+    B = json.load(open(BASE)); D["baselines"] = B
+    rows = []
+    for r in B["per_task"]:
+        if r.get("n_seeds", 0) == 0:
+            continue
+        grp = T("relabelled", "标签更新", "ラベル更新") if r["group"] == "updated" else T("added", "新增", "新規")
+        if r["kind"] == "regression":
+            old = r.get("old_ceiling"); oldv = f"{old['mean']:.4f}" if old else "-"
+            delta = (f"{(r['r2']['mean'] - old['mean']) / old['mean'] * 100:+.1f}%" if old else "-")
+            rows.append([r["task"].replace("_", " "), grp, "R²", f"{r['n_test']:,}", f"{r['r2']['mean']:.4f} ± {r['r2']['sd']:.4f}", f"{r['mae']['mean']:.4f}", oldv, delta])
+        else:
+            rows.append([r["task"].replace("_", " "), grp, "macro-F1", f"{r['n_test']:,}", f"{r['macro_f1']['mean']:.4f} ± {r['macro_f1']['sd']:.4f}", f"acc {r['accuracy']['mean']:.4f}", "-", "-"])
+    return f'''<section class="section">{H2("7 · Baselines on the rebuilt dataset", "Every relabelled and added task, trained alone", "所有标签更新和新增的任务,单独训练", "ラベル更新・新規の全タスク、単独学習")}
+<div class="col">{P("The same recipe as every other baseline in the campaign: KMD, the adopted values, five seeds, early stopping, last-epoch weights, the dataset's own split. Regression tasks report R² and MAE on the normalised scale; classification tasks macro-F1 and accuracy. Where a task existed on the 2026-05-15 labels, its old ceiling and the change are shown beside it.",
+"与 campaign 里其他基线完全相同的配方:KMD、采用参数、5 个 seed、早停、最后 epoch 权重、数据集自带划分。回归任务报告归一化尺度上的 R² 与 MAE,分类任务报告 macro-F1 与准确率。在 2026-05-15 标签下已存在的任务,旁边给出旧上限和变化。",
+"キャンペーンの他の基準と同一のレシピ:KMD、採用値、5シード、早期終了、最終エポックの重み、データセット自身の分割。回帰タスクは正規化スケールでの R² と MAE、分類タスクは macro-F1 と正解率を報告。2026-05-15 ラベルで存在したタスクには旧天井と変化を併記。")}</div>
+{table([T("task","任务","タスク"), T("group","类别","区分"), T("metric","指标","指標"), T("test rows","测试行数","テスト行数"), T("mean ± sd, 5 seeds","均值 ± sd,5 seed","平均 ± sd、5シード"), "MAE", T("2026-05-15 ceiling","2026-05-15 上限","2026-05-15 天井"), "Δ"], rows, cls="tablebox")}
+<div class="col" style="margin-top:16px">
+{P("<b>Relabelled tasks.</b> final_energy goes from 0.77 to 0.999; formation_energy, density and the dielectric tasks move within noise or slightly up (efermi +2.2%, dielectric_electronic +6.0%) — the GGA-family labels are at least as learnable as the old ones. volume stays at 0.61: the label is now the GGA cell volume, but KMD still cannot see the cell, while its per-atom form (density_atomic) trains to 0.979. With KMD, train the intensive column.",
+"<b>标签更新的任务。</b>final_energy 从 0.77 到 0.999;formation_energy、density 和介电任务在噪声内或略升(efermi +2.2%、dielectric_electronic +6.0%)——GGA 族标签至少和旧标签一样可学。volume 仍是 0.61:标签现在是 GGA 原胞体积,但 KMD 还是看不见原胞,而它的每原子形式(density_atomic)训到 0.979。用 KMD 时,训练强度量那一列。",
+"<b>ラベル更新タスク。</b>final_energy は 0.77 から 0.999 へ。formation_energy、density、誘電タスクはノイズ内かわずかに上昇(efermi +2.2%、dielectric_electronic +6.0%)— GGA 系ラベルは旧ラベルと同等以上に学習可能。volume は 0.61 のまま:ラベルは GGA 単位胞体積になったが KMD にはやはり単位胞が見えない。一方、原子あたりの形(density_atomic)は 0.979 まで学習できる。KMD を使うなら示強性の列を学習する。", "callout")}
+{P("<b>Magnetism is the next real limit.</b> Total magnetisation lands at 0.72–0.74 whether per cell, per formula unit or per volume, and magnetic ordering reaches macro-F1 0.56 (accuracy 0.75, dominated by the non-magnetic class): from composition alone the model knows which elements carry moments but not how they order.",
+"<b>磁性是下一个真正的极限。</b>总磁矩无论按原胞、按化学式单元还是按体积,都停在 0.72–0.74;磁序的 macro-F1 只有 0.56(准确率 0.75,由非磁类主导):只凭组成,模型知道哪些元素带磁矩,却不知道它们如何排列。",
+"<b>磁性が次の本当の限界。</b>全磁化は単位胞あたり・化学式単位あたり・体積あたりのいずれでも 0.72–0.74 に留まり、磁気秩序は macro-F1 0.56(正解率 0.75、非磁性クラスが支配)。組成だけからは、どの元素がモーメントを持つかは分かっても、どう秩序化するかは分からない。", "callout")}
+{P("<b>Added tasks.</b> Band gap 0.88, CBM 0.88, VBM 0.92, is-metal macro-F1 0.93, bulk modulus 0.93, refractive index 0.89 and shear modulus 0.79 are solid new tasks. Poisson ratio (0.31), universal anisotropy (0.35) and reaction energy (0.34) carry little composition signal, and piezoelectric maximum (196 test rows) none at all; they should enter the multi-task set only as deliberately hard or low-data tasks, or not at all.",
+"<b>新增任务。</b>Band gap 0.88、CBM 0.88、VBM 0.92、is-metal macro-F1 0.93、bulk modulus 0.93、折射率 0.89、shear modulus 0.79 是扎实的新任务。泊松比(0.31)、通用各向异性(0.35)和反应能(0.34)组成信号很弱,压电最大值(196 个测试行)完全学不到;它们只应作为刻意设置的困难 / 小数据任务进入多任务集,或者不进。",
+"<b>新規タスク。</b>バンドギャップ 0.88、CBM 0.88、VBM 0.92、is-metal macro-F1 0.93、体積弾性率 0.93、屈折率 0.89、剪断弾性率 0.79 は堅実な新規タスク。ポアソン比(0.31)、普遍異方性(0.35)、反応エネルギー(0.34)は組成の信号が弱く、圧電最大値(テスト行 196)は全く学習できない。これらは意図的な難タスク・少データタスクとしてのみマルチタスク集合に入れるか、入れない。", "callout")}
+</div>
+<figure style="margin-top:14px"><div class="figbox"><div class="legend"><span><i class="sw" style="background:var(--warm)"></i> {T("relabelled task","标签更新的任务","ラベル更新タスク")}</span><span><i class="sw" style="background:var(--frz)"></i> {T("added task","新增任务","新規タスク")}</span><span style="color:var(--muted)">{T("2,000 test rows sampled per task · seed 2025 · normalised scale · dashed = y = x","每任务抽样 2,000 个测试行 · seed 2025 · 归一化尺度 · 虚线为 y = x","タスクごとにテスト行 2,000 を抽出 · シード 2025 · 正規化スケール · 破線は y = x")}</span></div>
+<svg id="fig-scatter" width="960" height="1440" role="img" aria-label="Observation versus prediction for every regression task"></svg></div>
+{CAP("Observation (vertical) against prediction (horizontal) for one seed of every regression task; the R² is the five-seed mean.","每个回归任务一个 seed 的观测值(纵轴)对预测值(横轴);R² 为 5 个 seed 的均值。","各回帰タスク1シードの観測値(縦軸)対予測値(横軸)。R² は5シードの平均。")}</figure>
+<figure><div class="figbox"><svg id="fig-cm" width="960" height="300" role="img" aria-label="Confusion matrices of the classification tasks"></svg></div>
+{CAP("Row-normalised confusion matrices of the three classification tasks, seed 2025; macro-F1 and accuracy are five-seed means.","三个分类任务的行归一化混淆矩阵,seed 2025;macro-F1 与准确率为 5 个 seed 的均值。","3つの分類タスクの行正規化混同行列、シード 2025。macro-F1 と正解率は5シードの平均。")}</figure>
+</section>'''
+
 # ---------------- 6 update brief ----------------
 V = L["validation"]
 val_rows = []
@@ -270,11 +310,12 @@ out.append(f'''<section class="section">{H2("6 · Update brief", "Dataset 2026-0
 "再構築ラベルの抜き取り検査:Fe(bcc)−8.470 eV/atom、原子あたり 2.18 μB、FM。Si −5.425 eV/atom、バンドギャップ 0.610 eV。Pt −6.071 eV/atom。Fe₂O₃ 生成エネルギー −1.707 eV/atom、AFM — すべて GGA / GGA+U の基準値上にある。")}
 <h3 style="margin-top:22px">{T("Next","下一步","次のステップ")}</h3>
 <ol class="plan">
-<li>{T("<b>Re-run the single-task baselines on the 2026-09-08 dataset</b> for every MP-labelled task, and add the new properties as tasks: band gap, per-atom volume, magnetisation per volume, magnetic ordering, is-metal, elastic and dielectric.","<b>在 2026-09-08 数据集上重跑所有 MP 标签任务的单任务基线</b>,并把新属性加为任务:band gap、每原子体积、每体积磁化、磁序、是否金属、弹性、介电。","<b>2026-09-08 データセットで MP ラベルの全タスクの単独基準を再実行</b>し、新規物性をタスクに追加する:バンドギャップ、原子あたり体積、体積あたり磁化、磁気秩序、金属判定、弾性、誘電。")}</li>
-<li>{T("<b>Re-measure transfer on the two voided tasks</b> once the unseen-encoder stage on the old data has closed the 2×2; volume needs the scale-aware descriptor or its per-atom form for that measurement to mean anything.","<b>在旧数据的未见过编码器阶段把 2×2 收尾后,重测两个作废任务的迁移</b>;volume 需要能感知尺度的描述符或其每原子形式,测量才有意义。","<b>旧データでの未知エンコーダ段階が 2×2 を完成させた後、無効になった2タスクの転移を再測定</b>する。volume はスケール認識記述子か原子あたりの形でなければ測定に意味がない。")}</li>
+<li>{T("<b>Choose the multi-task set on the new data.</b> Section 7 gives every relabelled and added task its baseline; band gap, per-atom volume, magnetisation per volume, magnetic ordering, is-metal, bulk and shear modulus and refractive index earn a place; Poisson ratio, universal anisotropy, reaction energy and piezoelectric maximum do not.","<b>在新数据上确定多任务集。</b>第 7 节给出了每个标签更新和新增任务的基线;band gap、每原子体积、每体积磁化、磁序、is-metal、体模量与剪切模量、折射率有资格进入;泊松比、通用各向异性、反应能、压电最大值不进。","<b>新データでのマルチタスク集合を決める。</b>第7節がラベル更新・新規の全タスクに基準を与えた。バンドギャップ、原子あたり体積、体積あたり磁化、磁気秩序、is-metal、体積・剪断弾性率、屈折率は採用に値する。ポアソン比、普遍異方性、反応エネルギー、圧電最大値は採用しない。")}</li>
+<li>{T("<b>Re-run the transfer stages on the 2026-09-08 dataset</b> with that set once the unseen-encoder stage on the old data has closed the 2×2; volume enters through its per-atom form, or with a scale-aware descriptor.","<b>在 2026-09-08 数据集上重跑迁移阶段</b>,待旧数据的未见过编码器阶段把 2×2 收尾后进行;volume 以每原子形式进入,或改用能感知尺度的描述符。","<b>2026-09-08 データセットで転移段階を再実行</b>する。旧データでの未知エンコーダ段階が 2×2 を完成させた後に。volume は原子あたりの形で、あるいはスケール認識記述子で入れる。")}</li>
 <li>{T("<b>Choose the descriptor policy</b>: KMD stays invertible (needed for inverse design) but is scale-blind; XenonPy classic sees scale but is not invertible. Either keep both and train per-atom labels with KMD, or carry the atom count as a side input.","<b>决定描述符策略</b>:KMD 可逆(逆向设计需要)但尺度盲;XenonPy classic 看得见尺度但不可逆。要么两者都保留、用 KMD 训练每原子标签,要么把原子数作为旁路输入。","<b>記述子の方針を決める</b>:KMD は可逆(逆設計に必要)だがスケールに盲目。XenonPy classic はスケールが見えるが可逆ではない。両方を保持して KMD で原子あたりラベルを学習するか、原子数を副入力として持たせるか。")}</li>
 </ol></div>
 </section>
+{baselines_section()}
 <footer><p>{T("Data: summary/mp_labels_page_data.json (per-seed results, curves, API comparisons, dataset statistics); runs stA_*, stM_final_energy_*, stXc_* and stXn_* on RIKYU; MP API queries of 2026-09-08. Figure labels stay in English in every language.",
 "数据:summary/mp_labels_page_data.json(逐 seed 结果、曲线、API 比对、数据集统计);RIKYU 上的 stA_*、stM_final_energy_*、stXc_*、stXn_*;2026-09-08 的 MP API 查询。图内标签在各语言下均保留英文。",
 "データ:summary/mp_labels_page_data.json(シードごとの結果、曲線、API 比較、データセット統計)。RIKYU 上の stA_*、stM_final_energy_*、stXc_*、stXn_*。2026-09-08 の MP API 照会。図中のラベルはどの言語でも英語のまま。")}</p></footer>

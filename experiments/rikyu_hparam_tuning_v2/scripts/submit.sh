@@ -139,6 +139,9 @@ case "$STAGE" in
     descxn)     CONFIG=probe6_desc_xnosum.toml;   OUT=stage_desc; DEFTIME=06:00:00 ;;
     # Single task on the 2026-09-08 dataset (MP labels rebuilt on GGA / GGA+U): does final_energy recover?
     singlem)    CONFIG=probe6_mp2026.toml;        OUT=stage_single; DEFTIME=06:00:00 ;;
+    # Single-task baselines on the 2026-09-08 dataset: the 9 tasks whose labels changed and the 16 added
+    # Materials Project properties, 5 seeds each, the stage_single recipe.
+    singlen)    CONFIG=probe6_mp2026.toml;        OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
     *) echo "unknown stage '$STAGE'" >&2; exit 2 ;;
 esac
 TIME=${TIME:-$DEFTIME}

@@ -129,6 +129,34 @@ function draw(){
       txt(svg,m.l-10,y+13,r.col,"name",{"text-anchor":"end",fill:cInk}); txt(svg,X(Math.max(r.before,r.after))+8,y+13,`${r.before.toLocaleString()} → ${r.after.toLocaleString()}`,"val",{fill:cInk});});
     txt(svg,m.l+iw/2,H-6,"non-null MP rows per column · 2026-05-15 (ochre, above) vs 2026-09-08 (teal, below)","axis",{"text-anchor":"middle"});
   })();}catch(e){console.error("fig-cols failed",e);}
+
+  // ---- fig-scatter: observation vs prediction, one seed per regression task ----
+  try{(function(){const svg=document.getElementById("fig-scatter");if(!svg||!D.baselines)return;svg.textContent="";
+    const tasks=D.baselines.per_task.filter(r=>r.kind==="regression"&&r.scatter); const cols=4,cell=240,pad=14,foot=44; const rowsN=Math.ceil(tasks.length/cols);
+    const W=cols*cell,H=rowsN*(cell+foot-24); size(svg,W,H);
+    tasks.forEach((r,i)=>{const cx=(i%cols)*cell+pad,cy=Math.floor(i/cols)*(cell+foot-24)+pad,w=cell-2*pad,h=cell-2*pad-24;
+      const t=r.scatter.true,p=r.scatter.pred; const lo=Math.min(...t,...p),hi=Math.max(...t,...p); const X=v=>cx+(v-lo)/(hi-lo)*w, Y=v=>cy+h-(v-lo)/(hi-lo)*h;
+      svg.appendChild(el("rect",{x:cx,y:cy,width:w,height:h,fill:"none",stroke:cRule}));
+      svg.appendChild(el("line",{x1:X(lo),y1:Y(lo),x2:X(hi),y2:Y(hi),stroke:cMuted,"stroke-dasharray":"4 3",opacity:.7}));
+      const col=r.group==="updated"?C.warm:C.frz;
+      for(let k=0;k<t.length;k++)svg.appendChild(el("circle",{cx:X(p[k]),cy:Y(t[k]),r:1.6,fill:col,opacity:.45}));
+      txt(svg,cx,cy+h+16,r.task.replace(/_/g," "),"lab",{fill:cInk}); txt(svg,cx,cy+h+34,`R² ${r.r2.mean.toFixed(3)} · MAE ${r.mae.mean.toFixed(3)} · n ${r.scatter.n.toLocaleString()}`,"val",{fill:col});});
+  })();}catch(e){console.error("fig-scatter failed",e);}
+
+  // ---- fig-cm: confusion matrices of the three classification tasks ----
+  try{(function(){const svg=document.getElementById("fig-cm");if(!svg||!D.baselines)return;svg.textContent="";
+    const tasks=D.baselines.per_task.filter(r=>r.kind==="classification"&&r.confusion); const W=960,H=300; size(svg,W,H);
+    const panel=W/tasks.length;
+    tasks.forEach((r,i)=>{const M=r.confusion.matrix,k=M.length,cell=Math.min(50,(panel-120)/k),x0=i*panel+70,y0=60;
+      txt(svg,x0,y0-34,r.task.replace(/_/g," ")+` · macro-F1 ${r.macro_f1.mean.toFixed(3)} · acc ${r.accuracy.mean.toFixed(3)}`,"lab",{fill:cInk});
+      r.classes.forEach((c,jx)=>{txt(svg,x0+cell*jx+cell/2,y0-8,c,"axis",{"text-anchor":"middle"});txt(svg,x0-8,y0+cell*jx+cell/2+4,c,"axis",{"text-anchor":"end"});});
+      txt(svg,x0+cell*k/2,y0-20,"predicted →","axis",{"text-anchor":"middle",fill:cMuted});
+      M.forEach((row,a)=>{const tot=row.reduce((s,v)=>s+v,0);row.forEach((v,b)=>{const f=tot?v/tot:0;
+        svg.appendChild(el("rect",{x:x0+cell*b+1,y:y0+cell*a+1,width:cell-2,height:cell-2,rx:2,fill:a===b?C.warm:C.xfer,opacity:f>0?0.08+0.5*Math.sqrt(f):0.03}));
+        if(v){txt(svg,x0+cell*b+cell/2,y0+cell*a+cell/2+1,(f*100).toFixed(0)+"%","axis",{"text-anchor":"middle",fill:cInk});txt(svg,x0+cell*b+cell/2,y0+cell*a+cell/2+14,v.toLocaleString(),"axis",{"text-anchor":"middle","font-size":"10",fill:cMuted});}});
+        txt(svg,x0+cell*k+8,y0+cell*a+cell/2+4,tot.toLocaleString(),"axis",{fill:cMuted});});
+      txt(svg,x0,y0+cell*k+24,"rows = true class · % of the row · count · right: row total","axis",{fill:cMuted});});
+  })();}catch(e){console.error("fig-cm failed",e);}
 }
 draw();
 document.querySelectorAll("svg").forEach(s=>{const w=+s.getAttribute("width"),h=+s.getAttribute("height");if(w&&h&&!s.getAttribute("viewBox")){s.setAttribute("viewBox",`0 0 ${w} ${h}`);s.style.width="100%";s.style.maxWidth=Math.round(w*1.4)+"px";s.style.height="auto";}});
