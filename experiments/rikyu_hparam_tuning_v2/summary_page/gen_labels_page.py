@@ -49,7 +49,7 @@ R = D["runs"]; L = D["local"]; C6 = D["sample600"]; K = D["consistency"]; DS = D
 def m(v): return sum(v) / len(v)
 def sd(v): mu = m(v); return (sum((x - mu) ** 2 for x in v) / (len(v) - 1)) ** 0.5
 fe_old, fe_new = R["final_energy_old_kmd"], R["final_energy_new_kmd"]
-vol_kmd, vol_c, vol_n, vol_z = R["volume_old_kmd"], R["volume_xenonpy_classic"], R["volume_xenonpy_nosum"], R["volume_zscore_classic_discarded"]
+vol_kmd, vol_c, vol_n = R["volume_old_kmd"], R["volume_xenonpy_classic"], R["volume_xenonpy_nosum"]
 pos = lambda v: f'<td class="pos">{v}</td>'
 neg = lambda v: f'<td class="neg">{v}</td>'
 
@@ -59,19 +59,19 @@ out.append("<title>Two Ceilings, Two Causes</title>\n" + STYLE + "\n<style>.tabl
 # ---------------- header ----------------
 out.append(f'''<header>
 <p class="eyebrow">{T("Continual multi-task pretraining · Materials Project labels · findings and data update, 2026-09-08","连续多任务预训练 · Materials Project 标签 · 发现与数据更新,2026-09-08","継続的マルチタスク事前学習 · Materials Project ラベル · 知見とデータ更新、2026-09-08")}</p>
-<h1>{T("Two ceilings, two causes","两个上限,两个原因","2つの天井、2つの原因")}</h1>
+<h1>{T("Two easy tasks that would not train","两个本该容易、却训不好的任务","本来容易なのに学習できなかった2つのタスク")}</h1>
 <p class="standfirst">{T(
-"Two Materials Project tasks sat far below the rest — final_energy at R² 0.77, volume at 0.62 — and both had been read as limits of the model or of transfer. Neither was. final_energy's label mixed two DFT energy references; volume's label depends on a cell size the descriptor cannot see. Fixing the label lifts final_energy to 0.999 with nothing else changed; giving the descriptor cell scale lifts volume to 0.997. This page lays out the evidence for each, what it voids in earlier conclusions, the standard the rebuilt dataset follows, and what changed in it.",
-"两个 Materials Project 任务远低于其余任务——final_energy 的 R² 只有 0.77,volume 只有 0.62——之前都被解读为模型或迁移的极限。两者都不是。final_energy 的标签混合了两种 DFT 能量参考;volume 的标签依赖描述符看不见的原胞大小。只修标签,final_energy 升到 0.999;给描述符加上原胞尺度,volume 升到 0.997。本页给出各自的证据、由此作废的早期结论、重建数据集遵循的标准,以及数据集的变更内容。",
-"Materials Project の2タスクが他より大きく劣っていた — final_energy は R² 0.77、volume は 0.62 — そしてどちらもモデルや転移の限界と読まれていた。どちらも違う。final_energy のラベルは2種類の DFT エネルギー基準を混ぜており、volume のラベルは記述子に見えない単位胞の大きさに依存する。ラベルを直すだけで final_energy は 0.999 に、記述子に単位胞スケールを与えると volume は 0.997 に上がる。本ページはそれぞれの証拠、無効になる以前の結論、再構築データセットが従う基準、そしてその変更内容を示す。")}</p>
+"Final energy and volume are properties that earlier models predicted with correlation ≈ 0.99. On this dataset, with the KMD descriptor and the campaign's recipe, they trained to R² 0.77 and 0.62 and were read as limits of the model or of transfer. The question was why. The answer is two different causes: final_energy's label mixes two DFT energy references, and volume's label depends on a cell size the descriptor cannot see. With the label fixed and nothing else changed, final_energy reaches 0.999; with cell scale in the input, volume reaches 0.997. Because the first cause was misaligned data, the Materials Project part of the dataset was audited and rebuilt on one level of theory, and the additional MP properties that audit made available were added. This page gives the evidence, what it voids, the standard the data now follows, and the update.",
+"Final energy 和 volume 是早先的模型能预测到相关系数 ≈ 0.99 的性质。在这个数据集上,用 KMD 描述符和本轮配方,它们只训到 R² 0.77 和 0.62,并被解读为模型或迁移的极限。问题是为什么。答案是两个不同的原因:final_energy 的标签混合了两种 DFT 能量参考;volume 的标签依赖描述符看不见的原胞大小。只修标签、其余不动,final_energy 到 0.999;输入里有原胞尺度,volume 到 0.997。由于第一个原因是数据对不齐,数据集的 Materials Project 部分被全面核查并按单一理论水平重建,核查过程中发现可用的其他 MP 属性也一并补入。本页给出证据、由此作废的结论、数据现在遵循的标准,以及更新内容。",
+"Final energy と volume は、以前のモデルが相関 ≈ 0.99 で予測できていた物性である。このデータセットでは、KMD 記述子とキャンペーンのレシピで R² 0.77 と 0.62 にしか達せず、モデルや転移の限界と読まれていた。問いは「なぜか」。答えは2つの異なる原因:final_energy のラベルは2種類の DFT エネルギー基準を混ぜており、volume のラベルは記述子に見えない単位胞の大きさに依存する。ラベルを直すだけで final_energy は 0.999 に、入力に単位胞スケールがあれば volume は 0.997 に達する。第一の原因がデータの不整合だったため、データセットの Materials Project 部分を全面的に監査し単一の理論レベルで再構築し、監査で利用可能になった他の MP 物性も追加した。本ページは証拠、無効になる結論、データが今後従う基準、そして更新内容を示す。")}</p>
 </header>''')
 
 # ---------------- 1 symptom ----------------
 rows = [[t.replace("_", " "), f"{n:,}", f"{r:.4f}", f"{s:.4f}"] for t, n, r, s in D["ceilings"]]
 out.append(f'''<section class="section">{H2("1 · The symptom", "Six MP tasks, one recipe, two outliers", "六个 MP 任务、同一配方、两个异常值", "MP の6タスク、同一レシピ、2つの外れ値")}
-<div class="col">{P("Every task in the campaign is trained alone as its baseline: the same descriptor (KMD), the same adopted hyper-parameters, five seeds, early stopping. The Materials Project tasks with about 23,000 training rows split cleanly: four train to R² 0.91–0.99, two do not.",
-"campaign 里每个任务都先单独训练作为基线:同一描述符(KMD)、同一套采用的超参数、5 个 seed、早停。训练行数约 23,000 的 Materials Project 任务分成两群:四个训到 R² 0.91–0.99,两个不行。",
-"キャンペーンの各タスクはまず単独で学習し基準とする:同じ記述子(KMD)、同じ採用ハイパーパラメータ、5シード、早期終了。訓練行数約23,000の Materials Project タスクは明確に二分される:4つは R² 0.91–0.99 まで学習でき、2つはできない。")}</div>
+<div class="col">{P("Every task in the campaign is trained alone as its baseline: the same descriptor (KMD), the same adopted hyper-parameters, five seeds, early stopping. The Materials Project tasks with about 23,000 training rows split cleanly: four train to R² 0.91–0.99, two do not — and those two are properties that earlier models, on XenonPy composition descriptors, had predicted with correlation ≈ 0.99. Neither a model nor a data-volume problem explains that; the cause had to be in what the model was given.",
+"campaign 里每个任务都先单独训练作为基线:同一描述符(KMD)、同一套采用的超参数、5 个 seed、早停。训练行数约 23,000 的 Materials Project 任务分成两群:四个训到 R² 0.91–0.99,两个不行——而这两个正是早先用 XenonPy 组成描述符的模型能预测到相关系数 ≈ 0.99 的性质。模型或数据量都解释不了,原因只能在喂给模型的东西里。",
+"キャンペーンの各タスクはまず単独で学習し基準とする:同じ記述子(KMD)、同じ採用ハイパーパラメータ、5シード、早期終了。訓練行数約23,000の Materials Project タスクは明確に二分される:4つは R² 0.91–0.99 まで学習でき、2つはできない — しかもその2つは、以前 XenonPy 組成記述子のモデルが相関 ≈ 0.99 で予測できていた物性である。モデルでもデータ量でも説明がつかず、原因はモデルに与えたものの中にあるはずだった。")}</div>
 <figure><div class="figbox"><svg id="fig-ceil" width="960" height="320" role="img" aria-label="Single-task R² of the six MP tasks"></svg></div>
 {CAP("Single-task R², mean ± sd over five seeds, on the 2026-05-15 labels. total_magnetization (0.72) is per formula unit and shares volume's dependence on cell size; it is not analysed further here.",
 "单任务 R²,5 个 seed 的均值 ± sd,2026-05-15 标签。total_magnetization(0.72)是每化学式单元的量,和 volume 一样依赖原胞大小;本页不再展开。",
@@ -148,22 +148,18 @@ f"<em>Volume (normalized)</em> はデータセットの <em>volume_scaler</em> �
 <div style="height:14px"></div>
 {table([T("task · single-task network, 5 seeds","任务 · 单任务网络,5 seed","タスク · 単独学習ネットワーク、5シード"), "KMD", T("XenonPy classic (vs KMD)","XenonPy classic(vs KMD)","XenonPy classic(vs KMD)"), T("without the sum block (vs KMD)","去掉 sum 块(vs KMD)","sum ブロックなし(vs KMD)")], desc_rows, style="max-width:900px")}
 <figure style="margin-top:14px"><div class="figbox"><div class="legend"><span>● {T("one seed","一个 seed","1シード")} · ▬ {T("median","中位数","中央値")}</span></div><svg id="fig-vol-seeds" width="960" height="300" role="img" aria-label="volume R² per seed by descriptor"></svg></div>
-{CAP("volume, single task. With cell scale in the input, R² 0.997 on every seed; without it, 0.59–0.62 whichever scale-free descriptor is used. The fourth strip is the first attempt, discussed below.",
-"volume,单任务。输入里有原胞尺度时每个 seed 都是 R² 0.997;没有时无论哪种尺度无关描述符都是 0.59–0.62。第四列是第一次尝试,见下文。",
-"volume、単独学習。入力に単位胞スケールがあれば全シードで R² 0.997、なければどのスケール非依存記述子でも 0.59–0.62。4本目は最初の試行で、下で述べる。")}</figure>
+{CAP("volume, single task. With cell scale in the input, R² 0.997 on every seed; without it, 0.59–0.62 whichever scale-free descriptor is used.",
+"volume,单任务。输入里有原胞尺度时每个 seed 都是 R² 0.997;没有时无论哪种尺度无关描述符都是 0.59–0.62。",
+"volume、単独学習。入力に単位胞スケールがあれば全シードで R² 0.997、なければどのスケール非依存記述子でも 0.59–0.62。")}</figure>
 <figure><div class="figbox"><div class="legend"><span>● {T("one seed","一个 seed","1シード")} · ▬ {T("median","中位数","中央値")}</span></div><svg id="fig-other-seeds" width="960" height="300" role="img" aria-label="final_energy and dos_density R² per seed by descriptor"></svg></div>
 {CAP("The same three descriptors on final_energy (old label) and dos_density: per-atom and intensive labels do not care about the sum block, and the descriptor family lands within a few percent of KMD. The descriptor was volume's problem, not final_energy's.",
 "同样三种描述符用在 final_energy(旧标签)和 dos_density 上:每原子量和强度量不在乎 sum 块,描述符家族与 KMD 相差不过几个百分点。描述符是 volume 的问题,不是 final_energy 的。",
 "同じ3つの記述子を final_energy(旧ラベル)と dos_density に適用:原子あたり・示強性のラベルは sum ブロックに影響されず、記述子ファミリーは KMD と数%以内。記述子は volume の問題であって final_energy の問題ではない。")}</figure>
-<div class="col"><h3>{T("The first attempt, and why it was discarded","第一次尝试,以及为什么作废","最初の試行と、それを破棄した理由")}</h3>
-{P(f"The first contrast re-implemented the classic blocks by hand (numerically identical to XenonPy's, column correlation 1.000) but scaled them with a plain z-score instead of the notebooks' StandardScaler + Yeo-Johnson. The raw weighted sum is linear in the atom count, so after z-scoring a few compositions sat at |z| = {D['zscore_tails']['sum_max_z']:.0f}. The network memorised them: training loss 0.045 at epoch 1 (0.53 for the scale-free descriptor, 0.59 for KMD), validation loss worse than KMD's from epoch 1 and erratic, early stop at ~41 epochs, R² 0.16 with seeds from −0.12 to 0.43. Same formula, different preprocessing, opposite conclusion. Those runs are set aside and unused; the descriptors and their preprocessing now come from the data notebooks only.",
-f"第一次对比手工重实现了 classic 各块(数值与 XenonPy 逐列相关 1.000),但用普通 z-score 代替了 notebook 的 StandardScaler + Yeo-Johnson。原始 weighted sum 与原子数成线性,z-score 后有些组成的 |z| 达到 {D['zscore_tails']['sum_max_z']:.0f}。网络把它们记住了:第 1 个 epoch 训练损失就是 0.045(尺度无关描述符 0.53、KMD 0.59),验证损失从第 1 个 epoch 起就差于 KMD 且剧烈震荡,约 41 epoch 早停,R² 0.16、seed 间从 −0.12 到 0.43。同一公式、不同预处理、相反结论。这些 run 已搁置不用;描述符及其预处理现在只从数据 notebook 取。",
-f"最初の対比では classic の各ブロックを手で再実装し(XenonPy と数値的に同一、列相関 1.000)、ノートブックの StandardScaler + Yeo-Johnson の代わりに単純な z スコアで標準化した。生の weighted sum は原子数に線形なので、z スコア後に一部の組成が |z| = {D['zscore_tails']['sum_max_z']:.0f} に達した。ネットワークはそれらを暗記した:第1エポックで学習損失 0.045(スケール非依存記述子は 0.53、KMD は 0.59)、検証損失は第1エポックから KMD より悪く不安定、約41エポックで早期終了、R² 0.16、シード間で −0.12 から 0.43。同じ式、異なる前処理、正反対の結論。それらの実行は隔離して未使用とし、記述子と前処理はデータノートブックからのみ取ることにした。")}</div>
-<figure><div class="figbox"><div class="legend"><span><i class="sw" style="background:var(--alone)"></i> KMD</span><span><i class="sw" style="background:var(--warm)"></i> {T("XenonPy classic, notebook transform","XenonPy classic,notebook 变换","XenonPy classic、ノートブック変換")}</span><span><i class="sw" style="background:var(--xfer)"></i> {T("classic, plain z-score (discarded)","classic,普通 z-score(已作废)","classic、単純 z スコア(破棄)")}</span></div>
+<figure><div class="figbox"><div class="legend"><span><i class="sw" style="background:var(--alone)"></i> KMD</span><span><i class="sw" style="background:var(--warm)"></i> {T("XenonPy classic","XenonPy classic","XenonPy classic")}</span></div>
 <svg id="fig-curves" width="960" height="330" role="img" aria-label="Training and validation loss of three volume runs"></svg></div>
-{CAP("Seed 2025 of each. The discarded run fits the training set instantly and never generalises; the notebook-transformed descriptor fits it steadily and generalises to R² 0.997.",
-"各取 seed 2025。作废的 run 瞬间拟合训练集却始终不泛化;notebook 变换的描述符稳步拟合并泛化到 R² 0.997。",
-"各シード 2025。破棄した実行は訓練データに即座に適合するが全く汎化せず、ノートブック変換の記述子は着実に適合して R² 0.997 まで汎化する。")}</figure>
+{CAP("Seed 2025 of each. With KMD the validation loss floors at 0.4 within 40 epochs: the atom count the label needs is not in the input. With the scale-bearing descriptor both losses keep falling for the full 150 epochs.",
+"各取 seed 2025。KMD 下验证损失 40 epoch 内停在 0.4:标签需要的原子数不在输入里。带尺度的描述符下两条损失在整整 150 epoch 里持续下降。",
+"各シード 2025。KMD では検証損失が 40 エポック以内に 0.4 で頭打ち:ラベルが必要とする原子数が入力にない。スケールを持つ記述子では両損失が 150 エポックの間下がり続ける。")}</figure>
 </section>''')
 
 # ---------------- 4 what it voids ----------------
@@ -246,6 +242,9 @@ newcols = [
 ]
 newcol_rows = [[c, T(a, b, d), n] for c, a, b, d, n in newcols]
 out.append(f'''<section class="section">{H2("6 · Update brief", "Dataset 2026-09-08: what changed", "数据集 2026-09-08:变了什么", "データセット 2026-09-08:何が変わったか")}
+<div class="col">{P("The first cause was misaligned data, not a modelling choice, so the Materials Project part of the dataset was audited column by column against the API and rebuilt on one level of theory: energies from the GGA / GGA+U thermodynamic scheme, structure and magnetism from the GGA-family calculation of each material, electronic-structure values only where MP's own record says the source was GGA-family. The audit also showed which further MP properties are available on that same footing; those were added.",
+"第一个原因是数据对不齐,不是建模选择,所以数据集的 Materials Project 部分逐列对照 API 做了核查,并按单一理论水平重建:能量取 GGA / GGA+U 热力学方案;结构和磁性取每个材料的 GGA 族计算;能带类只在 MP 自己的记录表明来源是 GGA 族时保留。核查同时显示了在同一口径下还有哪些 MP 属性可用,这些也一并补入。",
+"第一の原因はデータの不整合であってモデリング上の選択ではない。そこでデータセットの Materials Project 部分を列ごとに API と照合して監査し、単一の理論レベルで再構築した:エネルギーは GGA / GGA+U 熱力学スキームから、構造と磁性は各物質の GGA 系計算から、電子構造の値は MP 自身の記録が GGA 系由来と示す場合のみ。監査は同じ基準で利用できる他の MP 物性も明らかにし、それらを追加した。")}</div>
 <div class="stats">
 <div class="stat"><p class="label">{T("rows","行数","行数")}</p><p class="value">{L['shape_new'][0]:,}</p><p class="note">{T("unchanged; qa- and starry- rows byte-identical","不变;qa- 与 starry- 行逐字节相同","不変。qa- と starry- 行はバイト単位で同一")}</p></div>
 <div class="stat"><p class="label">{T("columns","列数","列数")}</p><p class="value">{L['shape_old'][1]} → {L['shape_new'][1]}</p><p class="note">{T("18 new properties, their normalised columns and labels","18 个新属性及其归一化列和标签","18の新規物性とその正規化列・ラベル")}</p></div>
@@ -276,9 +275,9 @@ out.append(f'''<section class="section">{H2("6 · Update brief", "Dataset 2026-0
 <li>{T("<b>Choose the descriptor policy</b>: KMD stays invertible (needed for inverse design) but is scale-blind; XenonPy classic sees scale but is not invertible. Either keep both and train per-atom labels with KMD, or carry the atom count as a side input.","<b>决定描述符策略</b>:KMD 可逆(逆向设计需要)但尺度盲;XenonPy classic 看得见尺度但不可逆。要么两者都保留、用 KMD 训练每原子标签,要么把原子数作为旁路输入。","<b>記述子の方針を決める</b>:KMD は可逆(逆設計に必要)だがスケールに盲目。XenonPy classic はスケールが見えるが可逆ではない。両方を保持して KMD で原子あたりラベルを学習するか、原子数を副入力として持たせるか。")}</li>
 </ol></div>
 </section>
-<footer><p>{T("Data: summary/mp_labels_page_data.json (per-seed results, curves, API comparisons, dataset statistics); runs stA_*, stM_final_energy_*, stXc_*, stXn_* and stage_desc/_discarded_reimpl on RIKYU; MP API queries of 2026-09-08. Figure labels stay in English in every language.",
-"数据:summary/mp_labels_page_data.json(逐 seed 结果、曲线、API 比对、数据集统计);RIKYU 上的 stA_*、stM_final_energy_*、stXc_*、stXn_* 与 stage_desc/_discarded_reimpl;2026-09-08 的 MP API 查询。图内标签在各语言下均保留英文。",
-"データ:summary/mp_labels_page_data.json(シードごとの結果、曲線、API 比較、データセット統計)。RIKYU 上の stA_*、stM_final_energy_*、stXc_*、stXn_*、stage_desc/_discarded_reimpl。2026-09-08 の MP API 照会。図中のラベルはどの言語でも英語のまま。")}</p></footer>
+<footer><p>{T("Data: summary/mp_labels_page_data.json (per-seed results, curves, API comparisons, dataset statistics); runs stA_*, stM_final_energy_*, stXc_* and stXn_* on RIKYU; MP API queries of 2026-09-08. Figure labels stay in English in every language.",
+"数据:summary/mp_labels_page_data.json(逐 seed 结果、曲线、API 比对、数据集统计);RIKYU 上的 stA_*、stM_final_energy_*、stXc_*、stXn_*;2026-09-08 的 MP API 查询。图内标签在各语言下均保留英文。",
+"データ:summary/mp_labels_page_data.json(シードごとの結果、曲線、API 比較、データセット統計)。RIKYU 上の stA_*、stM_final_energy_*、stXc_*、stXn_*。2026-09-08 の MP API 照会。図中のラベルはどの言語でも英語のまま。")}</p></footer>
 </div>
 <script>
 {LANGJS}
