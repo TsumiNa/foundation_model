@@ -193,6 +193,7 @@ library has never been measured**, and the nearest evidence runs against it.
 | Transferability summary page (trilingual EN / 中 / 日, **in git**) | `summary_page/gen_page.py` + `page.js` → `summary_page/transferability_summary.html`; published as a claude.ai artifact |
 | Per-run scores behind that page's figures | `summary/position_runs.json` (four tasks × 240 runs), `summary/rep_raw.json` |
 | Budget / optimisation checks (experiments 6–7) | `summary/long_budget.json` |
+| Labels page (trilingual, **in git**) | `summary_page/gen_labels_page.py` + `labels_page.js` → `summary_page/mp_labels_summary.html`; data `summary/mp_labels_page_data.json`, `summary/baselines_mp2026.json`, `summary/space_group_classes.json` |
 | Descriptor contrast (experiment 8) | `summary/descriptor.json`; tables `data/desc_xenonpy_{classic,nosum}_trans.parquet` (gitignored, rebuilt by `scripts/make_comp_descriptors.py`) |
 
 **The report and figures are not in git** (`experiments/**/results/` is ignored) and travel by rsync
@@ -292,7 +293,7 @@ converts into score. So material_type's path to a gain **structurally cannot tra
    pretrained encoder fits the training set faster and more completely and generalises worse — a
    generalisation gap, not a budget gap. This makes experiment 1 (cell scale in the descriptor)
    the decisive one rather than a longer schedule.
-7. **Optimisation or representation?** — **done (2026-09-08, jobs 85797 / 85798): the
+7. **Optimisation or representation?** — **done (2026-09-12, jobs 85797 / 85798): the
    representation.** Two arms on the same three tasks, scored by `analysis/long_budget.py`:
    - `stC_<task>_s<seed>` — alone, 500 epochs, early stopping off, scheduler patience 100000 so the
      learning rate never decays. R² 0.7495 / 0.6121 / 0.6307
@@ -312,7 +313,7 @@ converts into score. So material_type's path to a gain **structurally cannot tra
    fresh one and generalises worse on exactly the labels that depend on cell scale. What remains to
    separate is exposure at step 24 from the pretrained representation itself — the unseen arms
    (stage_xu → ftzu / ftfu) do that — and whether the descriptor is the reason, which is experiment 8.
-8. **Descriptor contrast on the extensive properties** — **done (2026-09-08, jobs 86328 / 86329).**
+8. **Descriptor contrast on the extensive properties** — **done (2026-09-12, jobs 86328 / 86329).**
    Single task, the stage_single recipe, 5 seeds, three tasks. The descriptors are the ones
    `data/data/scripts/calculate_compositional_desc.ipynb` produced — XenonPy
    `Compositions(featurizers="classic")` (weighted sum / average / variance / max / min, 290 columns)
@@ -351,15 +352,15 @@ converts into score. So material_type's path to a gain **structurally cannot tra
      run directories sit in `stage_desc/_discarded_reimpl/` and are not used anywhere. Lesson kept
      in the working notes: descriptors and preprocessing come from the data notebooks, never
      re-implemented.
-9. **The final_energy label itself, traced to its source** — **done (2026-09-08).** With the user's
+9. **The final_energy label itself, traced to its source** — **done (2026-09-12).** With the user's
    temporary MP API key the column was traced to `summary.energy_per_atom`, which in today's
    Materials Project is the GGA / GGA+U / r2SCAN *mixed* thermo scheme: ~20% of entries carry an
    r2SCAN total energy tens of eV below the GGA one (Pt −51.5 vs −6.1, Au −50.6 vs −3.3), so the
    column mixed two energy references. The 2025-04-10 export copied it faithfully — no collection bug.
    The same mixing sits behind `formation_energy_per_atom`, and the summary's structure and magnetism
    come from r2SCAN tasks for ~23k of the 33.8k entries. The dataset was rebuilt on GGA / GGA+U only
-   (`data/qc_ac_te_mp_dos_reformat_20260908.pd.parquet`, script
-   `data/data/scripts/rebuild_mp_gga_20260908.py`, details in `..._CHANGES.md`), with per-cell values
+   (`data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet`, script
+   `data/data/scripts/rebuild_mp_gga_20260912.py`, details in `..._CHANGES.md`), with per-cell values
    rescaled to the dataset's cell, electronic-structure values kept only where MP's own origin task is
    GGA-family, and the extra MP properties added (band gap and its labels, per-atom volume, per-volume
    magnetisation, magnetic ordering, elastic, dielectric + refractive index, piezoelectric maxima).
@@ -369,7 +370,21 @@ converts into score. So material_type's path to a gain **structurally cannot tra
    final_energy, was a label artefact. Every stage of this campaign used the old dataset; volume,
    final_energy, formation_energy, density, total_magnetization, efermi and band gap have different
    labels in the new file, so their verdicts are not comparable across versions and the affected
-   stages have to be re-run on the 2026-09-08 dataset before anything more is concluded about them.
+   stages have to be re-run on the 2026-09-12 dataset before anything more is concluded about them.
+10. **Single-task baselines on the 2026-09-12 dataset** — **done (jobs 87957, 88115; `stage_single_mp2026`,
+   `stN_*`, 130 runs)**: the nine relabelled MP tasks and the seventeen added properties (band gap, CBM,
+   VBM, is-metal, is-gap-direct, per-atom volume, magnetisation per volume / per f.u., magnetic
+   ordering, reaction energy, bulk / shear modulus, Poisson ratio, anisotropy, refractive index,
+   piezoelectric maximum, space group), five seeds, the stage_single recipe, scored by
+   `analysis/baselines_mp2026.py` → `summary/baselines_mp2026.json`. final_energy 0.9986, formation
+   0.9963, density 0.9903, efermi 0.9271, dielectric_electronic 0.9091; volume 0.6058 with KMD while
+   its per-atom form reaches 0.9786; magnetisation 0.72–0.74 in every form, magnetic ordering macro-F1
+   0.556; band gap 0.883, CBM 0.881, VBM 0.923, is-metal 0.927, bulk modulus 0.928, shear 0.790,
+   refractive index 0.893; Poisson 0.313, anisotropy 0.354, reaction energy 0.342, piezoelectric 0.010;
+   space group (151 classes, ≥ 10 rows and a row in both splits, rarer groups missing like any other
+   task's NaN) macro-F1 0.202 / accuracy 0.241 — only high-symmetry families are recognisable from
+   composition. Configs `probe6_mp2026.toml` (41 tasks, dataset 20260912), grids `grid_singlen.txt`,
+   `grid_singlesg.txt`. Presented in `summary_page/mp_labels_summary.html` §7–8.
 
 ### What can and cannot be said now
 
@@ -379,7 +394,7 @@ converts into score. So material_type's path to a gain **structurally cannot tra
   12 of 24 tasks.
 - "final_energy is hard" cannot be said: on the GGA-only label it trains to R² 0.9986 alone. Its −9.1%
   warm-start loss, its position curve and its ledger were measured on the mixed-scheme label and are
-  void until re-measured on the 2026-09-08 dataset.
+  void until re-measured on the 2026-09-12 dataset.
 - "The extensive-property losses would close with more training" cannot be said: at 500 epochs
   without early stopping warm-start is still 10–16% below the same-budget single-task control, with
   a lower training loss and a higher validation loss than that control.

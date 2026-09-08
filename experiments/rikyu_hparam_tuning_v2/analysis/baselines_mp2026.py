@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single-task baselines on the 2026-09-08 dataset — summary/baselines_mp2026.json
+"""Single-task baselines on the 2026-09-12 dataset — summary/baselines_mp2026.json
 
 The nine Materials Project tasks whose labels changed in the rebuild and the sixteen properties added
 with it, each trained alone with the stage_single recipe (probe6_mp2026.toml + the adopted values,
@@ -25,8 +25,10 @@ UPDATED = ["final_energy", "formation_energy", "volume", "density", "total_magne
            "dielectric_total", "dielectric_ionic", "dielectric_electronic"]
 NEW = ["band_gap", "density_atomic", "magnetization_per_volume", "magnetization_per_fu", "reaction_energy",
        "cbm", "vbm", "bulk_modulus", "shear_modulus", "poisson_ratio", "universal_anisotropy",
-       "refractive_index", "piezoelectric_max", "magnetic_ordering", "is_metal", "is_gap_direct"]
-CLASSIFICATION = {"magnetic_ordering": ["AFM", "FM", "FiM", "NM"], "is_metal": ["no", "yes"], "is_gap_direct": ["no", "yes"]}
+       "refractive_index", "piezoelectric_max", "magnetic_ordering", "is_metal", "is_gap_direct", "space_group"]
+CLASSIFICATION = {"magnetic_ordering": ["AFM", "FM", "FiM", "NM"], "is_metal": ["no", "yes"], "is_gap_direct": ["no", "yes"], "space_group": None}
+SPACE_GROUP_CLASSES = Path(__file__).resolve().parents[1] / "summary" / "space_group_classes.json"
+TOP_K = 12   # classes shown individually in the space-group confusion matrix; the rest fold into "other"
 SEED_FOR_PREDS = 2025
 
 
@@ -73,7 +75,11 @@ def main() -> None:
         else:
             row["macro_f1"] = stats([s["macro_f1"] for s in per_seed if s["macro_f1"] is not None])
             row["accuracy"] = stats([s["accuracy"] for s in per_seed if s["accuracy"] is not None])
-            row["classes"] = CLASSIFICATION[task]
+            if task == "space_group":
+                sg = json.loads(SPACE_GROUP_CLASSES.read_text())
+                row["classes"] = sg["classes"]; row["class_counts"] = sg["counts"]
+            else:
+                row["classes"] = CLASSIFICATION[task]
         if args.preds:
             import numpy as np
             import pandas as pd
@@ -90,12 +96,28 @@ def main() -> None:
                                       "n": int(len(t)), "r2_seed": float(1 - ((t - p) ** 2).sum() / ((t - t.mean()) ** 2).sum())}
                 else:
                     t, p = df["true"].to_numpy(int), df["pred"].to_numpy(int)
-                    k = len(CLASSIFICATION[task])
-                    cm = [[int(((t == i) & (p == j)).sum()) for j in range(k)] for i in range(k)]
-                    row["confusion"] = {"matrix": cm, "n": int(len(t))}
+                    classes = row["classes"]; k = len(classes)
+                    if task == "space_group":
+                        # per-class precision / recall / F1 over all classes, and a confusion over the TOP_K most
+                        # common classes with everything else folded into "other"
+                        per = []
+                        for c in range(k):
+                            tp = int(((t == c) & (p == c)).sum()); fn = int(((t == c) & (p != c)).sum()); fp = int(((t != c) & (p == c)).sum())
+                            rec = tp / (tp + fn) if tp + fn else None; prec = tp / (tp + fp) if tp + fp else None
+                            f1 = (2 * prec * rec / (prec + rec)) if prec and rec else 0.0
+                            per.append({"class": classes[c], "n_test": tp + fn, "recall": rec, "precision": prec, "f1": f1})
+                        row["per_class"] = per
+                        order = sorted(range(k), key=lambda c: -row["class_counts"][classes[c]])[:TOP_K]
+                        fold = lambda x: order.index(x) if x in order else TOP_K
+                        tf, pf = [fold(x) for x in t], [fold(x) for x in p]
+                        cm = [[sum(1 for a, b in zip(tf, pf) if a == i and b == j) for j in range(TOP_K + 1)] for i in range(TOP_K + 1)]
+                        row["confusion_top"] = {"matrix": cm, "labels": [classes[c] for c in order] + ["other"], "n": int(len(t))}
+                    else:
+                        cm = [[int(((t == i) & (p == j)).sum()) for j in range(k)] for i in range(k)]
+                        row["confusion"] = {"matrix": cm, "n": int(len(t))}
         rows.append(row)
 
-    out = {"question": "single-task baselines on the 2026-09-08 dataset: the nine relabelled tasks and the sixteen added properties",
+    out = {"question": "single-task baselines on the 2026-09-12 dataset: the nine relabelled tasks and the sixteen added properties",
            "recipe": "probe6_mp2026.toml + adopted values via --set, KMD, five seeds, early stopping, last-epoch weights",
            "per_task": rows}
     args.out.parent.mkdir(parents=True, exist_ok=True)

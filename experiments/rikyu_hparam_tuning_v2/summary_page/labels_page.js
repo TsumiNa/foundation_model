@@ -157,6 +157,34 @@ function draw(){
         txt(svg,x0+cell*k+8,y0+cell*a+cell/2+4,tot.toLocaleString(),"axis",{fill:cMuted});});
       if(i===0)txt(svg,x0,y0+cell*k+24,"rows = true class · % of the row · count · right: row total","axis",{fill:cMuted});});
   })();}catch(e){console.error("fig-cm failed",e);}
+
+  // ---- fig-sg: space-group confusion over the most common groups ----
+  try{(function(){const svg=document.getElementById("fig-sg");if(!svg||!D.baselines)return;svg.textContent="";
+    const r=D.baselines.per_task.find(x=>x.task==="space_group"&&x.confusion_top); if(!r){svg.setAttribute("height",40);return;}
+    const M=r.confusion_top.matrix,L=r.confusion_top.labels,k=L.length,cell=38,x0=170,y0=130; const W=960,H=y0+cell*k+50; size(svg,W,H);
+    txt(svg,x0,y0-108,"space group · macro-F1 "+r.macro_f1.mean.toFixed(3)+" · accuracy "+r.accuracy.mean.toFixed(3)+" · "+r.classes.length+" classes","lab",{fill:cInk});
+    txt(svg,x0+cell*k/2,y0-90,"predicted →","axis",{"text-anchor":"middle",fill:cMuted});
+    L.forEach((c,jx)=>{const t=txt(svg,x0+cell*jx+cell/2+4,y0-8,c,"axis",{"text-anchor":"start","font-size":"11.5"});t.setAttribute("transform",`rotate(-60 ${x0+cell*jx+cell/2+4} ${y0-8})`);txt(svg,x0-8,y0+cell*jx+cell/2+4,c,"axis",{"text-anchor":"end"});});
+    M.forEach((row,a)=>{const tot=row.reduce((s,v)=>s+v,0);row.forEach((v,b)=>{const f=tot?v/tot:0;
+      svg.appendChild(el("rect",{x:x0+cell*b+1,y:y0+cell*a+1,width:cell-2,height:cell-2,rx:2,fill:a===b?C.warm:C.xfer,opacity:f>0?0.08+0.55*Math.sqrt(f):0.03}));
+      if(f>=0.02)txt(svg,x0+cell*b+cell/2,y0+cell*a+cell/2+4,(f*100).toFixed(0),"axis",{"text-anchor":"middle",fill:cInk,"font-size":"11"});});
+      txt(svg,x0+cell*k+8,y0+cell*a+cell/2+4,tot.toLocaleString(),"axis",{fill:cMuted});});
+    txt(svg,x0,y0+cell*k+30,"rows = true group · cell = % of the row (shown when ≥ 2%) · right: row total","axis",{fill:cMuted});
+  })();}catch(e){console.error("fig-sg failed",e);}
+
+  // ---- fig-sg-f1: per-class F1 against class size ----
+  try{(function(){const svg=document.getElementById("fig-sg-f1");if(!svg||!D.baselines)return;svg.textContent="";
+    const r=D.baselines.per_task.find(x=>x.task==="space_group"&&x.per_class); if(!r){svg.setAttribute("height",40);return;}
+    const pts=r.per_class.map(c=>({n:r.class_counts[c.class],f1:c.f1,cls:c.class})).filter(p=>p.n>0);
+    const W=960,H=330,m={t:36,r:30,b:56,l:70}; size(svg,W,H); const iw=W-m.l-m.r,ih=H-m.t-m.b;
+    const lo=1,hi=Math.log10(Math.max(...pts.map(p=>p.n))*1.2); const X=n=>m.l+(Math.log10(n)-lo)/(hi-lo)*iw, Y=f=>m.t+ih-f*ih;
+    for(let f=0;f<=1.001;f+=0.25){svg.appendChild(el("line",{x1:m.l,x2:m.l+iw,y1:Y(f),y2:Y(f),stroke:cSoft}));txt(svg,m.l-10,Y(f)+4,f.toFixed(2),"axis",{"text-anchor":"end"});}
+    [10,30,100,300,1000,3000].forEach(n=>{if(Math.log10(n)<=hi){svg.appendChild(el("line",{x1:X(n),x2:X(n),y1:m.t,y2:m.t+ih,stroke:cSoft}));txt(svg,X(n),m.t+ih+18,n.toLocaleString(),"axis",{"text-anchor":"middle"});}});
+    pts.forEach(p=>{svg.appendChild(el("circle",{cx:X(p.n),cy:Y(p.f1),r:4.5,fill:C.frz,opacity:.7}));});
+    pts.filter(p=>p.n>=800).forEach(p=>txt(svg,X(p.n)+7,Y(p.f1)-6,p.cls,"val",{fill:C.frz}));
+    svg.appendChild(el("line",{x1:m.l,x2:m.l+iw,y1:m.t+ih,y2:m.t+ih,stroke:cRule}));
+    txt(svg,m.l,m.t-16,"F1 of each space group (seed 2025) against the group's number of entries","axis"); txt(svg,m.l+iw/2,H-8,"entries in the group (log scale)","axis",{"text-anchor":"middle"});
+  })();}catch(e){console.error("fig-sg-f1 failed",e);}
 }
 draw();
 document.querySelectorAll("svg").forEach(s=>{const w=+s.getAttribute("width"),h=+s.getAttribute("height");if(w&&h&&!s.getAttribute("viewBox")){s.setAttribute("viewBox",`0 0 ${w} ${h}`);s.style.width="100%";s.style.maxWidth=Math.round(w*1.4)+"px";s.style.height="auto";}});

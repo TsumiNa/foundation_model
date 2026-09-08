@@ -142,6 +142,7 @@ case "$STAGE" in
     # Single-task baselines on the 2026-09-08 dataset: the 9 tasks whose labels changed and the 16 added
     # Materials Project properties, 5 seeds each, the stage_single recipe.
     singlen)    CONFIG=probe6_mp2026.toml;        OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
+    singlesg)   CONFIG=probe6_mp2026.toml;        OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;   # space_group, 125 classes, 5 seeds
     *) echo "unknown stage '$STAGE'" >&2; exit 2 ;;
 esac
 TIME=${TIME:-$DEFTIME}

@@ -3,7 +3,7 @@
 
 The page records why final_energy (R² 0.77) and volume (0.62) sat far below every other Materials
 Project task, with the evidence for each cause, what it voids in the transfer conclusions, the standard
-the rebuilt dataset follows, and the update brief for the 2026-09-08 dataset. English is the source
+the rebuilt dataset follows, and the update brief for the 2026-09-12 dataset. English is the source
 text; Chinese and Japanese follow it sentence by sentence behind the switch. Figures are drawn by
 labels_page.js from summary/mp_labels_page_data.json; the stylesheet and language switch are shared
 with the transferability page (extracted into summary_page/_shared_*.html/js).
@@ -58,7 +58,7 @@ out.append("<title>Two Ceilings, Two Causes</title>\n" + STYLE + "\n<style>.tabl
 
 # ---------------- header ----------------
 out.append(f'''<header>
-<p class="eyebrow">{T("Continual multi-task pretraining · Materials Project labels · findings and data update, 2026-09-08","连续多任务预训练 · Materials Project 标签 · 发现与数据更新,2026-09-08","継続的マルチタスク事前学習 · Materials Project ラベル · 知見とデータ更新、2026-09-08")}</p>
+<p class="eyebrow">{T("Continual multi-task pretraining · Materials Project labels · findings and data update, 2026-09-12","连续多任务预训练 · Materials Project 标签 · 发现与数据更新,2026-09-12","継続的マルチタスク事前学習 · Materials Project ラベル · 知見とデータ更新、2026-09-12")}</p>
 <h1>{T("Two easy tasks that would not train","两个本该容易、却训不好的任务","本来容易なのに学習できなかった2つのタスク")}</h1>
 <p class="standfirst">{T(
 "Final energy and volume are properties that earlier models predicted with correlation ≈ 0.99. On this dataset, with the KMD descriptor and the campaign's recipe, they trained to R² 0.77 and 0.62 and were read as limits of the model or of transfer. The question was why. The answer is two different causes: final_energy's label mixes two DFT energy references, and volume's label depends on a cell size the descriptor cannot see. With the label fixed and nothing else changed, final_energy reaches 0.999; with cell scale in the input, volume reaches 0.997. Because the first cause was misaligned data, the Materials Project part of the dataset was audited and rebuilt on one level of theory, and the additional MP properties that audit made available were added. This page gives the evidence, what it voids, the standard the data now follows, and the update.",
@@ -87,12 +87,12 @@ out.append(f'''<section class="section">{H2("2 · final_energy", "The label mixe
 <div class="col">{P("The dataset's <em>Final energy per atom</em> runs from −86.4 to −0.04 eV. A DFT energy per atom on the Materials Project's GGA scale does not go below about −14 eV, and 18.8% of the rows sit below that. Spot checks against known materials show values far off the GGA scale for some elements and on it for others:",
 "数据集里的 <em>Final energy per atom</em> 从 −86.4 到 −0.04 eV。Materials Project 的 GGA 口径下,每原子 DFT 能量不会低于约 −14 eV,而 18.8% 的行低于此值。用已知材料抽查,有的元素远离 GGA 口径,有的又在口径上:",
 "データセットの <em>Final energy per atom</em> は −86.4 から −0.04 eV に広がる。Materials Project の GGA スケールでは原子あたり DFT エネルギーは約 −14 eV を下回らないのに、行の 18.8% がそれより低い。既知物質での抜き取り検査では、GGA スケールから大きく外れる元素もあれば、スケール上にある元素もある:")}</div>
-<figure><div class="figbox"><div class="legend"><span><i class="sw" style="background:var(--warm)"></i> {T("GGA / GGA+U","GGA / GGA+U","GGA / GGA+U")}</span><span><i class="sw" style="background:var(--surface);border:2px solid var(--frz)"></i> r2SCAN</span><span><i class="sw sq" style="background:var(--xfer)"></i> {T("dataset 2026-05-15","数据集 2026-05-15","データセット 2026-05-15")}</span><span><i class="sw" style="background:none;border:1.5px dashed var(--warm)"></i> {T("dataset 2026-09-08","数据集 2026-09-08","データセット 2026-09-08")}</span></div>
+<figure><div class="figbox"><div class="legend"><span><i class="sw" style="background:var(--warm)"></i> {T("GGA / GGA+U","GGA / GGA+U","GGA / GGA+U")}</span><span><i class="sw" style="background:var(--surface);border:2px solid var(--frz)"></i> r2SCAN</span><span><i class="sw sq" style="background:var(--xfer)"></i> {T("dataset 2026-05-15","数据集 2026-05-15","データセット 2026-05-15")}</span><span><i class="sw" style="background:none;border:1.5px dashed var(--warm)"></i> {T("dataset 2026-09-12","数据集 2026-09-12","データセット 2026-09-12")}</span></div>
 <svg id="fig-probe" width="960" height="360" role="img" aria-label="Energy per atom of six materials under each scheme"></svg></div>
-{CAP("Six materials queried from the Materials Project API on 2026-09-08. The old dataset value (square) sits on the r2SCAN value wherever MP has an r2SCAN calculation, and on the GGA value where it does not (NaCl). The rebuilt dataset (dashed ring) sits on GGA / GGA+U for all of them.",
-"2026-09-08 从 Materials Project API 查询的六种材料。旧数据集的值(方块)在 MP 有 r2SCAN 计算的地方落在 r2SCAN 值上,没有的地方落在 GGA 值上(NaCl)。重建后的数据集(虚线圈)全部落在 GGA / GGA+U 上。",
-"2026-09-08 に Materials Project API から取得した6物質。旧データセットの値(四角)は MP に r2SCAN 計算がある物質では r2SCAN 値に、ない物質(NaCl)では GGA 値に一致する。再構築データセット(破線の輪)は全て GGA / GGA+U 上にある。")}</figure>
-{table([T("material","材料","物質"), T("GGA / GGA+U","GGA / GGA+U","GGA / GGA+U"), "r2SCAN", T("MP summary (mixed)","MP summary(混合)","MP summary(混合)"), T("dataset 2026-05-15","数据集 2026-05-15","データセット 2026-05-15"), T("dataset 2026-09-08","数据集 2026-09-08","データセット 2026-09-08")], probe_rows, style="max-width:900px")}
+{CAP("Six materials queried from the Materials Project API on 2026-09-12. The old dataset value (square) sits on the r2SCAN value wherever MP has an r2SCAN calculation, and on the GGA value where it does not (NaCl). The rebuilt dataset (dashed ring) sits on GGA / GGA+U for all of them.",
+"2026-09-12 从 Materials Project API 查询的六种材料。旧数据集的值(方块)在 MP 有 r2SCAN 计算的地方落在 r2SCAN 值上,没有的地方落在 GGA 值上(NaCl)。重建后的数据集(虚线圈)全部落在 GGA / GGA+U 上。",
+"2026-09-12 に Materials Project API から取得した6物質。旧データセットの値(四角)は MP に r2SCAN 計算がある物質では r2SCAN 値に、ない物質(NaCl)では GGA 値に一致する。再構築データセット(破線の輪)は全て GGA / GGA+U 上にある。")}</figure>
+{table([T("material","材料","物質"), T("GGA / GGA+U","GGA / GGA+U","GGA / GGA+U"), "r2SCAN", T("MP summary (mixed)","MP summary(混合)","MP summary(混合)"), T("dataset 2026-05-15","数据集 2026-05-15","データセット 2026-05-15"), T("dataset 2026-09-12","数据集 2026-09-12","データセット 2026-09-12")], probe_rows, style="max-width:900px")}
 <div class="col" style="margin-top:18px">{P("The Materials Project's <em>summary.energy_per_atom</em> is its <em>mixed</em> thermodynamic scheme (thermo_type GGA_GGA+U_R2SCAN): where an r2SCAN calculation exists it reports the r2SCAN total energy, whose zero differs from the GGA one by an element-dependent amount. The 2025-04-10 export copied that field faithfully — 89.7% of a random 600 rows are still bit-identical to today's API value — so this is not a collection bug. Over all 33,159 materials that carry both schemes:",
 "Materials Project 的 <em>summary.energy_per_atom</em> 是它的<em>混合</em>热力学方案(thermo_type GGA_GGA+U_R2SCAN):凡是有 r2SCAN 计算的条目就报 r2SCAN 总能,而它的零点与 GGA 相差一个随元素变化的量。2025-04-10 的导出忠实复制了这个字段——随机 600 行里 89.7% 至今与 API 逐位相同——所以不是采集错误。在同时有两种口径的 33,159 个材料上:",
 "Materials Project の <em>summary.energy_per_atom</em> は<em>混合</em>熱力学スキーム(thermo_type GGA_GGA+U_R2SCAN)である:r2SCAN 計算がある項目では r2SCAN 全エネルギーを返し、その零点は GGA と元素依存の量だけ異なる。2025-04-10 のエクスポートはこの欄を忠実に写した — ランダム600行の 89.7% は今日の API 値とビット単位で同一 — つまり収集バグではない。両スキームを持つ 33,159 物質全体では:")}</div>
@@ -163,7 +163,7 @@ f"<em>Volume (normalized)</em> はデータセットの <em>volume_scaler</em> �
 </section>''')
 
 # ---------------- 4 what it voids ----------------
-void_rows = [[t.replace("_", " "), neg(f"{a:+.1f}%"), neg(f"{b:+.1f}%"), neg(f"{c:+.1f}%"), T("void — label / descriptor artefact; re-measure on the 2026-09-08 dataset", "作废——标签 / 描述符假象;在 2026-09-08 数据集上重测", "無効 — ラベル / 記述子の人工物。2026-09-08 データセットで再測定")] for t, a, b, c in D["transfer_void"]]
+void_rows = [[t.replace("_", " "), neg(f"{a:+.1f}%"), neg(f"{b:+.1f}%"), neg(f"{c:+.1f}%"), T("void — label / descriptor artefact; re-measure on the 2026-09-12 dataset", "作废——标签 / 描述符假象;在 2026-09-12 数据集上重测", "無効 — ラベル / 記述子の人工物。2026-09-12 データセットで再測定")] for t, a, b, c in D["transfer_void"]]
 keep_rows = [[t.replace("_", " "), f"{a:+.1f}%", f"{b:+.1f}%", pos(f"{c:+.1f}%"), T("stands — labels unchanged", "成立——标签未变", "有効 — ラベル不変")] for t, a, b, c in D["transfer_keep"]]
 def strip_td(rows):  # cells built with pos()/neg() already carry <td>; wrap plain ones
     out_rows = []
@@ -219,7 +219,106 @@ items = "".join(f"<li><b>{T(a, c, e)}</b> {T(b, d, f)}</li>" for a, b, c, d, e, 
 out.append(f'''<section class="section">{H2("5 · The standard", "How Materials Project data enters the dataset from now on", "从今往后 Materials Project 数据如何进入数据集", "今後 Materials Project データをデータセットに入れる方法")}
 <div class="col plan"><ol class="plan">{items}</ol></div></section>''')
 
-# ---------------- 7 baselines on the rebuilt dataset (only when scored) ----------------
+
+# ---------------- 7 the added properties, explained ----------------
+PROPS = [
+ # (task name, what it is, how Materials Project computes it, unit, our label form)
+ ("band_gap", ("Band gap", "带隙", "バンドギャップ"),
+  ("The energy an electron must gain to jump from the highest filled electronic state to the lowest empty one. Zero for metals; a few eV for insulators; the number that decides whether a material conducts, absorbs visible light, or is transparent.",
+   "电子从最高占据态跳到最低空态所需的能量。金属为零,绝缘体为几 eV;它决定材料导电、吸收可见光还是透明。",
+   "電子が最高占有状態から最低空状態へ跳ぶのに必要なエネルギー。金属ではゼロ、絶縁体では数 eV。導電するか、可視光を吸収するか、透明かを決める量。"),
+  ("From the DFT band structure along high-symmetry lines (GGA / GGA+U). GGA underestimates gaps, typically by 30–50%, consistently across materials.",
+   "由沿高对称线的 DFT 能带结构得到(GGA / GGA+U)。GGA 系统性低估带隙,通常低 30–50%,但材料之间一致。",
+   "高対称線に沿った DFT バンド構造から(GGA / GGA+U)。GGA はギャップを一貫して 30–50% 程度過小評価する。"),
+  "eV", ("regression on the normalised value", "对归一化值做回归", "正規化値の回帰")),
+ ("cbm / vbm", ("Conduction-band minimum / valence-band maximum", "导带底 / 价带顶", "伝導帯下端 / 価電子帯上端"),
+  ("The two band edges themselves: the lowest empty level (CBM) and the highest filled level (VBM). Their difference is the band gap; their absolute positions govern how electrons move across an interface, e.g. in a solar cell or a battery electrode.",
+   "两个能带边缘本身:最低空能级(CBM)和最高占据能级(VBM)。二者之差是带隙;它们的绝对位置决定电子如何跨越界面,例如太阳能电池或电池电极。",
+   "2つのバンド端そのもの:最低空準位(CBM)と最高占有準位(VBM)。差がバンドギャップ、絶対位置は太陽電池や電池電極などの界面での電子の移動を決める。"),
+  ("Eigenvalues of the same GGA band-structure calculation, on the calculation's own energy reference; defined only for materials with a gap (about half of the entries).",
+   "同一 GGA 能带计算的本征值,以该计算自身的能量零点为参考;只对有带隙的材料定义(约一半条目)。",
+   "同じ GGA バンド構造計算の固有値、その計算自身のエネルギー基準。ギャップのある物質(項目の約半数)にのみ定義。"),
+  "eV", ("regression", "回归", "回帰")),
+ ("is_metal · is_gap_direct", ("Metal or not · direct or indirect gap", "是否金属 · 直接 / 间接带隙", "金属か否か · 直接 / 間接ギャップ"),
+  ("Two yes/no facts read off the band structure: whether the gap is zero (a metal), and — for non-metals — whether the band edges sit at the same crystal momentum (a direct gap, which absorbs and emits light efficiently, as in LEDs) or not (indirect, as in silicon).",
+   "从能带结构读出的两个是/否事实:带隙是否为零(金属);对非金属,能带边缘是否位于同一晶体动量(直接带隙,发光吸光高效,如 LED 材料)或不在(间接带隙,如硅)。",
+   "バンド構造から読める2つの yes/no:ギャップがゼロか(金属)、非金属ではバンド端が同じ結晶運動量にあるか(直接ギャップ、LED のように発光・吸光が効率的)否か(間接、シリコンなど)。"),
+  ("Derived from the GGA band structure; is_gap_direct is meaningful only for non-metals.", "由 GGA 能带结构导出;is_gap_direct 只对非金属有意义。", "GGA バンド構造から導出。is_gap_direct は非金属でのみ意味を持つ。"),
+  "—", ("two-class classification", "二分类", "2クラス分類")),
+ ("density_atomic", ("Volume per atom", "每原子体积", "原子あたり体積"),
+  ("The average space one atom occupies in the crystal: cell volume divided by the number of atoms in the cell. Unlike the cell volume it does not depend on how large a cell the database happened to store, so a composition-only model can learn it.",
+   "晶体中平均每个原子占据的空间:原胞体积除以原胞原子数。与原胞体积不同,它不依赖数据库恰好存了多大的原胞,所以只看组成的模型也能学。",
+   "結晶中で1原子が平均して占める空間:単位胞体積を原子数で割ったもの。単位胞体積と違い、データベースがどの大きさの単位胞を保存したかに依存しないので、組成だけのモデルでも学習できる。"),
+  ("From the GGA-relaxed structure of each material.", "来自每个材料的 GGA 弛豫结构。", "各物質の GGA 緩和構造から。"),
+  "Å³ / atom", ("regression", "回归", "回帰")),
+ ("magnetization_per_volume · magnetization_per_fu", ("Magnetisation per volume · per formula unit", "每体积 / 每化学式单元磁化强度", "体積あたり / 化学式単位あたり磁化"),
+  ("The net magnetic moment of the crystal in its calculated ground state, expressed per unit volume (an intensive quantity, comparable across materials) or per formula unit (per Fe₂O₃, per NaCl…). The unit μB, the Bohr magneton, is roughly the moment of one electron's spin.",
+   "晶体在计算基态下的净磁矩,按单位体积表示(强度量,可跨材料比较)或按化学式单元表示(每个 Fe₂O₃、每个 NaCl…)。单位 μB(玻尔磁子)大致是一个电子自旋的磁矩。",
+   "計算された基底状態での結晶の正味磁気モーメントを、単位体積あたり(示強性、物質間で比較可能)または化学式単位あたり(Fe₂O₃ ひとつ、NaCl ひとつ…)で表したもの。単位 μB(ボーア磁子)はおよそ電子スピン1個のモーメント。"),
+  ("Total magnetisation from the OUTCAR of the GGA / GGA+U calculation (collinear spins), divided by the GGA cell volume or by the number of formula units in the dataset's cell.",
+   "取 GGA / GGA+U 计算 OUTCAR 中的总磁化(共线自旋),除以 GGA 原胞体积或数据集原胞里的化学式单元数。",
+   "GGA / GGA+U 計算の OUTCAR の全磁化(共線スピン)を、GGA 単位胞体積またはデータセット単位胞中の化学式単位数で割る。"),
+  "μB / Å³ · μB / f.u.", ("regression", "回归", "回帰")),
+ ("magnetic_ordering", ("Magnetic ordering", "磁序", "磁気秩序"),
+  ("How the atomic moments line up in the calculated ground state: non-magnetic (no moments), ferromagnetic (all parallel, a net moment — the fridge-magnet case), ferrimagnetic (anti-parallel but unequal, a smaller net moment), antiferromagnetic (anti-parallel and cancelling, no net moment).",
+   "计算基态下原子磁矩的排列方式:非磁(无磁矩)、铁磁(全部平行,有净磁矩——冰箱贴那种)、亚铁磁(反平行但不等量,净磁矩较小)、反铁磁(反平行且抵消,无净磁矩)。",
+   "計算基底状態での原子磁気モーメントの並び方:非磁性(モーメントなし)、強磁性(全て平行で正味モーメントあり — 冷蔵庫マグネットの場合)、フェリ磁性(反平行だが不等で小さな正味モーメント)、反強磁性(反平行で打ち消し合い正味モーメントなし)。"),
+  ("pymatgen's collinear magnetic-structure analyser applied to the per-site moments of the GGA / GGA+U calculation.",
+   "把 pymatgen 的共线磁结构分析器作用于 GGA / GGA+U 计算的逐位点磁矩。",
+   "GGA / GGA+U 計算のサイトごとのモーメントに pymatgen の共線磁気構造解析器を適用。"),
+  "—", ("four-class classification (NM 67%, FM 23%, FiM 8%, AFM 2%)", "四分类(NM 67%、FM 23%、FiM 8%、AFM 2%)", "4クラス分類(NM 67%、FM 23%、FiM 8%、AFM 2%)")),
+ ("reaction_energy", ("Equilibrium reaction energy", "平衡反应能", "平衡反応エネルギー"),
+  ("How much energy the compound would release or absorb if it decomposed into the most competitive neighbouring phases — the thermodynamic safety margin of a stable compound. Zero means it sits exactly on the boundary; more negative means more firmly stable.",
+   "化合物分解为最具竞争力的相邻相时释放或吸收的能量——稳定化合物的热力学安全余量。零表示恰在边界上,越负越稳定。",
+   "化合物が最も競合する隣接相へ分解したときに放出・吸収されるエネルギー — 安定化合物の熱力学的な余裕。ゼロはちょうど境界、負が大きいほど安定。"),
+  ("From the GGA / GGA+U convex hull of the chemical system, per atom.", "由该化学体系的 GGA / GGA+U 凸包得到,每原子。", "その化学系の GGA / GGA+U 凸包から、原子あたり。"),
+  "eV / atom", ("regression", "回归", "回帰")),
+ ("bulk_modulus · shear_modulus", ("Bulk modulus · shear modulus", "体模量 · 剪切模量", "体積弾性率 · 剪断弾性率"),
+  ("Two stiffnesses: the bulk modulus is the pressure needed to squeeze the material to a slightly smaller volume; the shear modulus is the stress needed to change its shape without changing its volume. Diamond is stiff (K ≈ 440 GPa), rubber is not.",
+   "两种刚度:体模量是把材料压缩到略小体积所需的压强;剪切模量是改变形状而不改变体积所需的应力。金刚石很硬(K ≈ 440 GPa),橡胶不是。",
+   "2つの剛性:体積弾性率は物質をわずかに小さい体積へ圧縮するのに必要な圧力、剪断弾性率は体積を変えずに形を変えるのに必要な応力。ダイヤモンドは硬く(K ≈ 440 GPa)、ゴムは柔らかい。"),
+  ("Voigt–Reuss–Hill averages of the elastic tensor, computed by deforming the GGA structure in several directions and fitting the stress response.",
+   "弹性张量的 Voigt–Reuss–Hill 平均,通过在几个方向上使 GGA 结构变形并拟合应力响应算得。",
+   "弾性テンソルの Voigt–Reuss–Hill 平均。GGA 構造を複数方向に変形させ応力応答を当てはめて計算。"),
+  "GPa", ("regression", "回归", "回帰")),
+ ("poisson_ratio · universal_anisotropy", ("Poisson ratio · universal anisotropy", "泊松比 · 通用各向异性", "ポアソン比 · 普遍異方性"),
+  ("Poisson's ratio: how much a material narrows when stretched (about 0.3 for most solids, 0.5 for something incompressible like rubber). The universal anisotropy index: how strongly the stiffness depends on direction — 0 for a material that responds the same way in every direction, larger when it does not.",
+   "泊松比:材料被拉伸时横向收窄的程度(多数固体约 0.3,橡胶等不可压缩材料 0.5)。通用各向异性指数:刚度随方向变化的程度——各方向响应相同为 0,越依赖方向越大。",
+   "ポアソン比:引き伸ばしたとき横方向にどれだけ細くなるか(多くの固体で約 0.3、ゴムなど非圧縮性で 0.5)。普遍異方性指数:剛性がどれだけ方向に依存するか — 全方向で同じなら 0、依存が強いほど大きい。"),
+  ("Both derived from the same elastic tensor (Voigt and Reuss bounds).", "两者都由同一弹性张量导出(Voigt 与 Reuss 上下界)。", "どちらも同じ弾性テンソル(Voigt と Reuss の限界)から導出。"),
+  "—", ("regression", "回归", "回帰")),
+ ("refractive_index", ("Refractive index", "折射率", "屈折率"),
+  ("How much light slows down inside the material (glass ≈ 1.5, diamond ≈ 2.4). It is the square root of the electronic part of the dielectric constant, so it is a direct optical property.",
+   "光在材料内部减速的程度(玻璃 ≈ 1.5,金刚石 ≈ 2.4)。它是介电常数电子部分的平方根,是直接的光学性质。",
+   "物質内部で光がどれだけ遅くなるか(ガラス ≈ 1.5、ダイヤモンド ≈ 2.4)。誘電率の電子部分の平方根で、直接的な光学物性。"),
+  ("From the GGA dielectric tensor computed with density-functional perturbation theory (DFPT).", "由密度泛函微扰理论(DFPT)计算的 GGA 介电张量得到。", "密度汎関数摂動理論(DFPT)で計算した GGA 誘電テンソルから。"),
+  "—", ("regression", "回归", "回帰")),
+ ("piezoelectric_max", ("Piezoelectric maximum", "压电最大值", "圧電最大値"),
+  ("How much electric charge appears on the crystal's faces when it is squeezed — the effect behind quartz clocks and ultrasound transducers. Only crystals without a centre of symmetry can be piezoelectric, so few entries have it.",
+   "晶体被挤压时表面出现多少电荷——石英钟和超声换能器背后的效应。只有没有对称中心的晶体才有压电性,所以条目很少。",
+   "結晶を押したとき表面にどれだけ電荷が現れるか — 水晶時計や超音波振動子の原理。対称中心のない結晶だけが圧電性を持つので、該当項目は少ない。"),
+  ("The largest component of the DFPT piezoelectric tensor.", "DFPT 压电张量的最大分量。", "DFPT 圧電テンソルの最大成分。"),
+  "C / m²", ("regression (196 test rows)", "回归(196 个测试行)", "回帰(テスト行 196)")),
+ ("space_group", ("Space group", "空间群", "空間群"),
+  ("The symmetry of the crystal: which rotations, mirrors and translations map the structure onto itself. There are 230 possible space groups; the label is a symbol such as Fm-3m (rock salt), Pnma or P2₁/c. Nature is very uneven here — a few groups hold thousands of compounds, many hold a handful.",
+   "晶体的对称性:哪些旋转、镜面和平移能把结构映射回自身。共有 230 种可能的空间群;标签是 Fm-3m(岩盐型)、Pnma、P2₁/c 这样的符号。自然界在这里极不均匀——少数空间群包含上千种化合物,很多只有几种。",
+   "結晶の対称性:どの回転・鏡映・並進が構造を自分自身に写すか。可能な空間群は 230 種で、ラベルは Fm-3m(岩塩型)、Pnma、P2₁/c のような記号。自然はここで非常に不均一 — 少数の群が数千の化合物を含み、多くの群はわずか数個。"),
+  ("Symmetry detection on the relaxed structure (spglib, as stored by Materials Project). Groups with at least 10 entries and at least one row in both the train and test split are kept; rarer groups are treated as missing, like any other task's missing labels.",
+   "对弛豫结构做对称性识别(spglib,Materials Project 存储)。保留至少 10 个条目且在训练集和测试集里各至少 1 行的空间群;更稀有的按缺失处理,和其他任务的缺失标签一样。",
+   "緩和構造に対する対称性検出(spglib、Materials Project が保存)。10 項目以上かつ訓練・テスト両分割に1行以上ある群を保持し、それより稀な群は他タスクの欠損ラベルと同様に欠損扱い。"),
+  "—", ("151-class classification, very uneven", "151 类分类,极不均衡", "151クラス分類、極めて不均一")),
+]
+def props_section():
+    head=[T("task","任务","タスク"), T("what it is","是什么","何か"), T("how Materials Project computes it","Materials Project 怎么算","Materials Project の計算方法"), T("unit","单位","単位"), T("our label","我们的标签","本研究のラベル")]
+    rows=[[f"<b>{T(*nm)}</b><br><span style='color:var(--muted);font-size:12.5px'>{tk}</span>", T(*what), T(*how), unit, T(*form)] for tk, nm, what, how, unit, form in PROPS]
+    return f'''<section class="section">{H2("7 · The added properties", "What the new tasks measure, in plain terms", "新任务测的是什么,用大白话说", "新タスクが測るもの、平易に")}
+<div class="col">{P("For readers outside materials science: each property below is a single number (or a class) that Materials Project computed for a crystal with density-functional theory (DFT), a quantum-mechanical approximation to how electrons arrange themselves. The model receives only the chemical composition and must predict these numbers. Every regression label is standardised before training (StandardScaler followed by a Yeo-Johnson transform), so the R² and MAE reported elsewhere on this page are on that normalised scale.",
+"给材料领域之外的读者:下面每个性质都是 Materials Project 用密度泛函理论(DFT,一种描述电子如何排布的量子力学近似)为一种晶体算出的一个数(或一个类别)。模型只拿到化学组成,要预测这些数。所有回归标签训练前都做了标准化(StandardScaler 再接 Yeo-Johnson 变换),所以本页其他地方报告的 R² 与 MAE 都在这个归一化尺度上。",
+"材料科学以外の読者へ:以下の各物性は、Materials Project が結晶に対して密度汎関数理論(DFT、電子の配置を扱う量子力学的近似)で計算した1つの数値(または分類)である。モデルは化学組成だけを受け取り、これらを予測しなければならない。回帰ラベルはすべて学習前に標準化される(StandardScaler の後に Yeo-Johnson 変換)ので、本ページの R² と MAE はその正規化スケール上の値である。")}</div>
+{table(head, rows, cls="tablebox wrap")}
+</section>'''
+
+# ---------------- 8 baselines on the rebuilt dataset (only when scored) ----------------
 BASE = EXP / "summary" / "baselines_mp2026.json"
 def baselines_section():
     if not BASE.exists():
@@ -235,8 +334,8 @@ def baselines_section():
             delta = (f"{(r['r2']['mean'] - old['mean']) / old['mean'] * 100:+.1f}%" if old else "-")
             rows.append([r["task"].replace("_", " "), grp, "R²", f"{r['n_test']:,}", f"{r['r2']['mean']:.4f} ± {r['r2']['sd']:.4f}", f"{r['mae']['mean']:.4f}", oldv, delta])
         else:
-            rows.append([r["task"].replace("_", " "), grp, "macro-F1", f"{r['n_test']:,}", f"{r['macro_f1']['mean']:.4f} ± {r['macro_f1']['sd']:.4f}", f"acc {r['accuracy']['mean']:.4f}", "-", "-"])
-    return f'''<section class="section">{H2("7 · Baselines on the rebuilt dataset", "Every relabelled and added task, trained alone", "所有标签更新和新增的任务,单独训练", "ラベル更新・新規の全タスク、単独学習")}
+            rows.append([r["task"].replace("_", " ") + (f" ({len(r['classes'])} classes)" if r["task"] == "space_group" else ""), grp, "macro-F1", f"{r['n_test']:,}", f"{r['macro_f1']['mean']:.4f} ± {r['macro_f1']['sd']:.4f}", f"acc {r['accuracy']['mean']:.4f}", "-", "-"])
+    return f'''<section class="section">{H2("8 · Baselines on the rebuilt dataset", "Every relabelled and added task, trained alone", "所有标签更新和新增的任务,单独训练", "ラベル更新・新規の全タスク、単独学習")}
 <div class="col">{P("The same recipe as every other baseline in the campaign: KMD, the adopted values, five seeds, early stopping, last-epoch weights, the dataset's own split. Regression tasks report R² and MAE on the normalised scale; classification tasks macro-F1 and accuracy. Where a task existed on the 2026-05-15 labels, its old ceiling and the change are shown beside it.",
 "与 campaign 里其他基线完全相同的配方:KMD、采用参数、5 个 seed、早停、最后 epoch 权重、数据集自带划分。回归任务报告归一化尺度上的 R² 与 MAE,分类任务报告 macro-F1 与准确率。在 2026-05-15 标签下已存在的任务,旁边给出旧上限和变化。",
 "キャンペーンの他の基準と同一のレシピ:KMD、採用値、5シード、早期終了、最終エポックの重み、データセット自身の分割。回帰タスクは正規化スケールでの R² と MAE、分類タスクは macro-F1 と正解率を報告。2026-05-15 ラベルで存在したタスクには旧天井と変化を併記。")}</div>
@@ -248,15 +347,19 @@ def baselines_section():
 {P("<b>Magnetism is the next real limit.</b> Total magnetisation lands at 0.72–0.74 whether per cell, per formula unit or per volume, and magnetic ordering reaches macro-F1 0.56 (accuracy 0.75, dominated by the non-magnetic class): from composition alone the model knows which elements carry moments but not how they order.",
 "<b>磁性是下一个真正的极限。</b>总磁矩无论按原胞、按化学式单元还是按体积,都停在 0.72–0.74;磁序的 macro-F1 只有 0.56(准确率 0.75,由非磁类主导):只凭组成,模型知道哪些元素带磁矩,却不知道它们如何排列。",
 "<b>磁性が次の本当の限界。</b>全磁化は単位胞あたり・化学式単位あたり・体積あたりのいずれでも 0.72–0.74 に留まり、磁気秩序は macro-F1 0.56(正解率 0.75、非磁性クラスが支配)。組成だけからは、どの元素がモーメントを持つかは分かっても、どう秩序化するかは分からない。", "callout")}
-{P("<b>Added tasks.</b> Band gap 0.88, CBM 0.88, VBM 0.92, is-metal macro-F1 0.93, bulk modulus 0.93, refractive index 0.89 and shear modulus 0.79 are solid new tasks. Poisson ratio (0.31), universal anisotropy (0.35) and reaction energy (0.34) carry little composition signal, and piezoelectric maximum (196 test rows) none at all; they should enter the multi-task set only as deliberately hard or low-data tasks, or not at all.",
-"<b>新增任务。</b>Band gap 0.88、CBM 0.88、VBM 0.92、is-metal macro-F1 0.93、bulk modulus 0.93、折射率 0.89、shear modulus 0.79 是扎实的新任务。泊松比(0.31)、通用各向异性(0.35)和反应能(0.34)组成信号很弱,压电最大值(196 个测试行)完全学不到;它们只应作为刻意设置的困难 / 小数据任务进入多任务集,或者不进。",
-"<b>新規タスク。</b>バンドギャップ 0.88、CBM 0.88、VBM 0.92、is-metal macro-F1 0.93、体積弾性率 0.93、屈折率 0.89、剪断弾性率 0.79 は堅実な新規タスク。ポアソン比(0.31)、普遍異方性(0.35)、反応エネルギー(0.34)は組成の信号が弱く、圧電最大値(テスト行 196)は全く学習できない。これらは意図的な難タスク・少データタスクとしてのみマルチタスク集合に入れるか、入れない。", "callout")}
+{P("<b>Added tasks.</b> Band gap 0.88, CBM 0.88, VBM 0.92, is-metal macro-F1 0.93, bulk modulus 0.93, refractive index 0.89 and shear modulus 0.79 are solid new tasks. Poisson ratio (0.31), universal anisotropy (0.35) and reaction energy (0.34) carry little composition signal, and piezoelectric maximum (196 test rows) none at all; they should enter the multi-task set only as deliberately hard or low-data tasks, or not at all. Space group (151 classes) reaches macro-F1 0.20 and accuracy 0.24: composition alone identifies the simple high-symmetry families (Fm-3m, I4/mmm, Cmcm, P-62m are recognised 30–60% of the time) and almost never the low-symmetry groups such as Pnma, P2₁/c or C2/c, which are decided by structure, not stoichiometry.",
+"<b>新增任务。</b>Band gap 0.88、CBM 0.88、VBM 0.92、is-metal macro-F1 0.93、bulk modulus 0.93、折射率 0.89、shear modulus 0.79 是扎实的新任务。泊松比(0.31)、通用各向异性(0.35)和反应能(0.34)组成信号很弱,压电最大值(196 个测试行)完全学不到;它们只应作为刻意设置的困难 / 小数据任务进入多任务集,或者不进。空间群(151 类)macro-F1 0.20、准确率 0.24:只凭组成能认出简单的高对称家族(Fm-3m、I4/mmm、Cmcm、P-62m 有 30–60% 被识别),而 Pnma、P2₁/c、C2/c 这类低对称群几乎认不出——它们由结构决定,不由化学计量决定。",
+"<b>新規タスク。</b>バンドギャップ 0.88、CBM 0.88、VBM 0.92、is-metal macro-F1 0.93、体積弾性率 0.93、屈折率 0.89、剪断弾性率 0.79 は堅実な新規タスク。ポアソン比(0.31)、普遍異方性(0.35)、反応エネルギー(0.34)は組成の信号が弱く、圧電最大値(テスト行 196)は全く学習できない。これらは意図的な難タスク・少データタスクとしてのみマルチタスク集合に入れるか、入れない。空間群(151クラス)は macro-F1 0.20、正解率 0.24:組成だけで分かるのは単純な高対称族(Fm-3m、I4/mmm、Cmcm、P-62m は 30–60% 認識)で、Pnma、P2₁/c、C2/c のような低対称群はほぼ認識できない — 構造が決めるもので、化学量論では決まらない。", "callout")}
 </div>
 <figure style="margin-top:14px"><div class="figbox"><div class="legend"><span><i class="sw" style="background:var(--warm)"></i> {T("relabelled task","标签更新的任务","ラベル更新タスク")}</span><span><i class="sw" style="background:var(--frz)"></i> {T("added task","新增任务","新規タスク")}</span><span style="color:var(--muted)">{T("2,000 test rows sampled per task · seed 2025 · normalised scale · dashed = y = x","每任务抽样 2,000 个测试行 · seed 2025 · 归一化尺度 · 虚线为 y = x","タスクごとにテスト行 2,000 を抽出 · シード 2025 · 正規化スケール · 破線は y = x")}</span></div>
 <svg id="fig-scatter" width="960" height="1440" role="img" aria-label="Observation versus prediction for every regression task"></svg></div>
 {CAP("Observation (vertical) against prediction (horizontal) for one seed of every regression task; the R² is the five-seed mean.","每个回归任务一个 seed 的观测值(纵轴)对预测值(横轴);R² 为 5 个 seed 的均值。","各回帰タスク1シードの観測値(縦軸)対予測値(横軸)。R² は5シードの平均。")}</figure>
 <figure><div class="figbox"><svg id="fig-cm" width="960" height="300" role="img" aria-label="Confusion matrices of the classification tasks"></svg></div>
-{CAP("Row-normalised confusion matrices of the three classification tasks, seed 2025; macro-F1 and accuracy are five-seed means.","三个分类任务的行归一化混淆矩阵,seed 2025;macro-F1 与准确率为 5 个 seed 的均值。","3つの分類タスクの行正規化混同行列、シード 2025。macro-F1 と正解率は5シードの平均。")}</figure>
+{CAP("Row-normalised confusion matrices of the three small classification tasks, seed 2025; macro-F1 and accuracy are five-seed means.","三个小分类任务的行归一化混淆矩阵,seed 2025;macro-F1 与准确率为 5 个 seed 的均值。","3つの小規模分類タスクの行正規化混同行列、シード 2025。macro-F1 と正解率は5シードの平均。")}</figure>
+<figure><div class="figbox"><svg id="fig-sg" width="960" height="620" role="img" aria-label="Space-group confusion over the twelve most common groups"></svg></div>
+{CAP("Space group, seed 2025: the twelve most common groups shown individually, the other 139 folded into one row and column. Rows are true groups, cells are % of the row.","空间群,seed 2025:最常见的 12 个群单独显示,其余 139 个并入一行一列。行为真实群,格内为该行的 %。","空間群、シード 2025:最も多い12群を個別に、残り139群を1行1列にまとめて表示。行が真の群、セルは行内の%。")}</figure>
+<figure><div class="figbox"><svg id="fig-sg-f1" width="960" height="330" role="img" aria-label="Per-class F1 against class size for the space-group task"></svg></div>
+{CAP("Per-group F1 (seed 2025) against the number of entries in the group, log scale. Groups with hundreds of examples are learned; groups with tens mostly are not — the class imbalance is the physics of the crystal world, not a data defect, and it sets what macro-F1 can reach.","每个空间群的 F1(seed 2025)对该群条目数,对数坐标。有几百个样例的群学得到,只有几十个的大多学不到——类别不均衡是晶体世界的物理事实,不是数据缺陷,它决定了 macro-F1 能到多高。","各空間群の F1(シード 2025)対その群の項目数、対数軸。数百例ある群は学習でき、数十例の群はほとんど学習できない — クラスの不均衡は結晶世界の物理的事実であってデータの欠陥ではなく、macro-F1 の上限を決める。")}</figure>
 </section>'''
 
 # ---------------- 6 update brief ----------------
@@ -279,21 +382,22 @@ newcols = [
  ("Dielectric total / ionic / electronic · Refractive index", "GGA DFPT; 9 out-of-bound rows dropped", "GGA DFPT;9 行超出范围被去除", "GGA DFPT。範囲外の9行を除外", "4,501 · 4,500"),
  ("Piezoelectric max", "new, GGA DFPT", "新增,GGA DFPT", "新規、GGA DFPT", "1,362"),
  ("MP id", "new-format Materials Project id (legacy mp-<n> stays the index; 31 ids no longer resolve)", "新格式 Materials Project id(旧 mp-<n> 仍为索引;31 个 id 已不可解析)", "新形式の Materials Project id(旧 mp-<n> は索引のまま。31 個は解決不能)", "33,798"),
+ ("Space group (task label)", "dense encoding of the 151 space groups with ≥ 10 entries and a row in both train and test; rarer groups and non-MP rows are missing, like any other task", "151 个空间群(≥ 10 条且训练集、测试集各有一行)的密集编码;更稀有的群和非 MP 行按缺失处理,与其他任务一致", "10 項目以上かつ訓練・テスト両方に行がある 151 空間群の密な符号化。稀な群と非 MP 行は他タスク同様に欠損", "33,524"),
 ]
 newcol_rows = [[c, T(a, b, d), n] for c, a, b, d, n in newcols]
-out.append(f'''<section class="section">{H2("6 · Update brief", "Dataset 2026-09-08: what changed", "数据集 2026-09-08:变了什么", "データセット 2026-09-08:何が変わったか")}
+out.append(f'''<section class="section">{H2("6 · Update brief", "Dataset 2026-09-12: what changed", "数据集 2026-09-12:变了什么", "データセット 2026-09-12:何が変わったか")}
 <div class="col">{P("The first cause was misaligned data, not a modelling choice, so the Materials Project part of the dataset was audited column by column against the API and rebuilt on one level of theory: energies from the GGA / GGA+U thermodynamic scheme, structure and magnetism from the GGA-family calculation of each material, electronic-structure values only where MP's own record says the source was GGA-family. The audit also showed which further MP properties are available on that same footing; those were added.",
 "第一个原因是数据对不齐,不是建模选择,所以数据集的 Materials Project 部分逐列对照 API 做了核查,并按单一理论水平重建:能量取 GGA / GGA+U 热力学方案;结构和磁性取每个材料的 GGA 族计算;能带类只在 MP 自己的记录表明来源是 GGA 族时保留。核查同时显示了在同一口径下还有哪些 MP 属性可用,这些也一并补入。",
 "第一の原因はデータの不整合であってモデリング上の選択ではない。そこでデータセットの Materials Project 部分を列ごとに API と照合して監査し、単一の理論レベルで再構築した:エネルギーは GGA / GGA+U 熱力学スキームから、構造と磁性は各物質の GGA 系計算から、電子構造の値は MP 自身の記録が GGA 系由来と示す場合のみ。監査は同じ基準で利用できる他の MP 物性も明らかにし、それらを追加した。")}</div>
 <div class="stats">
 <div class="stat"><p class="label">{T("rows","行数","行数")}</p><p class="value">{L['shape_new'][0]:,}</p><p class="note">{T("unchanged; qa- and starry- rows byte-identical","不变;qa- 与 starry- 行逐字节相同","不変。qa- と starry- 行はバイト単位で同一")}</p></div>
-<div class="stat"><p class="label">{T("columns","列数","列数")}</p><p class="value">{L['shape_old'][1]} → {L['shape_new'][1]}</p><p class="note">{T("18 new properties, their normalised columns and labels","18 个新属性及其归一化列和标签","18の新規物性とその正規化列・ラベル")}</p></div>
+<div class="stat"><p class="label">{T("columns","列数","列数")}</p><p class="value">{L['shape_old'][1]} → {L['shape_new'][1]}</p><p class="note">{T("18 new properties with their normalised columns and labels, and the space-group task label","18 个新属性及其归一化列和标签,加空间群任务标签","18の新規物性とその正規化列・ラベル、および空間群タスクラベル")}</p></div>
 <div class="stat"><p class="label">{T("MP rows on GGA / GGA+U","GGA / GGA+U 口径的 MP 行","GGA / GGA+U 基準の MP 行")}</p><p class="value">33,166</p><p class="note">{T("of 33,829; 663 have no GGA-family calculation and are blank","共 33,829;663 个没有 GGA 族计算,置空","33,829 中。663 は GGA 系計算がなく空欄")}</p></div>
 <div class="stat"><p class="label">{T("final_energy alone","final_energy 单独训练","final_energy 単独学習")}</p><p class="value c-warm">{m(fe_new):.4f}</p><p class="note">{T(f"was {m(fe_old):.4f} on the old label","旧标签下为 " + f"{m(fe_old):.4f}","旧ラベルでは " + f"{m(fe_old):.4f}")}</p></div>
 </div>
-<div class="col">{P("Files: <code>data/qc_ac_te_mp_dos_reformat_20260908.pd.parquet</code>, <code>data/preprocessing_objects_20260908.pkl.z</code>, <code>data/qc_ac_te_mp_dos_reformat_20260908_CHANGES.md</code>; built by <code>data/data/scripts/rebuild_mp_gga_20260908.py</code> from API pulls made on 2026-09-08. The 2026-05-15 files are untouched.",
-"文件:<code>data/qc_ac_te_mp_dos_reformat_20260908.pd.parquet</code>、<code>data/preprocessing_objects_20260908.pkl.z</code>、<code>data/qc_ac_te_mp_dos_reformat_20260908_CHANGES.md</code>;由 <code>data/data/scripts/rebuild_mp_gga_20260908.py</code> 从 2026-09-08 的 API 拉取生成。2026-05-15 的文件未动。",
-"ファイル:<code>data/qc_ac_te_mp_dos_reformat_20260908.pd.parquet</code>、<code>data/preprocessing_objects_20260908.pkl.z</code>、<code>data/qc_ac_te_mp_dos_reformat_20260908_CHANGES.md</code>。<code>data/data/scripts/rebuild_mp_gga_20260908.py</code> が 2026-09-08 の API 取得から生成。2026-05-15 のファイルは未変更。")}</div>
+<div class="col">{P("Files: <code>data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet</code>, <code>data/preprocessing_objects_20260912.pkl.z</code>, <code>data/qc_ac_te_mp_dos_reformat_20260912_CHANGES.md</code>; built by <code>data/data/scripts/rebuild_mp_gga_20260912.py</code> from API pulls made on 2026-09-12. The 2026-05-15 files are untouched.",
+"文件:<code>data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet</code>、<code>data/preprocessing_objects_20260912.pkl.z</code>、<code>data/qc_ac_te_mp_dos_reformat_20260912_CHANGES.md</code>;由 <code>data/data/scripts/rebuild_mp_gga_20260912.py</code> 从 2026-09-12 的 API 拉取生成。2026-05-15 的文件未动。",
+"ファイル:<code>data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet</code>、<code>data/preprocessing_objects_20260912.pkl.z</code>、<code>data/qc_ac_te_mp_dos_reformat_20260912_CHANGES.md</code>。<code>data/data/scripts/rebuild_mp_gga_20260912.py</code> が 2026-09-12 の API 取得から生成。2026-05-15 のファイルは未変更。")}</div>
 {table([T("column(s)","列","列"), T("source in the rebuilt dataset","重建数据集中的来源","再構築データセットでの出典"), T("MP rows","MP 行数","MP 行数")], newcol_rows, cls="tablebox wrap")}
 <figure style="margin-top:14px"><div class="figbox"><svg id="fig-cols" width="960" height="660" role="img" aria-label="Non-null rows per column before and after"></svg></div>
 {CAP("Coverage per column. Columns that existed lose the 663 materials without a GGA-family calculation and, for the electronic structure, the 3,039 whose MP origin is not GGA-family; the new columns cover what their GGA workflows cover.",
@@ -310,15 +414,16 @@ out.append(f'''<section class="section">{H2("6 · Update brief", "Dataset 2026-0
 "再構築ラベルの抜き取り検査:Fe(bcc)−8.470 eV/atom、原子あたり 2.18 μB、FM。Si −5.425 eV/atom、バンドギャップ 0.610 eV。Pt −6.071 eV/atom。Fe₂O₃ 生成エネルギー −1.707 eV/atom、AFM — すべて GGA / GGA+U の基準値上にある。")}
 <h3 style="margin-top:22px">{T("Next","下一步","次のステップ")}</h3>
 <ol class="plan">
-<li>{T("<b>Choose the multi-task set on the new data.</b> Section 7 gives every relabelled and added task its baseline; band gap, per-atom volume, magnetisation per volume, magnetic ordering, is-metal, bulk and shear modulus and refractive index earn a place; Poisson ratio, universal anisotropy, reaction energy and piezoelectric maximum do not.","<b>在新数据上确定多任务集。</b>第 7 节给出了每个标签更新和新增任务的基线;band gap、每原子体积、每体积磁化、磁序、is-metal、体模量与剪切模量、折射率有资格进入;泊松比、通用各向异性、反应能、压电最大值不进。","<b>新データでのマルチタスク集合を決める。</b>第7節がラベル更新・新規の全タスクに基準を与えた。バンドギャップ、原子あたり体積、体積あたり磁化、磁気秩序、is-metal、体積・剪断弾性率、屈折率は採用に値する。ポアソン比、普遍異方性、反応エネルギー、圧電最大値は採用しない。")}</li>
-<li>{T("<b>Re-run the transfer stages on the 2026-09-08 dataset</b> with that set once the unseen-encoder stage on the old data has closed the 2×2; volume enters through its per-atom form, or with a scale-aware descriptor.","<b>在 2026-09-08 数据集上重跑迁移阶段</b>,待旧数据的未见过编码器阶段把 2×2 收尾后进行;volume 以每原子形式进入,或改用能感知尺度的描述符。","<b>2026-09-08 データセットで転移段階を再実行</b>する。旧データでの未知エンコーダ段階が 2×2 を完成させた後に。volume は原子あたりの形で、あるいはスケール認識記述子で入れる。")}</li>
+<li>{T("<b>Choose the multi-task set on the new data.</b> Section 8 gives every relabelled and added task its baseline; band gap, per-atom volume, magnetisation per volume, magnetic ordering, is-metal, bulk and shear modulus and refractive index earn a place; Poisson ratio, universal anisotropy, reaction energy and piezoelectric maximum do not.","<b>在新数据上确定多任务集。</b>第 8 节给出了每个标签更新和新增任务的基线;band gap、每原子体积、每体积磁化、磁序、is-metal、体模量与剪切模量、折射率有资格进入;泊松比、通用各向异性、反应能、压电最大值不进。","<b>新データでのマルチタスク集合を決める。</b>第8節がラベル更新・新規の全タスクに基準を与えた。バンドギャップ、原子あたり体積、体積あたり磁化、磁気秩序、is-metal、体積・剪断弾性率、屈折率は採用に値する。ポアソン比、普遍異方性、反応エネルギー、圧電最大値は採用しない。")}</li>
+<li>{T("<b>Re-run the transfer stages on the 2026-09-12 dataset</b> with that set once the unseen-encoder stage on the old data has closed the 2×2; volume enters through its per-atom form, or with a scale-aware descriptor.","<b>在 2026-09-12 数据集上重跑迁移阶段</b>,待旧数据的未见过编码器阶段把 2×2 收尾后进行;volume 以每原子形式进入,或改用能感知尺度的描述符。","<b>2026-09-12 データセットで転移段階を再実行</b>する。旧データでの未知エンコーダ段階が 2×2 を完成させた後に。volume は原子あたりの形で、あるいはスケール認識記述子で入れる。")}</li>
 <li>{T("<b>Choose the descriptor policy</b>: KMD stays invertible (needed for inverse design) but is scale-blind; XenonPy classic sees scale but is not invertible. Either keep both and train per-atom labels with KMD, or carry the atom count as a side input.","<b>决定描述符策略</b>:KMD 可逆(逆向设计需要)但尺度盲;XenonPy classic 看得见尺度但不可逆。要么两者都保留、用 KMD 训练每原子标签,要么把原子数作为旁路输入。","<b>記述子の方針を決める</b>:KMD は可逆(逆設計に必要)だがスケールに盲目。XenonPy classic はスケールが見えるが可逆ではない。両方を保持して KMD で原子あたりラベルを学習するか、原子数を副入力として持たせるか。")}</li>
 </ol></div>
 </section>
+{props_section()}
 {baselines_section()}
-<footer><p>{T("Data: summary/mp_labels_page_data.json (per-seed results, curves, API comparisons, dataset statistics); runs stA_*, stM_final_energy_*, stXc_* and stXn_* on RIKYU; MP API queries of 2026-09-08. Figure labels stay in English in every language.",
-"数据:summary/mp_labels_page_data.json(逐 seed 结果、曲线、API 比对、数据集统计);RIKYU 上的 stA_*、stM_final_energy_*、stXc_*、stXn_*;2026-09-08 的 MP API 查询。图内标签在各语言下均保留英文。",
-"データ:summary/mp_labels_page_data.json(シードごとの結果、曲線、API 比較、データセット統計)。RIKYU 上の stA_*、stM_final_energy_*、stXc_*、stXn_*。2026-09-08 の MP API 照会。図中のラベルはどの言語でも英語のまま。")}</p></footer>
+<footer><p>{T("Data: summary/mp_labels_page_data.json (per-seed results, curves, API comparisons, dataset statistics); runs stA_*, stM_final_energy_*, stXc_* and stXn_* on RIKYU; MP API queries of 2026-09-12. Figure labels stay in English in every language.",
+"数据:summary/mp_labels_page_data.json(逐 seed 结果、曲线、API 比对、数据集统计);RIKYU 上的 stA_*、stM_final_energy_*、stXc_*、stXn_*;2026-09-12 的 MP API 查询。图内标签在各语言下均保留英文。",
+"データ:summary/mp_labels_page_data.json(シードごとの結果、曲線、API 比較、データセット統計)。RIKYU 上の stA_*、stM_final_energy_*、stXc_*、stXn_*。2026-09-12 の MP API 照会。図中のラベルはどの言語でも英語のまま。")}</p></footer>
 </div>
 <script>
 {LANGJS}

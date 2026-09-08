@@ -1,4 +1,4 @@
-# probe6.toml on the 2026-09-08 qc dataset, whose Materials Project columns were rebuilt on GGA / GGA+U
+# probe6.toml on the 2026-09-12 qc dataset, whose Materials Project columns were rebuilt on GGA / GGA+U
 # only (the old Final energy per atom copied MP's mixed GGA/r2SCAN thermo energy and was unlearnable).
 # Same descriptor (KMD), same adopted values via --set, same split column; the 16 properties added with
 # that dataset are declared as tasks below the original 24.
@@ -52,7 +52,7 @@ kind = "kmd"
 n_grids = 8
 
 [datasets.qc]
-path = "data/qc_ac_te_mp_dos_reformat_20260908.pd.parquet"
+path = "data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet"
 
 [datasets.magnetic]
 path = "data/NEMAD_magnetic_20260419_norm.parquet"
@@ -320,6 +320,13 @@ kind = "classification"
 dataset = "qc"
 column = "Is gap direct (label)"
 num_classes = 2
+
+[[tasks]]
+name = "space_group"
+kind = "classification"
+dataset = "qc"
+column = "Space group (task label)"
+num_classes = 151
 
 [model]
 latent_dim = 128
