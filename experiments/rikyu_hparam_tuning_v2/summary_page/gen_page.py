@@ -115,6 +115,14 @@ HOWTO=f'''<div class="callout">{T(
 "<b>数字怎么读。</b>所有比较都按任务逐一进行,从不合并。“vs 单独”是该臂的平均分减去单独训练的平均分,再除以单独的平均分,以百分比表示。SE 是这一差值的标准误,合并了两臂各自的离散(√(SE<sub>臂</sub>² + SE<sub>单独</sub>²));2×SE 大致对应差值的 95% 区间。差值大于 2×SE 称为<em>分离</em>;分离且绝对差值不小于 0.01(实用门槛)才算<em>更好</em>或<em>更差</em>;其余为<em>不可分</em>。n:xfer、冻结、warm-start 各为 10 组顺序,单独为 5 个 seed。",
 "<b>数値の読み方。</b>比較はすべてタスクごとに行い、プールしない。「vs 単独」はそのアームの平均スコアから単独学習の平均を引き、単独の平均で割った百分率。SEはその差の標準誤差で、両アームの散らばりを合成したもの(√(SE<sub>アーム</sub>² + SE<sub>単独</sub>²))。2×SEは差のおおよそ95%区間に当たる。差が2×SEより大きければ<em>分離</em>とし、さらに絶対差が0.01(実用閾値)以上のときだけ<em>改善</em>または<em>悪化</em>と数える。それ以外は<em>判定不能</em>。nはxfer・凍結・ウォームスタートが10通りの順序、単独が5シード。")}</div>'''
 
+CNT=ft.get("counts",{})
+def cell_u(key):
+    c=CNT.get(key); n_u=sum(1 for r in ft["per_task"] if r.get("ftfu"))
+    if not c or n_u==0:
+        return f'<div class="run">{T("running · n=3 · fresh head","进行中 · n=3 · 新建 head","実行中 · n=3 · 新規ヘッド")}</div>'
+    s=f"{c['better']} / {c['worse']} / {c['unresolved']}"
+    return f'<div class="done">{T("done · n=3 · fresh head · "+s,"完成 · n=3 · 新建 head · "+s,"完了 · n=3 · 新規ヘッド · "+s)}</div>'
+
 # ---------- page ----------
 def P(en,zh,ja,cls=""): return f'<p class="{cls}">{T(en,zh,ja)}</p>' if cls else f"<p>{T(en,zh,ja)}</p>"
 def CAP(en,zh,ja): return f"<figcaption>{T(en,zh,ja)}</figcaption>"
@@ -173,12 +181,12 @@ footer{margin-top:56px;padding-top:22px;border-top:1px solid var(--rule);font-si
 
 # ---- header ----
 out.append(f'''<header>
-<p class="eyebrow">{T("Continual multi-task pretraining · 24 tasks · transferability, interim","连续多任务预训练 · 24 任务 · 迁移性,阶段性","継続的マルチタスク事前学習 · 24タスク · 転移性、中間報告")}</p>
+<p class="eyebrow">{T("Continual multi-task pretraining · 24 tasks · transferability","连续多任务预训练 · 24 任务 · 迁移性","継続的マルチタスク事前学習 · 24タスク · 転移性")}</p>
 <h1>{T("Transferability, four ways in","迁移性:四种接入方式","転移性:4通りのつなぎ方")}</h1>
 <p class="standfirst">{T(
-"The first transfer measurement said 18 of 24 tasks are worse off with a shared encoder. That measured one particular way of attaching a task, and of the four compared here it turned out to be the weakest. Measured three more ways, the shared encoder is roughly a wash against training alone, with real wins on four tasks and real losses on three. This page explains the four setups, shows the full result, walks through one task of each kind, and lays out what is still running.",
-"最初的迁移测量说 24 个任务里有 18 个在共享编码器下变差。它测的只是一种特定的接入方式,而在本页对比的四种里,它的效果最差。再用三种方式测量后,共享编码器相对于单独训练大体持平:四个任务确实获益,三个任务确实受损。本页先解释四种设置,再给出完整结果,逐一分析每类的一个代表任务,最后说明还在进行的实验。",
-"最初の転移測定では、24タスク中18が共有エンコーダで悪化するとされた。だがそれは特定のつなぎ方だけを測っており、本ページで比較した4通りの中では最も効果が低かった。さらに3通りで測ると、共有エンコーダは単独学習とほぼ互角で、4タスクは実際に改善し、3タスクは実際に悪化する。本ページでは4つの設定を説明し、全結果を示し、各種類の代表タスクを1つずつ詳しく見て、現在進行中の実験を示す。")}</p>
+"The first transfer measurement said 18 of 24 tasks are worse off with a shared encoder. That measured one particular way of attaching a task, and of the four compared here it turned out to be the weakest. Measured three more ways, the shared encoder is roughly a wash against training alone, with real wins on four tasks and real losses on three. This page explains the four setups, shows the full result, walks through one task of each kind, and closes the question of whether the encoder needs to have seen the task at all.",
+"最初的迁移测量说 24 个任务里有 18 个在共享编码器下变差。它测的只是一种特定的接入方式,而在本页对比的四种里,它的效果最差。再用三种方式测量后,共享编码器相对于单独训练大体持平:四个任务确实获益,三个任务确实受损。本页先解释四种设置,再给出完整结果,逐一分析每类的一个代表任务,最后回答编码器是否需要见过该任务这个问题。",
+"最初の転移測定では、24タスク中18が共有エンコーダで悪化するとされた。だがそれは特定のつなぎ方だけを測っており、本ページで比較した4通りの中では最も効果が低かった。さらに3通りで測ると、共有エンコーダは単独学習とほぼ互角で、4タスクは実際に改善し、3タスクは実際に悪化する。本ページでは4つの設定を説明し、全結果を示し、各種類の代表タスクを1つずつ詳しく見て、エンコーダがそのタスクを見ている必要があるのかという問いに答える。")}</p>
 </header>''')
 
 # ---- 1 setups ----
@@ -188,9 +196,9 @@ out.append(f'''<section class="section">
    "每个臂的起点相同:一个在其余 23 个任务上以混合 replay 连续训练出的编码器。差别只在于第 24 个任务 X <em>如何</em>接上去。<span class='num'>xfer</span> 是本轮 campaign 对第一种方式的简写;其余名称是我们自己起的。",
    "すべてのアームの出発点は同じで、他の23タスクをハイブリッドリプレイで継続学習したエンコーダである。違いは24番目のタスクXを<em>どう</em>つなぐかだけだ。<span class='num'>xfer</span>は最初の方式に対するキャンペーンでの略記で、他の名前は本ページでの呼称である。")}</div>
 <figure><div class="figbox"><svg id="fig0" width="960" height="250" role="img" aria-label="Schematic of the four transfer arms branching from a 23-task encoder."></svg></div>
-{CAP("Solid paths are measured (n = 10 orderings per task). The dashed pair — fine-tuning an encoder that has never seen X, with a fresh head — is being generated now (n = 3).",
-     "实线路径已测量(每任务 10 组顺序)。虚线的两条——在从未见过 X 的编码器上、用新建的 head 微调——正在生成中(n = 3)。",
-     "実線の経路は測定済み(タスクごとに10通りの順序)。破線の2本 — Xを一度も見ていないエンコーダに新規ヘッドで微調整 — は現在生成中(n = 3)。")}</figure>
+{CAP("Solid paths are measured (n = 10 orderings per task). The dashed pair — fine-tuning an encoder that has never seen X, with a fresh head — is measured at n = 3 orderings per task.",
+     "实线路径已测量(每任务 10 组顺序)。虚线的两条——在从未见过 X 的编码器上、用新建的 head 微调——每任务测了 3 组顺序。",
+     "実線の経路は測定済み(タスクごとに10通りの順序)。破線の2本 — Xを一度も見ていないエンコーダに新規ヘッドで微調整 — はタスクごとに3通りの順序で測定。")}</figure>
 <div class="tablebox setup"><table>
 <thead><tr><th>{T("Arm","臂","アーム")}</th><th>{T("What trains","训练什么","何を学習するか")}</th><th>{T("Replay","Replay","リプレイ")}</th><th>{T("Early stopping watches","早停监控","早期終了の監視対象")}</th><th>{T("What it asks","回答什么问题","何を問うか")}</th></tr></thead>
 <tbody>
@@ -198,8 +206,8 @@ out.append(f'''<section class="section">
 <tr><td class="c-xfer">xfer</td><td>{T("X added as step 24 of the continual sequence: encoder + fresh head, jointly.","X 作为连续序列的第 24 步加入:编码器 + 新建 head 联合训练。","Xを継続系列の第24ステップとして追加:エンコーダと新規ヘッドを同時学習。")}</td><td>{T("<b>on</b> — every epoch draws max(1500, 0.3N) rows from each of the 23 old tasks","<b>开</b>——每个 epoch 从 23 个旧任务各抽 max(1500, 0.3N) 行","<b>あり</b> — 各エポックで旧23タスクそれぞれから max(1500, 0.3N) 行を抽出")}</td><td>{T("the <b>sum</b> over all 24 tasks","24 个任务的<b>总和</b>","24タスクの<b>合計</b>")}</td><td>{T("What does X get when it arrives last in continual pretraining?","X 作为末位加入连续预训练时得到什么?","継続事前学習の最後に来たXは何を得るか?")}</td></tr>
 <tr><td class="c-frz">frozen</td><td>{T("From the xfer checkpoint: X's head only. Encoder bit-frozen.","从 xfer 检查点出发:只训 X 的 head,编码器逐位冻结。","xferのチェックポイントから:Xのヘッドのみ学習。エンコーダはビット単位で凍結。")}</td><td>{T("none","无","なし")}</td><td>{T("X's own loss","X 自身的损失","X自身の損失")}</td><td>{T("Is the shared representation, as is, good for X?","共享表示原样拿来,对 X 够不够好?","共有表現はそのままでXに有効か?")}</td></tr>
 <tr><td class="c-warm">warm-start</td><td>{T("From the xfer checkpoint: encoder + X's head.","从 xfer 检查点出发:编码器 + X 的 head 一起训。","xferのチェックポイントから:エンコーダとXのヘッドを学習。")}</td><td>{T("none","无","なし")}</td><td>{T("X's own loss","X 自身的损失","X自身の損失")}</td><td>{T("The model library's intended use.","模型库预想的用法。","モデルライブラリの想定用途。")}</td></tr>
-<tr><td class="c-frz">frozen, unseen</td><td>{T("From a 23-task encoder that never saw X: fresh head only.","从从未见过 X 的 23 任务编码器出发:只训新建 head。","Xを一度も見ていない23タスクのエンコーダから:新規ヘッドのみ学習。")}</td><td>{T("none","无","なし")}</td><td>{T("X's own loss","X 自身的损失","X自身の損失")}</td><td>{T("Same question, on a genuinely new task. <em>Running.</em>","同一问题,但针对真正的新任务。<em>进行中。</em>","同じ問いを、真に新しいタスクで。<em>実行中。</em>")}</td></tr>
-<tr><td class="c-warm">warm-start, unseen</td><td>{T("From the same 23-task encoder: encoder + fresh head.","从同一 23 任务编码器出发:编码器 + 新建 head。","同じ23タスクのエンコーダから:エンコーダと新規ヘッド。")}</td><td>{T("none","无","なし")}</td><td>{T("X's own loss","X 自身的损失","X自身の損失")}</td><td>{T("The library's use on a genuinely new task. <em>Running.</em>","模型库在真正新任务上的用法。<em>进行中。</em>","真に新しいタスクでのライブラリの用途。<em>実行中。</em>")}</td></tr>
+<tr><td class="c-frz">frozen, unseen</td><td>{T("From a 23-task encoder that never saw X: fresh head only.","从从未见过 X 的 23 任务编码器出发:只训新建 head。","Xを一度も見ていない23タスクのエンコーダから:新規ヘッドのみ学習。")}</td><td>{T("none","无","なし")}</td><td>{T("X's own loss","X 自身的损失","X自身の損失")}</td><td>{T("Same question, on a genuinely new task.","同一问题,但针对真正的新任务。","同じ問いを、真に新しいタスクで。")}</td></tr>
+<tr><td class="c-warm">warm-start, unseen</td><td>{T("From the same 23-task encoder: encoder + fresh head.","从同一 23 任务编码器出发:编码器 + 新建 head。","同じ23タスクのエンコーダから:エンコーダと新規ヘッド。")}</td><td>{T("none","无","なし")}</td><td>{T("X's own loss","X 自身的损失","X自身の損失")}</td><td>{T("The library's use on a genuinely new task.","模型库在真正新任务上的用法。","真に新しいタスクでのライブラリの用途。")}</td></tr>
 </tbody></table></div>
 <div class="col" style="margin-top:18px">{P("The two details that end up mattering are in the third and fourth columns. In xfer, X shares every epoch with roughly 79,000 replayed rows from the other tasks, and the stopping rule is the total loss — which the 23 already-converged tasks dominate. Both frozen and warm-start remove replay and let X's own loss decide when it is done.",
 "最终起决定作用的两个细节在第三、四列。在 xfer 里,X 每个 epoch 都和其他任务约 79,000 行 replay 同台,而停止规则看的是总损失——由 23 个已收敛的任务主导。冻结与 warm-start 两臂都去掉了 replay,让 X 自身的损失决定何时结束。",
@@ -224,8 +232,8 @@ out.append(f'''<section class="section">
 "各行が1タスクで、ウォームスタートの結果順に並ぶ。連結線はリプレイ除去でどれだけ動いたかを示す。塗りつぶしは2×SE(両アーム)で0から分離し、かつ実用閾値0.01を超えるもの、中抜きはそれ以外。magnetic_susceptibility(58行)はどのアームでも左に振り切れており、集計から除外。")}</figure>
 <div class="col" style="margin-top:8px"><p class="kicker">{T("Full table","完整表格","全表")}</p></div>
 <div class="tablebox"><table id="bigtable">
-<thead><tr><th rowspan="2">{T("Task","任务","タスク")}</th><th rowspan="2">N</th><th rowspan="2">{T("Alone","单独","単独")}</th><th colspan="2" class="grp c-xfer">xfer</th><th colspan="2" class="grp c-frz">{T("frozen","冻结","凍結")}</th><th colspan="2" class="grp c-warm">warm-start</th><th rowspan="2">{T("warm − frozen","warm − 冻结","warm − 凍結")}</th></tr>
-<tr><th>{T("value","值","値")}</th><th>{T("vs alone","vs 单独","vs 単独")}</th><th>{T("value","值","値")}</th><th>{T("vs alone","vs 单独","vs 単独")}</th><th>{T("value","值","値")}</th><th>{T("vs alone","vs 单独","vs 単独")}</th></tr></thead>
+<thead><tr><th rowspan="2">{T("Task","任务","タスク")}</th><th rowspan="2">N</th><th rowspan="2">{T("Alone","单独","単独")}</th><th colspan="2" class="grp c-xfer">xfer</th><th colspan="2" class="grp c-frz">{T("frozen","冻结","凍結")}</th><th colspan="2" class="grp c-warm">warm-start</th><th rowspan="2">{T("warm − frozen","warm − 冻结","warm − 凍結")}</th><th colspan="2" class="grp c-frz">{T("frozen, unseen","冻结,未见过","凍結、未知")}</th><th colspan="2" class="grp c-warm">{T("warm-start, unseen","warm-start,未见过","ウォームスタート、未知")}</th></tr>
+<tr><th>{T("value","值","値")}</th><th>{T("vs alone","vs 单独","vs 単独")}</th><th>{T("value","值","値")}</th><th>{T("vs alone","vs 单独","vs 単独")}</th><th>{T("value","值","値")}</th><th>{T("vs alone","vs 单独","vs 単独")}</th><th>{T("value","值","値")}</th><th>{T("vs alone","vs 单独","vs 単独")}</th><th>{T("value","值","値")}</th><th>{T("vs alone","vs 单独","vs 単独")}</th></tr></thead>
 <tbody></tbody></table></div>
 <div class="col" style="margin-top:14px"><p style="font-size:13.5px;color:var(--ink-2)">{T("* separated at 2×SE and |Δ| ≥ 0.01 &nbsp;·&nbsp; · separated but below the threshold &nbsp;·&nbsp; material_type is scored on macro-F1, all others on R². seebeck and power_factor rows use the 400-epoch reruns in every arm (the 150-epoch cap truncated them).",
 "* 在 2×SE 下分离且 |Δ| ≥ 0.01 · · 分离但低于门槛 · material_type 用 macro-F1,其余用 R²。seebeck 与 power_factor 两行在每个臂都用 400 epoch 的补跑(150 上限截断了它们)。",
@@ -349,23 +357,26 @@ out.append(f'''<section class="section">
    '<b>稀释本身就是一个重要发现,不只是干扰。</b>有些性质确实从共享编码器获益,但新任务在训练信号里占多大份额,决定了这种获益能否显现:在第 24 步只占 1% 梯度的任务,无论表示多好都会受损。任务自身的训练数据量仍是第一位的因素,迁移是第二位的。',
    '<b>希釈そのものが重要な知見であり、単なる副作用ではない。</b>一部の物性は確かに共有エンコーダから利益を得るが、新タスクが学習信号のどれだけを占めるかがその利益が見えるかどうかを決める:第24ステップで勾配の1%しか持たないタスクは、表現がどれほど良くても悪化する。タスク自身の学習データ量が依然として第一の要因であり、転移は第二の要因である。',"callout")}
 </div>
-<div class="col" style="margin-top:28px"><h3>{T("The four combinations, and what is still running","四种组合,以及仍在进行的","4つの組み合わせと、進行中のもの")}</h3>
-{P("Fixing the pretraining and varying how X is attached gives a 2×2. Two cells are done; two are being generated: the first 23 steps of each transfer ordering with X dropped, same seed, reproduce the step-23 encoder the pruner discarded — an encoder that has never seen X.",
-   "固定预训练、改变 X 的接入方式,得到一个 2×2。两格已完成;两格正在生成:把每个迁移顺序的前 23 步去掉 X 后同 seed 重跑,复现被裁剪器删掉的第 23 步编码器——一个从未见过 X 的编码器。",
-   "事前学習を固定しXのつなぎ方を変えると2×2になる。2マスは完了、2マスは生成中:各転移順序の最初の23ステップをXを除いて同じシードで再実行し、プルーナが捨てた第23ステップのエンコーダ — Xを一度も見ていないエンコーダ — を再現する。")}</div>
+<div class="col" style="margin-top:28px"><h3>{T("The four combinations, and what each answered","四种组合,以及各自回答了什么","4つの組み合わせと、それぞれが答えたこと")}</h3>
+{P("Fixing the pretraining and varying how X is attached gives a 2×2. All four cells are done. The two unseen cells re-ran the first 23 steps of three transfer orderings with X dropped, same seed, to reproduce the step-23 encoder the pruner discarded — an encoder that has never seen X — and fine-tuned it with a fresh head.",
+   "固定预训练、改变 X 的接入方式,得到一个 2×2。四格都已完成。两个未见过的格子把三个迁移顺序的前 23 步去掉 X 后同 seed 重跑,复现被裁剪器删掉的第 23 步编码器——一个从未见过 X 的编码器——再用新建的 head 微调。",
+   "事前学習を固定しXのつなぎ方を変えると2×2になる。4マスすべて完了。未知の2マスは、3つの転移順序の最初の23ステップをXを除いて同じシードで再実行し、プルーナが捨てた第23ステップのエンコーダ — Xを一度も見ていないエンコーダ — を再現して、新規ヘッドで微調整した。")}</div>
 <div class="matrix">
 <div class="h"></div><div class="h">{T("frozen encoder","冻结编码器","エンコーダ凍結")}</div><div class="h">{T("encoder + head","编码器 + head","エンコーダ + ヘッド")}</div>
 <div class="h">{T("encoder saw X once","编码器见过 X 一次","エンコーダはXを一度見た")}</div><div class="done">{T("done · n=10 · 4 / 12 / 7","完成 · n=10 · 4 / 12 / 7","完了 · n=10 · 4 / 12 / 7")}</div><div class="done">{T("done · n=10 · 4 / 4 / 14","完成 · n=10 · 4 / 4 / 14","完了 · n=10 · 4 / 4 / 14")}</div>
-<div class="h">{T("encoder never saw X","编码器从未见过 X","エンコーダはXを見ていない")}</div><div class="run">{T("running · n=3 · fresh head","进行中 · n=3 · 新建 head","実行中 · n=3 · 新規ヘッド")}</div><div class="run">{T("running · n=3 · fresh head","进行中 · n=3 · 新建 head","実行中 · n=3 · 新規ヘッド")}</div>
+<div class="h">{T("encoder never saw X","编码器从未见过 X","エンコーダはXを見ていない")}</div>{cell_u("ftzu_vs_single")}{cell_u("ftfu_vs_single")}
 </div>
-<div class="col">{P('The seen / unseen pair answers whether the single exposure at step 24 — and the head trained there — was worth anything. If not, the recipe simplifies to "pretrain, then fine-tune" and the three-hour continual step can be skipped.',
-   '见过 / 未见过这一对回答的是:第 24 步那一次接触——以及在那里训出的 head——到底值不值。如果不值,配方就简化为"预训练,然后微调",可以跳过那个三小时的连续预训练步。',
-   '既知/未知の対は、第24ステップでの一度の接触 — とそこで学習したヘッド — に価値があったかを答える。なければレシピは「事前学習、そして微調整」に単純化され、3時間の継続ステップは省ける。')}
+<div class="col">{P('<b>Answered.</b> With the encoder unfrozen, the single exposure at step 24 makes no measurable difference: warm-start from an encoder that never saw X is 2 better / 4 worse / 15 unresolved against training alone, and against the seen-once warm-start it is 2 better / 2 worse / 19 unresolved over 23 tasks. Frozen, the exposure does help — 4 tasks better, none worse — because a head trained at step 24 is better than a fresh one on a fixed representation. material_type gains +21.5% from an encoder that never saw it, so its gain is the 23-task representation, not exposure.',
+   '<b>已回答。</b>编码器解冻时,第 24 步那一次接触没有可测量的影响:从未见过 X 的编码器 warm-start 对比单独训练是 2 好 / 4 差 / 15 不可分,对比见过一次的 warm-start 在 23 个任务上是 2 好 / 2 差 / 19 不可分。冻结时那次接触确实有用——4 个任务更好、0 个更差——因为在固定的表示上,第 24 步训出的 head 好于新建的 head。material_type 从一个从未见过它的编码器上获得 +21.5%,所以它的增益来自 23 任务的表示,不是来自接触。',
+   '<b>答えが出た。</b>エンコーダを解凍する場合、第24ステップでの一度の接触に測定可能な違いはない:Xを一度も見ていないエンコーダからのウォームスタートは単独学習に対して 2 改善 / 4 悪化 / 15 判定不能、既知のウォームスタートに対しては23タスクで 2 改善 / 2 悪化 / 19 判定不能。凍結時には接触が効く — 4 タスク改善、悪化ゼロ — 固定表現の上では第24ステップで学習したヘッドが新規ヘッドより良いからだ。material_type は一度も見ていないエンコーダから +21.5% を得るので、その改善は23タスクの表現によるもので、接触によるものではない。', "callout")}
+{P('<b>The recipe simplifies.</b> For a new task, pretrain on the existing tasks, then warm-start fine-tune the new one: the continual step with replay adds nothing the fine-tune does not recover, and costs the most. Warm-start is the transfer method carried into the next phase, where pretraining length and order are varied under it.',
+   '<b>配方简化了。</b>对新任务:在已有任务上预训练,再对新任务 warm-start 微调;带 replay 的连续预训练步没有带来微调补不回来的东西,却最耗时。warm-start 作为迁移方式进入下一阶段,在它之下再改变预训练的长度和顺序。',
+   '<b>レシピは単純化される。</b>新タスクには、既存タスクで事前学習し、新タスクをウォームスタート微調整する。リプレイ付きの継続ステップは微調整で取り戻せないものを何も加えず、最も高くつく。ウォームスタートを転移方式として次段階へ持ち越し、その下で事前学習の長さと順序を変える。', "callout")}
 <h3 style="margin-top:22px">{T("Next","下一步","次のステップ")}</h3>
 <ol class="plan">
-<li>{T("<b>Finish the 2×2</b> (unseen arms, ~1 day of pretraining then minutes of fine-tuning) and pick the transfer method by it.","<b>补齐 2×2</b>(未见过的两臂:约 1 天预训练,之后分钟级微调),据此选定迁移方式。","<b>2×2を完成させる</b>(未知アーム:約1日の事前学習と数分の微調整)、それにより転移方式を決める。")}</li>
-<li>{T("<b>Fix that method, vary the pretraining</b> — length (encoders truncated at 4, 8, 12, 16, 23 tasks) and order (the 10 random orderings). This is the transferability-vs-pretraining question the first measurement tried to answer, redone under a transfer method that does not drown the task.","<b>固定该方式,改变预训练</b>——长度(在 4、8、12、16、23 个任务处截断的编码器)和顺序(10 组随机顺序)。这是最初测量想回答的&quot;迁移性 vs 预训练&quot;问题,在一个不会淹没任务的迁移方式下重做。","<b>その方式を固定し、事前学習を変える</b> — 長さ(4、8、12、16、23タスクで打ち切ったエンコーダ)と順序(10通りのランダム順序)。最初の測定が答えようとした「転移性 vs 事前学習」の問いを、タスクを溺れさせない転移方式でやり直す。")}</li>
-<li>{T("<b>Give the descriptor cell scale</b> and rerun final_energy and volume. The residual loss on extensive properties is the one part of the picture the replay mechanism does not explain, and a 500-epoch check without early stopping (30 + 15 runs) has ruled out undertraining as its cause.","<b>让描述符看见原胞尺度</b>,重跑 final_energy 和 volume。广延量的残余损失是 replay 机制解释不了的那一部分;500 epoch 无早停的检验(30 + 15 个 run)已排除训练不足这一解释。","<b>記述子に単位胞のスケールを与え</b>、final_energyとvolumeを再実行。示量性物性の残余損失はリプレイ機構が説明できない唯一の部分であり、早期終了なし500エポックの検証(30 + 15実行)で学習不足という説明はすでに除外済み。")}</li>
+<li>{T("<b>Move to the 2026-09-12 dataset first.</b> final_energy and volume — two of the four warm-start losers — turned out to be a label and a descriptor problem (see the companion page); their rows above are void, and the baselines for every relabelled and added task already exist on the new data.","<b>先切换到 2026-09-12 数据集。</b>warm-start 四个受损任务里的 final_energy 和 volume 已证明是标签和描述符的问题(见配套页面);上表中它们的行作废,新数据上所有标签更新和新增任务的基线已就绪。","<b>まず 2026-09-12 データセットへ移る。</b>ウォームスタートで悪化した4タスクのうち final_energy と volume はラベルと記述子の問題だった(併設ページ参照)。上表のその行は無効で、新データでのラベル更新・新規タスクの基準はすでにある。")}</li>
+<li>{T("<b>Fix warm-start as the method, vary the pretraining</b> — length (encoders truncated at 4, 8, 12, 16, 23 tasks) and order (the 10 random orderings). This is the transferability-vs-pretraining question the first measurement tried to answer, redone under a transfer method that does not drown the task.","<b>固定 warm-start,改变预训练</b>——长度(在 4、8、12、16、23 个任务处截断的编码器)和顺序(10 组随机顺序)。这是最初测量想回答的&quot;迁移性 vs 预训练&quot;问题,在一个不会淹没任务的迁移方式下重做。","<b>ウォームスタートを固定し、事前学習を変える</b> — 長さ(4、8、12、16、23タスクで打ち切ったエンコーダ)と順序(10通りのランダム順序)。最初の測定が答えようとした「転移性 vs 事前学習」の問いを、タスクを溺れさせない転移方式でやり直す。")}</li>
+<li>{T("<b>Decide the descriptor policy.</b> The companion page shows KMD is scale-blind: volume trains to R² 0.997 with the XenonPy classic descriptor and 0.979 as volume per atom with KMD, against 0.62 as cell volume. Per-atom targets or a descriptor that carries cell scale — pick one before the phase-B runs.","<b>决定描述符策略。</b>配套页面表明 KMD 对晶胞尺度不敏感:volume 用 XenonPy classic 描述符可训到 R² 0.997,用 KMD 以每原子体积训到 0.979,而以晶胞体积只有 0.62。每原子目标或带尺度信息的描述符——在 phase-B 之前二选一。","<b>記述子の方針を決める。</b>併設ページが示す通り KMD は格子スケールに盲目:volume は XenonPy classic 記述子で R² 0.997、KMD で原子あたり体積なら 0.979、セル体積のままでは 0.62。原子あたりの目標か、スケールを持つ記述子か — phase-B の前に決める。")}</li>
 <li>{T("<b>A task outside the 24, at low data volume</b> — the library's real use case, still unmeasured.","<b>24 个之外的任务、低数据量</b>——模型库真正的用途,仍未测量。","<b>24タスク外のタスク、低データ量で</b> — ライブラリの本来の用途、まだ未測定。")}</li>
 </ol></div>
 <div class="col caveats" style="margin-top:28px"><h3>{T("What to hold loosely","需要保留态度的几点","留保すべき点")}</h3><ul>
@@ -376,7 +387,7 @@ out.append(f'''<section class="section">
 </ul></div>
 </section>
 <footer><p>{T("Transfer stage: 24 tasks × 10 shuffled orderings, task under test last, hybrid replay max(1500, 0.3N). Fine-tune stage: 480 runs + 40 reruns, fm finetune, 150-epoch cap with patience 24. Single-task baselines: 5 seeds.","迁移阶段:24 任务 × 10 组打乱顺序,待测任务排末位,混合 replay max(1500, 0.3N)。微调阶段:480 个运行 + 40 个补跑,fm finetune,150 epoch 上限、patience 24。单任务基线:5 seed。","転移段階:24タスク × 10通りのシャッフル順序、被検タスクを最後に、ハイブリッドリプレイ max(1500, 0.3N)。微調整段階:480実行 + 40再実行、fm finetune、150エポック上限・patience 24。単独基準:5シード。")}</p>
-<p>{T("2×SE: twice the standard error of the difference between the two arms compared. Metric: macro-F1 for material_type, R² otherwise. Figure labels stay in English in every language. Interim — the unseen arms (stage_xu, 72 pretraining runs) are in flight.","2×SE:所比较两臂差值标准误的两倍。指标:material_type 用 macro-F1,其余用 R²。图内标签在各语言下均保留英文。阶段性——未见过的两臂(stage_xu,72 个预训练运行)仍在进行。","2×SE:比較する2アームの差の標準誤差の2倍。指標:material_typeはmacro-F1、他はR²。図中のラベルはどの言語でも英語のまま。中間報告 — 未知アーム(stage_xu、72の事前学習実行)は進行中。")}</p></footer>
+<p>{T("2×SE: twice the standard error of the difference between the two arms compared. Metric: macro-F1 for material_type, R² otherwise. Figure labels stay in English in every language. The unseen arms: stage_xu (72 pretraining runs) → ftzu / ftfu (144 fine-tunes), n = 3 orderings per task.","2×SE:所比较两臂差值标准误的两倍。指标:material_type 用 macro-F1,其余用 R²。图内标签在各语言下均保留英文。未见过的两臂:stage_xu(72 个预训练运行)→ ftzu / ftfu(144 个微调),每任务 3 组顺序。","2×SE:比較する2アームの差の標準誤差の2倍。指標:material_typeはmacro-F1、他はR²。図中のラベルはどの言語でも英語のまま。未知アーム:stage_xu(72の事前学習実行)→ ftzu / ftfu(144の微調整)、タスクごとに3順序。")}</p></footer>
 </div>
 <script>
 // language switch: one attribute on the root, remembered per viewer

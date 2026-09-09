@@ -120,7 +120,9 @@ fractions** summing to 1, so `Fe2O3` and `Fe4O6` produce an identical descriptor
 see how many atoms are in the cell. Meanwhile corr(Volume, atoms per cell) = **+0.868, 75.3% of the
 variance**. This is not label noise (only 7 of 33,822 reduced formulas repeat); it is a
 generalisation gap. Volume's 0.619 ceiling is the limit of a scale-free input, not under-training.
-Add an extensive feature and remeasure the extensive targets.
+Add an extensive feature and remeasure the extensive targets. **Confirmed (experiment 8):** with the notebook's XenonPy classic descriptor volume trains to
+R² 0.997 alone, and as volume per atom it reaches 0.979 on KMD (2026-09-12 baselines). What is
+still open is the policy — per-atom targets or a scale-carrying descriptor — before phase B.
 
 **2. Separate "placed last" from "ordering design".** Attribution is currently impossible: position
 correlates with cost at only +0.216, and front-of-sequence tasks lose more (7.48% vs 4.86%), so
@@ -139,8 +141,9 @@ samples underestimates spread.
 continuously on all 24 tasks and finished on one particular task, and for downstream transfer
 learning "which task it finished on" is a usable prior — so the task under test, the executed
 ordering, the seed, the hyper-parameters and every model's score on all 24 tasks are in the
-manifest. Note the caveat in the investigation section below: **warm-starting a new task from this
-library has never been measured**, and the nearest evidence runs against it.
+manifest. Warm-starting from it has now been measured (experiments 5 and 11 below): 4 better / 4
+worse / 14 unresolved against training alone, and an encoder that never saw the task does as well
+as one that did — the library's value is the 23-task representation, not the finishing task.
 
 ## Methodology worth reusing beyond this project
 
@@ -386,6 +389,43 @@ converts into score. So material_type's path to a gain **structurally cannot tra
    composition. Configs `probe6_mp2026.toml` (41 tasks, dataset 20260912), grids `grid_singlen.txt`,
    `grid_singlesg.txt`. Presented in `summary_page/mp_labels_summary.html` §7–8.
 
+11. **The unseen arms — does the encoder need to have seen X? — done (2026-09-10, stage_xu job
+   89380 → ftzu / ftfu jobs 92372 / 92373).** 72 encoders that never saw X (the first 23 steps of
+   three transfer orderings per task, X dropped, same seed), each fine-tuned with a fresh head,
+   frozen (ftzu) and unfrozen (ftfu); n = 3 orderings per task against n = 10 for the seen arms.
+   Scored by `analysis/ft.py` (2×SE with both arms' SE, |Δ| ≥ 0.01), direct seen-vs-unseen counts in
+   `summary/seen_vs_unseen_counts.json`.
+   - Warm-start, never saw X, vs training alone: 2 better (material_type +21.5%, magnetization
+     +4.6%) / 4 worse (final_energy −10.2%, volume −6.5%, seebeck −2.9%, magnetic_susceptibility) /
+     15 unresolved — the same shape as the seen warm-start (4 / 4 / 14).
+   - Warm-start, seen once vs never: 2 better (seebeck +0.023, zt +0.021) / 2 worse
+     (total_magnetization −0.019, dos_density −0.018) / 19 unresolved. material_type 0.6960 seen vs
+     0.6939 unseen. With the encoder unfrozen the step-24 exposure — and the head trained there —
+     changes nothing measurable.
+   - Frozen, seen once vs never: 4 better (final_energy, total_magnetization, magnetization,
+     magnetic_susceptibility; 5 by ft.py's one-sided rule, adding electrical_resistivity) / 0 worse /
+     19 unresolved. On a fixed representation a head trained at step 24 beats a fresh one; that is the
+     head, not the encoder. material_type frozen: 0.7245 seen vs 0.6698 unseen, both far above alone
+     (0.5710).
+   - Consequence: for a new task the recipe is "pretrain on the existing tasks, then warm-start
+     fine-tune"; the continual step with replay is the most expensive part of the pipeline and adds
+     nothing the fine-tune does not recover. Warm-start is the fixed transfer method for phase B.
+   - Caveats: n = 3, so the unresolved column is wide; final_energy and volume rows are void (mixed
+     label / scale-blind descriptor, experiments 9 and 8); the xu encoders are not bit-identical to
+     the transfer run's step-23 state (below). Presented in
+     `summary_page/transferability_summary.html` §5.
+
+**stage_xu, cost and caveats (2026-09-09).** One xu run is the matching transfer run minus its last
+step: 23 steps, 1,578 epochs, 24k → 78k rows per epoch as replay accumulates, 78.5 M sample-epochs —
+about 33 single-task trainings; the stage is 72 of them (≈ 28% of the transfer stage, ~200 GPU-hours
+at PACK=6). Submitted at PACK=24 it ran ~70 h per run and TIMED OUT at 48 h with 1/72 done (steps 17–22
+reached); resumed at PACK=6 as job 89380. Two consequences: (1) long continual stages go out at
+PACK ≤ 6; (2) a resumed run restarts its interrupted step, so its RNG stream differs from an
+uninterrupted run — steps 1–21 of xu_curie_o2 reproduce xf_curie_o2 epoch for epoch, steps 22–23 do
+not (49 / 69 epochs vs 61 / 63). The xu encoders are therefore "same ordering, same seed, never saw
+X" but not bit-identical to the transfer run's step-23 state. Keeping the penultimate step's
+checkpoint in future transfer stages makes this whole stage unnecessary.
+
 ### What can and cannot be said now
 
 - "Multi-task training hurts data-poor tasks" was a replay artefact: with replay removed the small
@@ -405,6 +445,11 @@ converts into score. So material_type's path to a gain **structurally cannot tra
 - "The fitting advantage is an optimisation artefact" cannot be said either: a fresh model with the
   learning rate never decayed ends with a higher training loss, not a lower one, and slowing the
   warm-started encoder underfits rather than regularises.
+- "The encoder has to have seen the task during pretraining" cannot be said: warm-started from an
+  encoder that never saw X, the counts against training alone (2 / 4 / 15) and against the seen
+  warm-start (2 / 2 / 19) are the same picture, and material_type's gain is intact (0.694 vs 0.696).
+  What the step-24 exposure buys is a trained head, which only matters when the encoder is frozen
+  (4 tasks better, 0 worse).
 - "Warm-starting from the model library beats training alone" can be said for four tasks and
   denied for three; for the rest it is a wash. The library is a reasonable starting point, not a
   free win, and the extensive properties (final_energy, volume) should not be warm-started from it
