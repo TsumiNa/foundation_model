@@ -3,17 +3,16 @@
 
 """Tests for the composition-keyed CompoundDataModule (refactor PR3)."""
 
-from unittest.mock import patch
-
 import numpy as np
 import pandas as pd
 import pytest
 import torch
 from loguru import logger
-from torch.utils.data.distributed import DistributedSampler
 
+from foundation_model.data.composition_sources import PrecomputedDescriptorSource
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.model_config import (
+    TaskConfigType,
     ClassificationTaskConfig,
     RegressionTaskConfig,
     _AEConfig,
@@ -164,7 +163,7 @@ def test_default_data_files_shared_across_tasks(tmp_path, descriptors_df):
     shared = pd.DataFrame({"composition": list(COMPOSITIONS), "task1": np.arange(20.0), "task2": np.arange(20.0)})
     path = tmp_path / "shared.parquet"
     shared.to_parquet(path)
-    configs = [
+    configs: list[TaskConfigType] = [
         RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1]),
         RegressionTaskConfig(name="task2", data_column="task2", dims=[2, 16, 1]),
     ]
@@ -192,7 +191,7 @@ def test_datamodule_normalizes_heterogeneous_compositions():
         # Same two compositions, spelled with float amounts / reversed order.
         "task_cls": pd.DataFrame({"task_cls": [0, 1]}, index=pd.Index(["O3.0Fe2.0", "H2.0O1.0"])),
     }
-    configs = [
+    configs: list[TaskConfigType] = [
         RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 8, 1]),
         ClassificationTaskConfig(name="task_cls", data_column="task_cls", num_classes=2, dims=[2, 8, 2]),
     ]
@@ -216,13 +215,55 @@ def test_datamodule_disable_normalizer_keeps_raw_keys(descriptors_df, reg_cls_co
     assert set(dm.master_index) == set(COMPOSITIONS)
 
 
-def test_datamodule_syncs_normalizer_into_precomputed_source(reg_cls_configs):
-    """The DataModule's opt-out propagates into a PrecomputedDescriptorSource (single source of truth)."""
-    from foundation_model.data.composition_sources import PrecomputedDescriptorSource
+def test_datamodule_default_normalizer_works_against_a_raw_source(descriptors_df, reg_cls_configs, tmp_path):
+    """The mirror case: the source keeps raw keys while the DataModule normalizes its own.
 
-    source = PrecomputedDescriptorSource("unused.parquet")  # defaults to normalization ON
-    CompoundDataModule(task_configs=reg_cls_configs, descriptor_fn=source, composition_normalizer=None)
-    assert source._composition_normalizer is None
+    The DataModule canonicalizes task keys, so it asks for 'Fe2 O3' while the source's index still
+    says 'Fe2O3'. This must resolve. It regressed once: removing the constructor's private-attribute
+    sync left nothing able to bridge the two spellings, and setup failed with "descriptor_fn
+    produced no valid descriptors for any composition" on a config that had worked.
+    """
+    path = tmp_path / "desc.parquet"
+    descriptors_df.rename_axis("composition").to_parquet(path)
+    source = PrecomputedDescriptorSource(
+        str(path),
+        composition_column="composition",
+        composition_normalizer=None,  # raw index
+    )
+    dm = CompoundDataModule(
+        task_configs=reg_cls_configs,
+        descriptor_fn=source,
+        task_frames=_reg_cls_frames(),
+        # ... and the DataModule keeps its default normalizer
+    )
+    dm.setup(stage="fit")
+    assert set(dm.master_index) == set(COMPOSITIONS)
+
+
+def test_datamodule_opt_out_works_against_a_normalizing_source(descriptors_df, reg_cls_configs, tmp_path):
+    """``composition_normalizer=None`` must resolve rows even from a source that normalizes.
+
+    This used to be arranged by assigning ``descriptor_fn._composition_normalizer`` from the
+    DataModule's constructor — reaching into the private attribute of one of the three descriptor
+    kinds. A ``lookup_descriptor_fn`` closure had no such attribute, so opting out there dropped
+    every composition with nothing but a warning. Descriptor sources now key their result by the
+    compositions they were handed, so the two normalization policies never have to agree.
+
+    Asserting on resolved rows rather than on that attribute is the point: the attribute was the
+    mechanism, the rows are the property.
+    """
+    path = tmp_path / "desc.parquet"
+    descriptors_df.rename_axis("composition").to_parquet(path)
+    source = PrecomputedDescriptorSource(str(path), composition_column="composition")  # normalizes
+
+    dm = CompoundDataModule(
+        task_configs=reg_cls_configs,
+        descriptor_fn=source,
+        task_frames=_reg_cls_frames(),
+        composition_normalizer=None,  # ... and the DataModule does not
+    )
+    dm.setup(stage="fit")
+    assert set(dm.master_index) == set(COMPOSITIONS)
 
 
 def test_split_column_resolution(descriptors_df, reg_cls_configs):
@@ -469,50 +510,3 @@ def test_mixed_tasks_batch_structure(descriptors_df):
     x, y_dict, masks, t_seqs = next(iter(dm.test_dataloader()))
     assert x.shape == (4, 2)
     assert "reg_task" in y_dict
-
-
-# --- DistributedSampler coverage --------------------------------------------
-
-
-def _ddp_dm(descriptors_df):
-    split = ["train"] * 10 + ["val"] * 5 + ["test"] * 5
-    return build_dm(
-        descriptors_df,
-        task_frames=_reg_cls_frames(split=split),
-        configs=[RegressionTaskConfig(name="task1", data_column="task1", dims=[2, 16, 1])],
-        batch_size=4,
-    )
-
-
-def test_single_gpu_no_distributed_sampler(descriptors_df):
-    with patch("torch.distributed.is_available", return_value=False):
-        with patch("torch.distributed.is_initialized", return_value=False):
-            dm = _ddp_dm(descriptors_df)
-            dm.setup(stage="fit")
-            loader = dm.train_dataloader()
-            assert not isinstance(loader.sampler, DistributedSampler)
-
-
-def test_multi_gpu_uses_distributed_sampler(descriptors_df):
-    with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
-        with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
-            with patch("torch.distributed.get_rank", return_value=0):
-                with patch("torch.distributed.get_world_size", return_value=2):
-                    dm = _ddp_dm(descriptors_df)
-                    dm.setup(stage="fit")
-                    loader = dm.train_dataloader()
-                    assert isinstance(loader.sampler, DistributedSampler)
-                    assert loader.sampler.shuffle is True
-                    assert loader.sampler.drop_last is False
-
-
-def test_multi_gpu_val_sampler_no_shuffle(descriptors_df):
-    with patch("foundation_model.data.datamodule.torch.distributed.is_available", return_value=True):
-        with patch("foundation_model.data.datamodule.torch.distributed.is_initialized", return_value=True):
-            with patch("torch.distributed.get_rank", return_value=0):
-                with patch("torch.distributed.get_world_size", return_value=2):
-                    dm = _ddp_dm(descriptors_df)
-                    dm.setup(stage="fit")
-                    loader = dm.val_dataloader()
-                    assert isinstance(loader.sampler, DistributedSampler)
-                    assert loader.sampler.shuffle is False

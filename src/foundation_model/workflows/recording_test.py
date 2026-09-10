@@ -155,3 +155,140 @@ def test_write_records_and_metrics_table(tmp_path) -> None:
     assert len(table) == 3
     assert set(table["task"]) == {"density", "mat"}
     assert "r2" in table.columns and "accuracy" in table.columns
+
+
+# --- the load side, on a real model -----------------------------------------------------------
+#
+# Every checkpoint test above runs on _TinyModel, a single nn.Linear. The mechanism that used to
+# key optimizer/scheduler state by parameter group was removed because nothing reads it back: the
+# CLIs load weights only, via load_checkpoint_state -> load_state_dict(strict=False). That claim
+# is what these two pin, on the real model and its real key names.
+
+
+def _real_model(*, disabled: tuple[str, ...] = ()):
+    """A FlexibleMultiTaskModel with one head of each kind plus the AE head, weights perturbed.
+
+    Perturbed rather than freshly initialised: two models built from the same config with the same
+    seed would compare equal even if the load did nothing at all.
+    """
+    from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
+    from foundation_model.models.model_config import (
+        ClassificationTaskConfig,
+        KernelRegressionTaskConfig,
+        MLPEncoderConfig,
+        OptimizerConfig,
+        RegressionTaskConfig,
+        TaskType,
+    )
+
+    latent = 16
+    model = FlexibleMultiTaskModel(
+        task_configs=[
+            RegressionTaskConfig(
+                name="density",
+                type=TaskType.REGRESSION,
+                data_column="density",
+                dims=[latent, 8, 1],
+                optimizer=OptimizerConfig(lr=1e-3, min_lr=1e-6),
+            ),
+            ClassificationTaskConfig(
+                name="is_metal",
+                type=TaskType.CLASSIFICATION,
+                data_column="is_metal",
+                dims=[latent, 8],
+                num_classes=2,
+                optimizer=OptimizerConfig(lr=1e-3, min_lr=1e-6),
+            ),
+            KernelRegressionTaskConfig(
+                name="dos",
+                data_column="dos",
+                t_column="energy",
+                x_dim=[latent, 8],
+                t_dim=[latent, 8],
+                kernel_num_centers=4,
+                optimizer=OptimizerConfig(lr=1e-3, min_lr=1e-6),
+            ),
+        ],
+        encoder_config=MLPEncoderConfig(hidden_dims=[12, 16, latent]),
+        enable_autoencoder=True,
+        shared_block_optimizer=OptimizerConfig(lr=5e-3, min_lr=1e-6),
+    )
+    if disabled:
+        model.disable_task(*disabled)
+    return model
+
+
+def test_real_model_checkpoint_round_trips_through_the_loader(tmp_path) -> None:
+    """save_step_checkpoint -> load_checkpoint_state -> load_state_dict must restore every weight.
+
+    This is the whole of what the CLIs ask of a checkpoint — ``fm finetune``, ``fm predict`` and
+    ``fm pretrain --resume`` all load weights and nothing else — so it is the guarantee that has to
+    hold, and it had never been asserted against a real model.
+    """
+    torch.manual_seed(0)
+    saved_model = _real_model()
+    with torch.no_grad():
+        for parameter in saved_model.parameters():
+            parameter.add_(torch.randn_like(parameter) * 0.1)
+
+    rec = RunRecorder(tmp_path)
+    path = rec.save_step_checkpoint(1, "density", saved_model, ["density", "is_metal", "dos"])
+    rec.close()
+
+    torch.manual_seed(1)  # a differently-initialised model, so equality can only come from the load
+    fresh = _real_model()
+    assert not torch.equal(
+        fresh.state_dict()["encoder.shared.layers.0.layer.weight"],
+        saved_model.state_dict()["encoder.shared.layers.0.layer.weight"],
+    ), "the two models must start apart, or the comparison below proves nothing"
+    state = load_checkpoint_state(path)
+    incompatible = fresh.load_state_dict(state["model"], strict=False)
+
+    assert not incompatible.missing_keys, (
+        f"weights the fresh model wanted but the checkpoint lacks: {incompatible.missing_keys}"
+    )
+    assert not incompatible.unexpected_keys, (
+        f"weights the checkpoint carries but the model has no slot for: {incompatible.unexpected_keys}"
+    )
+    expected = saved_model.state_dict()
+    assert set(fresh.state_dict()) == set(expected)
+    for key, value in fresh.state_dict().items():
+        assert torch.equal(value, expected[key]), f"{key} did not survive the round trip"
+
+
+def test_disabled_head_survives_the_round_trip_onto_a_full_model(tmp_path) -> None:
+    """A head disabled at save time must come back onto ``task_heads`` at load time.
+
+    ``fm finetune`` disables the non-target heads for the fit, so a mid-fit checkpoint stores them
+    under ``disabled_task_heads.*``; load_checkpoint_state folds them back. The synthetic test
+    above pins the folding on hand-written keys — this pins it on the ones the model really emits.
+    """
+    torch.manual_seed(0)
+    saved_model = _real_model(disabled=("is_metal",))
+    with torch.no_grad():
+        for parameter in saved_model.parameters():
+            parameter.add_(torch.randn_like(parameter) * 0.1)
+    raw_keys = set(saved_model.state_dict())
+    assert any(k.startswith("disabled_task_heads.is_metal.") for k in raw_keys), (
+        "fixture must actually park the head under disabled_task_heads"
+    )
+
+    rec = RunRecorder(tmp_path)
+    path = rec.save_step_checkpoint(1, "density", saved_model, ["density", "dos"])
+    rec.close()
+
+    torch.manual_seed(1)
+    fresh = _real_model()  # every head enabled, as predict/inverse rebuild it
+    incompatible = fresh.load_state_dict(load_checkpoint_state(path)["model"], strict=False)
+
+    assert not incompatible.missing_keys, incompatible.missing_keys
+    assert not incompatible.unexpected_keys, incompatible.unexpected_keys
+    disabled_weights = {
+        k.split("disabled_task_heads.")[1]: v
+        for k, v in saved_model.state_dict().items()
+        if k.startswith("disabled_task_heads.")
+    }
+    for suffix, value in disabled_weights.items():
+        assert torch.equal(fresh.state_dict()[f"task_heads.{suffix}"], value), (
+            f"the disabled head's {suffix} did not land on task_heads"
+        )

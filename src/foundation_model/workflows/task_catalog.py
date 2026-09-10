@@ -24,7 +24,7 @@ not the default.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -36,6 +36,7 @@ import pandas as pd
 from loguru import logger
 
 from foundation_model.data.composition_sources import (
+    DescriptorFn,
     PrecomputedDescriptorSource,
     canonical_key,
     normalize_composition,
@@ -50,12 +51,12 @@ from foundation_model.models.model_config import (
 )
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, KMD, element_features, formula_to_composition
 
-from ._sections import validate_hidden_dims, validate_positive_int
+from ._sections import reject_unknown, validate_hidden_dims, validate_positive_int
 
 TaskConfig = RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
 
 # A composition key element token, e.g. "Fe" / "Cu" in "Fe0.5 Cu0.5".
-_ELEMENT_TOKEN = re.compile(r"[A-Z][a-z]?")
+ELEMENT_TOKEN = re.compile(r"[A-Z][a-z]?")
 
 
 class TaskKind(str, Enum):
@@ -91,21 +92,6 @@ def _coerce_task_kind(value: Any) -> TaskKind:
         raise ValueError(
             f"Unknown task kind {value!r}; expected one of {sorted({k.value for k in TaskKind})}."
         ) from exc
-
-
-def _validate_replay(value: float | int | None, *, where: str) -> None:
-    if value is None:
-        return
-    if isinstance(value, bool):  # bool is an int subclass — reject it explicitly
-        raise ValueError(f"{where}: replay must be a number, got bool {value!r}.")
-    if isinstance(value, float):
-        if not 0.0 < value < 1.0:
-            raise ValueError(f"{where}: replay float must be in (0, 1) (fraction of labels), got {value}.")
-    elif isinstance(value, int):
-        if value < 1:
-            raise ValueError(f"{where}: replay int must be >= 1 (label count), got {value}.")
-    else:
-        raise ValueError(f"{where}: replay must be a float in (0, 1) or an int >= 1, got {value!r}.")
 
 
 @dataclass(kw_only=True)
@@ -155,7 +141,7 @@ class TaskSpec:
     t_column: str | None = None  # required iff kind == KERNEL_REGRESSION
     num_classes: int | None = None  # required iff kind == CLASSIFICATION
     lr: float | None = None  # per-task LR override
-    replay: float | int | None = None  # per-task replay override (fraction or count)
+    weight_decay: float | None = None  # per-task weight-decay override
     scaler: ScalerSpec | None = None
     # Per-head architecture overrides (fall back to [model] defaults when None).
     hidden_dims: list[int] | None = None  # reg/clf hidden widths
@@ -176,7 +162,13 @@ class TaskSpec:
                 raise ValueError(f"Task '{self.name}': num_classes must be >= 2, got {self.num_classes}.")
         elif self.num_classes is not None:
             raise ValueError(f"Task '{self.name}': 'num_classes' is only valid for classification.")
-        _validate_replay(self.replay, where=f"Task '{self.name}'")
+        # Per-task optimizer overrides are the only way to give one task a different learning rate
+        # or weight decay, so a nonsensical value here silently trains that head badly rather than
+        # failing — validate at config time.
+        if self.lr is not None and self.lr <= 0:
+            raise ValueError(f"Task '{self.name}': lr must be > 0, got {self.lr}.")
+        if self.weight_decay is not None and self.weight_decay < 0:
+            raise ValueError(f"Task '{self.name}': weight_decay must be >= 0, got {self.weight_decay}.")
         self._validate_arch_overrides()
 
     def _validate_arch_overrides(self) -> None:
@@ -298,14 +290,8 @@ class TaskCatalogConfig:
 # --- TOML → dataclass builder -------------------------------------------------------------
 
 
-def _reject_unknown(section: str, raw: Mapping[str, Any], known: set[str]) -> None:
-    unknown = sorted(set(raw) - known)
-    if unknown:
-        raise ValueError(f"[{section}]: unknown key(s) {unknown}; allowed keys are {sorted(known)}.")
-
-
 def _build_scaler_spec(raw: Mapping[str, Any], *, task_name: str) -> ScalerSpec:
-    _reject_unknown(f"tasks.{task_name}.scaler", raw, {"path", "key"})
+    reject_unknown(f"tasks.{task_name}.scaler", raw, {"path", "key"})
     if "path" not in raw:
         raise ValueError(f"Task '{task_name}': scaler requires 'path'.")
     return ScalerSpec(path=Path(raw["path"]), key=raw.get("key"))
@@ -318,14 +304,14 @@ def build_task_catalog_config(raw: Mapping[str, Any]) -> TaskCatalogConfig:
     the dataclasses alone would surface a less friendly ``TypeError``).
     """
 
-    _reject_unknown("<root>", raw, {"data", "descriptor", "datasets", "tasks"})
+    reject_unknown("<root>", raw, {"data", "descriptor", "datasets", "tasks"})
 
     data_raw = dict(raw.get("data", {}))
-    _reject_unknown("data", data_raw, set(DataConfig.__dataclass_fields__))
+    reject_unknown("data", data_raw, set(DataConfig.__dataclass_fields__))
     data = DataConfig(**data_raw)
 
     descriptor_raw = dict(raw.get("descriptor", {}))
-    _reject_unknown("descriptor", descriptor_raw, set(DescriptorConfig.__dataclass_fields__))
+    reject_unknown("descriptor", descriptor_raw, set(DescriptorConfig.__dataclass_fields__))
     descriptor = DescriptorConfig(**descriptor_raw)
 
     datasets_raw = raw.get("datasets", {})
@@ -334,7 +320,7 @@ def build_task_catalog_config(raw: Mapping[str, Any]) -> TaskCatalogConfig:
     datasets: dict[str, DatasetSpec] = {}
     for name, spec_raw in datasets_raw.items():
         spec_map = dict(spec_raw)
-        _reject_unknown(f"datasets.{name}", spec_map, set(DatasetSpec.__dataclass_fields__) - {"name"})
+        reject_unknown(f"datasets.{name}", spec_map, set(DatasetSpec.__dataclass_fields__) - {"name"})
         datasets[name] = DatasetSpec(name=name, **spec_map)
 
     tasks_raw = raw.get("tasks", [])
@@ -343,7 +329,7 @@ def build_task_catalog_config(raw: Mapping[str, Any]) -> TaskCatalogConfig:
     tasks: list[TaskSpec] = []
     for task_raw in tasks_raw:
         task_map = dict(task_raw)
-        _reject_unknown(
+        reject_unknown(
             f"tasks.{task_map.get('name', '?')}",
             task_map,
             set(TaskSpec.__dataclass_fields__),
@@ -376,7 +362,7 @@ def init_kernel_centers_sigmas(t_values: np.ndarray, n_kernel: int) -> tuple[lis
 
 
 def _count_elements(composition_key: str) -> int:
-    return len(_ELEMENT_TOKEN.findall(composition_key))
+    return len(ELEMENT_TOKEN.findall(composition_key))
 
 
 def _as_float_array(cell: Any) -> np.ndarray:
@@ -506,14 +492,19 @@ class TaskCatalog:
             out[name] = self._task_frames[name]
         return out
 
-    def descriptor_fn(self) -> Callable[[list[str]], pd.DataFrame]:
-        """Return a ``Callable[[list[str]], pd.DataFrame]`` producing composition descriptors."""
+    def descriptor_fn(self) -> DescriptorFn:
+        """Return the composition-descriptor source for this catalog.
+
+        Per the :data:`DescriptorFn` contract the returned rows are indexed by the composition
+        strings it was handed, not by any canonicalized spelling of them.
+        """
 
         if self._descriptor_source is not None:
-            source = self._descriptor_source
-            return lambda compositions: source(list(compositions))
+            # Already a DescriptorFn; it used to be wrapped in a lambda only to re-package the
+            # argument as a list for the narrower alias.
+            return self._descriptor_source
 
-        def _kmd_descriptor(compositions: list[str]) -> pd.DataFrame:
+        def _kmd_descriptor(compositions: Sequence[str]) -> pd.DataFrame:
             uncached = [c for c in dict.fromkeys(compositions) if c not in self._desc_cache]
             if uncached:
                 weights = np.zeros((len(uncached), len(DEFAULT_ELEMENTS)), dtype=float)
@@ -579,6 +570,7 @@ class TaskCatalog:
         weight_decay: float = 0.0,
         masking_ratio: float = 1.0,
         init_from_data: bool = True,
+        optimizer_template: Any = None,
     ) -> TaskConfig:
         """Build the model-side task config for ``name``.
 
@@ -589,7 +581,13 @@ class TaskCatalog:
 
         spec = self.task_spec(name)
         head_lr = spec.lr if spec.lr is not None else lr
-        optimizer = OptimizerConfig(lr=head_lr, weight_decay=weight_decay)
+        head_wd = spec.weight_decay if spec.weight_decay is not None else weight_decay
+        # optimizer_template is the [training] section: it carries the shared AdamW/scheduler
+        # numerics so a per-task head differs only in the lr/weight-decay pair.
+        if optimizer_template is not None:
+            optimizer = optimizer_template.optimizer_config(lr=head_lr, weight_decay=head_wd)
+        else:
+            optimizer = OptimizerConfig(lr=head_lr, weight_decay=head_wd)
 
         if spec.kind is TaskKind.REGRESSION:
             head_hidden = spec.hidden_dims if spec.hidden_dims is not None else head_hidden_dims

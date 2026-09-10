@@ -11,7 +11,7 @@ use one implementation. Only :class:`RunRecorder` writes files.
 from __future__ import annotations
 
 import ast
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -25,17 +25,16 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
+from foundation_model.models.task_head.kernel_regression import expand_for_kernel_regression
 from foundation_model.models.model_config import MLPEncoderConfig, OptimizerConfig
 
 from . import plots
-from ._sections import ModelSectionConfig, TrainingSectionConfig
+from ._sections import MULTI_DEVICE_HELP, ModelSectionConfig, TrainingSectionConfig
 from .recording import RunRecorder
 from .task_catalog import TaskCatalog, TaskConfig, TaskKind
 
 # Reserved built-in autoencoder head name (see FlexibleMultiTaskModel).
 AE_NAME = "__reconstruction__"
-# Legacy weight decay for regression / classification heads (kernel heads use kr_weight_decay).
-_HEAD_WEIGHT_DECAY = 1e-5
 
 
 def task_names_from_state(state_dict: Mapping[str, Any]) -> list[str]:
@@ -77,10 +76,15 @@ def build_empty_model(
         task_configs=[],
         encoder_config=build_encoder_config(model, catalog.descriptor_dim),
         enable_autoencoder=True,
-        shared_block_optimizer=OptimizerConfig(lr=training.encoder_lr, weight_decay=1e-2),
+        enable_learnable_loss_balancer=training.learnable_loss_balancer,
+        shared_block_optimizer=training.optimizer_config(
+            lr=training.encoder_lr, weight_decay=training.encoder_weight_decay
+        ),
     )
     if AE_NAME in built.task_configs_map:
-        built.task_configs_map[AE_NAME].optimizer = OptimizerConfig(lr=training.ae_lr)
+        built.task_configs_map[AE_NAME].optimizer = training.optimizer_config(
+            lr=training.ae_lr, weight_decay=training.ae_weight_decay
+        )
     return built
 
 
@@ -96,20 +100,34 @@ def build_model_for_checkpoint(
         task_configs=[],
         encoder_config=build_encoder_config(model, catalog.descriptor_dim),
         enable_autoencoder=True,
-        shared_block_optimizer=OptimizerConfig(lr=lr, weight_decay=1e-2),
+        # Placeholder optimizer: predict/inverse never optimize, they only need the
+        # architecture to match the checkpoint. scheduler_enabled=False keeps the min_lr < lr
+        # rule from rejecting a small caller-supplied lr on an inference-only path.
+        shared_block_optimizer=OptimizerConfig(lr=lr, weight_decay=1e-2, scheduler_enabled=False),
     )
+    if AE_NAME in built.task_configs_map:
+        # The AE head is auto-created by the constructor, so it never passes through the add_task
+        # loop below and would keep `optimizer = None`. configure_optimizers reads that as the
+        # OptimizerConfig defaults, i.e. scheduler_enabled=True, which disagrees with every other
+        # group here and raises. Nothing calls configure_optimizers on this model today —
+        # predict/inverse build no Trainer — but "every parameter group is consistent" has to be
+        # true of the model, not just of the groups this function happens to touch.
+        built.task_configs_map[AE_NAME].optimizer = OptimizerConfig(lr=lr, weight_decay=1e-2, scheduler_enabled=False)
     for name in task_names:
-        built.add_task(
-            catalog.build_task_config(
-                name,
-                latent_dim=model.latent_dim,
-                head_hidden_dims=model.head_hidden_dims,
-                kr_x_hidden_dims=model.kr_x_hidden_dims,
-                kr_t_hidden_dims=model.kr_t_hidden_dims,
-                n_kernel=model.n_kernel,
-                lr=lr,
-            )
+        head = catalog.build_task_config(
+            name,
+            latent_dim=model.latent_dim,
+            head_hidden_dims=model.head_hidden_dims,
+            kr_x_hidden_dims=model.kr_x_hidden_dims,
+            kr_t_hidden_dims=model.kr_t_hidden_dims,
+            n_kernel=model.n_kernel,
+            lr=lr,
         )
+        # Match the encoder placeholder: no scheduler on an inference-only model, so every
+        # parameter group is consistent and no group is subject to scheduler validation.
+        if head.optimizer is not None:
+            head.optimizer.scheduler_enabled = False
+        built.add_task(head)
     return built
 
 
@@ -160,7 +178,7 @@ def build_head_config(
     if spec.kind is TaskKind.KERNEL_REGRESSION:
         lr, weight_decay = training.kr_lr, training.kr_weight_decay
     else:
-        lr, weight_decay = training.head_lr, _HEAD_WEIGHT_DECAY
+        lr, weight_decay = training.head_lr, training.head_weight_decay
     return catalog.build_task_config(
         name,
         latent_dim=model.latent_dim,
@@ -172,6 +190,7 @@ def build_head_config(
         weight_decay=weight_decay,
         masking_ratio=masking_ratio,
         init_from_data=init_from_data,
+        optimizer_template=training,
     )
 
 
@@ -225,8 +244,9 @@ class DropLastTrainCompoundDataModule(CompoundDataModule):
     """``CompoundDataModule`` whose train loader drops the final partial batch.
 
     Guards against BatchNorm1d crashing on a size-1 tail batch. Only the train loader is
-    affected; val/test/predict keep every held-out row. A non-default sampler (e.g. a
-    ``DistributedSampler``) is preserved rather than replaced with ``shuffle=True``.
+    affected; val/test/predict keep every held-out row. A non-default sampler is preserved
+    rather than replaced with ``shuffle=True`` — nothing sets one today, but the wrapper must not
+    be what silently discards it when distributed training is added back.
     """
 
     def train_dataloader(self) -> DataLoader | None:  # type: ignore[override]
@@ -267,8 +287,40 @@ def test_rows(catalog: TaskCatalog, name: str, test_keys: set[str] | None) -> li
     return list(frame.index[mask])
 
 
-def descriptor_tensor(catalog: TaskCatalog, comps: list[str], device: torch.device) -> tuple[torch.Tensor, list[str]]:
-    desc = catalog.descriptor_fn()(comps)
+def guard_single_device(trainer: Any) -> None:
+    """Fail a fit that Lightning resolved onto more than one device.
+
+    The config check cannot cover ``devices = "auto"``, which is the default and resolves to *every*
+    GPU on the node — so on a multi-GPU machine the default itself would start DDP. This reads what
+    Lightning actually decided, after the Trainer exists and before it runs.
+    """
+    n = getattr(trainer, "num_devices", 1)
+    if n and n > 1:
+        raise RuntimeError(
+            f"Lightning resolved training.devices onto {n} devices. {MULTI_DEVICE_HELP} "
+            "Set [training] devices = 1 (or a single index) to pin one."
+        )
+
+
+def resolve_device(accelerator: str) -> torch.device:
+    """``"cpu"`` forces CPU; anything else uses CUDA when available, else CPU.
+
+    Shared rather than per-workflow: predict and inverse each carried their own copy, written
+    differently (``!= "cpu" and is_available()`` against a two-branch form) though the truth tables
+    matched. Two spellings of one decision is how the next accelerator gets added to only one.
+    """
+    if accelerator == "cpu":
+        return torch.device("cpu")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
+def descriptor_tensor(
+    catalog: TaskCatalog, comps: Sequence[str], device: torch.device
+) -> tuple[torch.Tensor, list[str]]:
+    """Descriptors for ``comps`` as a tensor, plus the subset the descriptor function kept."""
+    desc = catalog.descriptor_fn()(list(comps))
     kept = [c for c in comps if c in desc.index]
     tensor = torch.tensor(desc.loc[kept].values, dtype=torch.float32, device=device)
     return tensor, kept
@@ -381,7 +433,7 @@ def evaluate_task(
         xk, _ = descriptor_tensor(catalog, keep, device)
         h_k = torch.tanh(model.encoder(xk))
         t_tensors = [torch.tensor(t, dtype=torch.float32, device=device) for t in t_list]
-        expanded_h, expanded_t = model._expand_for_kernel_regression(h_k, t_tensors)
+        expanded_h, expanded_t = expand_for_kernel_regression(h_k, t_tensors)
         pred = catalog.inverse_transform(name, head(expanded_h, t=expanded_t).squeeze(-1).cpu().numpy())
         true = catalog.inverse_transform(name, np.concatenate(true_parts))
         r2 = float(r2_score(true, pred))

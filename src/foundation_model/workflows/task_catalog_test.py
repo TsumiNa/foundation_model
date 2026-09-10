@@ -23,6 +23,7 @@ from foundation_model.workflows.task_catalog import (
     ScalerSpec,
     TaskCatalog,
     TaskKind,
+    TaskSpec,
     build_task_catalog_config,
     init_kernel_centers_sigmas,
 )
@@ -251,12 +252,14 @@ column = "density"
         _build(toml)
 
 
-@pytest.mark.parametrize(
-    ("replay", "ok"),
-    [(0.1, True), (500, True), (0.0, False), (-1, False), (1.0, False)],
-)
-def test_replay_validation(replay: float, ok: bool) -> None:
-    toml = f"""
+def test_per_task_replay_key_is_rejected() -> None:
+    """``[[tasks]].replay`` was never read by any workflow — it must not silently do nothing.
+
+    Introduced by the fm-CLI refactor's PR1 for PR2 to consume; PR2 shipped
+    ``[pretrain.replay].per_task`` instead and the field was left orphaned. Removing it turns a
+    silent no-op into a config error that names the real key.
+    """
+    toml = """
 [datasets.qc]
 path = "data/qc.parquet"
 
@@ -265,13 +268,10 @@ name = "density"
 kind = "regression"
 dataset = "qc"
 column = "density"
-replay = {replay!r}
+replay = 0.1
 """
-    if ok:
-        assert _build(toml).tasks[0].replay == replay
-    else:
-        with pytest.raises(ValueError, match="replay"):
-            _build(toml)
+    with pytest.raises(ValueError, match=r"tasks\.density.*unknown key\(s\) \['replay'\]"):
+        _build(toml)
 
 
 def test_unsupported_extension_raises() -> None:
@@ -581,3 +581,24 @@ def test_build_datamodule(catalog_dir) -> None:
     cfgs = {c.name: c for c in dm.task_configs}
     assert cfgs["density"].task_masking_ratio == 0.5
     assert cfgs["density"].predict_idx == "test"
+
+
+# --- per-task optimizer overrides ------------------------------------------------------------
+
+
+def test_per_task_lr_and_weight_decay_override_the_group_defaults():
+    spec = TaskSpec(name="t", kind=TaskKind.REGRESSION, dataset="d", column="c", lr=1e-4, weight_decay=0.25)
+    assert (spec.lr, spec.weight_decay) == (1e-4, 0.25)
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"lr": 0.0}, "lr must be > 0"),
+        ({"lr": -1e-3}, "lr must be > 0"),
+        ({"weight_decay": -0.1}, "weight_decay must be >= 0"),
+    ],
+)
+def test_per_task_optimizer_overrides_are_validated(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        TaskSpec(name="t", kind=TaskKind.REGRESSION, dataset="d", column="c", **kwargs)

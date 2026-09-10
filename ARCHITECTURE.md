@@ -12,7 +12,15 @@ foundation_model/
 │   │   │   ├── classification.py
 │   │   │   ├── kernel_regression.py
 │   │   │   └── autoencoder.py   # Reconstructs x from h_task; powers optimize_latent
-│   │   ├── flexible_multi_task_model.py
+│   │   ├── inverse_design/      # Target-driven search over inputs (a *use* of a trained model)
+│   │   │   ├── targets.py       # What to optimise toward: objective terms + result containers
+│   │   │   ├── constraints.py   # What a recipe may be: whitelist, pins, floor, cardinality
+│   │   │   ├── annealing.py     # How fast the cardinality limit commits (the τ schedule)
+│   │   │   ├── simplex.py       # How logits become a legal recipe (top-K, lock paste, floor)
+│   │   │   ├── latent.py        # Search over descriptors, via the autoencoder
+│   │   │   ├── composition.py   # Search over element weights, through the KMD transform
+│   │   │   └── mixin.py         # InverseDesignMixin: what a search needs from the model
+│   │   ├── flexible_multi_task_model.py  # LightningModule: task lifecycle + train/eval steps
 │   │   └── model_config.py      # EncoderConfig + per-task config dataclasses
 │   ├── data/                    # CompoundDataModule + per-task data sources + splitter
 │   ├── utils/                   # KMD + plotting / training helpers
@@ -24,8 +32,13 @@ foundation_model/
 │       ├── _sections.py / _engine.py     # shared [model]/[training] configs + model build + eval
 │       ├── pretrain.py                   # replay-based continual engine (interval replay, n_runs)
 │       ├── finetune.py                   # freeze policy + fine-tune engine
-│       ├── inverse.py                    # scenario × path inverse-design engine
-│       ├── inverse_trajectory.py         # trajectory analytics / plots / animations
+│       ├── inverse/                     # scenario × path inverse-design engine
+│       │   ├── config.py                #   TOML schema: targets / scenarios / paths / seeds
+│       │   ├── seeds.py                 #   which compositions a scenario starts from
+│       │   ├── paths.py                 #   running one seed set down one path
+│       │   ├── report.py                #   figures + markdown
+│       │   ├── trajectory.py            #   per-step analytics / plots / animations
+│       │   └── engine.py                #   run: the scenario loop
 │       ├── plots.py                      # parity / confusion / kr-sequence / forgetting plots
 │       └── predict.py                    # arbitrary-checkpoint evaluation & prediction
 │
@@ -57,11 +70,60 @@ training/predict flows (output layout, `run_provenance.json`, per-step checkpoin
 parquets, metrics, figures). `_sections.py` (the `[model]`/`[training]` config) and `_engine.py`
 (model construction + per-head evaluation) are shared by the pretrain and finetune engines.
 
+## Distributed training: removed, and probably not worth re-adding
+
+`0.4.0` removed the DDP surface. Sampling and metrics had been built — a `DistributedSampler`
+branch, `set_epoch`, a per-rank index tracker so padded samples were not double-counted, and
+`sync_dist=True` on every log — but the **output half never was**: there is no rank guarding
+anywhere in the tree, so every rank would concurrently write the same checkpoint, the same metrics
+JSON and the same prediction parquet, and per-rank prediction shards were never gathered. It
+produced correct gradients and incorrect artefacts, and it was never run end to end: `strategy` is
+never set and every config in the repo is `devices = 1`.
+
+Multi-device configurations are now **rejected** rather than merely undocumented — see
+`[training] devices` in [docs/configuration.md](docs/configuration.md) — because the removal took
+`sync_dist=True` with it, so under DDP each rank would hand `ReduceLROnPlateau` its own shard's
+`train_final_loss_epoch` and the learning rates would diverge while the gradients stayed
+synchronised: a run that finishes, looks normal, and is wrong.
+
+**Before re-adding it, check whether it is the right axis at all.** DDP splits *one* run across
+several GPUs, which pays only when a single run saturates one. This project's runs do not come
+close: measured across 394 runs, a training run uses **~9% of its GPU and 1.29 GB of its 189 GB**
+(see the GPU-utilisation section of [AGENTS.md](AGENTS.md)). The parallelism that is actually
+available here is the other one — packing independent runs onto a single card, which measured
+**7.1× throughput** at eight per card. DDP would add a synchronisation surface, four missing
+pieces, and a class of silent-divergence bug, to speed up something that is not the bottleneck.
+
+If a model does eventually outgrow one card, the work is, in order:
+
+1. **rank-zero guarding on every `RunRecorder` write, plus a gather for prediction shards** — the
+   half that was never written, and the reason this could not simply be switched on;
+2. **cross-rank synchronisation of the scheduler monitor**, or the learning rates diverge;
+3. the sampler branch and metric dedup restored — commit `7a32a82` removed them intact, so its
+   diff is the reference implementation;
+4. an end-to-end multi-process test, since the mocked-branch unit tests that existed did not catch
+   that the output side was missing.
+
 # Model architecture
 
 `FlexibleMultiTaskModel` ([src/foundation_model/models/flexible_multi_task_model.py](src/foundation_model/models/flexible_multi_task_model.py))
 is a single-encoder, multi-head supervised model. Composition descriptors enter the encoder,
 get `tanh`'d at the model level, and feed every active task head.
+
+Target-driven search over *inputs* — `optimize_latent` / `optimize_composition`, a **use** of a
+trained model rather than part of training one — lives in
+[src/foundation_model/models/inverse_design/](src/foundation_model/models/inverse_design/).
+`InverseDesignMixin` declares what the search needs from the model — four members (`encoder`,
+`task_heads`, `task_configs_map`, `_head`) — and the model class mixes it in; nothing on the
+training path calls any of it, and the only consumer is `workflows/inverse/`.
+
+The package's modules each answer one question — what to optimise *toward* (`targets`), what a
+recipe may *be* (`constraints`), how fast the cardinality limit *commits* (`annealing`), how a
+logit vector *becomes* a recipe (`simplex`), and the two searches themselves (`latent`,
+`composition`). Dependencies run one way, leaves first. That split came out of
+`optimize_composition`, which was a single 975-line method whose nine nested closures — eight of
+them never touching `self` — were a constraint system with no way to reach it except through a
+twenty-keyword call.
 
 ## Diagram
 

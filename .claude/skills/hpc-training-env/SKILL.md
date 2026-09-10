@@ -60,6 +60,13 @@ analysis code are tracked). Share results between machines/people via rsync.
   `scancel <dependents>` + resubmit with a fresh dependency. Never wait on them.
 - Independent work units (per-checkpoint evals, per-task controls) → **disjoint-range parallel
   jobs**, not one serial job. A 10–14 h serial plan became ~3 h wall this way.
+- **Check `gres/gpuutil` before assuming one run per GPU.** These models do not fill a modern
+  card — measured at **~9% utilisation and 1.29 GB of 189 GB** across 394 runs — and nothing
+  reports it: the jobs exit 0 and look healthy. Read it from
+  `sacct -j <id> --format=JobID,TRESUsageInAve -n -P`. When it is low, run N grid points
+  concurrently inside one array task holding one GPU (separate processes, separate output dirs and
+  markers → throughput changes, results do not). Measured **7.1× at eight per card**, for 12% slower wall clock per run. Calibrate the pack size by re-running points that already finished unpacked;
+  contention is not linear. Skipping this check once cost ~2,600 GPU-h where ~330 would have done.
 - After code/schema changes while checkpoints are in flight: hold dependents
   (`scontrol hold`), run a small **GPU compat-probe job** (real environment, real checkpoint,
   tiny chain, PASS/FAIL), release only on PASS.

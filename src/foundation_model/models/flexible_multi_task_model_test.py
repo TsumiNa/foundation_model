@@ -11,15 +11,25 @@ from types import SimpleNamespace
 import lightning as L
 import numpy as np
 import pandas as pd
+from typing import Any, cast
+
+from torchmetrics import R2Score
+
 import pytest
+from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from lightning.pytorch.loggers import CSVLogger
+from lightning.pytorch.utilities.exceptions import MisconfigurationException
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel, OptimizationTarget
+from foundation_model.models.task_head.base import BaseTaskHead
 from foundation_model.models.model_config import (
+    TaskConfigType,
+    BaseEncoderConfig,
     ClassificationTaskConfig,
+    EncoderType,
     KernelRegressionTaskConfig,
     MLPEncoderConfig,
     OptimizerConfig,
@@ -51,7 +61,7 @@ def model_config_mixed_tasks():
             type=TaskType.REGRESSION,
             dims=[latent_dim, 64, 1],
             data_column="regr_task_1",
-            optimizer=OptimizerConfig(lr=1e-4, scheduler_type="None"),
+            optimizer=OptimizerConfig(lr=1e-4, scheduler_enabled=False),
             loss_weight=1.0,
         ),
         ClassificationTaskConfig(
@@ -60,7 +70,7 @@ def model_config_mixed_tasks():
             dims=[latent_dim, 64, 3],
             data_column="clf_task_1_classification_value",
             num_classes=3,
-            optimizer=OptimizerConfig(lr=1e-4, scheduler_type="None"),
+            optimizer=OptimizerConfig(lr=1e-4, scheduler_enabled=False),
             loss_weight=1.0,
         ),
         RegressionTaskConfig(
@@ -68,7 +78,7 @@ def model_config_mixed_tasks():
             type=TaskType.REGRESSION,
             dims=[latent_dim, 32, 2],
             data_column="regr_task_2",
-            optimizer=OptimizerConfig(lr=1e-4, scheduler_type="None"),
+            optimizer=OptimizerConfig(lr=1e-4, scheduler_enabled=False),
             loss_weight=0.5,
         ),
     ]
@@ -77,7 +87,7 @@ def model_config_mixed_tasks():
         "shared_block_dims": shared_dims,
         "task_configs": task_configs_list,
         "encoder_config": MLPEncoderConfig(hidden_dims=shared_dims, norm=True, residual=False),
-        "shared_block_optimizer": OptimizerConfig(lr=1e-3, scheduler_type="None"),
+        "shared_block_optimizer": OptimizerConfig(lr=1e-3, scheduler_enabled=False),
     }
     return SimpleNamespace(**config_dict)
 
@@ -119,7 +129,7 @@ def sample_batch_mixed_tasks(model_config_mixed_tasks):
         y_dict_batch[task_cfg.name] = y_task
 
     # temps_batch is an empty dict as no sequence tasks are included
-    temps_batch = {}
+    temps_batch: dict[str, list[torch.Tensor]] = {}
     return (x_formula, y_dict_batch, task_masks_batch, temps_batch)
 
 
@@ -158,7 +168,11 @@ def test_model_initialization(model_config_mixed_tasks):
             )
         # No sequence tasks in this fixture
 
-    assert not model.automatic_optimization, "automatic_optimization should be False for FlexibleMultiTaskModel"
+    # Automatic optimization, deliberately. The model returns one optimizer, so Lightning owns the
+    # backward pass, the optimizer step AND the scheduler step. It was manual only because the old
+    # per-group optimizers made Lightning refuse to drive them, and that split is what let the
+    # scheduler be stepped per batch instead of per epoch (#45).
+    assert model.automatic_optimization, "FlexibleMultiTaskModel must use automatic optimization"
 
 
 def test_model_forward_pass(model_config_mixed_tasks, sample_batch_mixed_tasks):
@@ -231,20 +245,8 @@ def test_model_training_step(model_config_mixed_tasks, sample_batch_mixed_tasks,
     # which is what training_step uses internally.
     # Number of optimizers = 1 (shared) + num_enabled_tasks
     num_enabled_tasks = sum(1 for tc in config.task_configs if tc.enabled)
-    mock_optimizers_list = []
-    for _ in range(1 + num_enabled_tasks):
-        opt = mocker.MagicMock(spec=torch.optim.Optimizer)
-        opt.step = mocker.MagicMock()
-        opt.zero_grad = mocker.MagicMock()
-        mock_optimizers_list.append(opt)
-
-    # Patch model.optimizers() to return our list of mock optimizers
-    # Note: model.optimizers() is a property that calls self.trainer.optimizers,
-    # so we need to ensure model.trainer.optimizers returns our mocks.
-    # A more direct way if model.optimizers() is called:
-    mocker.patch.object(model, "optimizers", return_value=mock_optimizers_list)
-    # If training_step directly accesses self.trainer.optimizers:
-    # mock_trainer.optimizers = mock_optimizers_list # This might be needed if self.optimizers() is complex
+    # No optimizer mocking: under automatic optimization training_step neither fetches optimizers
+    # nor steps them. It computes the objective and hands it back, and that is the whole contract.
 
     mock_log_dict = mocker.patch.object(model, "log_dict")
     mock_log = mocker.patch.object(model, "log")
@@ -254,25 +256,15 @@ def test_model_training_step(model_config_mixed_tasks, sample_batch_mixed_tasks,
     loss = model.training_step(sample_batch_mixed_tasks, batch_idx=0)
 
     assert isinstance(loss, torch.Tensor), "Loss should be a Tensor"
-    # With manual optimization, the returned loss might not directly have requires_grad=True
-    # if it's detached or cloned before returning. The important part is that the original
-    # computed loss that was passed to manual_backward had requires_grad=True.
-    # We'll assert that backward was called on a tensor.
-    # assert loss.requires_grad, "Loss should require gradients for backpropagation"
     assert loss.ndim == 0, "Loss should be a scalar"
+    # It must carry the graph: Lightning backwards exactly what this returns, so a detached loss
+    # would train nothing while still looking like a healthy step.
+    assert loss.requires_grad, "the returned loss is what Lightning backwards, so it needs a graph"
 
-    # Check that manual_backward was called (via strategy)
-    mock_strategy.backward.assert_called_once()
-    # Check that backward was called with a tensor that requires grad
-    backward_loss_arg = mock_strategy.backward.call_args[0][0]
-    assert isinstance(backward_loss_arg, torch.Tensor)
-    assert backward_loss_arg.requires_grad, "Loss passed to backward should require gradients"
+    # The model must NOT touch backward or the optimizer itself any more.
+    mock_strategy.backward.assert_not_called()
 
     # Check that optimizer steps and zero_grads were called
-    for opt_mock in mock_optimizers_list:
-        opt_mock.step.assert_called_once()
-        opt_mock.zero_grad.assert_called_once()
-
     mock_log_dict.assert_called()
     logged_metrics = mock_log_dict.call_args[0][0]
 
@@ -305,9 +297,10 @@ def test_model_validation_step(model_config_mixed_tasks, sample_batch_mixed_task
     mock_log_dict = mocker.patch.object(model, "log_dict")
     mock_log = mocker.patch.object(model, "log")
 
-    # validation_step now returns None and logs metrics via self.log_dict
-    result = model.validation_step(sample_batch_mixed_tasks, batch_idx=0)
-    assert result is None, "validation_step should return None"
+    # validation_step logs metrics via self.log_dict and returns nothing; the `-> None`
+    # annotation is what enforces that now, so asserting on the value is both redundant and
+    # rejected by the type checker.
+    model.validation_step(sample_batch_mixed_tasks, batch_idx=0)
 
     mock_log_dict.assert_called()
     logged_metrics = mock_log_dict.call_args[0][0]
@@ -361,9 +354,8 @@ def test_model_predict_step_all_tasks(model_config_mixed_tasks, sample_batch_mix
             assert isinstance(task_cfg, RegressionTaskConfig)
             expected_key_value = f"{task_name_snake}_value"
             assert expected_key_value in output, f"Predict output should contain key '{expected_key_value}'"
-            pred_value = output[expected_key_value]
-            if not isinstance(pred_value, torch.Tensor):
-                pred_value = torch.as_tensor(pred_value)
+            raw_value = output[expected_key_value]
+            pred_value = raw_value if isinstance(raw_value, torch.Tensor) else torch.as_tensor(raw_value)
             expected_shape = (x_formula.shape[0], task_cfg.dims[-1])
             assert pred_value.shape == expected_shape, (
                 f"Shape mismatch for {expected_key_value}. Expected {expected_shape}, got {pred_value.shape}"
@@ -375,18 +367,22 @@ def test_model_predict_step_all_tasks(model_config_mixed_tasks, sample_batch_mix
             expected_key_label = f"{task_name_snake}_label"
 
             assert expected_key_proba in output, f"Predict output should contain key '{expected_key_proba}'"
-            proba_value = output[expected_key_proba]
-            if not isinstance(proba_value, torch.Tensor):
-                proba_value = torch.as_tensor(proba_value)
+            raw_proba_value = output[expected_key_proba]
+
+            proba_value = (
+                raw_proba_value if isinstance(raw_proba_value, torch.Tensor) else torch.as_tensor(raw_proba_value)
+            )
             expected_proba_shape = (x_formula.shape[0], task_cfg.num_classes)
             assert proba_value.shape == expected_proba_shape, (
                 f"Shape mismatch for {expected_key_proba}. Expected {expected_proba_shape}, got {proba_value.shape}"
             )
 
             assert expected_key_label in output, f"Predict output should contain key '{expected_key_label}'"
-            label_value = output[expected_key_label]
-            if not isinstance(label_value, torch.Tensor):
-                label_value = torch.as_tensor(label_value)
+            raw_label_value = output[expected_key_label]
+
+            label_value = (
+                raw_label_value if isinstance(raw_label_value, torch.Tensor) else torch.as_tensor(raw_label_value)
+            )
             expected_label_shape = (x_formula.shape[0],)
             assert label_value.shape == expected_label_shape, (
                 f"Shape mismatch for {expected_key_label}. Expected {expected_label_shape}, got {label_value.shape}"
@@ -395,84 +391,128 @@ def test_model_predict_step_all_tasks(model_config_mixed_tasks, sample_batch_mix
 
 
 def test_model_configure_optimizers(model_config_mixed_tasks):
-    """Test configure_optimizers for mixed regression and classification tasks."""
+    """ONE AdamW with one param group per role, and at most one ReduceLROnPlateau.
+
+    The previous shape — one optimizer and one scheduler per group — is what forced manual
+    optimization, since Lightning drives at most one optimizer on its own. Collapsing it gives up
+    nothing that was reachable: every group's scheduler came from the same [training.scheduler]
+    block and monitored the same metric, so the N schedulers stepped in lockstep. What genuinely
+    varies per group — lr, weight_decay, min_lr — survives as param groups and a list-valued
+    min_lr.
+    """
     config = model_config_mixed_tasks
     model = FlexibleMultiTaskModel(
         task_configs=config.task_configs,
         encoder_config=config.encoder_config,
-        shared_block_optimizer=config.shared_block_optimizer,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, weight_decay=1e-2, min_lr=1e-6),
     )
+    for task_config in model.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=5e-3, weight_decay=1e-5, min_lr=1e-7)
 
-    optimizers_and_schedulers = model.configure_optimizers()
+    result = cast(dict[str, Any], model.configure_optimizers())
+    optimizer = result["optimizer"]
+    assert isinstance(optimizer, torch.optim.AdamW), "exactly one AdamW, not one per group"
 
-    assert isinstance(optimizers_and_schedulers, list), "configure_optimizers should return a list"
-
-    num_optimizers = 0
-    encoder_opt_found = False
-    task_head_opts_found_count = 0
-
-    all_optimized_param_ids = set()
-    enabled_tasks_in_config = [tc for tc in config.task_configs if tc.enabled]
-
-    for item in optimizers_and_schedulers:
-        num_optimizers += 1
-        optimizer = item["optimizer"] if isinstance(item, dict) else item
-        assert isinstance(optimizer, torch.optim.Optimizer), "Optimizer item is not a torch.optim.Optimizer"
-
-        current_opt_param_ids = set()
-        for group in optimizer.param_groups:
-            for p in group["params"]:
-                assert p.requires_grad, "Optimizer should only manage parameters that require gradients"
-                current_opt_param_ids.add(id(p))
-
-        assert all_optimized_param_ids.isdisjoint(current_opt_param_ids), (
-            "Optimizers should manage disjoint sets of parameters"
-        )
-        all_optimized_param_ids.update(current_opt_param_ids)
-
-        # Check if this optimizer handles encoder parameters
-        # model.encoder contains all encodable parts (shared, struct_enc, fusion)
-        encoder_params_ids = {id(p) for p in model.encoder.parameters() if p.requires_grad}
-        log_sigma_param_ids = {id(p) for p in model.task_log_sigmas.parameters() if p.requires_grad}
-        encoder_related_ids = encoder_params_ids.union(log_sigma_param_ids)
-        if not encoder_related_ids.isdisjoint(current_opt_param_ids):
-            assert current_opt_param_ids.issubset(encoder_related_ids)
-            encoder_opt_found = True
-            continue
-
-        # Check if this optimizer handles one of the task heads
-        found_task_head_for_this_opt = False
-        for task_name, head in model.task_heads.items():
-            head_params_ids = {id(p) for p in head.parameters() if p.requires_grad}
-            if not head_params_ids.isdisjoint(current_opt_param_ids):
-                assert current_opt_param_ids == head_params_ids, (
-                    f"Optimizer does not manage all and only parameters for task head {task_name}"
-                )
-                task_head_opts_found_count += 1
-                found_task_head_for_this_opt = True
-                break
-
-        if not found_task_head_for_this_opt and not encoder_opt_found:
-            # If it wasn't an encoder optimizer, it must be a task head optimizer
-            # This assertion might be too strict if encoder_params are split across multiple optimizers by configure_optimizers
-            # For now, assume one optimizer for encoder, one for each head.
-            pass  # Allow falling through if it's an encoder optimizer already marked
-
-    # Expected optimizers: 1 for encoder + 1 for each enabled task
-    expected_num_optimizers = 1 + len(enabled_tasks_in_config)
-    assert num_optimizers == expected_num_optimizers, (
-        f"Expected {expected_num_optimizers} optimizers, got {num_optimizers}"
+    # One group for the encoder plus one per head with trainable parameters.
+    expected_groups = 1 + len(
+        [n for n in model.task_heads if any(p.requires_grad for p in model._head(n).parameters())]
     )
-    assert encoder_opt_found, "No optimizer found for the encoder components"
-    assert task_head_opts_found_count == len(enabled_tasks_in_config), (
-        f"Expected {len(enabled_tasks_in_config)} optimizers for task heads, found {task_head_opts_found_count}"
-    )
+    assert len(optimizer.param_groups) == expected_groups
 
-    # Verify all trainable model parameters are covered
-    all_model_trainable_params_ids = {id(p) for p in model.parameters() if p.requires_grad}
-    assert all_optimized_param_ids == all_model_trainable_params_ids, (
-        "Not all trainable model parameters are covered by the optimizers"
+    # Per-group hyper-parameters must survive the collapse — this is the whole reason param groups
+    # exist rather than a single flat parameter list.
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(1e-3)
+    assert optimizer.param_groups[0]["weight_decay"] == pytest.approx(1e-2)
+    assert all(g["lr"] == pytest.approx(5e-3) for g in optimizer.param_groups[1:])
+    assert all(g["weight_decay"] == pytest.approx(1e-5) for g in optimizer.param_groups[1:])
+
+    # Every trainable parameter is optimized exactly once — no gaps, no double counting.
+    optimized = [id(p) for g in optimizer.param_groups for p in g["params"]]
+    trainable = {id(p) for p in model.parameters() if p.requires_grad}
+    assert len(optimized) == len(set(optimized)), "a parameter appears in more than one group"
+    assert set(optimized) == trainable
+
+    # One scheduler, driven by Lightning at epoch end — the model no longer steps it, which is
+    # what makes `patience` count epochs by construction rather than by convention.
+    lr_config = result["lr_scheduler"]
+    assert isinstance(lr_config["scheduler"], torch.optim.lr_scheduler.ReduceLROnPlateau)
+    assert lr_config["interval"] == "epoch"
+    assert lr_config["monitor"] == "train_final_loss_epoch"
+    # min_lr stays per group: it is a floor on each group's own learning rate.
+    assert lr_config["scheduler"].min_lrs == [1e-6] + [1e-7] * (expected_groups - 1)
+
+
+def test_configure_optimizers_rejects_groups_that_disagree_on_scheduler_policy(model_config_mixed_tasks):
+    """A single optimizer carries a single scheduler, so a mixed policy has to be an error.
+
+    It cannot arise from configuration — one [training.scheduler] block feeds every group — so a
+    model that reaches here with mixed policies was assembled in Python. Silently honouring one
+    group's patience while discarding another's is the class of invisible divergence that made the
+    v1 campaign unusable.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, patience=5, min_lr=1e-6),
     )
+    for task_config in model.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=5e-3, patience=20, min_lr=1e-6)
+
+    with pytest.raises(ValueError, match="must share one LR-scheduler policy"):
+        model.configure_optimizers()
+
+
+def test_configure_optimizers_returns_a_bare_optimizer_when_the_scheduler_is_off(model_config_mixed_tasks):
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, scheduler_enabled=False),
+    )
+    for task_config in model.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=5e-3, scheduler_enabled=False)
+
+    assert isinstance(model.configure_optimizers(), torch.optim.AdamW)
+
+
+def test_scheduler_policy_is_only_compared_where_it_decides_something(model_config_mixed_tasks):
+    """With the scheduler off everywhere, mode/factor/patience/monitor decide nothing.
+
+    No scheduler is constructed in that case, so those fields are dead values — rejecting the model
+    over them would refuse to build an optimizer on the strength of settings no code path reads.
+    The inference-only builder in workflows/_engine.py assembles exactly this shape.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, scheduler_enabled=False, patience=5, factor=0.5),
+    )
+    for task_config in model.task_configs_map.values():
+        # Same switch, wildly different dead values.
+        task_config.optimizer = OptimizerConfig(lr=5e-3, scheduler_enabled=False, patience=99, factor=0.1, mode="max")
+
+    assert isinstance(model.configure_optimizers(), torch.optim.AdamW)
+
+
+def test_configure_optimizers_rejects_a_scheduler_that_is_on_for_some_groups_only(model_config_mixed_tasks):
+    """Mixed on/off is still an error: there the settings do decide something.
+
+    One optimizer carries one scheduler, so "annealed" and "constant" cannot both be honoured —
+    and picking either silently is how a group ends up training under a schedule nobody chose.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, scheduler_enabled=False),
+    )
+    for task_config in model.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=5e-3, min_lr=1e-6, scheduler_enabled=True)
+
+    with pytest.raises(ValueError, match="must agree on whether the LR scheduler is enabled"):
+        model.configure_optimizers()
 
 
 # --- Fixtures for DataModule and Trainer Integration ---
@@ -495,7 +535,9 @@ def dummy_compound_datamodule(model_config_mixed_tasks, tmp_path):
 
     # Create dummy attributes DataFrame
     # It needs columns for each task's target and a 'split' column.
-    attributes_data = {}
+    # One column per task, of whatever dtype that task needs — float arrays, int label arrays,
+    # lists of lists for multi-output regression. Inference would fix it to the first one.
+    attributes_data: dict[str, Any] = {}
     sample_indices = formula_df.index
 
     for task_cfg in config.task_configs:
@@ -750,30 +792,6 @@ def test_model_registered_tasks_info_property(model_config_mixed_tasks):
         assert df_info.loc[i, "enabled"] == task_cfg_from_model.enabled
 
 
-def test_stage_index_tracker_masks_duplicates(model_config_mixed_tasks):
-    """Ensure distributed index tracker flags duplicates introduced by sampler padding."""
-    config = model_config_mixed_tasks
-    model = FlexibleMultiTaskModel(
-        task_configs=config.task_configs,
-        encoder_config=config.encoder_config,
-        shared_block_optimizer=config.shared_block_optimizer,
-    )
-    tracker = {"indices": [0, 1, 0, 2], "cursor": 0, "seen": set()}
-    model._stage_index_trackers["val"] = tracker
-
-    mask_info = model._get_batch_valid_mask(stage="val", batch_size=2, device=torch.device("cpu"))
-    assert mask_info is not None
-    mask_tensor, mask_flags = mask_info
-    assert mask_tensor.tolist() == [True, True]
-    assert mask_flags == [True, True]
-
-    mask_info = model._get_batch_valid_mask(stage="val", batch_size=2, device=torch.device("cpu"))
-    assert mask_info is not None
-    mask_tensor, mask_flags = mask_info
-    assert mask_tensor.tolist() == [False, True]
-    assert mask_flags == [False, True]
-
-
 def test_r2_metric_updates_respect_masks(model_config_mixed_tasks):
     """Validate that masked samples do not influence the logged R² metric."""
     config = model_config_mixed_tasks
@@ -795,7 +813,7 @@ def test_r2_metric_updates_respect_masks(model_config_mixed_tasks):
     )
 
     assert "regr_task_1" in model._metrics_updated["val"]
-    computed = model.val_r2_metrics["regr_task_1"].compute()
+    computed = cast(R2Score, model.val_r2_metrics["regr_task_1"]).compute()
     assert torch.isclose(computed, torch.tensor(1.0))
 
 
@@ -964,7 +982,7 @@ def test_optimize_latent_space_requires_ae():
 
 def _make_reg_clf_model():
     enc = MLPEncoderConfig(hidden_dims=[INPUT_DIM, 16, LATENT_DIM])
-    tasks = [
+    tasks: list[TaskConfigType] = [
         RegressionTaskConfig(name="prop", data_column="prop", dims=[LATENT_DIM, 8, 1]),
         ClassificationTaskConfig(name="cls", data_column="cls", num_classes=3, dims=[LATENT_DIM, 8, 3]),
     ]
@@ -1015,6 +1033,30 @@ def test_optimize_latent_class_targets_rejects_regression_task():
             class_targets={"prop": [0]},
             optimize_space="input",
         )
+
+
+def test_optimize_latent_restores_train_mode_and_requires_grad_after_a_failure(mocker):
+    """A crash mid-search must not leave the model frozen and in eval() for the whole session.
+
+    The search deliberately calls ``eval()`` and ``requires_grad_(False)`` on every parameter while
+    it descends on the *input*. Restoring that on the happy path only means one exception leaks a
+    permanently untrainable model into the rest of the process — and the symptom is "training
+    silently stops moving the encoder", which is invisible in logs and expensive to bisect.
+    ``optimize_composition`` has always used try/finally; this is the same guarantee for its twin.
+    """
+    torch.manual_seed(0)
+    model = _make_reg_clf_model()
+    model.train()
+    assert all(p.requires_grad for p in model.parameters()), "fixture must start trainable"
+
+    mocker.patch.object(model, "_optimization_objective", side_effect=RuntimeError("head blew up"))
+    with pytest.raises(RuntimeError, match="head blew up"):
+        model.optimize_latent(
+            initial_input=torch.randn(3, INPUT_DIM), task_targets={"prop": 1.0}, optimize_space="input", steps=5
+        )
+
+    assert model.training, "the model must be back in train mode"
+    assert all(p.requires_grad for p in model.parameters()), "every parameter must be trainable again"
 
 
 def test_optimize_latent_class_targets_rejects_out_of_range_index():
@@ -1129,7 +1171,7 @@ def test_optimize_latent_restores_requires_grad_after_call():
 def _make_full_model():
     """Regression + classification + kernel-regression heads (AE on) for target-kind tests."""
     enc = MLPEncoderConfig(hidden_dims=[INPUT_DIM, 16, LATENT_DIM])
-    tasks = [
+    tasks: list[TaskConfigType] = [
         RegressionTaskConfig(name="prop", data_column="prop", dims=[LATENT_DIM, 8, 1]),
         ClassificationTaskConfig(name="cls", data_column="cls", num_classes=3, dims=[LATENT_DIM, 8, 3]),
         KernelRegressionTaskConfig(
@@ -1413,7 +1455,7 @@ def _build_aligned_model_and_kernel():
 
     n_components = len(DEFAULT_ELEMENTS)
     enc = MLPEncoderConfig(hidden_dims=[INPUT_DIM, 16, LATENT_DIM])
-    tasks = [
+    tasks: list[TaskConfigType] = [
         RegressionTaskConfig(name="prop", data_column="prop", dims=[LATENT_DIM, 8, 1]),
         ClassificationTaskConfig(name="cls", data_column="cls", num_classes=3, dims=[LATENT_DIM, 8, 3]),
     ]
@@ -2491,3 +2533,401 @@ def test_optimize_latent_space_with_ae():
     assert result.optimized_input.shape == (2, 2, INPUT_DIM)
     assert result.optimized_target.shape == (2, 2, 1)
     assert result.trajectory.shape == (2, 2, 5, 1)
+
+
+# --- LR scheduler cadence ---------------------------------------------------------------------
+
+
+class _SchedulerStepCounter(FlexibleMultiTaskModel):
+    """Records every scheduler ``step()`` call so a test can assert the cadence.
+
+    A subclass rather than patching the bound method: Lightning checks that
+    ``configure_optimizers`` is *defined* on the model, and a MagicMock does not satisfy that
+    check, so patching it makes the Trainer refuse to run.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.step_calls: list[object] = []
+        self.n_schedulers = 0
+
+    def configure_optimizers(self):
+        result = super().configure_optimizers()
+        entries = result if isinstance(result, list) else [result]
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            scheduler = entry.get("lr_scheduler", {}).get("scheduler")
+            if scheduler is None:
+                continue
+            self.n_schedulers += 1
+            original_step = scheduler.step
+
+            def counting_step(*args, _orig=original_step, **kwargs):
+                self.step_calls.append(args[0] if args else None)
+                return _orig(*args, **kwargs)
+
+            scheduler.step = counting_step
+        return result
+
+
+def test_scheduler_steps_once_per_epoch_not_per_batch(model_config_mixed_tasks, dummy_compound_datamodule):
+    """``patience`` must count epochs, so the scheduler must be stepped once per epoch.
+
+    History this guards against: the model once used manual optimization — forced by having one
+    optimizer per parameter group, since Lightning drives at most one automatically — and manual
+    optimization means Lightning does not drive schedulers either, so the model stepped them
+    itself. It did that inside ``training_step``, once per *batch*, which made
+    ReduceLROnPlateau's ``patience`` count batches: on a 24k-row task at ``batch_size = 256``
+    (~90 batches/epoch) the LR reached ``min_lr`` inside the first epoch, and a whole tuning
+    campaign was run and discarded before anyone noticed.
+
+    The optimizers are now collapsed into one, so Lightning owns the scheduler and steps it at the
+    interval configure_optimizers declares. The model cannot get the cadence wrong because it no
+    longer chooses it — but this still asserts the RUNTIME cadence rather than that declaration,
+    because last time the config read perfectly while the runtime did the wrong thing.
+    """
+    config = model_config_mixed_tasks
+    model = _SchedulerStepCounter(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, min_lr=1e-6),
+    )
+    # Every head gets a live scheduler too, so the count below covers all parameter groups.
+    for task_config in model.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=1e-3, min_lr=1e-6)
+
+    epochs, batches_per_epoch = 2, 3
+    trainer = L.Trainer(
+        logger=False,
+        max_epochs=epochs,
+        limit_train_batches=batches_per_epoch,
+        limit_val_batches=1,
+        accelerator="cpu",
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+    )
+    trainer.fit(model, datamodule=dummy_compound_datamodule)
+
+    assert model.n_schedulers > 0, "no scheduler was created, so the cadence is untested"
+    assert len(model.step_calls) == model.n_schedulers * epochs, (
+        f"expected {model.n_schedulers} scheduler(s) x {epochs} epochs = "
+        f"{model.n_schedulers * epochs} steps; got {len(model.step_calls)} over "
+        f"{batches_per_epoch} batches/epoch — per-batch stepping would give "
+        f"{model.n_schedulers * epochs * batches_per_epoch}"
+    )
+    # Each step receives the epoch-aggregated monitored metric, not a raw per-batch loss.
+    assert all(value is not None for value in model.step_calls)
+
+
+def test_scheduler_monitor_missing_raises(model_config_mixed_tasks, dummy_compound_datamodule):
+    """A monitor that never appears must fail loudly — a scheduler that silently never anneals
+    is invisible in logs, which is the failure mode this whole area kept producing.
+
+    Every group has to carry the SAME live scheduler here. The fixture's heads switch theirs off,
+    so leaving them alone makes the model fail in configure_optimizers on the mixed on/off policy
+    instead — an error that also happens to quote the monitor name, so the assertion below would
+    pass without a single epoch ever running.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3, min_lr=1e-6, monitor="no_such_metric"),
+    )
+    for task_config in model.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=1e-3, min_lr=1e-6, monitor="no_such_metric")
+
+    trainer = L.Trainer(
+        logger=False,
+        max_epochs=1,
+        limit_train_batches=1,
+        limit_val_batches=1,
+        accelerator="cpu",
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+    )
+    with pytest.raises(MisconfigurationException, match="no_such_metric"):
+        trainer.fit(model, datamodule=dummy_compound_datamodule)
+
+
+def test_no_optimizer_step_when_loss_has_no_graph(model_config_mixed_tasks, sample_batch_mixed_tasks, mocker):
+    """A batch whose loss carries no graph must be skipped, not backwarded.
+
+    Under automatic optimization the way to skip a batch is to return None — Lightning then
+    performs no backward and no optimizer step. Returning the graph-free tensor instead would have
+    Lightning try to backward a graph that does not exist.
+
+    The manual-optimization version of this test guarded a subtler bug: the else-branch called
+    opt.step() on every optimizer right after logging that it was *skipping* the step, which was a
+    no-op only because zero_grad(set_to_none=True) leaves grads as None. Handing the loop to
+    Lightning removes the branch and the bug with it.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=config.shared_block_optimizer,
+    )
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+
+    mocker.patch.object(model, "log_dict")
+    mocker.patch.object(model, "log")
+
+    assert model.training_step(sample_batch_mixed_tasks, 0) is None, (
+        "a graph-free batch must be skipped by returning None, not by returning a detached loss"
+    )
+
+
+# --- characterization: the three steps' observable output must not drift -----------------------
+
+
+def _run_step_and_capture(model, batch, step_name, mocker):
+    """Every value the step publishes: its return, and the full logged key/value set."""
+    captured: dict[str, float] = {}
+
+    def record_dict(d, *args, **kwargs):
+        for key, value in d.items():
+            captured[key] = float(value)
+
+    def record_one(key, value, *args, **kwargs):
+        captured[key] = float(value)
+
+    mocker.patch.object(model, "log_dict", side_effect=record_dict)
+    mocker.patch.object(model, "log", side_effect=record_one)
+    # No optimizer or backward mocking: under automatic optimization every step is a pure function
+    # of the batch that logs and returns, and touches neither.
+    result = getattr(model, step_name)(batch, 0)
+    return (None if result is None else float(result)), captured
+
+
+@pytest.mark.parametrize("step_name", ["training_step", "validation_step", "test_step"])
+def test_step_output_is_stable(model_config_mixed_tasks, sample_batch_mixed_tasks, mocker, step_name):
+    """Pin what each step returns and logs.
+
+    These functions have been rewritten several times and carry the loss that actually trains the
+    model, so a refactor has to prove it changed nothing observable. This captures the return value
+    and every logged key/value from a fixed batch with fixed weights; any drift in loss
+    composition, weighting, masking or metric naming fails here rather than silently changing
+    training.
+    """
+    torch.manual_seed(0)
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=config.shared_block_optimizer,
+    )
+    model.eval()
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.fill_(0.01)
+
+    returned, logged = _run_step_and_capture(model, sample_batch_mixed_tasks, step_name, mocker)
+
+    prefix = {"training_step": "train", "validation_step": "val", "test_step": "test"}[step_name]
+    task_names = [c.name for c in config.task_configs]
+
+    # Structure: one raw loss, one all_missing flag, one weight and one contribution per task that
+    # produced a loss, plus the aggregate keys.
+    for name in task_names:
+        assert f"{prefix}_{name}_all_missing" in logged, f"missing all_missing flag for {name}"
+    assert f"{prefix}_final_supervised_loss" in logged
+    assert f"{prefix}_final_loss" in logged
+
+    # Values: the aggregate must equal the sum of the per-task contributions it reports.
+    contributions = sum(v for k, v in logged.items() if k.endswith("_final_loss_contrib"))
+    assert logged[f"{prefix}_final_supervised_loss"] == pytest.approx(contributions, rel=1e-5)
+    assert logged[f"{prefix}_final_loss"] == pytest.approx(contributions, rel=1e-5)
+    if returned is not None:
+        assert returned == pytest.approx(contributions, rel=1e-5)
+
+    # Weighting: with no learnable balancer, each contribution is weight x raw loss.
+    for name in task_names:
+        raw_key, weight_key = f"{prefix}_{name}_raw_loss", f"{prefix}_{name}_static_weight"
+        contrib_key = f"{prefix}_{name}_final_loss_contrib"
+        if raw_key in logged:
+            assert logged[contrib_key] == pytest.approx(logged[raw_key] * logged[weight_key], rel=1e-5)
+
+
+# --- encoder-config normalisation and the typed head accessor ---------------------------------
+
+
+def test_encoder_config_accepts_a_concrete_config_unchanged():
+    """A ready-made config must reach the encoder as-is.
+
+    __init__ used to branch on isinstance(..., BaseEncoderConfig) to skip build_encoder_config;
+    that branch is gone because build_encoder_config already passes such a config through. This
+    pins the behaviour the removed branch used to provide.
+    """
+    encoder_config = MLPEncoderConfig(hidden_dims=[5, 8, 4])
+    model = FlexibleMultiTaskModel(
+        task_configs=[RegressionTaskConfig(name="t", data_column="c", dims=[4, 3, 1])],
+        encoder_config=encoder_config,
+        shared_block_optimizer=OptimizerConfig(lr=1e-3),
+    )
+    assert model.encoder_config is encoder_config
+    assert model.latent_dim == 4
+
+
+def test_encoder_config_accepts_a_mapping():
+    """A mapping is normalised into a dataclass by the same single call."""
+    model = FlexibleMultiTaskModel(
+        task_configs=[RegressionTaskConfig(name="t", data_column="c", dims=[4, 3, 1])],
+        encoder_config={"hidden_dims": [5, 8, 4]},
+        shared_block_optimizer=OptimizerConfig(lr=1e-3),
+    )
+    assert isinstance(model.encoder_config, MLPEncoderConfig)
+    assert model.latent_dim == 4
+
+
+def test_encoder_config_rejects_a_subclass_the_encoder_cannot_use():
+    """The removed branch tested the ABSTRACT base, so a third subclass passed it and then failed
+    deeper in FoundationEncoder. Routing through build_encoder_config rejects it at construction."""
+
+    @dataclass(kw_only=True)
+    class _ThirdKind(BaseEncoderConfig):
+        type: EncoderType = EncoderType.MLP
+
+        @property
+        def latent_dim(self) -> int:
+            return 4
+
+    with pytest.raises(TypeError, match="MLPEncoderConfig"):
+        FlexibleMultiTaskModel(
+            task_configs=[RegressionTaskConfig(name="t", data_column="c", dims=[4, 3, 1])],
+            encoder_config=_ThirdKind(),
+            shared_block_optimizer=OptimizerConfig(lr=1e-3),
+        )
+
+
+def test_head_accessor_returns_the_registered_head_for_every_kind(model_config_mixed_tasks):
+    """_head must resolve to the registered instance for each supported head type.
+
+    It replaces 13 raw ModuleDict lookups whose type a checker could not resolve, so it is the one
+    place the "every value here is a BaseTaskHead" invariant is stated.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        shared_block_optimizer=config.shared_block_optimizer,
+    )
+    assert model.task_heads, "fixture must register at least one head"
+    for name in model.task_heads:
+        head = model._head(name)
+        assert head is model.task_heads[name]
+        assert isinstance(head, BaseTaskHead)
+        assert callable(head.compute_loss)
+
+
+# --- learnable loss balancer (uncertainty weighting) -------------------------------------------
+
+
+def test_loss_balancer_skips_the_autoencoder_head(model_config_mixed_tasks):
+    """ "Per supervised task" has to exclude the AE head, and this is the path that always hits it.
+
+    build_empty_model turns the autoencoder on for every pretrain and finetune run, so a sigma
+    registered for it is not a corner case — it would rescale the reconstruction term against the
+    supervised ones and move the encoder gradient, in the one experiment whose point is to compare
+    the supervised balance. The head also has no labels for an uncertainty to be about.
+    """
+    config = model_config_mixed_tasks
+    model = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        enable_autoencoder=True,
+        enable_learnable_loss_balancer=True,
+    )
+
+    assert "__reconstruction__" in model.task_heads, "fixture must actually have the AE head"
+    assert "__reconstruction__" not in model.task_log_sigmas
+    assert set(model.task_log_sigmas) == {tc.name for tc in config.task_configs if tc.enabled}
+
+
+def test_loss_balancer_registers_one_log_sigma_per_supervised_task(model_config_mixed_tasks):
+    """Kendall/Gal/Cipolla uncertainty weighting needs one learnable log sigma per task.
+
+    The feature has been implemented on the model since before the [training] section existed, but
+    nothing routed a value to it, so it had never run. These two tests are the on/off comparison
+    that absence made impossible.
+    """
+    config = model_config_mixed_tasks
+    off = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        enable_learnable_loss_balancer=False,
+    )
+    on = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        enable_learnable_loss_balancer=True,
+    )
+
+    assert len(off.task_log_sigmas) == 0, "no sigmas may exist while the balancer is off"
+    supervised = [n for n in on.task_heads if n != "__reconstruction__"]
+    assert sorted(on.task_log_sigmas) == sorted(supervised)
+    # They must be learnable, and start at log sigma = 0 (sigma = 1), i.e. the unweighted objective.
+    assert all(p.requires_grad for p in on.task_log_sigmas.parameters())
+    assert all(p.detach().item() == 0.0 for p in on.task_log_sigmas.values())
+
+    # And they must reach an optimizer, or they would never move. configure_optimizers puts them
+    # in the main (encoder) group, so look for them there rather than trusting that it did.
+    # The fixture gives some heads scheduler_enabled=False while the encoder has it on — a mix a
+    # single scheduler cannot represent, and which configure_optimizers now rejects. Pin one policy
+    # here: this test is about the balancer, not about that constraint.
+    for task_config in on.task_configs_map.values():
+        task_config.optimizer = OptimizerConfig(lr=1e-3, min_lr=1e-6)
+
+    result = cast(dict[str, Any], on.configure_optimizers())
+    optimised = {id(p) for group in result["optimizer"].param_groups for p in group["params"]}
+    assert all(id(p) in optimised for p in on.task_log_sigmas.parameters()), (
+        "log sigmas exist but no optimizer owns them — they would stay at their init value forever"
+    )
+
+
+def test_loss_balancer_changes_the_objective_and_its_gradient(model_config_mixed_tasks):
+    """At log sigma = 0 the balanced objective is HALF the static one, plus a log-sigma penalty.
+
+    That factor is not cosmetic: it halves every gradient reaching the shared encoder on the first
+    step, which is exactly the kind of silent scale change that has to be visible in a test before
+    anyone reads an A/B of this feature.
+    """
+    config = model_config_mixed_tasks
+    losses = {"regr_task_1": torch.tensor(4.0, requires_grad=True)}
+
+    off = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        enable_learnable_loss_balancer=False,
+    )
+    on = FlexibleMultiTaskModel(
+        task_configs=config.task_configs,
+        encoder_config=config.encoder_config,
+        enable_learnable_loss_balancer=True,
+    )
+
+    logs_off: dict[str, torch.Tensor] = {}
+    logs_on: dict[str, torch.Tensor] = {}
+    total_off = off._weighted_total_loss(
+        stage="train", raw_losses=losses, logs=logs_off, device=torch.device("cpu"), keep_graph=True
+    )
+    total_on = on._weighted_total_loss(
+        stage="train", raw_losses=losses, logs=logs_on, device=torch.device("cpu"), keep_graph=True
+    )
+
+    assert float(total_off) == pytest.approx(4.0)
+    # 0.5 * exp(-2*0) * 4.0 + 0 = 2.0
+    assert float(total_on) == pytest.approx(2.0)
+    # The balancer reports the sigma it is using; the static path does not.
+    assert "train_regr_task_1_sigma_t" in logs_on
+    assert "train_regr_task_1_sigma_t" not in logs_off
+    assert float(logs_on["train_regr_task_1_sigma_t"]) == pytest.approx(1.0)
+
+    # The log sigma must carry gradient, or the weighting could never adapt.
+    total_on.backward()
+    assert on.task_log_sigmas["regr_task_1"].grad is not None
+    assert float(on.task_log_sigmas["regr_task_1"].grad) != 0.0

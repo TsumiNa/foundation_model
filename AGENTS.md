@@ -34,7 +34,9 @@
 - Install: `uv sync --frozen --all-groups`
 - Add dependency: `uv add <pkg>` or `uv add --dev <pkg>`
 - Install the commit hook once per clone: `uv run pre-commit install`; it runs `ruff format` on staged
-  Python files and intentionally does not run Mypy.
+  Python files and `mypy src/` over the whole package. Mypy runs package-wide rather than on the
+  staged files because its inference crosses module boundaries, so per-file answers differ from
+  package answers.
 
 ## File-Scoped Commands
 
@@ -45,6 +47,29 @@
 | Typecheck | `uv run mypy path/to/file.py` |
 | Test file | `uv run pytest path/to/module_test.py` |
 | Test case | `uv run pytest path/to/module_test.py::test_name` |
+
+## Cluster Work: Measure GPU Utilisation Before Sizing a Fleet
+
+> **This project's models do not fill a GB200. Measured across 394 runs, a training run uses ~9% of
+> its GPU and 1.29 GB of its 189 GB. One run per GPU therefore wastes about nine tenths of every
+> card reserved — and NOTHING reports this.** Jobs complete, exit 0 and log nothing unusual.
+>
+> Check it deliberately, from Slurm's accounting rather than a sampled `nvidia-smi`:
+>
+> ```bash
+> sacct -j <jobid> --format=JobID,TRESUsageInAve -n -P   # → gres/gpuutil=9
+> ```
+>
+> When utilisation is low, pack independent runs onto one GPU. They are separate processes with
+> separate seeds, so this changes throughput and nothing else about the results: eight to a card
+> measured **7.1× throughput** for 12% slower wall clock per run. Calibrate the pack size against
+> runs that already completed unpacked; do not extrapolate it.
+>
+> Cost of skipping this check, once: a campaign spent ~2,600 GPU-hours on work that would have
+> taken ~330 packed, because the idle GPUs were invisible until someone thought to look.
+>
+> Details, the per-GPU 32-CPU cap, and the array-job pattern:
+> `.github/instructions/rikyu-supercomputer.instructions.md`.
 
 ## Key Conventions
 

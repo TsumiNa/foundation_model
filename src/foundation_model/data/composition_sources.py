@@ -29,7 +29,9 @@ from loguru import logger
 
 from .splitter import MultiTaskSplitter
 
-DescriptorFn = Callable[[list[str]], pd.DataFrame]
+# Sequence, not list: every implementation here accepts any sequence, and declaring the
+# narrower list[str] made them fail to satisfy their own alias (parameters are contravariant).
+DescriptorFn = Callable[[Sequence[str]], pd.DataFrame]
 
 # Split labels, ordered by precedence (later wins on conflict).
 _SPLIT_PRECEDENCE: dict[str, int] = {"train": 1, "val": 2, "test": 3}
@@ -111,7 +113,8 @@ def lookup_descriptor_fn(
     """Build a ``descriptor_fn`` that looks up rows of an in-memory descriptor frame.
 
     The frame is re-indexed by :func:`canonical_key` so lookups match the canonical composition
-    keys the DataModule passes (it normalizes task frames the same way). Rows whose keys collide
+    keys the DataModule passes (it normalizes task frames the same way); :class:`_CompositionLookup`
+    then resolves raw requests against it too, so the two sides' settings need not agree. Rows whose keys collide
     after normalization — including pre-existing duplicate index labels — are collapsed keep-first
     (with a warning), guaranteeing a 1:1 key→row map so lookups never mismatch in length.
 
@@ -121,19 +124,66 @@ def lookup_descriptor_fn(
         Descriptor matrix indexed by composition.
     composition_normalizer : Callable | None, optional
         Normalizer applied to the frame index. Defaults to :func:`normalize_composition`;
-        pass ``None`` to look up by the raw (stringified) index instead.
+        pass ``None`` to keep the raw (stringified) index. Either way both raw and canonical
+        requests resolve.
     """
     frame = _reindex_by_canonical(features, composition_normalizer, source="lookup_descriptor_fn")
+    return _CompositionLookup(frame, composition_normalizer)
 
-    index = frame.index
 
-    def descriptor_fn(compositions: Sequence[str]) -> pd.DataFrame:
-        # Keys are usually already canonical (the DataModule normalized them), so try a direct
-        # hit first and only pay for canonicalization on a miss.
-        present = [c if c in index else canonical_key(c, composition_normalizer) for c in compositions]
-        return frame.loc[[k for k in present if k in index]]
+class _CompositionLookup:
+    """A descriptor frame plus the map needed to resolve any spelling of a composition.
 
-    return descriptor_fn
+    Two independent choices decide how a composition is spelled: whether the *frame* was
+    canonicalized (this source's ``composition_normalizer``) and whether the *caller* canonicalized
+    its request (the DataModule's own, separate setting). All four combinations occur, so matching
+    on one spelling alone drops rows whenever the two disagree:
+
+    - frame canonical, request raw   -> canonicalizing the request finds it
+    - frame raw, request canonical   -> only a canonical view of the index finds it
+
+    Both are covered here, and neither affects the labels: rows always come back **indexed by the
+    keys the caller asked for**. That re-keying is the contract every ``descriptor_fn`` owes
+    :class:`DescriptorCache`, which matches the caller's own keys against whatever index comes
+    back (``present = [c for c in requested if c in self._cache.index]``). Returning the *matched*
+    key instead silently drops every composition when the spellings differ — 0 rows resolved,
+    everything reported as "dropped", no error.
+
+    Normalization is confined to this boundary. The caller passes plain strings and gets rows back
+    under those same strings; only here is the ``str | None`` that ``normalize_composition`` can
+    return resolved, by :func:`canonical_key`.
+    """
+
+    def __init__(self, frame: pd.DataFrame, normalizer: CompositionNormalizer | None):
+        self._frame = frame
+        self._normalizer = normalizer
+        # canonical spelling -> the label actually in the index, built once (a per-query rebuild
+        # would be O(len(frame)) on every batch). Keep-first on collision, matching the rule
+        # _reindex_by_canonical already applies. Non-formula keys (synthetic IDs, material IDs)
+        # canonicalize to themselves, so they are unaffected by this view.
+        canonical_view: dict[str, str] = {}
+        for label in frame.index:
+            canonical_view.setdefault(canonical_key(label, normalize_composition), label)
+        self._canonical_view = canonical_view
+
+    def _resolve(self, composition: str) -> str | None:
+        """The index label holding ``composition``, or None if the frame does not have it."""
+        if composition in self._frame.index:
+            return composition
+        # The frame's own spelling, if this source canonicalized it.
+        key = canonical_key(composition, self._normalizer)
+        if key in self._frame.index:
+            return key
+        # The caller's spelling may be the canonical one while the frame stayed raw.
+        return self._canonical_view.get(canonical_key(composition, normalize_composition))
+
+    def __call__(self, compositions: Sequence[str]) -> pd.DataFrame:
+        found = {c: label for c in compositions if (label := self._resolve(c)) is not None}
+        if not found:
+            return self._frame.iloc[:0]
+        out = self._frame.loc[list(found.values())].copy(deep=False)
+        out.index = pd.Index(list(found), name=self._frame.index.name)
+        return out
 
 
 def _reindex_by_canonical(
@@ -144,7 +194,9 @@ def _reindex_by_canonical(
     Uses a shallow copy (the descriptor matrix is shared, only the index is replaced) to avoid
     duplicating large descriptor frames.
     """
-    canon = pd.Index([canonical_key(c, normalizer) for c in frame.index])
+    # Keep the index name ('composition' for most sources) — it is dropped otherwise, leaving
+    # re-indexed frames inconsistent with the ones load_task_frame produces.
+    canon = pd.Index([canonical_key(c, normalizer) for c in frame.index], name=frame.index.name)
     out = frame.copy(deep=False)
     out.index = canon
     duplicated = canon.duplicated(keep="first")
@@ -321,8 +373,10 @@ class PrecomputedDescriptorSource:
         index is treated as the composition key.
     composition_normalizer : Callable | None, optional
         Normalizer applied to the descriptor index via :func:`canonical_key` (deduped keep-first
-        afterwards), so lookups match the canonical keys the DataModule passes. Defaults to
-        :func:`normalize_composition`; pass ``None`` to look up by the raw string index.
+        afterwards). Defaults to :func:`normalize_composition`; pass ``None`` to keep the raw
+        string index. This chooses how the *index* is spelled, not what can be looked up in it:
+        :class:`_CompositionLookup` resolves raw and canonical requests either way, so this
+        setting does not have to agree with the DataModule's own normalizer.
     """
 
     def __init__(
@@ -336,6 +390,7 @@ class PrecomputedDescriptorSource:
         self.composition_column = composition_column
         self._composition_normalizer = composition_normalizer
         self._frame: pd.DataFrame | None = None
+        self._lookup: _CompositionLookup | None = None
 
     def _load(self) -> pd.DataFrame:
         if self._frame is None:
@@ -353,25 +408,28 @@ class PrecomputedDescriptorSource:
         return self._frame
 
     def __call__(self, compositions: Sequence[str]) -> pd.DataFrame:
-        frame = self._load()
-        index = frame.index
-        # Keys are usually already canonical (the DataModule normalized them); try a direct hit
-        # first and only canonicalize on a miss, so we don't re-normalize every query at scale.
-        present = [c if c in index else canonical_key(c, self._composition_normalizer) for c in compositions]
-        return frame.loc[[k for k in present if k in index]]
+        if self._lookup is None:
+            self._lookup = _CompositionLookup(self._load(), self._composition_normalizer)
+        return self._lookup(compositions)
 
 
 class DescriptorCache:
     """Apply a user descriptor function once per unique composition.
 
-    The descriptor function maps a list of composition strings to a DataFrame indexed by
-    composition. Results are cached; subsequent calls only compute compositions not seen
-    before. Compositions the function fails to produce (or returns as all-NaN rows) are
-    reported as "dropped" by :meth:`resolve`.
+    The descriptor function maps a sequence of composition strings to a DataFrame **indexed by
+    the strings it was given**. That is a contract, not a convention: :meth:`compute` matches the
+    caller's own keys against the returned index, so a function that re-keys its output — for
+    instance to a canonicalized spelling — has every row silently reported as "dropped" instead.
+    :func:`lookup_descriptor_fn` and :class:`PrecomputedDescriptorSource` satisfy it via
+    :class:`_CompositionLookup`.
+
+    Results are cached; subsequent calls only compute compositions not seen before. Compositions
+    the function fails to produce (or returns as all-NaN rows) are reported as "dropped" by
+    :meth:`resolve`.
 
     Parameters
     ----------
-    descriptor_fn : Callable[[list[str]], pd.DataFrame]
+    descriptor_fn : DescriptorFn
         Function returning a composition-indexed descriptor frame.
     """
 

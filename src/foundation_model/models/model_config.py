@@ -122,8 +122,11 @@ def build_encoder_config(config: BaseEncoderConfig | Mapping[str, Any]) -> Encod
         return config
 
     if not isinstance(config, Mapping):
+        # Naming BaseEncoderConfig here was misleading: the check above accepts only the concrete
+        # EncoderConfig union, so a legitimate BaseEncoderConfig subclass was told it must be one.
         raise TypeError(
-            f"encoder_config must be a BaseEncoderConfig, mapping, or None; received {type(config).__name__}"
+            "encoder_config must be an MLPEncoderConfig, a TransformerEncoderConfig, a mapping, or "
+            f"None; received {type(config).__name__}"
         )
 
     config_dict = dict(config)
@@ -164,26 +167,72 @@ def build_encoder_config(config: BaseEncoderConfig | Mapping[str, Any]) -> Encod
 
 @dataclass
 class OptimizerConfig:
-    """Configuration for optimizer and learning rate scheduler."""
+    """Optimizer + LR-scheduler settings for one parameter group.
 
-    # Optimizer settings
-    optimizer_type: Literal["AdamW", "Adam", "SGD"] = "AdamW"  # Type of optimizer
+    The optimizer is always ``AdamW`` and the scheduler always ``ReduceLROnPlateau``; only their
+    hyper-parameters vary. Earlier revisions selected between AdamW/Adam/SGD and
+    ReduceLROnPlateau/StepLR/None, but nothing routed those choices out to the TOML layer, so the
+    alternatives were unreachable and untested. Narrowing to one pair and exposing its parameters
+    instead trades unused breadth for tuning depth. Set ``scheduler_enabled = False`` for a flat
+    learning rate.
+    """
+
+    # --- AdamW ---
     lr: float = 5e-3  # Learning rate
-    weight_decay: float = 1e-3  # Weight decay (L2 penalty)
-    eps: float = 1e-6  # Term added to denominator for numerical stability
-    betas: Tuple[float, float] = (0.9, 0.999)  # Coefficients for computing running averages of gradient
+    weight_decay: float = 1e-3  # Decoupled weight decay
+    eps: float = 1e-6  # Added to the denominator for numerical stability
+    betas: Tuple[float, float] = (0.9, 0.999)  # Running-average coefficients (beta1, beta2)
 
-    # Scheduler settings
-    scheduler_type: Literal["ReduceLROnPlateau", "StepLR", "None"] = (
-        "ReduceLROnPlateau"  # Type of learning rate scheduler
-    )
-    mode: Literal["min", "max"] = "min"  # Mode for ReduceLROnPlateau
-    factor: float = 0.5  # Factor by which the learning rate will be reduced
-    patience: int = 5  # Number of epochs with no improvement after which learning rate will be reduced
-    min_lr: float = 1e-4  # A lower bound on the learning rate
-    monitor: str = "train_total_loss"  # Quantity to monitor
-    interval: str = "epoch"  # Interval for monitoring
-    frequency: int = 1  # Frequency of monitoring
+    # --- ReduceLROnPlateau ---
+    scheduler_enabled: bool = True  # False = constant LR (no scheduler is constructed)
+    mode: Literal["min", "max"] = "min"  # Whether a lower or higher monitored value is better
+    factor: float = 0.5  # LR multiplier applied on plateau
+    patience: int = 5  # epochs without improvement before reducing
+    min_lr: float = 1e-4  # Floor for the reduced LR — see the note below
+    # monitor IS honoured: configure_optimizers hands it to Lightning, which looks it up in
+    # trainer.callback_metrics at epoch end and steps ReduceLROnPlateau itself. It must therefore
+    # name a metric that exists at the end of a training epoch, and a missing one raises there.
+    # Only the first group's decision parameters (scheduler_enabled/mode/factor/patience/monitor)
+    # are read: one optimizer carries one scheduler, so configure_optimizers requires every group
+    # to agree on them and raises if they do not. lr/weight_decay/min_lr stay genuinely per-group.
+    monitor: str = "train_final_loss_epoch"  # must exist in trainer.callback_metrics at epoch end
+    # No `interval` / `frequency` fields. They were carried here as inert values, read by nothing
+    # but their own validator, and the only other value they could take is the bug this class's
+    # history is about: `interval = "step"` is per-batch stepping, which is what made `patience`
+    # count batches (#45). configure_optimizers declares "epoch"/1 outright.
+
+    def __post_init__(self) -> None:
+        if self.lr <= 0:
+            raise ValueError(f"OptimizerConfig.lr must be > 0, got {self.lr}.")
+        if self.weight_decay < 0:
+            raise ValueError(f"OptimizerConfig.weight_decay must be >= 0, got {self.weight_decay}.")
+        if self.eps <= 0:
+            raise ValueError(f"OptimizerConfig.eps must be > 0, got {self.eps}.")
+        self.betas = tuple(float(b) for b in self.betas)  # type: ignore[assignment]
+        if len(self.betas) != 2 or not all(0.0 <= b < 1.0 for b in self.betas):
+            raise ValueError(f"OptimizerConfig.betas must be two floats in [0, 1), got {self.betas!r}.")
+        if self.mode not in ("min", "max"):
+            raise ValueError(f"OptimizerConfig.mode must be 'min' or 'max', got {self.mode!r}.")
+        if not 0.0 < self.factor < 1.0:
+            raise ValueError(f"OptimizerConfig.factor must be in (0, 1), got {self.factor}.")
+        if self.patience < 0:
+            raise ValueError(f"OptimizerConfig.patience must be >= 0, got {self.patience}.")
+        if self.min_lr < 0:
+            raise ValueError(f"OptimizerConfig.min_lr must be >= 0, got {self.min_lr}.")
+        # min_lr is a FLOOR on the reduced learning rate, so a min_lr at or above lr silently
+        # disables annealing: the scheduler fires but cannot move the LR. That failure is invisible
+        # in logs, which is why it is rejected here rather than warned about.
+        if self.scheduler_enabled and self.min_lr >= self.lr:
+            raise ValueError(
+                f"OptimizerConfig.min_lr ({self.min_lr}) must be below lr ({self.lr}) — otherwise "
+                "ReduceLROnPlateau can never reduce the learning rate. Lower min_lr, raise lr, or "
+                "set scheduler_enabled = false for a deliberately constant LR."
+            )
+        # monitor is looked up in trainer.callback_metrics at epoch end. Validating it here keeps
+        # a directly-constructed OptimizerConfig self-consistent instead of deferring the failure
+        # to the end of the first epoch; the TOML layer checks the same thing.
+        if self.scheduler_enabled and not self.monitor:
+            raise ValueError("OptimizerConfig.monitor must be a non-empty metric name.")
 
 
 # Allowed string selectors for ``BaseTaskConfig.predict_idx``. Any other string is rejected;

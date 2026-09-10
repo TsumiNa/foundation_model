@@ -11,6 +11,7 @@ from typing import Dict, Optional  # For type hinting
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from numpy import ndarray
 
 from foundation_model.models.model_config import BaseTaskConfig
@@ -20,6 +21,26 @@ from foundation_model.models.model_config import BaseTaskConfig
 def _to_snake_case(name: str) -> str:
     s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
     return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
+
+
+def masked_mse_loss(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor | None:
+    """Mean squared error over the valid entries only, or ``None`` when there are none.
+
+    The regression head and the autoencoder head had this same twenty lines each. They agree
+    because they are the same objective — a real-valued prediction against a real-valued target,
+    with a mask saying which rows carry a label — and a batch where a task has no labels at all has
+    no loss to contribute rather than a loss of zero, which is why the empty case returns None and
+    not a scalar.
+    """
+    if mask is None:
+        mask = torch.ones_like(target)
+
+    valid_count = mask.sum()
+    if valid_count == 0:
+        return None
+
+    losses = F.mse_loss(pred, target, reduction="none") * mask
+    return losses.sum() / valid_count
 
 
 class BaseTaskHead(nn.Module, ABC):

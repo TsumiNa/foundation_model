@@ -1,5 +1,36 @@
 # Recent Updates
 
+## 2026-08-27 (0.4.0 — one optimizer, and a much smaller model class)
+
+Breaking, in the order the changes read:
+
+- **One `AdamW` with per-role parameter groups**, and `automatic_optimization` back on. The model
+  built one optimizer *and* one `ReduceLROnPlateau` per group, which forced manual optimization —
+  and manual optimization means Lightning drives no schedulers either, which is how stepping them
+  became the model's job and how #45 (`patience` counting batches) got in. Verified lossless:
+  replaying one metric trajectory through both shapes gives byte-identical learning rates over 20
+  epochs. Per-group `lr` / `weight_decay` / `min_lr` survive; a per-group scheduler *policy* does
+  not, and disagreement now raises rather than silently honouring one group.
+- **`[training] devices` accepts one device only.** Distributed training was removed with its
+  output half never written; multi-device configurations are rejected rather than merely
+  undocumented, with a runtime guard for `devices = "auto"` on a multi-GPU node. See
+  `ARCHITECTURE.md`, which also records the measured reason to doubt DDP is the right axis here.
+- **`OptimizerConfig.interval` / `.frequency` removed.** Read by nothing but their own validator,
+  and `interval = "step"` *is* #45.
+
+Also in this release:
+
+- `flexible_multi_task_model.py` **3296 → ~1100 lines**; inverse design and the KR batch plumbing
+  moved out, and `models/inverse_design/` and `workflows/inverse/` are packages now — one module
+  per question, `optimize_composition` down from 975 lines (709 of code) to 489 (223 of code).
+- **`[training] learnable_loss_balancer`** (default `false`): uncertainty weighting existed on the
+  model since before the `[training]` section but nothing ever routed a value to it, so it had
+  never run. Supervised heads only — the autoencoder is excluded.
+- The checkpoint machinery nothing read back is gone; the load path the CLIs actually use now has
+  tests against a real model.
+- Five duplicated implementations collapsed, found by an AST-normalised sweep of every function
+  body; the run seed reaches inverse-design seed selection; the KR regroup validates its lengths.
+
 ## 2026-07-04 (Unified `fm` CLI refactor)
 
 - **Single `fm` command** replaces the three legacy console scripts. A thin

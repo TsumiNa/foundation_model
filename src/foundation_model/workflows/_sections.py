@@ -5,9 +5,14 @@
 
 from __future__ import annotations
 
+import re
+
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from foundation_model.models.model_config import OptimizerConfig
 
 _MODES = {"min", "max"}
 
@@ -29,24 +34,72 @@ def validate_positive_int(where: str, value: Any) -> None:
         raise ValueError(f"{where} must be a positive int, got {value!r}.")
 
 
+_INT_STRING = re.compile(r"-?\d+")
+
+MULTI_DEVICE_HELP = (
+    "Distributed training is removed (see ARCHITECTURE.md, 'Distributed training'): the "
+    "sampler and metric half was built but the output half never was, so ranks would concurrently "
+    "overwrite the same checkpoint and results. Until it is restored, more than one device is "
+    "rejected rather than run — every rank would feed its own shard's train_final_loss_epoch to "
+    "ReduceLROnPlateau, so the learning rates would diverge even though the gradients are synced."
+)
+
+
 def validate_devices(value: Any) -> None:
-    """Lightning-compatible ``Trainer(devices=...)``: an int count (``-1`` = all, else ``>= 1``), a
-    non-empty list of non-negative device indices (``[1, 3]``), or a non-empty string (``"auto"`` /
-    ``"1,3"`` / ``"0-3"``). Lightning validates that the indices/string map to real devices at fit.
+    """One device. ``1``, ``"auto"``, or a single index (``[0]`` / ``"0"``).
+
+    The shape Lightning accepts is wider — an int count, a list of indices, a range string — and
+    this used to accept all of it, which left the configuration surface pointing at a code path
+    that no longer exists. See :data:`MULTI_DEVICE_HELP`.
     """
     if isinstance(value, bool):  # bool is an int subclass — reject it explicitly
         raise ValueError(f"training.devices must be an int, list of ints, or str, got bool {value!r}.")
     if isinstance(value, int):
-        if value == -1 or value >= 1:
+        if value == 1:
             return
+        if value == -1 or value > 1:
+            raise ValueError(
+                f"training.devices must be 1 while distributed training is out, got {value}. {MULTI_DEVICE_HELP}"
+            )
         raise ValueError(f"training.devices int must be -1 (all) or >= 1, got {value}.")
     if isinstance(value, list):
         if not value or any(isinstance(d, bool) or not isinstance(d, int) or d < 0 for d in value):
             raise ValueError(f"training.devices list must be non-empty non-negative int indices, got {value!r}.")
+        if len(value) > 1:
+            raise ValueError(
+                f"training.devices must name one device while distributed training is out, got {value!r}. {MULTI_DEVICE_HELP}"
+            )
         return
     if isinstance(value, str):
-        if not value.strip():
-            raise ValueError('training.devices string must be non-empty (e.g. "auto", "1,3", "0-3").')
+        text = value.strip()
+        if not text:
+            raise ValueError('training.devices string must be non-empty (e.g. "auto", "1", "0,2").')
+        if text == "auto":
+            return  # resolves at fit time; guard_single_device is what catches a multi-GPU node
+        # Lightning reads a BARE numeric string as a COUNT, not an index: devices = "2" is two GPUs
+        # ([0, 1]), exactly like the int 2. Only a string carrying a separator is a list of indices.
+        # Reading "2" as "the GPU at index 2" is the obvious mistake — and the mistake this check
+        # made when it went by punctuation alone — so bare numbers go through the int rule.
+        if _INT_STRING.fullmatch(text):
+            validate_devices(int(text))
+            return
+        indices: list[int] = []
+        for part in (p.strip() for p in text.split(",")):
+            if not part:
+                continue
+            try:
+                if "-" in part[1:]:  # a range like "0-3"
+                    lo, _, hi = part.partition("-")
+                    indices.extend(range(int(lo), int(hi) + 1))
+                else:
+                    indices.append(int(part))
+            except ValueError:
+                raise ValueError(f"training.devices string is not a device list, got {value!r}.") from None
+        if len(indices) != 1:
+            raise ValueError(
+                f"training.devices must name one device while distributed training is out, got "
+                f"{value!r} ({len(indices)} devices). {MULTI_DEVICE_HELP}"
+            )
         return
     raise ValueError(f"training.devices must be an int, list of ints, or str, got {value!r}.")
 
@@ -134,6 +187,69 @@ class CheckpointConfig:
 
 
 @dataclass(kw_only=True)
+class OptimizerSectionConfig:
+    """``[training.optimizer]`` — AdamW numerics shared by every parameter group.
+
+    Per-group learning rates and weight decays stay on ``[training]`` next to each other
+    (``encoder_lr`` / ``encoder_weight_decay`` …); only the terms that are genuinely global live
+    here.
+    """
+
+    betas: list[float] = field(default_factory=lambda: [0.9, 0.999])
+    eps: float = 1e-6
+
+    def __post_init__(self) -> None:
+        if len(self.betas) != 2 or any(not isinstance(b, (int, float)) or not 0.0 <= b < 1.0 for b in self.betas):
+            raise ValueError(f"training.optimizer.betas must be two numbers in [0, 1), got {self.betas!r}.")
+        if self.eps <= 0:
+            raise ValueError(f"training.optimizer.eps must be > 0, got {self.eps}.")
+
+
+@dataclass(kw_only=True)
+class SchedulerSectionConfig:
+    """``[training.scheduler]`` — ``ReduceLROnPlateau``, applied to every parameter group.
+
+    ``patience`` counts **epochs**. The model declares one scheduler at ``interval = "epoch"`` and
+    Lightning drives it: once per epoch, on the epoch-aggregated ``monitor`` metric read from
+    ``trainer.callback_metrics``. (The model used to step its own schedulers — it had one per
+    parameter group, which forced manual optimization, under which Lightning drives neither. It did
+    that inside ``training_step``, i.e. once per *batch*, which made ``patience`` count batches and
+    drove the LR to ``min_lr`` inside the first epoch on a 24k-row task.)
+
+    There is no ``interval`` / ``frequency`` key, and no ``OptimizerConfig`` field behind one:
+    per-batch stepping of a plateau scheduler is the bug above, not a configuration.
+
+    One block, every group. These five settings are the scheduling **decision**, which reads only
+    the monitored metric, so the single scheduler owns them for all parameter groups; ``lr`` /
+    ``weight_decay`` / ``min_lr`` are per-group and stay that way. A model assembled in Python with
+    groups that disagree here is rejected by ``configure_optimizers`` rather than resolved silently.
+
+    ``min_lr`` is a FLOOR on the reduced learning rate. A low configured LR plus this floor leaves
+    the scheduler almost no room to anneal — at the default ``1e-4``, an ``lr`` of ``2e-4`` can only
+    be halved once. ``OptimizerConfig`` rejects the degenerate case (``min_lr >= lr``) outright.
+    """
+
+    enabled: bool = True
+    mode: Literal["min", "max"] = "min"
+    factor: float = 0.5
+    patience: int = 5  # in epochs
+    min_lr: float = 1e-4
+    monitor: str = "train_final_loss_epoch"  # must be logged with on_epoch=True during training
+
+    def __post_init__(self) -> None:
+        if self.mode not in _MODES:
+            raise ValueError(f"training.scheduler.mode must be 'min' or 'max', got {self.mode!r}.")
+        if not 0.0 < self.factor < 1.0:
+            raise ValueError(f"training.scheduler.factor must be in (0, 1), got {self.factor}.")
+        if self.patience < 0:
+            raise ValueError(f"training.scheduler.patience must be >= 0, got {self.patience}.")
+        if self.min_lr < 0:
+            raise ValueError(f"training.scheduler.min_lr must be >= 0, got {self.min_lr}.")
+        if not self.monitor:
+            raise ValueError("training.scheduler.monitor must be a non-empty metric name.")
+
+
+@dataclass(kw_only=True)
 class LoggingConfig:
     """``[training.logging]`` — enable Lightning's ``CSVLogger`` / ``TensorBoardLogger``."""
 
@@ -143,14 +259,33 @@ class LoggingConfig:
 
 @dataclass(kw_only=True)
 class TrainingSectionConfig:
-    """``[training]`` — epochs, learning rates, accelerator + Lightning callbacks/loggers."""
+    """``[training]`` — epochs, per-group optimizer settings, accelerator + Lightning callbacks.
+
+    There are four parameter groups (shared encoder, regression/classification heads,
+    kernel-regression heads, the always-on autoencoder head) and each gets its own AdamW instance.
+    Every group's learning rate AND weight decay is configurable here; before this section grew
+    them, three of the four weight decays were hard-coded at call sites spanning three orders of
+    magnitude (1e-2 encoder / 1e-3 AE / 1e-5 reg+clf), which made them invisible to tuning.
+    """
 
     max_epochs: int = 100
     encoder_lr: float = 5e-3
+    encoder_weight_decay: float = 1e-2
     head_lr: float = 5e-3
+    head_weight_decay: float = 1e-5
     kr_lr: float = 5e-4
     kr_weight_decay: float = 5e-5
     ae_lr: float = 5e-3
+    ae_weight_decay: float = 1e-3
+    # Kendall/Gal/Cipolla (CVPR 2018) uncertainty weighting: learn one log sigma per supervised
+    # task and combine losses as sum_i [ 0.5 * exp(-2 log sigma_i) * L_i + log sigma_i ]. It exists
+    # to stop multi-task training from collapsing onto whichever tasks descend fastest, which is a
+    # live risk here — the 24-task sequence spans three orders of magnitude in label count.
+    #
+    # The model has implemented this since before this section existed, but nothing ever routed a
+    # value to it, so it has never been switched on in any run. Exposing it does not turn it on;
+    # it makes the comparison runnable.
+    learnable_loss_balancer: bool = False
     accelerator: str = "auto"
     # Passed straight to Lightning's Trainer(devices=...): "auto" (all devices for the accelerator),
     # an int count (-1 = all), a list of device indices ([1, 3]), or a string ("1,3" / "0-3").
@@ -159,11 +294,42 @@ class TrainingSectionConfig:
     early_stopping: EarlyStoppingConfig = field(default_factory=EarlyStoppingConfig)
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    optimizer: OptimizerSectionConfig = field(default_factory=OptimizerSectionConfig)
+    scheduler: SchedulerSectionConfig = field(default_factory=SchedulerSectionConfig)
 
     def __post_init__(self) -> None:
         if self.max_epochs < 1:
             raise ValueError(f"training.max_epochs must be >= 1, got {self.max_epochs}.")
         validate_devices(self.devices)
+        for group in ("encoder", "head", "kr", "ae"):
+            lr = getattr(self, f"{group}_lr")
+            if lr <= 0:
+                raise ValueError(f"training.{group}_lr must be > 0, got {lr}.")
+            if getattr(self, f"{group}_weight_decay") < 0:
+                raise ValueError(
+                    f"training.{group}_weight_decay must be >= 0, got {getattr(self, f'{group}_weight_decay')}."
+                )
+
+    def optimizer_config(self, *, lr: float, weight_decay: float) -> "OptimizerConfig":
+        """One parameter group's :class:`OptimizerConfig`, built from this section.
+
+        Single place where ``[training]`` becomes an optimizer, so the four groups cannot drift
+        apart on anything except the lr/weight-decay pair that distinguishes them.
+        """
+        from foundation_model.models.model_config import OptimizerConfig
+
+        return OptimizerConfig(
+            lr=lr,
+            weight_decay=weight_decay,
+            eps=self.optimizer.eps,
+            betas=(self.optimizer.betas[0], self.optimizer.betas[1]),
+            scheduler_enabled=self.scheduler.enabled,
+            mode=self.scheduler.mode,
+            factor=self.scheduler.factor,
+            patience=self.scheduler.patience,
+            min_lr=self.scheduler.min_lr,
+            monitor=self.scheduler.monitor,
+        )
 
 
 def build_model_section(raw: Mapping[str, Any]) -> ModelSectionConfig:
@@ -182,10 +348,16 @@ def build_training_section(raw: Mapping[str, Any]) -> TrainingSectionConfig:
     reject_unknown("training.checkpoint", ckpt_raw, set(CheckpointConfig.__dataclass_fields__))
     log_raw = dict(data.pop("logging", {}))
     reject_unknown("training.logging", log_raw, set(LoggingConfig.__dataclass_fields__))
+    opt_raw = dict(data.pop("optimizer", {}))
+    reject_unknown("training.optimizer", opt_raw, set(OptimizerSectionConfig.__dataclass_fields__))
+    sched_raw = dict(data.pop("scheduler", {}))
+    reject_unknown("training.scheduler", sched_raw, set(SchedulerSectionConfig.__dataclass_fields__))
 
     return TrainingSectionConfig(
         **data,
         early_stopping=EarlyStoppingConfig(**es_raw),
         checkpoint=CheckpointConfig(**ckpt_raw),
         logging=LoggingConfig(**log_raw),
+        optimizer=OptimizerSectionConfig(**opt_raw),
+        scheduler=SchedulerSectionConfig(**sched_raw),
     )

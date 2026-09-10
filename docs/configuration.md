@@ -93,8 +93,8 @@ One entry per prediction head. At least one is required; names must be unique.
 | `column` | str | — | required | Target column. |
 | `t_column` | str | `None` | required iff `kind = kernel_regression`; forbidden otherwise | The sequence x-axis column (e.g. energies for DOS, temperatures for ZT). |
 | `num_classes` | int | `None` | required iff `kind = classification`, `>= 2`; forbidden otherwise | Number of classes. |
-| `lr` | float | `None` | | Per-task learning-rate override (else the section LR for its kind). |
-| `replay` | float \| int | `None` | float in `(0,1)` or int `>= 1` | Per-task replay amount (pretrain); overrides `[pretrain.replay]`. |
+| `lr` | float | `None` | `> 0` | Per-task learning-rate override (else `[training]`'s LR for this head's kind). |
+| `weight_decay` | float | `None` | `>= 0` | Per-task weight-decay override (else `[training]`'s weight decay for this head's kind). |
 | `hidden_dims` | list[int] | `None` | positive ints; reg/clf only | Override `[model].head_hidden_dims` for this head. |
 | `x_hidden_dims` | list[int] | `None` | positive ints; KR only | Override `[model].kr_x_hidden_dims` (value branch). |
 | `t_hidden_dims` | list[int] | `None` | positive ints; KR only | Override `[model].kr_t_hidden_dims` (coordinate branch). |
@@ -108,6 +108,22 @@ A nested table on a task. Used only to inverse-transform predictions to human-re
 |---|---|---|---|---|
 | `path` | str (path) | — | required | Fitted scaler (joblib). |
 | `key` | str | `None` | | Key inside a dict-of-scalers pickle; `None` = the whole object is the scaler. |
+
+## Python-layer fields vs TOML keys
+
+`BaseTaskConfig` is what the model consumes; the config layer builds it from `[datasets.*]` +
+`[[tasks]]`, and the names differ. When reading the source, this is the mapping:
+
+| `BaseTaskConfig` field | TOML equivalent | Notes |
+|---|---|---|
+| `data_files` | `[datasets.<name>].path`, selected by `[[tasks]].dataset` | TOML groups tasks under named datasets instead of repeating a path per task. |
+| `data_column` | `[[tasks]].column` | |
+| `t_column` | `[[tasks]].t_column` | Kernel regression only. |
+| `composition_column` | `[data].composition_column` | Global in TOML; the per-task override is Python-only. |
+| `split_column` | — | Honoured inside the data file (a `split` column); not a TOML key. |
+| `task_masking_ratio` | no direct key; set by the pretrain loop | Each step sets `1.0` for the newly introduced task and the ratio resolved from `[pretrain.replay].amount` / `.per_task` for every replaying task. Not settable per task for a scaling-law sweep — use `[datasets.<name>].sample`. |
+| `predict_idx` | `[predict].split` / `[predict].compositions` | Set for every task at once by `fm predict`, not per task. |
+| `optimizer` | `[training]` group settings + `[[tasks]].lr` / `.weight_decay` | See [`[training]`](#training--optimization-pretrain--finetune-only). |
 
 ## `[model]` — network architecture
 
@@ -131,14 +147,101 @@ above).
 | Key | Type | Default | Constraint | Description |
 |---|---|---|---|---|
 | `max_epochs` | int | `100` | `>= 1` | Max epochs per training step. |
-| `encoder_lr` | float | `0.005` | | Shared-encoder learning rate. |
-| `head_lr` | float | `0.005` | | Regression/classification head learning rate. |
-| `kr_lr` | float | `0.0005` | | Kernel-regression head learning rate. |
-| `kr_weight_decay` | float | `5e-05` | | Weight decay for KR heads (reg/clf heads use a fixed `1e-5`). |
-| `ae_lr` | float | `0.005` | | AutoEncoder head learning rate (the AE head always trains). |
+| `encoder_lr` | float | `0.005` | `> 0` | Shared-encoder learning rate. |
+| `encoder_weight_decay` | float | `0.01` | `>= 0` | Shared-encoder weight decay. |
+| `head_lr` | float | `0.005` | `> 0` | Regression/classification head learning rate. |
+| `head_weight_decay` | float | `1e-05` | `>= 0` | Regression/classification head weight decay. |
+| `kr_lr` | float | `0.0005` | `> 0` | Kernel-regression head learning rate. |
+| `kr_weight_decay` | float | `5e-05` | `>= 0` | Kernel-regression head weight decay. |
+| `ae_lr` | float | `0.005` | `> 0` | AutoEncoder head learning rate (the AE head always trains). |
+| `ae_weight_decay` | float | `0.001` | `>= 0` | AutoEncoder head weight decay. |
+| `learnable_loss_balancer` | bool | `false` | new in `0.4.0` | Uncertainty weighting (Kendall/Gal/Cipolla, CVPR 2018): learn one log σ per supervised task and combine losses as Σᵢ [ 0.5·exp(−2 log σᵢ)·Lᵢ + log σᵢ ] instead of the static `[[tasks]].loss_weight`. Off by default — see the note below. |
 | `accelerator` | str | `"auto"` | | Lightning accelerator (`auto` / `cpu` / `gpu` / …). |
-| `devices` | int \| list[int] \| str | `"auto"` | | Passed to Lightning `Trainer(devices=...)`: `"auto"` (all devices for the accelerator), an int count (`-1` = all), a list of device indices (`[1, 3]`), or a string (`"1,3"` / `"0-3"`). |
+| `devices` | int \| list[int] \| str | `"auto"` | **one device only** | Passed to Lightning `Trainer(devices=...)`. While distributed training is out (see the note below), only single-device forms are accepted: `1`, `"auto"`, `[0]`, `"0"`. `-1`, `2`, `[1, 3]`, `"1,3"` and `"0-3"` are rejected at config time, and a `"auto"` that Lightning resolves onto several GPUs is refused before the fit starts. |
 | `seed` | int | `2025` | | Global seed (`--seed` overrides). |
+
+> **One device.** Distributed training was removed in `0.4.0` with its output half never written —
+> the sampler and metric side was built, but nothing guarded writes by rank, so every rank would
+> concurrently overwrite the same checkpoint, metrics JSON and prediction parquet. There is a
+> second reason it cannot simply be switched back on: the training logs no longer carry
+> `sync_dist=True`, so each rank would hand `ReduceLROnPlateau` its own shard's
+> `train_final_loss_epoch` and the learning rates would diverge across ranks even though the
+> gradients are synchronised — a run that finishes, looks normal, and is wrong. Both halves are
+> named in [ARCHITECTURE.md](../ARCHITECTURE.md)'s distributed-training section, which also records the
+> measured reason to doubt DDP is the right axis for this project at all.
+
+The model builds **one AdamW with one parameter group per role** — shared encoder, regression/
+classification heads, kernel-regression heads, and the always-on autoencoder head — so each group
+has its own learning rate and weight decay. The four defaults span three orders of magnitude
+(`1e-2` encoder / `1e-3` AE / `5e-5` KR / `1e-5` reg+clf); they were call-site constants before
+`0.3.0` and are configuration now.
+
+> **Changed in 0.4.0.** It used to be one AdamW *instance* per group. Lightning drives at most one optimizer
+> automatically, so that shape forced `automatic_optimization = False`, and under manual
+> optimization Lightning stops driving schedulers too — which is how stepping them became the
+> model's job, and how the #45 per-batch bug got in. The collapse changes no learning rate: every
+> group's scheduler was built from the one `[training.scheduler]` block below and monitored the
+> same metric, so the N schedulers already decided identically. Per-group `lr` / `weight_decay` /
+> `min_lr` survive as parameter groups and a list-valued `min_lr`.
+
+A single `[[tasks]]` entry may override its own head with `lr` / `weight_decay`, which win over
+these group defaults. Everything else about the optimizer comes from the two sub-tables below and
+is shared by every group.
+
+> **`learnable_loss_balancer` has never been switched on in any run.** The model has implemented
+> uncertainty weighting since before `[training]` existed, but nothing routed a value to it, so it
+> defaulted off and stayed there. Exposing the key does not turn it on; it makes the A/B runnable.
+> Note when you do run it: the log σ parameters join the shared-encoder group, so they take
+> `encoder_weight_decay` — AdamW's decoupled decay pulls each log σ toward 0 (σ = 1, i.e. the
+> unweighted objective), which is a mild bias against the balancer that is worth being aware of
+> when reading the comparison.
+
+### `[training.optimizer]` → AdamW numerics (shared by every group)
+
+| Key | Type | Default | Constraint | Description |
+|---|---|---|---|---|
+| `betas` | list[float] | `[0.9, 0.999]` | two values in `[0, 1)` | AdamW running-average coefficients. |
+| `eps` | float | `1e-06` | `> 0` | Added to the denominator for numerical stability. |
+
+AdamW is the only optimizer. Earlier revisions carried `Adam` and `SGD` branches that no config
+key could reach; they were removed in `0.3.0` rather than left as untested dead paths.
+
+### `[training.scheduler]` → `ReduceLROnPlateau` (shared by every group)
+
+| Key | Type | Default | Constraint | Description |
+|---|---|---|---|---|
+| `enabled` | bool | `true` | | `false` = constant learning rate; no scheduler is constructed. |
+| `mode` | str | `"min"` | `min` \| `max` | Whether a lower or higher monitored value is better. |
+| `factor` | float | `0.5` | `(0, 1)` | Multiplier applied to the LR on plateau. |
+| `patience` | int | `5` | `>= 0` | Epochs without improvement before reducing. |
+| `min_lr` | float | `0.0001` | `>= 0`; `< lr` when `enabled = true` | **Floor** for the reduced LR — see the warning below. |
+| `monitor` | str | `"train_final_loss_epoch"` | non-empty; must exist at epoch end | Metric the plateau is measured on. Must be logged with `on_epoch=True` during **training**; a missing key raises at the end of the first epoch rather than silently skipping the LR step. |
+
+`ReduceLROnPlateau` is the only scheduler; `StepLR` and the `"None"` selector were removed in
+`0.3.0`, the latter replaced by `enabled`.
+
+There is **one** scheduler, over the single AdamW, and **Lightning** drives it: the model declares
+`interval = "epoch"` and Lightning steps it once per epoch on the epoch-aggregated `monitor`
+metric. The model does not touch it, so the cadence cannot drift back to per-batch. There is no
+`interval` / `frequency` key here and no field behind one — a plateau scheduler stepped per batch
+is the bug below, not a setting.
+
+These five keys are the scheduling **decision**, which reads only the monitored metric, so they
+apply to every parameter group; `lr` / `weight_decay` / `min_lr` remain per-group. A per-group
+scheduler *policy* is therefore not expressible — it never was from this file, which has always
+been one block feeding every group.
+
+> **Changed in 0.3.1.** Schedulers previously stepped inside `training_step`, i.e. once per
+> *batch*, which made `patience` count batches — on a 24k-row task at `batch_size = 256`
+> (~90 batches/epoch) the LR reached `min_lr` inside the first epoch. `monitor` was ignored
+> entirely, and its old default `train_total_loss` named a metric that does not exist. Runs before
+> 0.3.1 annealed far faster than their config implies.
+
+> **`min_lr` interacts with every learning rate.** It is a floor, so a low LR plus the default
+> `1e-4` floor leaves almost no room to anneal: at `lr = 2e-4` the scheduler can halve once and
+> then stops. `min_lr >= lr` is rejected at config time, because in that case the scheduler runs
+> but can never change the LR — a no-op that is invisible in logs. When lowering a learning rate
+> below ~`1e-3`, lower `min_lr` with it or set `enabled = false` deliberately.
 
 ### `[training.early_stopping]` → Lightning `EarlyStopping` (on by default)
 

@@ -9,7 +9,6 @@ import pandas as pd
 import torch
 from loguru import logger
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 
 from foundation_model.models.model_config import (
     ClassificationTaskConfig,
@@ -22,7 +21,6 @@ from .composition_sources import (
     CompositionNormalizer,
     DescriptorCache,
     DescriptorFn,
-    PrecomputedDescriptorSource,
     build_composition_universe,
     canonical_key,
     load_task_frame,
@@ -30,6 +28,24 @@ from .composition_sources import (
     resolve_splits,
 )
 from .dataset import CompoundDataset
+
+# A task's batched target or mask. Ordinary heads get one stacked tensor; kernel-regression heads
+# keep one tensor per sample, because their sequences have different lengths and cannot be stacked.
+# That split is the same distinction the model's steps branch on, so naming it here lets both sides
+# say the same thing instead of each re-deriving it from `key in kernel_regression_tasks`.
+BatchedTaskValue = torch.Tensor | list[torch.Tensor]
+
+#: ``{task_name: value}`` for targets and for masks.
+TaskBatch = dict[str, BatchedTaskValue]
+
+#: One sample as ``CompoundDataset.__getitem__`` returns it: descriptors, then a per-task tensor
+#: for targets, masks and t-sequences. Sequence lengths differ between samples, which is why the
+#: collate function cannot stack the last three.
+DatasetItem = tuple[torch.Tensor, dict[str, torch.Tensor], dict[str, torch.Tensor], dict[str, torch.Tensor]]
+
+#: What the collate function returns and every ``*_step`` unpacks:
+#: ``(descriptors, targets, masks, t-sequences)``.
+CollatedBatch = tuple[torch.Tensor, TaskBatch, TaskBatch, dict[str, list[torch.Tensor]]]
 
 TaskConfig = RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
 
@@ -54,28 +70,30 @@ class CollateFnWithTaskInfo:
             cfg.name for cfg in task_configs if cfg.type == TaskType.KERNEL_REGRESSION and cfg.enabled
         }
 
-    def __call__(self, batch):
-        """
-        Custom collate function for batching data.
+    def __call__(self, batch: Sequence[DatasetItem]) -> CollatedBatch:
+        """Collate one batch.
 
         Parameters
         ----------
-        batch : List[Tuple]
-            List of (model_input_x, sample_y_dict, sample_task_masks_dict, sample_t_sequences_dict)
+        batch : Sequence[DatasetItem]
+            One ``(model_input_x, sample_y_dict, sample_task_masks_dict, sample_t_sequences_dict)``
+            per sample, as ``CompoundDataset.__getitem__`` produces it.
 
         Returns
         -------
-        Tuple
-            (batched_input, batched_y_dict, batched_mask_dict, batched_t_sequences_dict)
+        CollatedBatch
+            ``(batched_input, batched_y_dict, batched_mask_dict, batched_t_sequences_dict)``.
         """
         model_inputs, y_dicts, mask_dicts, t_sequences_dicts = zip(*batch)
 
         # Handle model inputs (formula features only)
         batched_input = torch.stack(model_inputs)
 
-        # Handle targets and masks based on task type
-        batched_y_dict = {}
-        batched_mask_dict = {}
+        # Handle targets and masks based on task type. Both dicts hold BatchedTaskValue: a stacked
+        # tensor for ordinary heads, a per-sample list for kernel-regression ones. Inference would
+        # otherwise fix them to whichever branch the first task happened to take.
+        batched_y_dict: TaskBatch = {}
+        batched_mask_dict: TaskBatch = {}
 
         for key in y_dicts[0].keys():
             if key in self.kernel_regression_tasks:
@@ -88,7 +106,7 @@ class CollateFnWithTaskInfo:
                 batched_mask_dict[key] = torch.stack([d[key] for d in mask_dicts])
 
         # Handle sequence data (t-parameters) - always List[Tensor] format
-        batched_t_sequences_dict = {}
+        batched_t_sequences_dict: dict[str, list[torch.Tensor]] = {}
         for key in t_sequences_dicts[0].keys():
             batched_t_sequences_dict[key] = [d[key] for d in t_sequences_dicts]
 
@@ -148,7 +166,7 @@ class CompoundDataModule(L.LightningDataModule):
     task_configs : Sequence[TaskConfig]
         Task configurations. Per-task ``data_files`` / ``composition_column`` / ``split_column``
         / ``task_masking_ratio`` / ``predict_idx`` drive data loading.
-    descriptor_fn : Callable[[list[str]], pd.DataFrame]
+    descriptor_fn : DescriptorFn
         Maps composition keys to a composition-indexed descriptor frame.
     task_frames : Mapping[str, pd.DataFrame] | None, optional
         In-memory per-task frames (indexed by composition or carrying the composition column),
@@ -255,10 +273,12 @@ class CompoundDataModule(L.LightningDataModule):
             self.default_data_files = tuple(str(p) for p in default_data_files)
         self.composition_column = composition_column
         self.composition_normalizer = composition_normalizer
-        # The DataModule owns the normalization policy; keep a recognized descriptor source in
-        # sync so the opt-out (composition_normalizer=None) only has to be set in one place.
-        if isinstance(descriptor_fn, PrecomputedDescriptorSource):
-            descriptor_fn._composition_normalizer = composition_normalizer
+        # No syncing into the descriptor source. It used to assign
+        # descriptor_fn._composition_normalizer so the opt-out "only had to be set in one place",
+        # but that reached into a private attribute of ONE of the three descriptor kinds; a
+        # closure built by lookup_descriptor_fn had nothing to assign to, and opting out there
+        # silently dropped every composition. Descriptor sources now return rows under the keys
+        # they were handed, so their own normalization never has to agree with this one.
         self.random_seed = random_seed
         self.val_split = val_split
         self.test_split = test_split
@@ -293,7 +313,6 @@ class CompoundDataModule(L.LightningDataModule):
         self.val_dataset: CompoundDataset | None = None
         self.test_dataset: CompoundDataset | None = None
         self.predict_dataset: CompoundDataset | None = None
-        self._train_sampler: DistributedSampler | None = None
 
         self.save_hyperparameters(
             # Callables / large frames must not be pickled into checkpoints (a function reference
@@ -531,12 +550,6 @@ class CompoundDataModule(L.LightningDataModule):
 
     # ------------------------------------------------------------------ lightning
 
-    def on_train_epoch_start(self):
-        """Update the DistributedSampler epoch so shuffling differs across epochs."""
-        if getattr(self, "_train_sampler", None) is not None and hasattr(self._train_sampler, "set_epoch"):
-            if getattr(self, "trainer", None) is not None:
-                self._train_sampler.set_epoch(self.trainer.current_epoch)
-
     def setup(self, stage: str | None = None):
         """Prepare datasets for the requested stage (fit, test, predict)."""
         logger.info(f"--- Setting up DataModule for stage: {stage} ---")
@@ -576,23 +589,12 @@ class CompoundDataModule(L.LightningDataModule):
 
     # ------------------------------------------------------------------ dataloaders
 
-    def _make_loader(self, dataset, *, shuffle: bool, track_sampler: bool):
+    def _make_loader(self, dataset, *, shuffle: bool):
         collate_fn = create_collate_fn_with_task_info(self.task_configs)
-        use_ddp = torch.distributed.is_available() and torch.distributed.is_initialized()
-        sampler: DistributedSampler | None
-        if use_ddp:
-            sampler = DistributedSampler(dataset, shuffle=shuffle, drop_last=False)
-            loader_shuffle = False
-        else:
-            sampler = None
-            loader_shuffle = shuffle
-        if track_sampler:
-            self._train_sampler = sampler
         return DataLoader(
             dataset,
             batch_size=self.batch_size,
-            shuffle=loader_shuffle,
-            sampler=sampler,
+            shuffle=shuffle,
             num_workers=self.num_workers,
             persistent_workers=self.persistent_workers,
             pin_memory=self.pin_memory,
@@ -605,22 +607,22 @@ class CompoundDataModule(L.LightningDataModule):
         if self.train_dataset is None or len(self.train_dataset) == 0:
             logger.warning("train_dataloader: Train dataset is None or empty. Returning None.")
             return None
-        return self._make_loader(self.train_dataset, shuffle=True, track_sampler=True)
+        return self._make_loader(self.train_dataset, shuffle=True)
 
     def val_dataloader(self):
         if self.val_dataset is None or len(self.val_dataset) == 0:
             logger.info("val_dataloader: Validation dataset is None or empty. Returning None.")
             return None
-        return self._make_loader(self.val_dataset, shuffle=False, track_sampler=False)
+        return self._make_loader(self.val_dataset, shuffle=False)
 
     def test_dataloader(self):
         if self.test_dataset is None or len(self.test_dataset) == 0:
             logger.info("test_dataloader: Test dataset is None or empty. Returning None.")
             return None
-        return self._make_loader(self.test_dataset, shuffle=False, track_sampler=False)
+        return self._make_loader(self.test_dataset, shuffle=False)
 
     def predict_dataloader(self):
         if self.predict_dataset is None or len(self.predict_dataset) == 0:
             logger.info("predict_dataloader: Predict dataset is None or empty. Returning None.")
             return None
-        return self._make_loader(self.predict_dataset, shuffle=False, track_sampler=False)
+        return self._make_loader(self.predict_dataset, shuffle=False)

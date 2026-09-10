@@ -175,8 +175,7 @@ walk-through.
 
 - Per-task data files joined by a shared **composition** column.
 - Missing values masked rather than dropped (per-task masks in `y_dict`).
-- Configurable train/val/test splits, descriptor caching, per-task `task_masking_ratio` for
-  scaling-law experiments.
+- Configurable train/val/test splits and descriptor caching.
 
 ### Input data — composition-keyed per-task sources
 
@@ -186,48 +185,44 @@ property task means adding one file plus one task config. Descriptors are comput
 the union of compositions via a user-supplied `descriptor_fn` (results are cached per unique
 composition).
 
-**DataModule wiring** (YAML):
+**Wiring it** — `[data]` holds the loader/split settings, `[descriptor]` says how descriptors are
+produced, and each data file gets a `[datasets.<name>]` table that tasks reference by name:
 
-```yaml
-data:
-  class_path: foundation_model.data.datamodule.CompoundDataModule
-  init_args:
-    descriptor_fn:
-      class_path: foundation_model.data.composition_sources.PrecomputedDescriptorSource
-      init_args:
-        path: "data/descriptors.parquet"
-        composition_column: null  # null => use the file's index as the composition key
-    composition_column: "composition"
-    val_split: 0.1
-    test_split: 0.1
-    random_seed: 42
-    batch_size: 64
+```toml
+[data]
+composition_column = "composition"
+val_split = 0.1
+test_split = 0.1
+split_random_seed = 42
+batch_size = 64
+
+[descriptor]
+kind = "precomputed"          # or "kmd" for the on-the-fly invertible descriptor
+path = "data/descriptors.parquet"
+
+[datasets.band_gap]
+path = "data/band_gap.parquet"
+
+[datasets.dos]
+path = "data/dos.parquet"
+
+[[tasks]]
+name = "band_gap"
+kind = "regression"
+dataset = "band_gap"
+column = "Band gap"
+
+[[tasks]]
+name = "dos"
+kind = "kernel_regression"
+dataset = "dos"
+column = "DOS density"
+t_column = "DOS energy"
 ```
 
-**Per-task data** is configured on each task config (`BaseTaskConfig`):
-
-| Field | Purpose |
-|-------|---------|
-| `data_files` | This task's own source file(s) (`csv` / `parquet` / `pd.xz` / `pkl`), concatenated by rows |
-| `data_column` | Column inside that file holding the target values |
-| `t_column` | (Kernel regression) column holding the sequence x-axis (energy / temperature / time) |
-| `composition_column` | Per-task override of the global composition column |
-| `split_column` | Optional in-file `train` / `val` / `test` labels (default `"split"`) |
-| `task_masking_ratio` | Optional keep-ratio applied to this task's valid training samples |
-| `predict_idx` | Composition subset to predict: `train`/`val`/`test`/`all` or an explicit list |
-
-```yaml
-# In model.init_args.task_configs (linked into the datamodule automatically):
-- name: band_gap
-  type: REGRESSION
-  data_files: "data/band_gap.parquet"
-  data_column: "Band gap"
-- name: dos
-  type: KernelRegression
-  data_files: "data/dos.parquet"
-  data_column: "DOS density"
-  t_column: "DOS energy"
-```
+The `BaseTaskConfig` dataclass the model consumes uses different field names than these TOML
+keys; [`docs/configuration.md`](docs/configuration.md#python-layer-fields-vs-toml-keys) maps the
+two for anyone reading the source.
 
 **Splitting.** A single composition-level train/val/test split is derived by overlaying every
 task file's `split` column (precedence `test > val > train`; conflicts warn). Compositions
@@ -266,7 +261,7 @@ column = "my_property"
 
 [model]
 latent_dim = 128
-encoder_hidden = 256
+encoder_hidden_dims = [256]
 
 [training]
 max_epochs = 60
@@ -289,41 +284,41 @@ fm finetune --config samples/finetune_smoke.toml \
 `finetune.tasks`, keeping the built-in autoencoder head trainable; the loss-balancer scalars
 (`task_log_sigmas`) are frozen so the objective weighting can't drift.
 
-### Example 3 — Transformer encoder
+### Example 3 — Transformer encoder (model layer only, not selectable from TOML)
 
-```yaml
-model:
-  init_args:
-    encoder_config:
-      type: transformer
-      input_dim: 128
-      d_model: 256
-      num_layers: 4
-      nhead: 4
-      dropout: 0.1
-      use_cls_token: true
-      apply_layer_norm: true
+`TransformerEncoderConfig` exists in the model layer and `FlexibleMultiTaskModel` accepts it, so
+it is reachable when constructing the model in Python:
+
+```python
+from foundation_model.models.model_config import TransformerEncoderConfig
+
+encoder_config = TransformerEncoderConfig(
+    input_dim=128, d_model=256, num_layers=4, nhead=4, dropout=0.1,
+    use_cls_token=True, apply_layer_norm=True,
+)
 ```
 
 Both `[CLS]` and mean-pooling aggregations keep every feature token in play for the supervised
 loss (gradients reach all tokens through self-attention).
 
-### Example 4 — Scaling-law experiment via `task_masking_ratio`
+**The `fm` CLI cannot select it.** `[model]` describes an MLP encoder only — the workflow layer's
+`build_encoder_config` always returns an `MLPEncoderConfig` built from `encoder_hidden_dims` and
+`latent_dim`. Wiring the transformer through to TOML is unimplemented, not merely undocumented.
 
-Each task's `task_masking_ratio` controls the fraction of its valid training samples used (`1.0`
-= all, `0.5` = half). Re-run training with `task_A.task_masking_ratio` set to `1.0`, `0.5`,
-`0.2` in turn and record the final `val_task_A_*` loss — as the ratio drops, validation loss for
-that task rises (the scaling-law signal) while other tasks are unaffected.
+### Example 4 — Scaling-law experiments
 
-```yaml
-task_configs:
-  - name: task_A
-    type: REGRESSION
-    data_files: "examples/data/task_A.csv"
-    data_column: "target_A"
-    dims: [256, 64, 1]
-    task_masking_ratio: 1.0   # vary this to study the scaling law
-```
+`task_masking_ratio` controls the fraction of a task's valid training samples used (`1.0` = all,
+`0.5` = half), and drives the scaling-law signal: as the ratio drops, that task's validation loss
+rises while the others are unaffected.
+
+**There is no `[[tasks]]` key that sets it directly.** During continual pretraining it is set for
+you: each step gives the newly introduced task `1.0` and every replaying task the ratio resolved
+from `[pretrain.replay].amount` / `[pretrain.replay].per_task`, so those keys vary it — but as a
+replay budget, not as a per-task scaling-law dial. To sweep training-set size from the CLI, use
+`[datasets.<name>].sample` (or `--sample`), which caps rows for a whole dataset.
+
+A worked scaling-law study driven entirely from the CLI lives in
+[`experiments/rikyu_task_scaling/`](experiments/rikyu_task_scaling/).
 
 ## Inverse design
 

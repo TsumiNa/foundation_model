@@ -8,13 +8,12 @@ AutoEncoder task head for the FlexibleMultiTaskModel.
 from typing import Dict, Optional, cast
 
 import torch
-import torch.nn.functional as F
 from numpy import ndarray
 
 from foundation_model.models.components.fc_layers import LinearBlock
 from foundation_model.models.model_config import BaseTaskConfig, _AEConfig
 
-from .base import BaseTaskHead
+from .base import BaseTaskHead, masked_mse_loss
 
 
 class AutoEncoderHead(BaseTaskHead):
@@ -103,22 +102,7 @@ class AutoEncoderHead(BaseTaskHead):
         torch.Tensor | None
             Total loss as a scalar tensor, or None if no valid samples.
         """
-        if mask is None:
-            mask = torch.ones_like(target)
-
-        # Check if there are any valid samples
-        valid_count = mask.sum()
-        if valid_count == 0:
-            # No valid samples in this batch for this task
-            return None
-
-        # Apply mask to both predictions and targets
-        losses = F.mse_loss(pred, target, reduction="none") * mask
-
-        # Compute total loss
-        total_loss = losses.sum() / valid_count
-
-        return total_loss
+        return masked_mse_loss(pred, target, mask)
 
     def _predict_impl(self, x: torch.Tensor) -> Dict[str, ndarray]:
         """

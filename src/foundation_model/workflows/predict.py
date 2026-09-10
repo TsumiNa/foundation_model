@@ -20,6 +20,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from foundation_model.models.task_head.kernel_regression import expand_for_kernel_regression
 import torch
 from lightning import seed_everything
 from loguru import logger
@@ -27,7 +28,7 @@ from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, r2_sc
 
 from foundation_model.data.composition_sources import canonical_key, normalize_composition
 
-from ._engine import as_float_array, build_model_for_checkpoint, checkpoint_task_order
+from ._engine import as_float_array, build_model_for_checkpoint, checkpoint_task_order, resolve_device
 from ._sections import ModelSectionConfig, build_model_section, reject_unknown
 from .recording import RunRecorder, load_checkpoint_state
 from .task_catalog import TaskCatalog, TaskCatalogConfig, TaskKind, build_task_catalog_config
@@ -98,13 +99,6 @@ def build_predict_config(
     )
 
 
-def _resolve_device(accelerator: str) -> torch.device:
-    """``"cpu"`` forces CPU; ``"auto"`` uses CUDA when available, else CPU."""
-    if accelerator != "cpu" and torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
-
-
 def run(cfg: PredictConfig, recorder: RunRecorder | None = None) -> dict[str, Any]:
     """Predict ``cfg.tasks`` (or every checkpoint head) on the resolved set. Returns metrics dict."""
 
@@ -114,8 +108,8 @@ def run(cfg: PredictConfig, recorder: RunRecorder | None = None) -> dict[str, An
     seed_everything(cfg.seed, workers=True)
 
     try:
-        model, ckpt_tasks = _rebuild_model(cfg, catalog)
-        model = model.to(_resolve_device(cfg.accelerator))
+        model, ckpt_tasks = rebuild_model(cfg, catalog)
+        model = model.to(resolve_device(cfg.accelerator))
         heads = set(model.task_heads)
         requested = cfg.tasks or [t for t in ckpt_tasks if t in heads]
         missing = [t for t in requested if t not in heads]
@@ -147,7 +141,7 @@ def run(cfg: PredictConfig, recorder: RunRecorder | None = None) -> dict[str, An
             rec.close()
 
 
-def _rebuild_model(cfg: PredictConfig, catalog: TaskCatalog) -> tuple[Any, list[str]]:
+def rebuild_model(cfg: PredictConfig, catalog: TaskCatalog) -> tuple[Any, list[str]]:
     state = load_checkpoint_state(cfg.checkpoint)
     ckpt_tasks = checkpoint_task_order(state)
     catalog_tasks = {t.name for t in cfg.catalog.tasks}
@@ -259,7 +253,7 @@ def _predict_kr(
     with torch.no_grad():
         h = torch.tanh(model.encoder(x))
         t_tensors = [torch.tensor(t, dtype=torch.float32, device=device) for t in t_list]
-        expanded_h, expanded_t = model._expand_for_kernel_regression(h, t_tensors)
+        expanded_h, expanded_t = expand_for_kernel_regression(h, t_tensors)
         pred = catalog.inverse_transform(name, head(expanded_h, t=expanded_t).squeeze(-1).cpu().numpy())
     rows: list[dict[str, Any]] = []
     offset = 0
