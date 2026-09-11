@@ -87,7 +87,7 @@ fig("fig-weights",s=>{
   [10,30,100,300,1000,3000].forEach(t=>{el(s,"line",{x1:xs(t),x2:xs(t),y1:y0,y2:y1,stroke:C.soft});el(s,"text",{x:xs(t),y:y1+18,"text-anchor":"middle",class:"axis",fill:C.muted},t.toLocaleString());});
   [0.1,1,10].forEach(t=>{el(s,"line",{x1:x0,x2:x1,y1:ys(t),y2:ys(t),stroke:C.soft});el(s,"text",{x:x0-8,y:ys(t)+4,"text-anchor":"end",class:"axis",fill:C.muted},"×"+t);});
   el(s,"line",{x1:x0,x2:x1,y1:ys(1),y2:ys(1),stroke:C.ink,"stroke-dasharray":"4 4"});
-  el(s,"text",{x:x0,y:20,class:"name",fill:C.muted},"weight of one row of each class in the loss (sklearn balanced) against the class size · dashed = unweighted");
+  el(s,"text",{x:x0,y:20,class:"name",fill:C.muted},"weight of one row of each class in the loss, N / (151 · N_c), against the class size · dashed = unweighted");
   el(s,"text",{x:(x0+x1)/2,y:H-8,"text-anchor":"middle",class:"name",fill:C.muted},"rows in the class (training split, log scale)");
   w.forEach(p=>el(s,"circle",{cx:xs(p[0]),cy:ys(p[1]),r:4,fill:C.xfer,opacity:.75}));
   const big=w.slice().sort((a,b)=>b[0]-a[0])[0], small=w.slice().sort((a,b)=>a[0]-b[0])[0];

@@ -418,13 +418,13 @@ converts into score. So material_type's path to a gain **structurally cannot tra
 12. **Space group: why 0.24 here and 0.60 in the ShotgunCSP paper — done (2026-09-11).** The paper
    (Liu et al., npj Comput. Mater. 2024, Fig. 3: 33,040 stable MP entries, 213 groups, XenonPy 290,
    FC-NN, plain cross-entropy, top-1 60.22 ± 0.87%) and the pipeline's stN_space_group (151 groups,
-   KMD, encoder [256]→384 + head [64], sklearn-balanced class weights, last-epoch weights) were
+   KMD, encoder [256]→384 + head [64], inverse-frequency class weights N/(K·N_c) in the PyTorch cross-entropy — the formula sklearn calls "balanced" — last-epoch weights) were
    compared with a local factorial on the SAME rows, label and split (`analysis/space_group_study.py`,
    16 arms × 3 seeds, `summary/space_group_study{,_table}.json`). The arm built from the project's own
    encoder/head classes reproduces the RIKYU run (0.247 ± 0.006 vs 0.241 ± 0.005, same stopping
    epoch). Findings, as matched-pair effects on top-1 accuracy:
    - **Loss weighting is the first-order cause**: unweighted cross-entropy +21 pt at the pipeline
-     shape (+27 mean over four pairs). With 151 classes the balanced weights range ×0.067 (Fm-3m) to
+     shape (+27 mean over four pairs). With 151 classes the inverse-frequency weights range ×0.067 (Fm-3m) to
      ×22 (10-row groups); the three largest groups are 26% of rows but 2% of the loss, and the
      as-run head recalls 29% of Fm-3m, 4% of Pnma, 0% of P2_1/c and C2/c. Macro-F1 does not benefit
      either (0.20 → 0.31 without weights). The weighted validation loss bottoms at epoch 6 and climbs,
@@ -484,7 +484,7 @@ checkpoint in future transfer stages makes this whole stage unnecessary.
   warm-start (2 / 2 / 19) are the same picture, and material_type's gain is intact (0.694 vs 0.696).
   What the step-24 exposure buys is a trained head, which only matters when the encoder is frozen
   (4 tasks better, 0 worse).
-- "Space group is barely learnable from composition" cannot be said: the 0.24 was the balanced
+- "Space group is barely learnable from composition" cannot be said: the 0.24 was the inverse-frequency
   class weights (−21 pt on 151 classes) plus KMD's blindness to cell size (−11 pt); the pipeline
   reaches 0.47 with the weights off and 0.56 with a scale-aware descriptor, and the paper's 0.60 is
   reproduced on our rows with its network.
