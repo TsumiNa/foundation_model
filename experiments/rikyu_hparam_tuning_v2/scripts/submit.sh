@@ -85,9 +85,18 @@ case "$STAGE" in
     bal|balx)         CONFIG=probe6.toml; OUT=stage_bal; DEFTIME=12:00:00 ;;
     # Same-regime single-task ceilings — the control the recorded H200 ceilings cannot be.
     single)           CONFIG=probe6.toml; OUT=stage_single; DEFTIME=06:00:00 ;;
+    # Re-baseline for the two KR tasks whose single-task runs hit the 150-epoch cap (power_factor
+    # 5/5 and still improving, seebeck 4/5). Same config and output root, prefix stB, cap raised
+    # to 400 so early stopping — not the cap — decides when they are done.
+    singlex)          CONFIG=probe6.toml; OUT=stage_single; DEFTIME=06:00:00 ;;
     # Transfer at deployment scale: 24-task sequences with the task under test last.
     # 48h because these are full stage-C-length runs, and packed co-tenants contend.
     xfer)             CONFIG=final_hybrid_v2.toml; OUT=stage_xfer; DEFTIME=48:00:00 ;;
+    # "Unseen" encoders: the first 23 steps of each transfer ordering with the task under test
+    # dropped, same seed. The pipeline is bit-deterministic at a fixed seed, so this reproduces the
+    # step-23 encoder the pruner discarded — an encoder that has never seen X, for a clean
+    # frozen / warm-start test with a fresh head.
+    xu)               CONFIG=final_hybrid_v2.toml; OUT=stage_xu; DEFTIME=48:00:00 ;;
     b|b3)             CONFIG=probe6.toml; OUT=stage_b; DEFTIME=06:00:00 ;;
     # Stage C': 24 tasks, 4 arms. `fm pretrain --resume` is idempotent, so a walltime kill is
     # recovered by resubmitting the identical command; `fm finetune` has NO resume and gets its
@@ -100,6 +109,51 @@ case "$STAGE" in
     c2top2)     CONFIG=final_hybrid_c2top2.toml;   OUT=stage_c; DEFTIME=48:00:00 ;;
     c2top3)     CONFIG=final_hybrid_c2top3.toml;   OUT=stage_c; DEFTIME=48:00:00 ;;
     c2con)      CONFIG=final_consolidate_v2.toml;  OUT=stage_c; DEFTIME=10:00:00; MODE=finetune ;;
+    # Warm-start fine-tune from the transfer stage's final checkpoints, one task, no replay.
+    # Two arms = two configs (freeze_encoder is a bool; bools do not travel through --set safely).
+    # Both write into stage_ft, distinguished by runid prefix; _ckpt there is a copy of model_library.
+    # Single-task runs took 3-27 min unpacked, so 4h covers a PACK=24 co-tenant with room.
+    ftz|ftzs)   CONFIG=ft_frozen.toml;  OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
+    ftf|ftfs)   CONFIG=ft_full.toml;    OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
+    # seebeck and power_factor hit the 150-epoch cap in every arm (KR tasks converge slowly), so
+    # their fine-tune rows are rerun at 400 epochs to match the re-baselined single-task runs.
+    ftzx)       CONFIG=ft_frozen.toml;  OUT=stage_ft; DEFTIME=06:00:00; MODE=finetune ;;
+    ftfx)       CONFIG=ft_full.toml;    OUT=stage_ft; DEFTIME=06:00:00; MODE=finetune ;;
+    # Same two arms on the stage_xu encoders, which never saw the task; the head is created fresh.
+    ftzu)       CONFIG=ft_frozen_new.toml; OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
+    ftfu)       CONFIG=ft_full_new.toml;   OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
+    # Long-budget check on the resolvable warm-start losers (final_energy, volume, dos_density):
+    # 500 epochs, early stopping OFF, in both the warm-start arm and a single-task control, so the
+    # budget is not the confound. Runs are 3-4x longer than the 150-epoch ones; 12h covers PACK=8.
+    ftfl)       CONFIG=ft_full_long.toml; OUT=stage_ft;     DEFTIME=12:00:00; MODE=finetune ;;
+    singlel)    CONFIG=probe6_long.toml;  OUT=stage_single; DEFTIME=12:00:00 ;;
+    # Follow-ups: alone with the LR schedule effectively off (can a fresh model reach warm-start's
+    # training loss?), and warm-start with the encoder LR 10x lower, early stopping on (is the
+    # overfitting controllable by slowing the encoder?). Grids from scripts/make_grid_long.py.
+    singlec)    CONFIG=probe6_long.toml;  OUT=stage_single; DEFTIME=12:00:00 ;;
+    ftflr)      CONFIG=ft_full.toml;      OUT=stage_ft;     DEFTIME=08:00:00; MODE=finetune ;;
+    # Descriptor contrast on the extensive properties, single task, same recipe as stage_single: the
+    # XenonPy classic composition descriptor from data/data/scripts/calculate_compositional_desc.ipynb
+    # (with its scale-bearing weighted-sum block) vs the same table without that block.
+    descxc)     CONFIG=probe6_desc_xclassic.toml; OUT=stage_desc; DEFTIME=06:00:00 ;;
+    descxn)     CONFIG=probe6_desc_xnosum.toml;   OUT=stage_desc; DEFTIME=06:00:00 ;;
+    # Single task on the 2026-09-08 dataset (MP labels rebuilt on GGA / GGA+U): does final_energy recover?
+    singlem)    CONFIG=probe6_mp2026.toml;        OUT=stage_single; DEFTIME=06:00:00 ;;
+    # Single-task baselines on the 2026-09-08 dataset: the 9 tasks whose labels changed and the 16 added
+    # Materials Project properties, 5 seeds each, the stage_single recipe.
+    singlen)    CONFIG=probe6_mp2026.toml;        OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
+    singlesg)   CONFIG=probe6_mp2026.toml;        OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;   # space_group, 151 classes, 5 seeds
+    # space-group study: the same head on UNWEIGHTED cross-entropy (TaskSpec.class_weights = "none").
+    # Needs SRC_OVERRIDE — the knob is in no container yet.
+    singlesgnw) CONFIG=probe6_mp2026_sgnw.toml;   OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
+    # ... and the same on the XenonPy classic descriptor (precomputed), to confirm the descriptor factor.
+    singlesgxc) CONFIG=probe6_mp2026_sgxc.toml;   OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
+    # material_type with the weights on (control, stMb) and off (stMn), same recipe, 5 seeds each — the head
+    # the balanced weights were designed for (5 classes, 99% majority).
+    singlemtb)  CONFIG=probe6_mp2026.toml;        OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
+    singlemtn)  CONFIG=probe6_mp2026_mtnw.toml;   OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
+    # magnetic_ordering / is_metal / is_gap_direct with the weights off (stC); controls are the stN baselines.
+    singleclfn) CONFIG=probe6_mp2026_clfnw.toml;  OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
     *) echo "unknown stage '$STAGE'" >&2; exit 2 ;;
 esac
 TIME=${TIME:-$DEFTIME}

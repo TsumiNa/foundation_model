@@ -1,0 +1,218 @@
+{
+  "question": "is the ~0.7 R2 ceiling on the extensive properties the descriptor's scale-blindness?",
+  "arms": {
+    "kmd": "KMD on atomic fractions (adopted ceilings)",
+    "classic": "XenonPy classic composition descriptor, StandardScaler + Yeo-Johnson (the notebook's table)",
+    "nosum": "the same table without the weighted-sum block"
+  },
+  "per_task": [
+    {
+      "task": "volume",
+      "n_train": 23678,
+      "kmd": {
+        "mean": 0.6191167236702663,
+        "sd": 0.007880788883268914,
+        "n": 5
+      },
+      "classic": {
+        "mean": 0.9965881415305298,
+        "sd": 8.034604426604459e-05,
+        "n": 5,
+        "values": [
+          0.9965943962896877,
+          0.9965566532420999,
+          0.9965070323701345,
+          0.9965620719980535,
+          0.9967205537526729
+        ]
+      },
+      "classic_epochs": 150,
+      "classic_vs_kmd": {
+        "n": 5,
+        "mean": 0.9965881415305298,
+        "sd": 8.034604426604459e-05,
+        "delta": 0.3774714178602635,
+        "relative_pct": 60.96934607460225,
+        "se_of_difference": 0.0035245790928700718,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "nosum": {
+        "mean": 0.5918974563467185,
+        "sd": 0.007277962400384067,
+        "n": 5,
+        "values": [
+          0.5897996152219993,
+          0.5946421583621994,
+          0.6008092980464387,
+          0.581001108231969,
+          0.5932351018709863
+        ]
+      },
+      "nosum_epochs": 79,
+      "nosum_vs_kmd": {
+        "n": 5,
+        "mean": 0.5918974563467185,
+        "sd": 0.007277962400384067,
+        "delta": -0.027219267323547736,
+        "relative_pct": -4.3964677875580005,
+        "se_of_difference": 0.004797407010543489,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "classic_vs_nosum": {
+        "n": 5,
+        "mean": 0.9965881415305298,
+        "sd": 8.034604426604459e-05,
+        "delta": 0.40469068518381124,
+        "relative_pct": 68.37175609464921,
+        "se_of_difference": 0.003255002064153982,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    },
+    {
+      "task": "final_energy",
+      "n_train": 23678,
+      "kmd": {
+        "mean": 0.773908325858961,
+        "sd": 0.009630377828053023,
+        "n": 5
+      },
+      "classic": {
+        "mean": 0.7677288781969112,
+        "sd": 0.030061557147949218,
+        "n": 5,
+        "values": [
+          0.7143449441929812,
+          0.778999688155732,
+          0.7811807299685576,
+          0.7772518784530491,
+          0.7868671502142359
+        ]
+      },
+      "classic_epochs": 134,
+      "classic_vs_kmd": {
+        "n": 5,
+        "mean": 0.7677288781969112,
+        "sd": 0.030061557147949218,
+        "delta": -0.0061794476620498084,
+        "relative_pct": -0.798472823663092,
+        "se_of_difference": 0.014116950062038697,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "nosum": {
+        "mean": 0.7895341895197238,
+        "sd": 0.004280647664223971,
+        "n": 5,
+        "values": [
+          0.792521175748306,
+          0.7866628858045234,
+          0.7940925846961125,
+          0.7837023804222245,
+          0.7906919209274523
+        ]
+      },
+      "nosum_epochs": 134,
+      "nosum_vs_kmd": {
+        "n": 5,
+        "mean": 0.7895341895197238,
+        "sd": 0.004280647664223971,
+        "delta": 0.015625863660762795,
+        "relative_pct": 2.019084578708938,
+        "se_of_difference": 0.004713133173087334,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "classic_vs_nosum": {
+        "n": 5,
+        "mean": 0.7677288781969112,
+        "sd": 0.030061557147949218,
+        "delta": -0.021805311322812604,
+        "relative_pct": -2.761794436802901,
+        "se_of_difference": 0.013579551999860988,
+        "separated": false,
+        "practically_significant": true,
+        "matters": false
+      }
+    },
+    {
+      "task": "dos_density",
+      "n_train": 7009,
+      "kmd": {
+        "mean": 0.625012253458048,
+        "sd": 0.00500513064912446,
+        "n": 5
+      },
+      "classic": {
+        "mean": 0.6241244276102178,
+        "sd": 0.0030790769981027285,
+        "n": 5,
+        "values": [
+          0.6284148804279814,
+          0.625908866446758,
+          0.6234171952214909,
+          0.622284574473205,
+          0.6205966214816541
+        ]
+      },
+      "classic_epochs": 150,
+      "classic_vs_kmd": {
+        "n": 5,
+        "mean": 0.6241244276102178,
+        "sd": 0.0030790769981027285,
+        "delta": -0.0008878258478302037,
+        "relative_pct": -0.14204935069961733,
+        "se_of_difference": 0.002628004869670159,
+        "separated": false,
+        "practically_significant": false,
+        "matters": false
+      },
+      "nosum": {
+        "mean": 0.6095399979803718,
+        "sd": 0.005978376312149488,
+        "n": 5,
+        "values": [
+          0.6190706607623202,
+          0.6117592814086018,
+          0.6052698451636429,
+          0.6050939420813115,
+          0.6065062604859829
+        ]
+      },
+      "nosum_epochs": 150,
+      "nosum_vs_kmd": {
+        "n": 5,
+        "mean": 0.6095399979803718,
+        "sd": 0.005978376312149488,
+        "delta": -0.015472255477676167,
+        "relative_pct": -2.4755123426895653,
+        "se_of_difference": 0.0034868987982009216,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      },
+      "classic_vs_nosum": {
+        "n": 5,
+        "mean": 0.6241244276102178,
+        "sd": 0.0030790769981027285,
+        "delta": 0.014584429629845963,
+        "relative_pct": 2.39269443812867,
+        "se_of_difference": 0.0030073808701232183,
+        "separated": true,
+        "practically_significant": true,
+        "matters": true
+      }
+    }
+  ],
+  "notes": [
+    "Single task, 5 seeds per arm, probe6 recipe with the adopted values; early stopping on, 150-epoch cap \u2014 the same recipe as the KMD baselines.",
+    "Descriptor tables: data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet re-keyed by composition (scripts/make_comp_descriptors.py)."
+  ]
+}

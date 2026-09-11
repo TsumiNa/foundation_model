@@ -1,158 +1,517 @@
-# v2 交接
+# v2 handoff
 
-## 状态
+## Status
 
 **COMPLETE**
 
-全部阶段完成并验证。本轮全部测量都在 PR #45 之后的代码上（该 PR 修正了 `ReduceLROnPlateau` 按
-batch 而非 epoch 触发）；在此之前选出的超参与引用的天花板均已作废重测，交付物中不含修复前的数字。
+Every stage is finished and verified. All measurements in this round ran on code after PR #45, which
+fixed `ReduceLROnPlateau` firing per batch rather than per epoch; hyper-parameters chosen before that
+and the ceilings quoted alongside them were void and have been remeasured, so no pre-fix number
+appears in the deliverables.
 
-`v1-complete` 标签存在，v1 产物未被重跑或修改。
+The `v1-complete` tag exists and no v1 artefact was rerun or modified.
 
-## 采纳参数
+## Adopted parameters
 
 ```
-model.latent_dim            = 384        ← 改了（原 128）
-model.encoder_hidden_dims   = [256]      = 默认
-training.encoder_lr         = 2e-3       ← 改了（原 5e-3）
-training.scheduler.min_lr   = 1e-5       ← 改了（原 1e-4）
-training.scheduler.patience = 5          = 默认
-training.scheduler.factor   = 0.5        = 默认
-model.head_hidden_dims      = [64]       = 默认
-training.head_lr            = 5e-3       = 默认
-model.kr_x_hidden_dims      = [128,64]   = 默认
-training.kr_lr              = 5e-4       = 默认
-training.early_stopping.patience = 24    = 默认
-training.learnable_loss_balancer = false ← 明确不要开
+model.latent_dim            = 384        <- changed (was 128)
+model.encoder_hidden_dims   = [256]      = default
+training.encoder_lr         = 2e-3       <- changed (was 5e-3)
+training.scheduler.min_lr   = 1e-5       <- changed (was 1e-4)
+training.scheduler.patience = 5          = default
+training.scheduler.factor   = 0.5        = default
+model.head_hidden_dims      = [64]       = default
+training.head_lr            = 5e-3       = default
+model.kr_x_hidden_dims      = [128,64]   = default
+training.kr_lr              = 5e-4       = default
+training.early_stopping.patience = 24    = default
+training.learnable_loss_balancer = false <- explicitly off
 ```
 
-其余一律默认。**1080 + 120 + 100 + 10 个 run 之后，实际改动的只有三个数**——其余每一个"停在
-默认"都是测出来的，不是没测。
+Everything else stays at its default. **After 1,080 + 120 + 100 + 10 runs, three numbers actually
+changed** — and every other "stayed at the default" was measured, not skipped.
 
-## 关键数字
+## Key numbers
 
-每项都带 seed 数与噪声口径。噪声带 = 单 run 极差；判定用差值的标准误。
+Each carries its seed count and noise convention. The noise band is the single-run range; verdicts
+use the standard error of the difference.
 
-| 阶段 | 配置 | 指标 | 均值 | seed 数 | 可分辨阈值 | 是否可分辨 |
+| Stage | Config | Metric | Mean | Seeds | Resolvable at | Resolved? |
 |---|---|---|---|---|---|---|
-| Stage 0 锚点 | 未调 + 0.3.2 镜像 | probe6 相对分 | 参考点 | 9 | σ=2.05% | — |
-| Stage 0 | 早先选出的编码器 vs 未调 | 同上 | −0.83% | 9 | 2SE 2.73% | **否** |
-| A′ 决赛 | `L384_E0p002_M1e-05_P5` | 同上 | +1.83% | 25 | — | — |
-| A′ 决赛 | 同上 vs 决赛内未调对照 | 同上 | **+1.56%** | 25 vs 25 | 2SE 0.84% | **是**（1.9×） |
-| A′ 决赛 | 第 2 名 `E0p001003…` | 同上 | +1.44% | 25 | 需 98 seed 才能与第 1 分开 | 否 |
-| A′ 决赛 | 第 3 名 `E0p0042…` | 同上 | +1.35% | 25 | 需 62 seed | 否 |
-| A′ 网格 | 与榜首并列的配置数 | — | **29 / 296** | 5 | 每对 2·√(sem₁²+sem₂²) | — |
-| A4 | 有调度 vs 固定 LR | 同上 | +4.12% | 60 run | 2SE 0.78% | **是** |
-| a2b | 早停 40 vs 24 | 同上 | +0.252% | 5+5 | 2SE 0.403% | **否**（需 6 seed） |
-| B′ 网格 | 榜首 vs 默认 head | 同上 | +0.608% | 5+5 | 2SE 1.045% | **否** |
-| B′ 决赛 | 榜首 vs 默认 head | 同上 | **+0.007%** | 25+25 | 需 **172 360** seed | **否** |
-| balancer | 最好关闭臂 vs 最好开启臂 | 同上 | +3.61% | 5+5 | 2SE 1.56% | **是** |
+| Stage 0 anchor | untuned + container 0.3.2 | probe6 relative score | reference | 9 | sigma = 2.05% | - |
+| Stage 0 | previously chosen encoder vs untuned | same | -0.83% | 9 | 2SE 2.73% | **no** |
+| A' finals | `L384_E0p002_M1e-05_P5` | same | +1.83% | 25 | - | - |
+| A' finals | same vs the finals' untuned control | same | **+1.56%** | 25 vs 25 | 2SE 0.84% | **yes** (1.9x) |
+| A' finals | 2nd place `E0p001003...` | same | +1.44% | 25 | 98 seeds to separate from 1st | no |
+| A' finals | 3rd place `E0p0042...` | same | +1.35% | 25 | 62 seeds | no |
+| A' grid | configs tied with the leader | - | **29 / 296** | 5 | 2*sqrt(sem1^2+sem2^2) per pair | - |
+| A4 | scheduled vs fixed LR | same | +4.12% | 60 runs | 2SE 0.78% | **yes** |
+| a2b | early stopping 40 vs 24 | same | +0.252% | 5+5 | 2SE 0.403% | **no** (needs 6 seeds) |
+| B' grid | leader vs default head | same | +0.608% | 5+5 | 2SE 1.045% | **no** |
+| B' finals | leader vs default head | same | **+0.007%** | 25+25 | **172,360** seeds | **no** |
+| balancer | best off-arm vs best on-arm | same | +3.61% | 5+5 | 2SE 1.56% | **yes** |
 
-### Stage C′ 六个臂
+### The six Stage C' arms
 
-| 臂 | mean R² | big | mid | small |
+| Arm | mean R2 | big | mid | small |
 |---|---|---|---|---|
-| `c2_top1_cons` | **0.7274** | +0.0206 | −0.0119 | −0.0283 |
-| `c2_top3` | 0.7262 | +0.0109 | −0.0071 | −0.0194 |
-| `c2_top1` | 0.7229 | +0.0244 | −0.0071 | −0.0243 |
-| `c2_top2` | 0.7225 | +0.0197 | −0.0067 | −0.0076 |
-| `c2_base_cons` | 0.7189 | +0.0209 | +0.0004 | −0.0218 |
-| `c2_base`（未调参） | 0.7155 | +0.0214 | +0.0065 | −0.0286 |
+| `c2_top1_cons` | **0.7274** | +0.0206 | -0.0119 | -0.0283 |
+| `c2_top3` | 0.7262 | +0.0109 | -0.0071 | -0.0194 |
+| `c2_top1` | 0.7229 | +0.0244 | -0.0071 | -0.0243 |
+| `c2_top2` | 0.7225 | +0.0197 | -0.0067 | -0.0076 |
+| `c2_base_cons` | 0.7189 | +0.0209 | +0.0004 | -0.0218 |
+| `c2_base` (untuned) | 0.7155 | +0.0214 | +0.0065 | -0.0286 |
 
-deficit 对**同régime**天花板；每臂仅 1 seed，小差距不可分辨。
+Deficits are against the **same-regime** ceilings; 1 seed per arm, so small differences are not
+resolvable.
 
-## 三条必须一起传下去的结论
+## Three conclusions that must travel together
 
-**1. 调参在 24 任务上买到 +0.0074 / +1.03%**（未调参 0.7155 → 调参 0.7229，mean R²）；
-加 consolidation 到 0.7274。与探针上的 +1.56% 同量级、方向一致，**但每臂只有 1 seed，不可分辨**。
+**1. Tuning buys +0.0074 / +1.03% across 24 tasks** (untuned 0.7155 -> tuned 0.7229, mean R2), and
+consolidation lifts it to 0.7274. Same magnitude and direction as the probe's +1.56%, **but with 1
+seed per arm none of it is resolvable**.
 
-被推上部署规模的三个配置极差只有 0.0037（相对 0.51%），低于 1e-2 实用门槛——**探针名次在部署
-规模上不携带可操作的信息**。这正是推三个而非一个的价值：只推一个就只会看到「调参臂比基线好」。
+The three configs promoted to deployment scale span only 0.0037 (0.51% relative), below the 1e-2
+practical threshold — **the probe's ranking carries no actionable information at deployment scale**.
+That is exactly the value of promoting three rather than one: promoting one would only have shown
+"the tuned arm beats the baseline".
 
-**2. 部署规模上的迁移是负的，且推翻了探针结论。**
+**2. Transfer is negative at deployment scale, and it retracts the probe's conclusion.**
 
-24 任务、待测任务排最后、3 次打乱重复、共同测试集：**19 / 24 个任务不如单独训练**，只有
-`material_type` 更好（+22.4%）。而 6 任务探针上 zt +6.85%、magnetization +4.40% 看似正迁移，
-到 24 任务全部退回"无法分辨"，magnetic_moment 甚至转为 −6.33%。**探针是廉价筛子，不能替代
-真实régime。**
+24 tasks, the task under test placed last, **10 shuffled repeats**, matched test rows: **18 of 24
+tasks do worse than training alone**, 5 are unresolved, and only `material_type` does better
+(+13.41%). On the six-task probe, zt +6.85% and magnetization +4.40% looked like positive transfer;
+at 24 tasks both fall back to unresolved, and magnetic_moment turns to -5.75%. **A probe is a cheap
+sieve, not a substitute for the real regime.**
 
-**3. 单任务天花板已在本régime重测，继承的那批不能再用。** 旧天花板测于 PR #45 之前，在 23 个
-回归/KR 任务里**17 个偏低、平均 +0.0275**，且**不是常数**（seebeck 低 0.104，dielectric_ionic 反而
-高 0.017），无法用偏移量修正。新天花板：24 任务 × 5 seed、0.3.2 镜像、采纳配置，与 campaign run
-的唯一差别是 `pretrain.task_sequence`（`summary/ceilings_adopted.json`）。本轮所有 deficit 都对它计算。
+Tripling the repeats from 3 to 10 moved tasks in one direction only: the split went from 1 / 15 / 8
+to 1 / 18 / 5, with all three newly-resolved tasks landing on the single-task side. Nothing moved
+the other way.
 
-> **短名单是预算截断，不是噪声感知的筛选。** 5 seed 下与榜首并列的有 29 个配置，短名单只取了
-> 前 8 个，**22 个并列配置没有进决赛**——仅因为它们含噪的样本均值排在第 8 之后。所以决赛冠军是
-> 这 8 个里最好的，不是 29 个里最好的。这不推翻结论（决赛显示前 4 名在 25 seed 下仍不可区分，
-> 说明这片区域整体等价），但下一轮若要更严谨，应当保留全部并列者或显式声明截断。
+**3. The single-task ceilings were remeasured in this regime; the inherited set cannot be reused.**
+The old ceilings predate PR #45 and are **too low for 17 of 23 regression/KR tasks, by +0.0275 on
+average** — and the offset is **not constant** (seebeck 0.104 low, dielectric_ionic 0.017 high), so
+it cannot be corrected with a shift. The new ceilings: 24 tasks x 5 seeds, container 0.3.2, adopted
+config, differing from a campaign run only in `pretrain.task_sequence`
+(`summary/ceilings_adopted.json`). Every deficit this round is computed against them.
 
-## 否决与不采纳
+> **The shortlist was a budget truncation, not noise-aware selection.** At 5 seeds, 29 configs were
+> tied with the leader and the shortlist took only the top 8, so **22 tied configs never reached the
+> finals** — purely because their noisy sample means ranked below 8th. The finals winner is the best
+> of those 8, not of 29. This does not overturn the conclusion (the finals show the top four still
+> indistinguishable at 25 seeds, so the region is flat), but a stricter next round should either keep
+> every tie or state the truncation explicitly.
 
-| 项目 | 判定 | 依据 |
+## Rejected and not adopted
+
+| Item | Verdict | Basis |
 |---|---|---|
-| learnable loss balancer | **否决** | 机制性反向（σ²=L，σ 与损失相关 +0.970，AE 权重 20 075 vs seebeck 1.5）；排除 AE 后仍反转 112 倍 |
-| PCGrad | **不引入** | 直接测量编码器逐任务梯度，未发现方向冲突（该方法只对负余弦对生效） |
-| 调 head | **不采纳** | 24 配置里 16 个并列；"什么都不改"排第 8 且 2SE 最小；决赛中榜首优势坍缩 99% |
-| 早停 24 → 40 | **不采纳** | +0.252% 不可分辨，却多花 11% 墙钟 |
-| 向下扩展 LR 搜索 | **不需要** | 下界外最优点不可分辨（−0.11%） |
-| 关闭 LR 调度 | **否决** | 有调度比固定 LR 好 4.12% |
+| learnable loss balancer | **rejected** | mechanically inverted (sigma^2 = L, corr(sigma, loss) = +0.970, AE weight 20,075 vs seebeck 1.5); still inverted 112x with AE excluded |
+| PCGrad | **not adopted** | per-task encoder gradients measured directly, no directional conflict found (the method acts only on negative-cosine pairs) |
+| head tuning | **not adopted** | 16 of 24 configs tied; "change nothing" ranks 8th with the smallest 2SE; in the finals the leader's edge collapses 99% |
+| early stopping 24 -> 40 | **not adopted** | +0.252% unresolvable, and it costs 11% more wall clock |
+| extending the LR search downward | **not needed** | the below-floor optimum is unresolvable (-0.11%) |
+| turning the LR schedule off | **rejected** | scheduled beats fixed LR by 4.12% |
 
-## 下一轮该做的（按优先级）
+## What the next round should do, in priority order
 
-**1. 描述符补上晶胞尺度特征。** `formula_to_composition` 返回**原子分数**（和为 1），所以
-`Fe2O3` 与 `Fe4O6` 得到完全相同的描述符——模型看不见晶胞里有多少原子。而
-corr(Volume, 晶胞原子数) = **+0.868（75.3% 的方差）**。这不是标签噪声（33 822 个约化式里只有 7 个
-重复），是泛化缺口。volume 的 0.619 天花板是无尺度输入的上限，不是训练不足。补一个外延特征后
-重测外延类目标。
+**1. Give the descriptor a cell-scale feature.** `formula_to_composition` returns **atomic
+fractions** summing to 1, so `Fe2O3` and `Fe4O6` produce an identical descriptor — the model cannot
+see how many atoms are in the cell. Meanwhile corr(Volume, atoms per cell) = **+0.868, 75.3% of the
+variance**. This is not label noise (only 7 of 33,822 reduced formulas repeat); it is a
+generalisation gap. Volume's 0.619 ceiling is the limit of a scale-free input, not under-training.
+Add an extensive feature and remeasure the extensive targets. **Confirmed (experiment 8):** with the notebook's XenonPy classic descriptor volume trains to
+R² 0.997 alone, and as volume per atom it reaches 0.979 on KMD (2026-09-12 baselines). What is
+still open is the policy — per-atom targets or a scale-carrying descriptor — before phase B.
 
-**2. 分离"排最后"与"顺序设计"。** 当前无法归因：位置与代价的相关系数只有 +0.216，且序列前段
-任务损失更大（7.48% vs 4.86%）——位置不是主因。但对比本身混了三件事（1 seed vs 3 重复、
-人工设计顺序 vs 随机顺序、位置）。需要专门实验：同一任务固定在同一位置，只变前面 23 个的顺序。
+**2. Separate "placed last" from "ordering design".** Attribution is currently impossible: position
+correlates with cost at only +0.216, and front-of-sequence tasks lose more (7.48% vs 4.86%), so
+position is not the main driver. But the comparison confounds three things — 1 seed vs 3 repeats,
+hand-designed vs random ordering, and position. It needs a dedicated experiment: hold one task at a
+fixed position and vary only the order of the other 23.
 
-**3. xfer 补到 n=10。** 已定：168 个新运行，**PACK=24，约 338 GPU 时**，墙钟约 48 小时。
-用 `make_grids.py xfer --orders 10 --append-to configs/grid_xfer.txt`——已验证现有 72 个一行不改。
-9 个任务的跨重复离散度超过自身 seed 噪声 2 倍，正是需要更多重复的那些。
+**3. Extend xfer to n=10.** **Done.** 240 runs complete, all carrying 24 steps. It took two
+walltime handovers (`74033` -> `76757` -> `78201`, chained with `--dependency=afterany` so no time
+was idled) plus one three-hour login-node outage that did not touch the running jobs. Eleven tasks
+now show spread wider than their own seed noise, up from nine at n=3 — expected, since an sd from 3
+samples underestimates spread.
 
-**4. 预训练模型库。** 240 个模型 × 6.6 MiB ≈ 1.6 GB。每个模型是"在 24 个任务上连续训练过、
-且以某个特定任务收尾"的编码器，对后续 transfer learning 而言"以哪个任务收尾"是可选先验，
-所以待测任务与完整顺序必须进元数据。
+**4. The pre-trained model library.** **Built**: 240 models, 1.56 GiB, at
+`$OUTBASE/model_library/` with `MANIFEST.json` and `INDEX.md`. Each model is an encoder trained
+continuously on all 24 tasks and finished on one particular task, and for downstream transfer
+learning "which task it finished on" is a usable prior — so the task under test, the executed
+ordering, the seed, the hyper-parameters and every model's score on all 24 tasks are in the
+manifest. Warm-starting from it has now been measured (experiments 5 and 11 below): 4 better / 4
+worse / 14 unresolved against training alone, and an encoder that never saw the task does as well
+as one that did — the library's value is the 23-task representation, not the finishing task.
 
-## 方法学（可复用，与本项目无关的部分）
+## Methodology worth reusing beyond this project
 
-1. **探针必须覆盖大/中/小三档**：σ 从 5.01% 降到 2.05%（分辨 1% 所需 seed 从 101 降到 17）。
-2. **名次要用 seed 买，不是网格点**：本轮**两次独立复现 winner's curse**——A′ 的 5 seed 榜首在
-   25 seed 下掉到第 10；B′ 的 5 seed 榜首优势坍缩 99%。加网格点只是多买彩票。
-3. **并列判定必须用两个臂的标准误**：`2·√(sem₁²+sem₂²)`，只用榜首的会低估不确定性、
-   少报并列——本轮修正后并列数从 11 变成 29。
-4. **把"什么都不改"作为正式配置放进网格**：只占 24 个格点里的 1 个，却让"head 不需要调"成为
-   排名结果而非论证。
-4. **继承的基线必须在当前régime重测**：旧天花板在 23 个任务里 17 个偏低，且偏差不是常数。
-5. **凡是"在当前最优上"做的实验，最优一变就必须重做**：本轮踩了两次（早停、24 任务天花板）。
-6. **分组均值会掩盖相消**：某个 small 组的 −0.019 实为 +0.060 与 −0.022 相抵，两件事都不代表。
-7. **一个无法大声失败的组件是系统性风险**：本轮五例——半接上的 loss balancer、`parse_point`
-   静默丢弃未知标签（会让 100 个 run 全变成同一个基线）、`PACK=1` 覆盖环境变量（误发 100 块卡）、
-   ssh broken pipe 返回 0、分析脚本按第 23 步给未完成的臂打分。
-8. **极差不是 σ**：`E[极差] = d₂(n)·σ`，且 d₂ 随 n 增长，所以跨不同 seed 数比极差 = 比 seed 数。
-9. **步长增长时不能用中位步长外推**：replay 让每步更贵，中位数被前面便宜的步主导，曾把 Stage C
-   的剩余时间低估一个量级（1.3h vs 11–17h）。
-10. **`--resume` 按 run 的长度决定，不按阶段名**：xfer 继承了"probe 阶段不 resume"，而它是
-    stage-C 长度的 run，被杀会丢一整天——而检查点其实一直在写。
-11. **两个臂必须在同一批测试样本上比较**：数据模块按加载任务的并集划分，单任务与多任务的测试集
-    因此不同（多任务大 3–7%）。包含关系为严格子集时，限制到共同行即可精确修正。
-12. **打包倍数要在真实负载上标定**：probe6 上 PACK=8 测得 7.1×，但 24 任务负载上
-    **PACK=24 实测 2.98×（效率 75%）、PACK=32 为 3.68×（69%）**；显存与主机内存都不是瓶颈
-    （32 档：显存 32/185 GB、主机 316/1691 GB），CPU 是。
+1. **A probe must span large / medium / small**: sigma fell from 5.01% to 2.05%, dropping the seeds
+   needed to resolve 1% from 101 to 17.
+2. **Rankings are bought with seeds, not grid points**: this round reproduced **winner's curse twice
+   independently** — A''s 5-seed leader finished 10th at 25 seeds, and B''s 5-seed leader lost 99% of
+   its edge. More grid points only buy more lottery tickets.
+3. **Tie detection must use both arms' standard errors**: `2*sqrt(sem1^2 + sem2^2)`. Using only the
+   leader's understates the uncertainty and under-reports ties — correcting it took the count from 11
+   to 29.
+4. **Put "change nothing" in the grid as a formal config**: it costs 1 of 24 grid points and turns
+   "the heads need no tuning" into a ranking result rather than an argument.
+5. **An inherited baseline must be remeasured in the current regime**: the old ceilings were too low
+   for 17 of 23 tasks, and the offset is not constant.
+6. **Any experiment run on the current best has to be redone when the best changes**: this round hit
+   it twice (early stopping, and the 24-task ceilings).
+7. **A group mean hides cancellation**: one small-group -0.019 was actually +0.060 against -0.022,
+   and represented neither.
+8. **A component that cannot fail loudly is a systemic risk**: five instances this round — the
+   half-wired loss balancer; `parse_point` silently dropping unknown tags (which would have turned
+   100 runs into the same baseline); `PACK=1` overriding the environment variable (misfiring 100
+   GPUs); an ssh broken pipe returning 0; and an analysis script scoring an unfinished arm at step 23.
+9. **A range is not a sigma**: `E[range] = d2(n)*sigma`, and d2 grows with n, so comparing ranges
+   across different seed counts compares seed counts.
+10. **Do not extrapolate with a median step time when steps grow**: replay makes each step more
+    expensive, the median is dominated by the cheap early steps, and this once underestimated Stage
+    C's remaining time by an order of magnitude (1.3h vs 11-17h).
+11. **`--resume` is decided by a run's length, not its stage name**: xfer inherited "probe stages do
+    not resume" while being a Stage-C-length run, so a kill lost a full day — although the
+    checkpoints had been written all along.
+12. **Two arms must be compared on the same test rows**: the data module splits by the union of the
+    tasks it loads, so single-task and multi-task test sets differ (multi-task is 3-7% larger). When
+    the containment is a strict subset, restricting to the shared rows corrects it exactly.
+13. **Calibrate the packing factor on the real workload**: PACK=8 measured 7.1x on probe6, but on the
+    24-task workload **PACK=24 measures 2.98x (75% efficiency) and PACK=32 measures 3.68x (69%)**.
+    Neither GPU nor host memory is the constraint (at PACK=32: 32 of 185 GB of GPU memory, 316 of
+    1,691 GB of host memory) — the CPU is.
 
-## 产物位置
+## Where the artefacts are
 
-| 产物 | 路径 |
+| Artefact | Path |
 |---|---|
-| 汇总 JSON（19 个，**进 git**） | `experiments/rikyu_hparam_tuning_v2/summary/*.json` |
-| 报告 | `results/REPORT_v2_20260830.md`（gitignore） |
-| 演示文稿（23 页） | `results/REPORT_v2_20260830.pptx`（gitignore） |
-| 图（10 张） | `results/*.png`（gitignore；可由 `analysis/plots.py` 从汇总 JSON 重绘） |
-| 原始 run 输出 | RIKYU `/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning_v2/` |
-| 方法学记录 | `NOTES.md` |
+| Summary JSON (19 files, **in git**) | `experiments/rikyu_hparam_tuning_v2/summary/*.json` |
+| Report | `results/REPORT_v2_20260830.md` (gitignored) |
+| Deck (26 slides) | `results/REPORT_v2_20260901.pptx` (gitignored) |
+| Figures (10) | `results/*.png` (gitignored; redrawable from the summary JSON via `analysis/plots.py`) |
+| Raw run output | RIKYU `/data1/rkp00067/rku00225/fm/rikyu_hparam_tuning_v2/` |
+| Methodology notes | `NOTES.md` |
+| Transferability summary page (trilingual EN / 中 / 日, **in git**) | `summary_page/gen_page.py` + `page.js` → `summary_page/transferability_summary.html`; published as a claude.ai artifact |
+| Per-run scores behind that page's figures | `summary/position_runs.json` (four tasks × 240 runs), `summary/rep_raw.json` |
+| Budget / optimisation checks (experiments 6–7) | `summary/long_budget.json` |
+| Labels page (trilingual, **in git**) | `summary_page/gen_labels_page.py` + `labels_page.js` → `summary_page/mp_labels_summary.html`; data `summary/mp_labels_page_data.json`, `summary/baselines_mp2026.json`, `summary/space_group_classes.json` |
+| Descriptor contrast (experiment 8) | `summary/descriptor.json`; tables `data/desc_xenonpy_{classic,nosum}_trans.parquet` (gitignored, rebuilt by `scripts/make_comp_descriptors.py`) |
 
-**报告与图不在 git 里**（`experiments/**/results/` 被忽略），靠 rsync 传递——但汇总 JSON 在 git 里，
-所以每张图都能重绘。
+**The report and figures are not in git** (`experiments/**/results/` is ignored) and travel by rsync
+— but the summary JSON is in git, so every figure can be redrawn.
+
+## Why only material_type gained — and what the warm-start stage found
+
+The transfer stage said 18 of 24 tasks are materially worse when they arrive last, and that the
+smaller a task's dataset, the larger its relative loss (corr(log rows, relative change) = +0.636).
+**The warm-start stage (`stage_ft`, 480 + 40 runs) resolves most of that.** At step 24 of a
+continual sequence the new task shares the encoder with replay from 23 others and owns about 1% of
+the gradient if it is small; early stopping watches the sum over all 24 and fires when the replayed
+tasks stop improving, so the new task gets ~60 epochs where alone it takes 90-150. Taking the same
+final checkpoint and training the same task with replay removed:
+
+| Comparison | Better | Worse | Unresolved |
+|---|---|---|---|
+| xfer (replay, placed last) vs alone | 1 | 19 | 4 |
+| frozen encoder vs alone | 4 | 12 | 7 |
+| **warm-start (encoder + head) vs alone** | **4** | **4** | **14** |
+| warm-start vs the replay step | **19** | **0** | 2 |
+
+So the loss in the transfer stage was mostly **replay dilution at the task's own step**, not a bad
+representation. Warm-starting from the 24-task encoder is roughly break-even against training alone:
+material_type +21.9%, zt +6.7%, magnetization +4.9%, dielectric_total +3.4% gain; final_energy -9.1%,
+volume -6.9%, dos_density -4.2% lose. zt and magnetization are the probe's original winners, back as
+real ones. The frozen encoder is not a drop-in feature extractor (12 worse) — except for
+material_type, where frozen (0.7245) beats warm-start (0.6960): it wants the shared "ordinary
+material" representation left alone.
+
+Full table: `summary/ft.json`. Baselines and both fine-tune arms were audited for convergence; the
+two KR tasks that hit the 150-epoch cap (seebeck, power_factor) were rerun at 400 in every arm and
+the ceilings patched (`summary/ceilings_adopted_v2.json`); no verdict changed.
+
+What remains unexplained, and the leads for it:
+
+### Lead one: extensive vs intensive properties (a mechanism, not just a correlation)
+
+| Kind | Tasks | Median delta R2 | Median relative |
+|---|---|---|---|
+| Extensive (`final_energy` / `volume` / `total_magnetization`) | 3 | **-0.1052** | **-17.0%** |
+| Intensive | 20 | -0.0168 | -2.2% |
+| Classification (`material_type`) | 1 | **+0.1245** | **+21.8%** |
+
+The mechanism is independently verified: the KMD descriptor goes through `formula_to_composition`,
+which returns **atomic fractions**, so `Fe2O3` and `Fe4O6` are identical to it and cell scale is
+invisible; `corr(Volume, atom count) = +0.868`, 75.3% of the variance. An extensive target can only
+be fitted through a within-dataset composition-to-size correlation, and multi-task training pulls the
+encoder toward what the tasks **share** — which is exactly the scale-free part, erasing that
+correlation. This explains why single-task training can do it and multi-task cannot.
+
+**The confound must be acknowledged**: within the same 23,678-row dataset the only intensive control
+is `density`, and at 0.9898 single-task it is already at the ceiling with nothing to lose. So "9x
+worse within the same dataset" **is not usable evidence**; only the 6.3x ratio across all 24 tasks
+is, and it rests on 3 extensive tasks.
+
+### Lead two: material_type's gain cannot generalise to regression
+
+Recomputed on matched rows (both arms on the same 7,354 test rows), the decomposition is clear:
+**rare-class recall does not improve at all** (IQC even drops 2.14), while **precision** roughly
+doubles (IAC 30.2 -> 53.5, IQC 51.1 -> 62.2). The source is `others` being misfiled into the rare
+classes falling from 1.16% to 0.49% — 84 rows per run down to 36. So what the shared encoder improves
+is its model of the **majority class**, which cuts false alarms.
+
+R2 has no false-alarm axis. There is no mechanism in regression by which "crying wolf less often"
+converts into score. So material_type's path to a gain **structurally cannot transfer** to the other
+23 regression tasks, which weakens any inference that multi-task training has general value.
+
+### Experiments, in cost order
+
+1. **Add a control where the descriptor can see cell scale** (atom count or volume as an extra input
+   feature) and rerun `final_energy` and `volume`, single-task and multi-task. If the extensive-property
+   loss closes substantially, lead one holds. **This is the decisive experiment.**
+2. **Introduce one or two more classification tasks** (even ones binned from existing continuous
+   targets) and see whether they gain too. If they do, the specialness lies in the task type rather
+   than in this task; if they do not, a finer explanation is needed.
+3. **Recompute material_type's gain under a class-balanced metric** (or a binary collapse). If the
+   gain shrinks sharply, much of it is a property of macro-F1 under extreme imbalance rather than a
+   representation-learning benefit.
+4. **Measure task-specificity of the encoder's representation per task**: compare linear separability
+   or CKA similarity between the single-task and multi-task encoders, testing the hypothesis that
+   multi-task training pulls the representation into a shared subspace.
+5. **Measure warm-starting directly** — **done for the 24 in-distribution tasks** (`stage_ft`,
+   table above). Still open: a task *outside* the 24, and a sweep over **low data volumes**, which
+   is where a warm start should matter most and where nothing has been measured yet.
+6. **Is warm-start's residual loss on the extensive properties just undertraining?** — **done
+   (2026-09-07, jobs 85149 / 85150): no.** Both arms were given 500 epochs with early stopping OFF
+   (`ftfl_<task>_o<k>` in `stage_ft`, 10 orderings; `stL_<task>_s<seed>` in `stage_single`, 5 seeds;
+   configs `ft_full_long.toml` / `probe6_long.toml`, grids from `scripts/make_grid_long.py`, scored
+   by `analysis/long_budget.py` → `summary/long_budget.json`). Training alone is insensitive to the
+   budget (final_energy −0.1%, volume −0.1%, dos_density +1.0% against the early-stopped baseline).
+   Warm-start stays resolvably below the same-budget single-task control: final_energy −10.0%,
+   volume −15.9%, dos_density −9.6%. The per-epoch logs say why: warm-start's validation loss bottoms
+   out early (median best epoch 143 / 72 / 62 against 130 / 101 / 112 alone) and then drifts up
+   (+5% / +22% / +13% by epoch 500), while its training loss ends LOWER than the single-task
+   model's (final_energy 0.011 vs 0.015, volume 0.012 vs 0.063, dos_density 0.0098 vs 0.0120). The
+   pretrained encoder fits the training set faster and more completely and generalises worse — a
+   generalisation gap, not a budget gap. This makes experiment 1 (cell scale in the descriptor)
+   the decisive one rather than a longer schedule.
+7. **Optimisation or representation?** — **done (2026-09-12, jobs 85797 / 85798): the
+   representation.** Two arms on the same three tasks, scored by `analysis/long_budget.py`:
+   - `stC_<task>_s<seed>` — alone, 500 epochs, early stopping off, scheduler patience 100000 so the
+     learning rate never decays. R² 0.7495 / 0.6121 / 0.6307
+     (final_energy / volume / dos_density) against 0.7735 / 0.6187 / 0.6315 with the
+     schedule; the final training loss is HIGHER without annealing (0.052 vs 0.015, 0.090 vs 0.063,
+     0.0121 vs 0.0120). A fresh model does not reach warm-start's training loss (0.011 / 0.012 /
+     0.0098) with or without the schedule, so the low training loss is not an optimisation artefact.
+   - `ftflr_<task>_o<k>` — warm-start with the encoder LR 2e-4 instead of 2e-3, early stopping on,
+     400-epoch cap. Worse than the default warm-start: 0.6261 vs 0.7033 (-11.0%),
+     0.5314 vs 0.5767 (-7.9%), 0.5801 vs 0.5988 (-3.1%). Early stopping fired at epoch
+     51–69 with the training loss still at 0.14 / 0.22 / 0.016: underfitting, landing between the
+     frozen arm and the default warm-start. Slowing the encoder does not help; the more it is allowed
+     to move, the better, and the default still trails training alone.
+
+   Taken with 6: the residual loss is not budget (6), not the LR schedule, and not controllable by
+   slowing the encoder (7). The pretrained encoder fits the training set faster and further than a
+   fresh one and generalises worse on exactly the labels that depend on cell scale. What remains to
+   separate is exposure at step 24 from the pretrained representation itself — the unseen arms
+   (stage_xu → ftzu / ftfu) do that — and whether the descriptor is the reason, which is experiment 8.
+8. **Descriptor contrast on the extensive properties** — **done (2026-09-12, jobs 86328 / 86329).**
+   Single task, the stage_single recipe, 5 seeds, three tasks. The descriptors are the ones
+   `data/data/scripts/calculate_compositional_desc.ipynb` produced — XenonPy
+   `Compositions(featurizers="classic")` (weighted sum / average / variance / max / min, 290 columns)
+   followed by StandardScaler → PowerTransformer(yeo-johnson) — re-keyed by the pipeline's canonical,
+   non-reduced composition (`scripts/make_comp_descriptors.py`); `nosum` drops the weighted-sum
+   block, the only block whose raw cell amounts carry scale. Output `stage_desc` (`stXc_*`,
+   `stXn_*`), scored by `analysis/descriptor.py` → `summary/descriptor.json`. R², last-epoch weights:
+
+   | task | KMD | XenonPy classic (vs KMD) | XenonPy without sum (vs KMD) |
+   |---|---|---|---|
+   | volume | 0.6191 | 0.9966 (+61.0%*) | 0.5919 (-4.4%*) |
+   | final_energy | 0.7739 | 0.7677 (-0.8%) | 0.7895 (+2.0%*) |
+   | dos_density | 0.6250 | 0.6241 (-0.1%) | 0.6095 (-2.5%*) |
+
+   - **volume's ceiling was the descriptor.** `Volume (normalized)` is `volume_scaler`
+     (StandardScaler + Yeo-Johnson, λ ≈ 0, i.e. ~log) of the CELL volume, and cells run to 10,000
+     atoms; KMD sees only atomic fractions. With the scale-bearing sum block the single-task R² goes
+     0.62 → 0.997 (five seeds within 0.0002); without it, 0.59. Everything said earlier about volume
+     as a "negative-transfer extensive property" is therefore about a label the descriptor could not
+     see, not about transfer; its transfer behaviour has to be re-measured with a scale-aware
+     descriptor.
+   - **final_energy is not a scale problem.** It is per atom, the sum block does not help, and the
+     descriptor family lands at 0.77–0.79 either way (gradient boosting on the same features: 0.76
+     on the pipeline split and on a random split alike). The label itself is the open question:
+     the dataset's `Final energy per atom` does not match MP's PBE `energy_per_atom` (Si −8.77 vs
+     −5.42; Pt −51.5 vs −6.1; Au −50.6 vs −3.3; NaCl −6.9 vs −3.5), 18.8% of rows lie below −14
+     eV/atom and actinides reach −86, while `Formation energy per atom` looks normal. An element-
+     dependent energy reference of that size dominates the variance and is hard to learn from
+     composition aggregates. **Where this column came from in the 2026-05-15 reformat, and whether
+     it is the same quantity as the earlier final-energy models were trained on, is to be confirmed
+     with the data owner before final_energy is interpreted further.**
+   - dos_density: the family is level with KMD; the sum block adds +2.4%.
+   - First attempt, discarded: a re-implementation of the classic descriptor with plain z-scoring
+     (numerically identical to XenonPy's blocks, but the raw sum block's |z| reaches 83 and the
+     network memorised training rows; volume R² 0.16) and two invented "bounded" variants. Their
+     run directories sit in `stage_desc/_discarded_reimpl/` and are not used anywhere. Lesson kept
+     in the working notes: descriptors and preprocessing come from the data notebooks, never
+     re-implemented.
+9. **The final_energy label itself, traced to its source** — **done (2026-09-12).** With the user's
+   temporary MP API key the column was traced to `summary.energy_per_atom`, which in today's
+   Materials Project is the GGA / GGA+U / r2SCAN *mixed* thermo scheme: ~20% of entries carry an
+   r2SCAN total energy tens of eV below the GGA one (Pt −51.5 vs −6.1, Au −50.6 vs −3.3), so the
+   column mixed two energy references. The 2025-04-10 export copied it faithfully — no collection bug.
+   The same mixing sits behind `formation_energy_per_atom`, and the summary's structure and magnetism
+   come from r2SCAN tasks for ~23k of the 33.8k entries. The dataset was rebuilt on GGA / GGA+U only
+   (`data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet`, script
+   `data/data/scripts/rebuild_mp_gga_20260912.py`, details in `..._CHANGES.md`), with per-cell values
+   rescaled to the dataset's cell, electronic-structure values kept only where MP's own origin task is
+   GGA-family, and the extra MP properties added (band gap and its labels, per-atom volume, per-volume
+   magnetisation, magnetic ordering, elastic, dielectric + refractive index, piezoelectric maxima).
+   **Single-task final_energy on the rebuilt label, same recipe, same descriptor (KMD), 5 seeds:
+   R² 0.9986 ± 0.0001, against 0.7739 ± 0.0096 on the old label** (`stM_final_energy_s*`,
+   `configs/probe6_mp2026.toml`). The 0.77 ceiling, and everything the transfer stages said about
+   final_energy, was a label artefact. Every stage of this campaign used the old dataset; volume,
+   final_energy, formation_energy, density, total_magnetization, efermi and band gap have different
+   labels in the new file, so their verdicts are not comparable across versions and the affected
+   stages have to be re-run on the 2026-09-12 dataset before anything more is concluded about them.
+10. **Single-task baselines on the 2026-09-12 dataset** — **done (jobs 87957, 88115; `stage_single_mp2026`,
+   `stN_*`, 130 runs)**: the nine relabelled MP tasks and the seventeen added properties (band gap, CBM,
+   VBM, is-metal, is-gap-direct, per-atom volume, magnetisation per volume / per f.u., magnetic
+   ordering, reaction energy, bulk / shear modulus, Poisson ratio, anisotropy, refractive index,
+   piezoelectric maximum, space group), five seeds, the stage_single recipe, scored by
+   `analysis/baselines_mp2026.py` → `summary/baselines_mp2026.json`. final_energy 0.9986, formation
+   0.9963, density 0.9903, efermi 0.9271, dielectric_electronic 0.9091; volume 0.6058 with KMD while
+   its per-atom form reaches 0.9786; magnetisation 0.72–0.74 in every form, magnetic ordering macro-F1
+   0.556; band gap 0.883, CBM 0.881, VBM 0.923, is-metal 0.927, bulk modulus 0.928, shear 0.790,
+   refractive index 0.893; Poisson 0.313, anisotropy 0.354, reaction energy 0.342, piezoelectric 0.010;
+   space group (151 classes, ≥ 10 rows and a row in both splits, rarer groups missing like any other
+   task's NaN) macro-F1 0.202 / accuracy 0.241 — only high-symmetry families are recognisable from
+   composition. Configs `probe6_mp2026.toml` (41 tasks, dataset 20260912), grids `grid_singlen.txt`,
+   `grid_singlesg.txt`. Presented in `summary_page/mp_labels_summary.html` §7–8.
+
+11. **The unseen arms — does the encoder need to have seen X? — done (2026-09-10, stage_xu job
+   89380 → ftzu / ftfu jobs 92372 / 92373).** 72 encoders that never saw X (the first 23 steps of
+   three transfer orderings per task, X dropped, same seed), each fine-tuned with a fresh head,
+   frozen (ftzu) and unfrozen (ftfu); n = 3 orderings per task against n = 10 for the seen arms.
+   Scored by `analysis/ft.py` (2×SE with both arms' SE, |Δ| ≥ 0.01), direct seen-vs-unseen counts in
+   `summary/seen_vs_unseen_counts.json`.
+   - Warm-start, never saw X, vs training alone: 2 better (material_type +21.5%, magnetization
+     +4.6%) / 4 worse (final_energy −10.2%, volume −6.5%, seebeck −2.9%, magnetic_susceptibility) /
+     15 unresolved — the same shape as the seen warm-start (4 / 4 / 14).
+   - Warm-start, seen once vs never: 2 better (seebeck +0.023, zt +0.021) / 2 worse
+     (total_magnetization −0.019, dos_density −0.018) / 19 unresolved. material_type 0.6960 seen vs
+     0.6939 unseen. With the encoder unfrozen the step-24 exposure — and the head trained there —
+     changes nothing measurable.
+   - Frozen, seen once vs never: 4 better (final_energy, total_magnetization, magnetization,
+     magnetic_susceptibility; 5 by ft.py's one-sided rule, adding electrical_resistivity) / 0 worse /
+     19 unresolved. On a fixed representation a head trained at step 24 beats a fresh one; that is the
+     head, not the encoder. material_type frozen: 0.7245 seen vs 0.6698 unseen, both far above alone
+     (0.5710).
+   - Consequence: for a new task the recipe is "pretrain on the existing tasks, then warm-start
+     fine-tune"; the continual step with replay is the most expensive part of the pipeline and adds
+     nothing the fine-tune does not recover. Warm-start is the fixed transfer method for phase B.
+   - Caveats: n = 3, so the unresolved column is wide; final_energy and volume rows are void (mixed
+     label / scale-blind descriptor, experiments 9 and 8); the xu encoders are not bit-identical to
+     the transfer run's step-23 state (below). Presented in
+     `summary_page/transferability_summary.html` §5.
+
+12. **Space group: why 0.24 here and 0.60 in the ShotgunCSP paper — done (2026-09-11).** The paper
+   (Liu et al., npj Comput. Mater. 2024, Fig. 3: 33,040 stable MP entries, 213 groups, XenonPy 290,
+   FC-NN, plain cross-entropy, top-1 60.22 ± 0.87%) and the pipeline's stN_space_group (151 groups,
+   KMD, encoder [256]→384 + head [64], inverse-frequency class weights N/(K·N_c) in the PyTorch cross-entropy — the formula sklearn calls "balanced" — last-epoch weights) were
+   compared with a local factorial on the SAME rows, label and split (`analysis/space_group_study.py`,
+   16 arms × 3 seeds, `summary/space_group_study{,_table}.json`). The arm built from the project's own
+   encoder/head classes reproduces the RIKYU run (0.247 ± 0.006 vs 0.241 ± 0.005, same stopping
+   epoch). Findings, as matched-pair effects on top-1 accuracy:
+   - **Loss weighting is the first-order cause**: unweighted cross-entropy +21 pt at the pipeline
+     shape (+27 mean over four pairs). With 151 classes the inverse-frequency weights range ×0.067 (Fm-3m) to
+     ×22 (10-row groups); the three largest groups are 26% of rows but 2% of the loss, and the
+     as-run head recalls 29% of Fm-3m, 4% of Pnma, 0% of P2_1/c and C2/c. Macro-F1 does not benefit
+     either (0.20 → 0.31 without weights). The weighted validation loss bottoms at epoch 6 and climbs,
+     so early stopping fires at 31 epochs with the training loss at 1.6.
+   - **The descriptor is the second cause**: XenonPy classic (290) +11 pt over KMD in every setting,
+     but classic WITHOUT its weighted-sum block only +1 — the gain is cell size. Atoms per cell alone
+     predicts the space group at 0.242 (majority 0.102; 1.9 bits MI). Same root as volume: KMD is
+     scale-blind. Third task that needs the cell scale.
+   - Model: the paper's 4-layer GELU/dropout net +4 pt (and −9 pt under balanced weights). Optimiser
+     recipe −0.3, input scaling −0.7, random split +1.6, best-val-loss vs last epoch −4 (last is right).
+   - All three switched: 0.611 on our data = the paper's 0.602.
+   - **Pipeline confirmation on RIKYU (5 seeds each, `summary/space_group_confirm.json`)** through the
+     new `[[tasks]] class_weights = "balanced" | "none"` knob (default unchanged), run via SRC_OVERRIDE on
+     a patched copy of the 0.3.2 container's package: stN as run 0.2412 ±
+     0.0053 / F1 0.2022; stW (none, KMD)
+     0.4650 ± 0.0064 / F1 0.3127; stX (none, XenonPy classic
+     precomputed) 0.5568 ± 0.0087 / F1 0.4002. Configs
+     `probe6_mp2026_sgnw.toml` / `_sgxc.toml`, grids `grid_singlesgnw/xc.txt`, stages `singlesgnw` /
+     `singlesgxc`. The space-group baseline to quote is 0.465 / 0.313 (KMD) or 0.557 / 0.400
+     (scale-aware descriptor), not 0.242 / 0.202; the labels page's "only high-symmetry families are
+     recognisable" is withdrawn. Presented in `summary_page/space_group_summary.html`.
+   - **material_type checked the same way (stMb / stMn, 5 seeds each, `summary/material_type_weights.json`)**:
+     with the weights macro-F1 0.5710 ± 0.0308 (= the recorded ceiling 0.5710), without 0.8338 ± 0.0175;
+     accuracy 0.9878 → 0.9978. Rare-class recall about the same (IAC 0.95 → 0.86, IQC 0.84 → 0.84),
+     precision doubled (IAC 0.39 → 0.82, IQC 0.51 → 0.78): the weighted head files ~75 rows/run
+     as IAC against 24 real. The weights help no head measured so far.
+     CAVEAT: every material_type transfer verdict in experiments 1–5 and 11 (xfer / frozen / warm-start all
+     +22–27% over alone 0.571) was measured with the weights on in every arm; against the unweighted
+     baseline (0.83) they are unmeasured.
+   - **magnetic_ordering / is_metal / is_gap_direct checked (stC_* none vs the stN baselines, 5 seeds each,
+     `summary/classification_weights.json`)**: magnetic_ordering macro-F1 0.5563 → 0.5852, accuracy
+     0.7493 → 0.8291, but AFM recall 0.56 → 0.14 (118 test rows); is_metal identical
+     (0.9272 / 0.9269, balanced classes); is_gap_direct macro-F1 0.6340 → 0.6272 (within sd),
+     accuracy 0.7331 → 0.8677, direct-gap recall 0.79 → 0.25 / precision 0.31 → 0.53.
+     So the weights help no head on macro-F1 or accuracy; what they buy is minority recall on the two heads
+     whose minority is a real, learnable class. USER DECISION 2026-09-11: `class_weights = "none"` on every
+     classification head; screening uses that need AFM / direct-gap recall move the decision threshold at
+     inference. Also decided the same day: KMD stays the descriptor (invertibility); volume, total
+     magnetisation and space group are reported as KMD-limited rather than moved to another descriptor.
+   - Open: the head shape for many-class tasks (the remaining 4–5 pt to the paper's net).
+   - **The knob is released separately as PR #57** (`feat/class-weights-knob` off master, version
+     0.4.0 → 0.4.1, docs + README). Until it is merged and the `rikyu-0.4.1` image is pulled to RIKYU
+     (`~/containers/foundation-model_rikyu-0.4.1.sif`, then `VERSION=0.4.1` in `scripts/submit.sh`),
+     runs that set `class_weights` need `SRC_OVERRIDE=/home/rku00225/projects/fm_0.3.2_patched`. The
+     user's decision: future training uses the new code/image. 0.4.x also carries master's #42–#54
+     training refactors that the 0.3.2 campaign never ran on — re-baseline before comparing.
+
+**stage_xu, cost and caveats (2026-09-09).** One xu run is the matching transfer run minus its last
+step: 23 steps, 1,578 epochs, 24k → 78k rows per epoch as replay accumulates, 78.5 M sample-epochs —
+about 33 single-task trainings; the stage is 72 of them (≈ 28% of the transfer stage, ~200 GPU-hours
+at PACK=6). Submitted at PACK=24 it ran ~70 h per run and TIMED OUT at 48 h with 1/72 done (steps 17–22
+reached); resumed at PACK=6 as job 89380. Two consequences: (1) long continual stages go out at
+PACK ≤ 6; (2) a resumed run restarts its interrupted step, so its RNG stream differs from an
+uninterrupted run — steps 1–21 of xu_curie_o2 reproduce xf_curie_o2 epoch for epoch, steps 22–23 do
+not (49 / 69 epochs vs 61 / 63). The xu encoders are therefore "same ordering, same seed, never saw
+X" but not bit-identical to the transfer run's step-23 state. Keeping the penultimate step's
+checkpoint in future transfer stages makes this whole stage unnecessary.
+
+### What can and cannot be said now
+
+- "Multi-task training hurts data-poor tasks" was a replay artefact: with replay removed the small
+  tasks are level or better (magnetization +4.9%, magnetic_moment unresolved).
+- "The shared encoder is a general feature extractor" still cannot be said — frozen, it is worse for
+  12 of 24 tasks.
+- "final_energy is hard" cannot be said: on the GGA-only label it trains to R² 0.9986 alone. Its −9.1%
+  warm-start loss, its position curve and its ledger were measured on the mixed-scheme label and are
+  void until re-measured on the 2026-09-12 dataset.
+- "The extensive-property losses would close with more training" cannot be said: at 500 epochs
+  without early stopping warm-start is still 10–16% below the same-budget single-task control, with
+  a lower training loss and a higher validation loss than that control.
+- "volume is an extensive property the shared encoder cannot serve" cannot be said any more: with
+  a descriptor that carries cell scale, training alone reaches R² 0.997. Its transfer verdicts
+  (xfer −16.1%, frozen −16.6%, warm-start −6.9%) were measured on a label the descriptor could not
+  see and have to be re-measured.
+- "The fitting advantage is an optimisation artefact" cannot be said either: a fresh model with the
+  learning rate never decayed ends with a higher training loss, not a lower one, and slowing the
+  warm-started encoder underfits rather than regularises.
+- "The encoder has to have seen the task during pretraining" cannot be said: warm-started from an
+  encoder that never saw X, the counts against training alone (2 / 4 / 15) and against the seen
+  warm-start (2 / 2 / 19) are the same picture, and material_type's gain is intact (0.694 vs 0.696).
+  What the step-24 exposure buys is a trained head, which only matters when the encoder is frozen
+  (4 tasks better, 0 worse).
+- "Space group is barely learnable from composition" cannot be said: the 0.24 was the inverse-frequency
+  class weights (−21 pt on 151 classes) plus KMD's blindness to cell size (−11 pt); the pipeline
+  reaches 0.47 with the weights off and 0.56 with a scale-aware descriptor, and the paper's 0.60 is
+  reproduced on our rows with its network.
+- "Warm-starting from the model library beats training alone" can be said for four tasks and
+  denied for three; for the rest it is a wash. The library is a reasonable starting point, not a
+  free win, and the extensive properties (final_energy, volume) should not be warm-started from it
+  until the descriptor can see cell scale.
