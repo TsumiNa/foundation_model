@@ -152,6 +152,8 @@ case "$STAGE" in
     # the balanced weights were designed for (5 classes, 99% majority).
     singlemtb)  CONFIG=probe6_mp2026.toml;        OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
     singlemtn)  CONFIG=probe6_mp2026_mtnw.toml;   OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
+    # magnetic_ordering / is_metal / is_gap_direct with the weights off (stC); controls are the stN baselines.
+    singleclfn) CONFIG=probe6_mp2026_clfnw.toml;  OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
     *) echo "unknown stage '$STAGE'" >&2; exit 2 ;;
 esac
 TIME=${TIME:-$DEFTIME}

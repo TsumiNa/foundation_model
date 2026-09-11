@@ -454,8 +454,17 @@ converts into score. So material_type's path to a gain **structurally cannot tra
      CAVEAT: every material_type transfer verdict in experiments 1–5 and 11 (xfer / frozen / warm-start all
      +22–27% over alone 0.571) was measured with the weights on in every arm; against the unweighted
      baseline (0.83) they are unmeasured.
-   - Open: magnetic_ordering / is_metal / is_gap_direct with vs without weights (two runs each); the
-     head shape for many-class tasks (the remaining 4–5 pt to the paper's net).
+   - **magnetic_ordering / is_metal / is_gap_direct checked (stC_* none vs the stN baselines, 5 seeds each,
+     `summary/classification_weights.json`)**: magnetic_ordering macro-F1 0.5563 → 0.5852, accuracy
+     0.7493 → 0.8291, but AFM recall 0.56 → 0.14 (118 test rows); is_metal identical
+     (0.9272 / 0.9269, balanced classes); is_gap_direct macro-F1 0.6340 → 0.6272 (within sd),
+     accuracy 0.7331 → 0.8677, direct-gap recall 0.79 → 0.25 / precision 0.31 → 0.53.
+     So the weights help no head on macro-F1 or accuracy; what they buy is minority recall on the two heads
+     whose minority is a real, learnable class. USER DECISION 2026-09-11: `class_weights = "none"` on every
+     classification head; screening uses that need AFM / direct-gap recall move the decision threshold at
+     inference. Also decided the same day: KMD stays the descriptor (invertibility); volume, total
+     magnetisation and space group are reported as KMD-limited rather than moved to another descriptor.
+   - Open: the head shape for many-class tasks (the remaining 4–5 pt to the paper's net).
    - **The knob is released separately as PR #57** (`feat/class-weights-knob` off master, version
      0.4.0 → 0.4.1, docs + README). Until it is merged and the `rikyu-0.4.1` image is pulled to RIKYU
      (`~/containers/foundation-model_rikyu-0.4.1.sif`, then `VERSION=0.4.1` in `scripts/submit.sh`),
