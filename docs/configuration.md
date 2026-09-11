@@ -93,6 +93,7 @@ One entry per prediction head. At least one is required; names must be unique.
 | `column` | str | — | required | Target column. |
 | `t_column` | str | `None` | required iff `kind = kernel_regression`; forbidden otherwise | The sequence x-axis column (e.g. energies for DOS, temperatures for ZT). |
 | `num_classes` | int | `None` | required iff `kind = classification`, `>= 2`; forbidden otherwise | Number of classes. |
+| `class_weights` | str | `"balanced"` | `"balanced"` \| `"none"`; classification only | Per-class weights in the cross-entropy: `"balanced"` = inverse class frequency `N / (num_classes · N_c)` computed on the training split (the historical default), `"none"` = unweighted. Prefer `"none"` for heads with many classes, where the weights trade top-1 accuracy for rare classes that are not learnable anyway. |
 | `lr` | float | `None` | `> 0` | Per-task learning-rate override (else `[training]`'s LR for this head's kind). |
 | `weight_decay` | float | `None` | `>= 0` | Per-task weight-decay override (else `[training]`'s weight decay for this head's kind). |
 | `hidden_dims` | list[int] | `None` | positive ints; reg/clf only | Override `[model].head_hidden_dims` for this head. |
