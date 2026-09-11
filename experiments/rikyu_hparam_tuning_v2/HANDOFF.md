@@ -446,8 +446,16 @@ converts into score. So material_type's path to a gain **structurally cannot tra
      `singlesgxc`. The space-group baseline to quote is 0.465 / 0.313 (KMD) or 0.557 / 0.400
      (scale-aware descriptor), not 0.242 / 0.202; the labels page's "only high-symmetry families are
      recognisable" is withdrawn. Presented in `summary_page/space_group_summary.html`.
-   - Open: whether magnetic_ordering / is_metal / is_gap_direct want the weights (two runs each);
-     the head shape for many-class tasks (the remaining 4–5 pt to the paper's net).
+   - **material_type checked the same way (stMb / stMn, 5 seeds each, `summary/material_type_weights.json`)**:
+     with the weights macro-F1 0.5710 ± 0.0308 (= the recorded ceiling 0.5710), without 0.8338 ± 0.0175;
+     accuracy 0.9878 → 0.9978. Rare-class recall about the same (IAC 0.95 → 0.86, IQC 0.84 → 0.84),
+     precision doubled (IAC 0.39 → 0.82, IQC 0.51 → 0.78): the weighted head files ~75 rows/run
+     as IAC against 24 real. The weights help no head measured so far.
+     CAVEAT: every material_type transfer verdict in experiments 1–5 and 11 (xfer / frozen / warm-start all
+     +22–27% over alone 0.571) was measured with the weights on in every arm; against the unweighted
+     baseline (0.83) they are unmeasured.
+   - Open: magnetic_ordering / is_metal / is_gap_direct with vs without weights (two runs each); the
+     head shape for many-class tasks (the remaining 4–5 pt to the paper's net).
 
 **stage_xu, cost and caveats (2026-09-09).** One xu run is the matching transfer run minus its last
 step: 23 steps, 1,578 epochs, 24k → 78k rows per epoch as replay accumulates, 78.5 M sample-epochs —

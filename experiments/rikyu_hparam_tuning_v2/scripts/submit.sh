@@ -148,6 +148,10 @@ case "$STAGE" in
     singlesgnw) CONFIG=probe6_mp2026_sgnw.toml;   OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
     # ... and the same on the XenonPy classic descriptor (precomputed), to confirm the descriptor factor.
     singlesgxc) CONFIG=probe6_mp2026_sgxc.toml;   OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
+    # material_type with the weights on (control, stMb) and off (stMn), same recipe, 5 seeds each — the head
+    # the balanced weights were designed for (5 classes, 99% majority).
+    singlemtb)  CONFIG=probe6_mp2026.toml;        OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
+    singlemtn)  CONFIG=probe6_mp2026_mtnw.toml;   OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
     *) echo "unknown stage '$STAGE'" >&2; exit 2 ;;
 esac
 TIME=${TIME:-$DEFTIME}
