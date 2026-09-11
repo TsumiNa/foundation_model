@@ -222,6 +222,41 @@ column = "mtype"
         _build(toml)
 
 
+def test_clf_class_weights_values() -> None:
+    base = """
+[datasets.qc]
+path = "data/qc.parquet"
+
+[[tasks]]
+name = "mat"
+kind = "classification"
+dataset = "qc"
+column = "mtype"
+num_classes = 3
+class_weights = "%s"
+"""
+    with pytest.raises(ValueError, match="class_weights"):
+        _build(base % "inverse")
+    for ok in ("balanced", "none"):
+        _build(base % ok)
+
+
+def test_class_weights_on_regression_raises() -> None:
+    toml = """
+[datasets.qc]
+path = "data/qc.parquet"
+
+[[tasks]]
+name = "density"
+kind = "regression"
+dataset = "qc"
+column = "density"
+class_weights = "none"
+"""
+    with pytest.raises(ValueError, match="only valid for classification"):
+        _build(toml)
+
+
 def test_duplicate_task_names_raise() -> None:
     toml = (
         _base_toml("data/qc.parquet")
@@ -432,6 +467,13 @@ def test_build_task_config_per_kind(catalog_dir) -> None:
     assert isinstance(reg, RegressionTaskConfig) and reg.dims == [8, 4, 1]
     assert isinstance(clf, ClassificationTaskConfig) and clf.num_classes == 3 and clf.dims == [8, 4]
     assert clf.class_weights is not None and len(clf.class_weights) == 3
+    # class_weights = "none" turns the balanced weights off for that head only
+    cat_u = _catalog(
+        catalog_dir,
+        extra_tasks='\n[[tasks]]\nname = "mat_unweighted"\nkind = "classification"\ndataset = "qc"\ncolumn = "mtype"\nnum_classes = 3\nclass_weights = "none"\n',
+    )
+    assert _build_task(cat_u, "mat_unweighted").class_weights is None
+    assert _build_task(cat_u, "mat").class_weights is not None
     # KR: x branch [latent, *kr_x_hidden_dims]; t branch = kr_t_hidden_dims verbatim
     assert isinstance(kr, KernelRegressionTaskConfig) and kr.kernel_num_centers == 5
     assert kr.x_dim == [8, 16, 8] and kr.t_dim == [8, 4]
