@@ -456,6 +456,12 @@ converts into score. So material_type's path to a gain **structurally cannot tra
      baseline (0.83) they are unmeasured.
    - Open: magnetic_ordering / is_metal / is_gap_direct with vs without weights (two runs each); the
      head shape for many-class tasks (the remaining 4–5 pt to the paper's net).
+   - **The knob is released separately as PR #57** (`feat/class-weights-knob` off master, version
+     0.4.0 → 0.4.1, docs + README). Until it is merged and the `rikyu-0.4.1` image is pulled to RIKYU
+     (`~/containers/foundation-model_rikyu-0.4.1.sif`, then `VERSION=0.4.1` in `scripts/submit.sh`),
+     runs that set `class_weights` need `SRC_OVERRIDE=/home/rku00225/projects/fm_0.3.2_patched`. The
+     user's decision: future training uses the new code/image. 0.4.x also carries master's #42–#54
+     training refactors that the 0.3.2 campaign never ran on — re-baseline before comparing.
 
 **stage_xu, cost and caveats (2026-09-09).** One xu run is the matching transfer run minus its last
 step: 23 steps, 1,578 epochs, 24k → 78k rows per epoch as replay accumulates, 78.5 M sample-epochs —
