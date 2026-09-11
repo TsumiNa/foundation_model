@@ -136,8 +136,10 @@ ready-to-copy templates.
 - **Multi-task** regression + classification + kernel regression on a shared encoder.
 - **Learnable per-task uncertainty** loss balancer (Kendall et al. CVPR 2018) — optional, per
   `enable_learnable_loss_balancer`. See the "Loss Weighting Strategy" section below.
-- **Per-class classification weights** (`ClassificationTaskConfig.class_weights`) — keeps minority
-  classes alive in imbalanced supervised tasks (e.g. the QC material-type head).
+- **Per-class classification weights** — `[[tasks]] class_weights = "balanced" | "none"` (default
+  `"balanced"`: inverse-frequency weights in the cross-entropy; `"none"`: unweighted). Weighting was
+  meant to keep minority classes alive on imbalanced heads; on a many-class head it costs top-1
+  accuracy instead, so switch it off there.
 - **Task add / remove at runtime** — `model.add_task(cfg)` / `model.remove_tasks("name")` for
   continual-learning-style task sequences.
 - **Optional AutoEncoder head** (`enable_autoencoder=True`) — reconstructs the input descriptor
