@@ -18,6 +18,7 @@ _pr = json.load(open(EXP / "summary" / "position_runs.json"))
 POSRUNS_JS = "const POSRUNS=" + json.dumps({t: [[r["pos"], None if r["at_train"] is None else round(r["at_train"], 5),
                                                 None if r["at_end"] is None else round(r["at_end"], 5)] for r in v]
                                             for t, v in _pr.items()}, separators=(",", ":")) + ";\n"
+STYLE = (HERE / "_shared_style.html").read_text(encoding="utf-8")
 OUT = HERE / "transferability_summary.html"   # results/ is gitignored; this one travels in git
 ft=json.load(open(f"{EXP}/summary/ft.json")); pos=json.load(open(f"{EXP}/summary/position.json"))
 ta=json.load(open(f"{EXP}/summary/transfer_adopted.json")); mx=json.load(open(f"{EXP}/summary/matched_xfer.json"))
@@ -126,56 +127,15 @@ def cell_u(key):
 # ---------- page ----------
 def P(en,zh,ja,cls=""): return f'<p class="{cls}">{T(en,zh,ja)}</p>' if cls else f"<p>{T(en,zh,ja)}</p>"
 def CAP(en,zh,ja): return f"<figcaption>{T(en,zh,ja)}</figcaption>"
+def FH(en,zh,ja): return f'<div class="fighead"><span class="fignum"></span><span class="figtitle">{T(en,zh,ja)}</span></div>'
+def TH(en,zh,ja): return f'<div class="tabhead"><span class="tabnum"></span><span class="figtitle">{T(en,zh,ja)}</span></div>'
+
 
 out=[]
 out.append('''<title>Transferability, Four Ways</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:wght@400;600&family=Public+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&family=Noto+Serif+SC:wght@600&family=Noto+Serif+JP:wght@600&display=swap">
-<style>
-:root{--paper:#F4F6F7;--surface:#FFFFFF;--ink:#14181B;--ink-2:#262E33;--muted:#4E585E;--rule:#DCE1E3;--rule-soft:#E9EDEF;--alone:#7A858B;--xfer:#A85A1A;--frz:#5B3F8C;--warm:#0E6E78;
- --f-display:"Spectral","Noto Serif SC","Noto Serif JP",Georgia,serif;--f-body:"Public Sans","Noto Sans SC","Noto Sans JP",system-ui,-apple-system,sans-serif;--f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--paper:#12161A;--surface:#191E23;--ink:#E7EBEC;--ink-2:#D2DADD;--muted:#AAB4B9;--rule:#2A3238;--rule-soft:#212930;--alone:#98A3A8;--xfer:#E0A05C;--frz:#A97FE8;--warm:#4FBECA}}
-:root[data-theme="dark"]{--paper:#12161A;--surface:#191E23;--ink:#E7EBEC;--ink-2:#D2DADD;--muted:#AAB4B9;--rule:#2A3238;--rule-soft:#212930;--alone:#98A3A8;--xfer:#E0A05C;--frz:#A97FE8;--warm:#4FBECA}
-/* language: exactly one of the three spans is visible; default (no attribute) = English */
-.l-en,.l-zh,.l-ja{display:none!important}:root:not([data-lang="zh"]):not([data-lang="ja"]) .l-en{display:inline!important}[data-lang="zh"] .l-zh{display:inline!important}[data-lang="ja"] .l-ja{display:inline!important}
-[data-lang="zh"] body,[data-lang="ja"] body{line-height:1.75}
-.langbar{position:fixed;top:14px;right:16px;z-index:9;display:flex;gap:2px;background:var(--surface);border:1px solid var(--rule);border-radius:999px;padding:3px}
-.langbar button{font-family:var(--f-mono);font-size:12px;letter-spacing:.06em;border:0;background:transparent;color:var(--ink-2);padding:5px 11px;border-radius:999px;cursor:pointer}
-.langbar button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}.langbar button:focus-visible{outline:2px solid var(--warm);outline-offset:1px}
-*{box-sizing:border-box}
-body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:16.5px;line-height:1.62;margin:0;padding:0 24px 96px;-webkit-font-smoothing:antialiased}
-.wrap{max-width:1440px;margin:0 auto}.col{max-width:none}
-header{padding:64px 0 36px;border-bottom:1px solid var(--rule);margin-bottom:44px}
-.eyebrow{font-family:var(--f-mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 16px}
-h1{font-family:var(--f-display);font-weight:600;font-size:clamp(30px,4.4vw,44px);line-height:1.14;letter-spacing:-.012em;margin:0 0 18px;text-wrap:balance}
-.standfirst{font-size:18.5px;line-height:1.6;color:var(--ink-2);margin:0}
-h2{font-family:var(--f-display);font-weight:600;font-size:25px;line-height:1.24;margin:0 0 8px;text-wrap:balance}h3{font-family:var(--f-display);font-weight:600;font-size:19px;margin:0 0 6px}
-.kicker{font-family:var(--f-mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);margin:0 0 12px}
-.section{margin:0 0 64px}p{margin:0 0 16px}.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-weight:500}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);margin:0 0 22px}
-.stat{background:var(--surface);padding:20px 22px 18px}.stat .label{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);margin:0 0 9px}
-.stat .value{font-family:var(--f-mono);font-size:clamp(20px,2.7vw,28px);white-space:nowrap;font-weight:500;line-height:1;margin:0 0 6px;font-variant-numeric:tabular-nums}.stat .note{font-size:13px;color:var(--ink-2);margin:0;line-height:1.45}
-.c-xfer{color:var(--xfer)}.c-frz{color:var(--frz)}.c-warm{color:var(--warm)}.c-alone{color:var(--alone)}
-figure{margin:0 0 12px}.figbox{background:var(--surface);border:1px solid var(--rule);padding:20px 18px 12px;overflow-x:auto}
-figcaption{font-size:14.5px;color:var(--ink-2);line-height:1.5;margin:12px 0 0}
-svg{display:block}svg text{font-family:var(--f-mono);fill:var(--ink);font-variant-numeric:tabular-nums}svg text.axis{font-size:13px}svg text.val{font-size:12.5px;font-weight:500}svg text.name{font-size:13.5px}svg text.lab{font-size:14.5px;font-weight:500}
-.legend{display:flex;flex-wrap:wrap;gap:18px;align-items:center;margin:0 0 16px;font-size:14px;color:var(--ink-2)}.legend span{display:inline-flex;align-items:center;gap:8px}.sw{width:13px;height:13px;border-radius:50%;flex:none}.sw.sq{border-radius:2px}
-.tablebox{overflow-x:auto;border:1px solid var(--rule);background:var(--surface)}.ledger{margin:0 0 14px}.ledger td:nth-child(2),.ledger td:nth-child(6){white-space:normal;text-align:left}.ledger td:nth-child(6){font-family:var(--f-body);color:var(--muted);font-size:13.5px}.ledger td:first-child{white-space:normal}
-table{border-collapse:collapse;width:100%;font-size:15px}th,td{padding:9px 11px;text-align:right;border-bottom:1px solid var(--rule-soft);white-space:nowrap}
-th:first-child,td:first-child{text-align:left}thead th{font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:1px solid var(--rule)}
-[data-lang="zh"] thead th,[data-lang="ja"] thead th{text-transform:none;letter-spacing:0;font-family:var(--f-body);font-size:13.5px}
-thead .grp{text-align:center;font-weight:700;padding-bottom:5px;border-bottom:2px solid currentColor}
-tbody td{font-family:var(--f-mono);font-variant-numeric:tabular-nums;color:var(--ink-2)}tbody td:first-child{font-family:var(--f-body);color:var(--ink)}
-tbody tr:last-child td{border-bottom:none}td.pos{color:var(--warm);font-weight:700;background:color-mix(in srgb,var(--warm) 13%,transparent)}td.neg{color:var(--xfer);font-weight:700;background:color-mix(in srgb,var(--xfer) 11%,transparent)}
-.setup{border:1px solid var(--rule);background:var(--surface)}.setup table td{white-space:normal;text-align:left;font-family:var(--f-body);color:var(--ink-2);vertical-align:top}.setup table td:first-child{font-family:var(--f-mono);font-weight:500;color:var(--ink);white-space:nowrap}
-.rep{display:grid;grid-template-columns:1fr;gap:26px;margin:0 0 18px}
-.callout{border-left:2px solid var(--rule);padding:4px 0 4px 16px;margin:0 0 16px;font-size:16px;color:var(--ink-2)}.callout b{color:var(--ink)}
-.caveats ul,.plan ol{margin:0;padding:0 0 0 20px;display:grid;gap:12px}.caveats li,.plan li{font-size:16px;color:var(--ink-2);line-height:1.55}.caveats b,.plan b{color:var(--ink)}
-.matrix{display:grid;grid-template-columns:auto 1fr 1fr;gap:1px;background:var(--rule);border:1px solid var(--rule);margin:0 0 18px;max-width:640px}
-.matrix div{background:var(--surface);padding:12px 14px;font-size:14px}.matrix .h{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}[data-lang="zh"] .matrix .h,[data-lang="ja"] .matrix .h{text-transform:none;letter-spacing:0;font-family:var(--f-body);font-size:12px}
-.matrix .done{color:var(--warm);font-weight:500}.matrix .run{color:var(--muted)}
-footer{margin-top:56px;padding-top:22px;border-top:1px solid var(--rule);font-size:13px;color:var(--ink-2)}footer p{margin:0 0 6px}
-</style>
+'''+STYLE+'''
 <div class="langbar" role="group" aria-label="Language"><button data-lang="en" aria-pressed="true">EN</button><button data-lang="zh">中</button><button data-lang="ja">日</button></div>
 <div class="wrap">''')
 
@@ -195,11 +155,11 @@ out.append(f'''<section class="section">
 {P("Every arm starts from the same place: an encoder trained continuously on the other 23 tasks with hybrid replay. They differ in <em>how</em> the 24th task, X, is then attached to it. <span class='num'>xfer</span> is the campaign's shorthand for the first of these; the other names are ours.",
    "每个臂的起点相同:一个在其余 23 个任务上以混合 replay 连续训练出的编码器。差别只在于第 24 个任务 X <em>如何</em>接上去。<span class='num'>xfer</span> 是本轮 campaign 对第一种方式的简写;其余名称是我们自己起的。",
    "すべてのアームの出発点は同じで、他の23タスクをハイブリッドリプレイで継続学習したエンコーダである。違いは24番目のタスクXを<em>どう</em>つなぐかだけだ。<span class='num'>xfer</span>は最初の方式に対するキャンペーンでの略記で、他の名前は本ページでの呼称である。")}</div>
-<figure><div class="figbox"><svg id="fig0" width="960" height="250" role="img" aria-label="Schematic of the four transfer arms branching from a 23-task encoder."></svg></div>
+<figure>{FH("The six ways of attaching task X, drawn as branches off the 23-task encoder","接入任务 X 的六种方式,画成从 23 任务编码器分出的分支","タスクXをつなぐ6通りの方法を、23タスクエンコーダからの分岐として描いたもの")}<div class="figbox"><svg id="fig0" width="960" height="250" role="img" aria-label="Schematic of the four transfer arms branching from a 23-task encoder."></svg></div>
 {CAP("Solid paths are measured (n = 10 orderings per task). The dashed pair — fine-tuning an encoder that has never seen X, with a fresh head — is measured at n = 3 orderings per task.",
      "实线路径已测量(每任务 10 组顺序)。虚线的两条——在从未见过 X 的编码器上、用新建的 head 微调——每任务测了 3 组顺序。",
      "実線の経路は測定済み(タスクごとに10通りの順序)。破線の2本 — Xを一度も見ていないエンコーダに新規ヘッドで微調整 — はタスクごとに3通りの順序で測定。")}</figure>
-<div class="tablebox setup"><table>
+{TH("The six arms: what trains, whether replay is on, what early stopping watches, and what each asks","六个臂:训练什么、是否有 replay、早停监控什么、各回答什么问题","6つのアーム:何を学習するか、リプレイの有無、早期終了の監視対象、何を問うか")}<div class="tablebox setup"><table>
 <thead><tr><th>{T("Arm","臂","アーム")}</th><th>{T("What trains","训练什么","何を学習するか")}</th><th>{T("Replay","Replay","リプレイ")}</th><th>{T("Early stopping watches","早停监控","早期終了の監視対象")}</th><th>{T("What it asks","回答什么问题","何を問うか")}</th></tr></thead>
 <tbody>
 <tr><td class="c-alone">alone</td><td>{T("A fresh model on X only, 5 seeds.","只在 X 上从零训练的模型,5 个 seed。","Xだけで新規に学習したモデル、5シード。")}</td><td>{T("none","无","なし")}</td><td>{T("X's own loss","X 自身的损失","X自身の損失")}</td><td>{T('The reference. Everything below is "vs alone".','参照基线。下文一切"vs 单独"都相对它。','参照基準。以下の「vs 単独」はすべてこれに対する値。')}</td></tr>
@@ -224,18 +184,17 @@ out.append(f'''<section class="section">
 <div class="stat"><p class="label">{T("warm-start vs xfer","warm-start vs xfer","ウォームスタート vs xfer")}</p><p class="value c-warm" id="s-rec"></p><p class="note">{T("tasks that recover once replay is removed","去掉 replay 后回升的任务数","リプレイを外すと回復するタスク数")}</p></div>
 </div>
 {HOWTO}
-<figure><div class="figbox">
+<figure>{FH("Score change against training alone, task by task, for xfer, frozen and warm-start","每个任务相对单独训练的分数变化:xfer、冻结、warm-start","タスクごとの単独学習に対するスコア変化:xfer、凍結、ウォームスタート")}<div class="figbox">
 <div class="legend"><span><i class="sw" style="background:var(--xfer)"></i> {T("xfer (replay, placed last)","xfer(带 replay,排末位)","xfer(リプレイあり、最後に配置)")}</span><span><i class="sw" style="background:var(--frz)"></i> {T("frozen","冻结","凍結")}</span><span><i class="sw" style="background:var(--warm)"></i> {T("warm-start","warm-start","ウォームスタート")}</span>{KEY_FILL}<span style="color:var(--muted)">{T("connector runs xfer → warm-start · x-axis clipped at ±30%","连线从 xfer 指向 warm-start · 横轴截断于 ±30%","連結線は xfer → ウォームスタート · 横軸は±30%で切り詰め")}</span></div>
 <svg id="fig1" width="960" height="720" role="img" aria-label="Per-task relative change against training alone for the three arms, sorted by warm-start."></svg>
 </div>{CAP("Each row is one task, sorted by its warm-start result. The connector shows how far removing replay moves it. Filled markers are separated from zero at 2×SE (both arms) and past the 0.01 practical threshold; hollow markers are not. magnetic_susceptibility (58 rows) sits off-scale to the left in every arm and is excluded from the counts.",
 "每行一个任务,按 warm-start 结果排序。连线显示去掉 replay 后移动了多远。实心标记 = 在 2×SE(计两臂)下与零分离且超过 0.01 实用门槛;空心 = 否。magnetic_susceptibility(58 行)在每个臂都超出左边界,不计入计数。",
 "各行が1タスクで、ウォームスタートの結果順に並ぶ。連結線はリプレイ除去でどれだけ動いたかを示す。塗りつぶしは2×SE(両アーム)で0から分離し、かつ実用閾値0.01を超えるもの、中抜きはそれ以外。magnetic_susceptibility(58行)はどのアームでも左に振り切れており、集計から除外。")}</figure>
-<div class="col" style="margin-top:8px"><p class="kicker">{T("Full table","完整表格","全表")}</p></div>
-<div class="tablebox"><table id="bigtable">
+{TH("Full result — every task under every arm, with its verdict against training alone","完整结果——每个任务在每个臂下的值,及相对单独训练的判定","全結果 — 全タスク・全アームの値と、単独学習に対する判定")}<div class="tablebox"><table id="bigtable">
 <thead><tr><th rowspan="2">{T("Task","任务","タスク")}</th><th rowspan="2">N</th><th rowspan="2">{T("Alone","单独","単独")}</th><th colspan="2" class="grp c-xfer">xfer</th><th colspan="2" class="grp c-frz">{T("frozen","冻结","凍結")}</th><th colspan="2" class="grp c-warm">warm-start</th><th rowspan="2">{T("warm − frozen","warm − 冻结","warm − 凍結")}</th><th colspan="2" class="grp c-frz">{T("frozen, unseen","冻结,未见过","凍結、未知")}</th><th colspan="2" class="grp c-warm">{T("warm-start, unseen","warm-start,未见过","ウォームスタート、未知")}</th></tr>
 <tr><th>{T("value","值","値")}</th><th>{T("vs alone","vs 单独","vs 単独")}</th><th>{T("value","值","値")}</th><th>{T("vs alone","vs 单独","vs 単独")}</th><th>{T("value","值","値")}</th><th>{T("vs alone","vs 单独","vs 単独")}</th><th>{T("value","值","値")}</th><th>{T("vs alone","vs 单独","vs 単独")}</th><th>{T("value","值","値")}</th><th>{T("vs alone","vs 单独","vs 単独")}</th></tr></thead>
 <tbody></tbody></table></div>
-<div class="col" style="margin-top:14px"><p style="font-size:13.5px;color:var(--ink-2)">{T("* separated at 2×SE and |Δ| ≥ 0.01 &nbsp;·&nbsp; · separated but below the threshold &nbsp;·&nbsp; material_type is scored on macro-F1, all others on R². seebeck and power_factor rows use the 400-epoch reruns in every arm (the 150-epoch cap truncated them).",
+<div class="col"><p class="tabnote">{T("* separated at 2×SE and |Δ| ≥ 0.01 &nbsp;·&nbsp; · separated but below the threshold &nbsp;·&nbsp; material_type is scored on macro-F1, all others on R². seebeck and power_factor rows use the 400-epoch reruns in every arm (the 150-epoch cap truncated them).",
 "* 在 2×SE 下分离且 |Δ| ≥ 0.01 · · 分离但低于门槛 · material_type 用 macro-F1,其余用 R²。seebeck 与 power_factor 两行在每个臂都用 400 epoch 的补跑(150 上限截断了它们)。",
 "* 2×SEで分離かつ|Δ| ≥ 0.01 · · 分離するが閾値未満 · material_typeはmacro-F1、他はR²。seebeckとpower_factorの行は全アームで400エポックの再実行を使用(150エポックの上限で打ち切られていたため)。")}</p></div>
 </section>''')
@@ -246,7 +205,7 @@ out.append(f'''<section class="section">
 {P("In xfer, X's rows and the replayed rows share every epoch. The replay total is roughly fixed — about 79,000 rows — so X's share of the gradient is set by its own size:",
    "在 xfer 里,X 的样本和 replay 样本共享每一个 epoch。replay 总量大致固定——约 79,000 行——所以 X 的梯度份额由它自身的大小决定:",
    "xferではXの行とリプレイ行が各エポックを共有する。リプレイ総量はほぼ一定 — 約79,000行 — なので、Xの勾配占有率は自身のサイズで決まる:")}</div>
-<div class="tablebox" style="max-width:560px"><table><thead><tr><th>{T("Task","任务","タスク")}</th><th>{T("X's rows","X 的行数","Xの行数")}</th><th>{T("Replay rows","Replay 行数","リプレイ行数")}</th><th>{T("X's share","X 的份额","Xの占有率")}</th></tr></thead><tbody id="sharetable"></tbody></table></div>
+{TH("The share of the step-24 gradient that the new task owns, for four tasks","四个任务在第 24 步各自占有的梯度份额","4タスクが第24ステップの勾配に占める割合")}<div class="tablebox" style="max-width:560px"><table><thead><tr><th>{T("Task","任务","タスク")}</th><th>{T("X's rows","X 的行数","Xの行数")}</th><th>{T("Replay rows","Replay 行数","リプレイ行数")}</th><th>{T("X's share","X 的份额","Xの占有率")}</th></tr></thead><tbody id="sharetable"></tbody></table></div>
 <div class="col" style="margin-top:16px">
 {P("And the stopping rule compounds it: early stopping watches the sum over all 24 tasks, which the 23 replayed tasks — already converged — dominate. It fires when <em>they</em> stop improving. So the last task gets a median of about 60 epochs where, trained alone, it takes 90 to 150. Two thirds of the tasks still had their own loss falling when xfer stopped.",
    "停止规则又加重了这一点:早停监控 24 个任务的总和,而这由 23 个已收敛的 replay 任务主导。它在<em>它们</em>停止改进时触发。于是末位任务只得到中位约 60 个 epoch,而单独训练要 90–150 个。xfer 停止时,三分之二的任务自身损失仍在下降。",
@@ -269,10 +228,10 @@ out.append(f'''<div><h3><span class="c-warm">{T("Better","更好","改善")}</sp
 <div class="col">{P("zt was one of the six-task probe's original winners. Under xfer it fell to unresolved and was written off. Remove replay and it returns as a resolvable gain in both arms, and the two arms agree to within 0.2%: the shared representation already holds what zt needs, and unfreezing adds nothing.",
 "zt 是 6 任务探针最初的赢家之一。在 xfer 下它退成不可分,被当作没有效果。去掉 replay,它在两个臂都以可分辨的增益回归,且两臂相差不到 0.2%:共享表示已经包含 zt 需要的东西,解冻不再增加什么。",
 "ztは6タスク探針での当初の勝者の1つだった。xferでは判定不能に落ち、効果なしと片付けられた。リプレイを外すと両アームで判別可能な改善として戻り、両アームの差は0.2%以内:共有表現がztの必要とするものをすでに含んでおり、凍結解除は何も加えない。")}</div>
-{zt_l}
-<figure><div class="figbox">{LEG_STRIP}<svg class="repfig" data-task="zt" width="960" height="250" role="img" aria-label="zt: per-run scores for the four arms."></svg></div>
+{TH("zt — every number the text relies on, with n, 2×SE, verdict and source","zt——正文依赖的每个数字,含 n、2×SE、判定与来源","zt — 本文が依拠する全数値、n・2×SE・判定・出典付き")}{zt_l}
+<figure>{FH("zt — the score of every run, grouped by arm","zt——每个运行的分数,按臂分组","zt — 実行ごとのスコア、アーム別")}<div class="figbox">{LEG_STRIP}<svg class="repfig" data-task="zt" width="960" height="250" role="img" aria-label="zt: per-run scores for the four arms."></svg></div>
 {CAP("Run-level distribution. xfer's median sits above alone but its spread straddles it; both no-replay arms sit clear.","逐运行分布。xfer 的中位数高于单独,但离散范围跨过它;两个无 replay 臂完全在其上方。","実行単位の分布。xferの中央値は単独より上だが散らばりがそれを跨ぐ。リプレイなしの両アームは明確に上にある。")}</figure>
-<figure><div class="figbox"><svg id="fig-zt-arc" width="960" height="230" role="img" aria-label="zt measured four ways, each with its 2SE interval."></svg></div>
+<figure>{FH("zt — the same gain measured four ways, each with its 2×SE interval","zt——同一增益的四种测量,各带 2×SE 区间","zt — 同じ改善の4通りの測定、それぞれ2×SE区間付き")}<div class="figbox"><svg id="fig-zt-arc" width="960" height="230" role="img" aria-label="zt measured four ways, each with its 2SE interval."></svg></div>
 {CAP("The same task measured four ways, as change against training alone with 2×SE intervals (both arms' uncertainty). The probe and the two no-replay arms agree; only xfer — the arm with replay — sits back at the zero line. The probe was measuring the no-replay case all along.",
 "同一任务的四次测量,以相对单独训练的变化表示,带 2×SE 区间(计两臂不确定度)。探针与两个无 replay 臂一致;只有带 replay 的 xfer 退回零线。探针一直测的就是无 replay 的情形。",
 "同じタスクを4通りで測り、単独学習に対する変化として2×SE区間(両アームの不確かさ)付きで示す。探針とリプレイなしの2アームは一致し、リプレイありのxferだけがゼロ線に戻る。探針は最初からリプレイなしの状況を測っていたのだ。")}</figure></div>''')
@@ -282,20 +241,20 @@ out.append(f'''<div><h3><span class="c-warm">{T("Better, and different in kind",
 <div class="col">{P("The campaign's most conspicuous result, the only task that was a winner even under xfer, and the only classification task — five classes, 99.25% of rows in one of them. Its gain runs opposite to the extensive properties in every way. Where zt's frozen and warm-start arms agree, material_type's diverge: frozen beats warm-start, the largest &quot;unfreezing hurts&quot; on the board. It owned 32% of the gradient at step 24, the most of any task, so dilution barely touched it.",
 "本轮最显眼的结果,唯一在 xfer 下也获益的任务,也是唯一的分类任务——五类,99.25% 的行属于其中一类。它的增益在每个方面都与广延量相反。zt 的冻结与 warm-start 一致,material_type 的则分道扬镳:冻结胜过 warm-start,是全板最大的&quot;解冻有害&quot;。它在第 24 步占 32% 的梯度,为所有任务之最,稀释几乎没碰到它。",
 "キャンペーンで最も目立つ結果であり、xferでも勝者だった唯一のタスク、そして唯一の分類タスク — 5クラス、行の99.25%が1クラスに集中。その改善はあらゆる点で示量性物性と逆向きだ。ztの凍結とウォームスタートが一致するのに対し、material_typeでは分岐する:凍結がウォームスタートに勝ち、全体で最大の「凍結解除が有害」となる。第24ステップで勾配の32%を占め、全タスク中最大なので、希釈はほとんど届かなかった。")}</div>
-{mt_l}
-<figure><div class="figbox">{LEG_STRIP}<svg class="repfig" data-task="material_type" width="960" height="250" role="img" aria-label="material_type: per-run macro-F1 for the four arms."></svg></div>
+{TH("material_type — every number the text relies on, with n, 2×SE, verdict and source","material_type——正文依赖的每个数字,含 n、2×SE、判定与来源","material_type — 本文が依拠する全数値、n・2×SE・判定・出典付き")}{mt_l}
+<figure>{FH("material_type — macro-F1 of every run, grouped by arm","material_type——每个运行的 macro-F1,按臂分组","material_type — 実行ごとの macro-F1、アーム別")}<div class="figbox">{LEG_STRIP}<svg class="repfig" data-task="material_type" width="960" height="250" role="img" aria-label="material_type: per-run macro-F1 for the four arms."></svg></div>
 {CAP("Run-level distribution, macro-F1. Note the order: frozen highest, then warm-start, then xfer, then alone — the only task where freezing wins.","逐运行分布,macro-F1。注意顺序:冻结最高,其次 warm-start,再次 xfer,最后单独——唯一冻结获胜的任务。","実行単位の分布、macro-F1。順序に注目:凍結が最高、次にウォームスタート、xfer、単独 — 凍結が勝つ唯一のタスク。")}</figure>
-<figure><div class="figbox"><div class="legend"><span><i class="sw sq" style="background:var(--warm)"></i> {T("at its own step","在自己那一步","自身のステップ時点")}</span><span><i class="sw sq" style="background:var(--xfer)"></i> {T("after the sequence ends","序列结束时","系列終了時点")}</span><span><i class="sw sq" style="background:var(--alone);opacity:.6"></i> {T("alone (5 seeds)","单独(5 seed)","単独(5シード)")}</span>{KEY_DOTS}</div>
+<figure>{FH("material_type — score by position in the training sequence, at its own step and after the sequence ends","material_type——按训练序列位置的分数,在自己那一步与序列结束时","material_type — 学習系列での位置別スコア、自身のステップ時点と系列終了時点")}<div class="figbox"><div class="legend"><span><i class="sw sq" style="background:var(--warm)"></i> {T("at its own step","在自己那一步","自身のステップ時点")}</span><span><i class="sw sq" style="background:var(--xfer)"></i> {T("after the sequence ends","序列结束时","系列終了時点")}</span><span><i class="sw sq" style="background:var(--alone);opacity:.6"></i> {T("alone (5 seeds)","单独(5 seed)","単独(5シード)")}</span>{KEY_DOTS}</div>
 <svg id="fig-mt-pos" width="980" height="340" role="img" aria-label="material_type macro-F1 by position band, at its own step and at sequence end, against alone."></svg></div>
 {CAP("Position bands from the transfer stage, each run scored on its own test rows: every dot is one run, the bar the median; % labels compare each median with the alone median (0.5761). This is the only task whose score rises the <em>later</em> it appears — the opposite of every regression task — and every band's median, early or late, sits above the best of the 5 alone seeds (0.6035).",
 "迁移阶段的位置分段,各运行用自身测试行评分:每点一个运行,粗线为中位数;% 为各中位数相对单独中位数(0.5761)。它是唯一越<em>晚</em>出现分数越高的任务——与所有回归任务相反——而且无论早晚,每一段的中位数都高过 5 个单独 seed 里最好的那个(0.6035)。",
 "転移段階の位置帯、各実行は自身のテスト行で評価:各点が1実行、太線が中央値。%は各中央値の単独中央値(0.5761)に対する値。<em>後</em>に出るほどスコアが上がる唯一のタスク — すべての回帰タスクと逆 — であり、早晩を問わずどの帯の中央値も単独5シードの最良値(0.6035)より上にある。")}</figure>
-<figure><div class="figbox"><div class="legend"><span><i class="sw sq" style="background:var(--xfer)"></i> {T("alone","单独","単独")}</span><span><i class="sw sq" style="background:var(--warm)"></i> {T("xfer (multi-task)","xfer(多任务)","xfer(マルチタスク)")}</span></div>
+<figure>{FH("material_type — recall and precision of each class, alone vs xfer","material_type——每个类别的 recall 与 precision,单独 vs xfer","material_type — クラスごとの recall と precision、単独 vs xfer")}<div class="figbox"><div class="legend"><span><i class="sw sq" style="background:var(--xfer)"></i> {T("alone","单独","単独")}</span><span><i class="sw sq" style="background:var(--warm)"></i> {T("xfer (multi-task)","xfer(多任务)","xfer(マルチタスク)")}</span></div>
 <svg id="fig-mt-prf" width="880" height="290" role="img" aria-label="Per-class recall and precision, alone vs xfer, on matched rows."></svg></div>
 {CAP("Where the gain comes from, decomposed on the same 7,354 test rows (5 alone seeds vs 3 xfer orderings). Recall on the four rare classes does not move — IQC even drops — while their precision roughly doubles. The model finds no quasicrystal it was missing; it stops misfiling ordinary material as one. Decomposed for the xfer arm; the frozen arm's larger gain has not been decomposed and is assumed, not shown, to share the mechanism.",
 "增益的来源,在同一 7,354 行测试集上分解(5 个单独 seed vs 3 组 xfer 顺序)。四个稀有类的 recall 不动——IQC 反而下降——而它们的 precision 大约翻倍。模型没有找到原本漏掉的准晶,而是不再把普通材料误判成准晶。这是对 xfer 臂的分解;冻结臂更大的增益未做分解,只是假定同一机制,未经展示。",
 "改善の出所を同じ7,354テスト行(単独5シード vs xfer 3順序)で分解。希少4クラスのrecallは動かず — IQCはむしろ低下 — precisionはほぼ倍増。モデルは見逃していた準結晶を見つけたのではなく、普通の材料を準結晶と誤分類しなくなった。これはxferアームの分解であり、凍結アームのより大きな改善は分解しておらず、同じ機構だと仮定しているに過ぎない。")}</figure>
-<figure><div class="figbox"><svg id="fig-mt-cm" width="980" height="400" role="img" aria-label="Row-normalised confusion matrices, alone vs xfer."></svg></div>
+<figure>{FH("material_type — confusion matrices, alone vs xfer","material_type——混淆矩阵,单独 vs xfer","material_type — 混同行列、単独 vs xfer")}<div class="figbox"><svg id="fig-mt-cm" width="980" height="400" role="img" aria-label="Row-normalised confusion matrices, alone vs xfer."></svg></div>
 {CAP('Rows are true classes, columns predicted; upper number = % of the row, lower = rows per run. The dashed row is "others", the 7,298-row majority: its leak into the four rare classes falls from 1.16% to 0.49%. Because the rare classes hold 1–28 rows each, removing ~48 false positives a run is what doubles their precision. This is a representation of "what ordinary material looks like" — which is what 23 property-regression tasks teach — and fine-tuning the encoder on material_type’s own majority-dominated loss degrades it. So the recipe inverts for this task: <b>keep the encoder, train the head.</b> Whether that holds for other imbalanced classification tasks is untested; there is only one on the board.',
 '行为真实类,列为预测类;上方数字 = 占该行的 %,下方 = 每运行行数。虚线框为 "others",7,298 行的多数类:它泄漏进四个稀有类的比例从 1.16% 降到 0.49%。稀有类各只有 1–28 行,每运行少约 48 个误报就足以让 precision 翻倍。这是一种"普通材料长什么样"的表示——正是 23 个性质回归任务教给编码器的——而让编码器按 material_type 自己多数类主导的损失微调会破坏它。所以对这个任务,配方反过来:<b>保留编码器,只训 head。</b>这一点对其他不均衡分类任务是否成立尚未检验;板上只有这一个。',
 '行が真のクラス、列が予測。上の数字は行内の%、下は実行あたり行数。破線枠は"others"、7,298行の多数派クラス:希少4クラスへの漏れが1.16%から0.49%に減る。希少クラスは各1〜28行しかないので、実行あたり約48件の偽陽性を除くだけでprecisionが倍になる。これは「普通の材料とはどんなものか」の表現 — 23の物性回帰タスクがエンコーダに教えるもの — であり、material_type自身の多数派支配の損失でエンコーダを微調整するとそれが損なわれる。ゆえにこのタスクではレシピが逆転する:<b>エンコーダは保持し、ヘッドだけ学習。</b>他の不均衡分類タスクでも成り立つかは未検証で、板上には1つしかない。')}</figure></div>''')
@@ -305,10 +264,10 @@ out.append(f'''<div><h3><span class="c-alone">{T("Unresolved","不可分","判�
 <div class="col">{P('851 training rows, the second-smallest real task. In xfer it owned 1.1% of every epoch and was cut off at a median 56 epochs against 142 alone; it read as clear negative transfer. Warm-start brings it to indistinguishable from alone. The "negative transfer" came from the training setup, not from the task; what remains is a task the encoder neither helps nor hurts.',
 '851 行训练数据,第二小的实质任务。在 xfer 里它每个 epoch 只占 1.1%,并在中位 56 个 epoch 时被掐断,而单独训练要 142 个;它读起来是明确的负迁移。warm-start 把它带回与单独训练不可分。"负迁移"来自训练设置,而不是任务本身;剩下的是一个编码器既不帮也不害的任务。',
 '訓練行851、実質的に2番目に小さいタスク。xferでは各エポックの1.1%しか占めず、単独なら142エポックのところ中央値56エポックで打ち切られ、明確な負の転移に見えた。ウォームスタートで単独と区別できない水準に戻る。「負の転移」は学習設定によるものでタスク自体のものではなく、残るのはエンコーダが助けも害もしないタスクである。')}</div>
-{mm_l}
-<figure><div class="figbox">{LEG_STRIP}<svg class="repfig" data-task="magnetic_moment" width="960" height="250" role="img" aria-label="magnetic_moment: per-run scores for the four arms."></svg></div>
+{TH("magnetic_moment — every number the text relies on, with n, 2×SE, verdict and source","magnetic_moment——正文依赖的每个数字,含 n、2×SE、判定与来源","magnetic_moment — 本文が依拠する全数値、n・2×SE・判定・出典付き")}{mm_l}
+<figure>{FH("magnetic_moment — the score of every run, grouped by arm","magnetic_moment——每个运行的分数,按臂分组","magnetic_moment — 実行ごとのスコア、アーム別")}<div class="figbox">{LEG_STRIP}<svg class="repfig" data-task="magnetic_moment" width="960" height="250" role="img" aria-label="magnetic_moment: per-run scores for the four arms."></svg></div>
 {CAP("Run-level distribution. xfer and frozen sit below alone; warm-start's median lands on the alone line with its spread across it — unresolved, not &quot;worse&quot;.","逐运行分布。xfer 与冻结低于单独;warm-start 的中位数落在单独线上、离散跨过它——是不可分,不是&quot;更差&quot;。","実行単位の分布。xferと凍結は単独より下。ウォームスタートの中央値は単独の線上にあり散らばりがそれを跨ぐ — 「悪化」ではなく判定不能。")}</figure>
-<figure><div class="figbox">{LEG_POS}<svg class="posfig" data-task="magnetic_moment" width="980" height="330" role="img" aria-label="magnetic_moment score at each sequence position, xfer at its own step."></svg></div>
+<figure>{FH("magnetic_moment — score at each of the 24 positions in the transfer stage","magnetic_moment——迁移阶段 24 个位置上各自的分数","magnetic_moment — 転移段階の24位置それぞれでのスコア")}<div class="figbox">{LEG_POS}<svg class="posfig" data-task="magnetic_moment" width="980" height="330" role="img" aria-label="magnetic_moment score at each sequence position, xfer at its own step."></svg></div>
 {CAP("The transfer stage's position curve: the task's score at the step where it was trained, at each of the 24 positions — every dot one run, the bar the median at that position — against the alone median (dashed) and the range of the 5 alone seeds (shaded). Unhurt at early positions, hurt only late: the more tasks precede it — the more replay it competes with at its own step — the worse it does. That is the dilution signature, and the reason the −6.3% at position 24 belongs to the training setup rather than to the task.",
 "迁移阶段的位置曲线:该任务在被训练那一步的分数,24 个位置逐个显示——每点一个运行,粗线为该位置的中位数——对照单独训练的中位数(虚线)和 5 个 seed 的范围(阴影)。早期位置不吃亏,晚期才受损:前面的任务越多——在自己那一步要对抗的 replay 越多——表现越差。这就是稀释的指纹,也是第 24 位那个 −6.3% 属于训练设置而非任务本身的原因。",
 "転移段階の位置曲線:学習されたステップでのスコアを24位置それぞれに示す — 各点が1実行、太線がその位置の中央値 — 単独の中央値(破線)と5シードの範囲(網掛け)と比較。序盤の位置では損なわれず、終盤でのみ悪化:先行タスクが多いほど — 自身のステップで競合するリプレイが多いほど — 悪くなる。これが希釈の特徴であり、24位置での−6.3%がタスクではなく学習設定の性質である理由だ。")}</figure></div>''')
@@ -318,19 +277,19 @@ out.append(f'''<div><h3><span class="c-xfer">{T("Worse","更差","悪化")}</spa
 <div class="col">{P("The largest loss of the campaign, and not a dilution story: with 23,678 rows final_energy owned 24.4% of the gradient at step 24, yet lost heavily. Removing replay recovers most of it and unfreezing the encoder is worth the biggest unfreezing gain on the board — but it stays resolvably worse than alone. A budget check rules out undertraining: with early stopping off and 500 epochs for both arms, warm-start stays 10.0% below training alone. Its validation loss bottoms out at epoch 143 and drifts up, while its training loss ends lower than the single-task model’s (0.011 vs 0.015): it fits the training set better and generalises worse.",
 "本轮最大的损失,而且不是稀释的故事:final_energy 有 23,678 行,在第 24 步占 24.4% 的梯度,却仍大幅受损。去掉 replay 恢复了大部分,解冻编码器带来全板最大的解冻收益——但它仍可分辨地差于单独训练。预算检验排除了训练不足:两臂都关掉早停跑满 500 epoch 后,warm-start 仍比单独训练低 10.0%。它的验证损失在第 143 epoch 触底后回升,而训练损失最终比单任务模型更低(0.011 vs 0.015):拟合训练集更好,泛化更差。",
 "キャンペーン最大の損失であり、希釈の話ではない:23,678行のfinal_energyは第24ステップで勾配の24.4%を占めながら大きく損なわれた。リプレイ除去で大半が回復し、凍結解除は全体で最大の凍結解除効果をもたらす — それでも単独より判別可能なほど悪い。予算検証で学習不足は否定された:両アームとも早期終了を切って500エポック回しても、ウォームスタートは単独学習より10.0%低いまま。検証損失は第143エポックで底を打って上昇に転じ、学習損失は単独モデルより低く終わる(0.011 vs 0.015):訓練データへの適合は良く、汎化は悪い。")}</div>
-{fe_l}
-<figure><div class="figbox">{LEG_STRIP}<svg class="repfig" data-task="final_energy" width="960" height="250" role="img" aria-label="final_energy: per-run scores for the four arms."></svg></div>
+{TH("final_energy — every number the text relies on, with n, 2×SE, verdict and source","final_energy——正文依赖的每个数字,含 n、2×SE、判定与来源","final_energy — 本文が依拠する全数値、n・2×SE・判定・出典付き")}{fe_l}
+<figure>{FH("final_energy — the score of every run, grouped by arm","final_energy——每个运行的分数,按臂分组","final_energy — 実行ごとのスコア、アーム別")}<div class="figbox">{LEG_STRIP}<svg class="repfig" data-task="final_energy" width="960" height="250" role="img" aria-label="final_energy: per-run scores for the four arms."></svg></div>
 {CAP("Run-level distribution. Every arm sits below alone; warm-start closes most of the gap but not all of it, with no overlap of the alone spread.","逐运行分布。每个臂都低于单独;warm-start 收窄了大部分差距但没有全部,与单独的离散范围没有重叠。","実行単位の分布。全アームが単独より下。ウォームスタートは差の大半を埋めるが全部ではなく、単独の散らばりとは重ならない。")}</figure>
-<figure><div class="figbox">{LEG_POS}<svg class="posfig" data-task="final_energy" width="980" height="330" role="img" aria-label="final_energy score at each sequence position, xfer at its own step."></svg></div>
+<figure>{FH("final_energy — score at each of the 24 positions in the transfer stage","final_energy——迁移阶段 24 个位置上各自的分数","final_energy — 転移段階の24位置それぞれでのスコア")}<div class="figbox">{LEG_POS}<svg class="posfig" data-task="final_energy" width="980" height="330" role="img" aria-label="final_energy score at each sequence position, xfer at its own step."></svg></div>
 {CAP("Position curve. Unlike magnetic_moment it is hurt at <em>every</em> position — −13.7% even in the first eight slots, where replay is light — and gets worse the later it sits. A task with 24% of the gradient is not being drowned; something about the shared representation itself costs it.",
 "位置曲线。与 magnetic_moment 不同,它在<em>每个</em>位置都受损——前八个位置 replay 很轻,也已 −13.7%——而且越靠后越差。占 24% 梯度的任务不是被淹没了;是共享表示本身有什么东西让它付出代价。",
 "位置曲線。magnetic_momentと異なり<em>すべての</em>位置で損なわれる — リプレイが軽い最初の8位置でも−13.7% — そして後ろほど悪化。勾配の24%を持つタスクが溺れているのではなく、共有表現そのものの何かが代償を課している。")}</figure>
-<figure><div class="figbox"><div class="legend"><span><i class="sw" style="background:var(--xfer)"></i> {T("extensive property","广延量","示量性物性")}</span><span><i class="sw" style="background:var(--frz)"></i> {T("intensive property","强度量","示強性物性")}</span><span><i class="sw" style="background:var(--warm)"></i> {T("classification","分类","分類")}</span><span style="color:var(--muted)">{T("filled = separated at 2×SE and |Δ| ≥ 0.01","实心 = 2×SE 分离且 |Δ| ≥ 0.01","塗りつぶし = 2×SEで分離かつ|Δ| ≥ 0.01")}</span></div>
+<figure>{FH("Warm-start vs alone for all tasks, coloured by the kind of quantity","所有任务的 warm-start vs 单独,按物理量类型着色","全タスクのウォームスタート vs 単独、物理量の種類で色分け")}<div class="figbox"><div class="legend"><span><i class="sw" style="background:var(--xfer)"></i> {T("extensive property","广延量","示量性物性")}</span><span><i class="sw" style="background:var(--frz)"></i> {T("intensive property","强度量","示強性物性")}</span><span><i class="sw" style="background:var(--warm)"></i> {T("classification","分类","分類")}</span><span style="color:var(--muted)">{T("filled = separated at 2×SE and |Δ| ≥ 0.01","实心 = 2×SE 分离且 |Δ| ≥ 0.01","塗りつぶし = 2×SEで分離かつ|Δ| ≥ 0.01")}</span></div>
 <svg id="fig-kind" width="960" height="560" role="img" aria-label="Warm-start change against alone for 23 tasks, coloured by whether the property is extensive, intensive or a classification."></svg></div>
 {CAP("Warm-start vs alone across the board, coloured by the kind of quantity. The three extensive properties — those that scale with the size of the cell — are the three largest resolvable losses. Intensive properties cluster around zero; the one classification task is the largest gain. magnetic_susceptibility (58 rows) is omitted as off-scale.",
 "全板的 warm-start vs 单独,按物理量类型着色。三个广延量——随原胞大小变化的量——正是三个最大的可分辨损失。强度量聚在零附近;唯一的分类任务是最大的增益。magnetic_susceptibility(58 行)超出量程,未画出。",
 "全タスクのウォームスタート vs 単独を物理量の種類で色分け。3つの示量性物性 — 単位胞のサイズに比例する量 — が判別可能な損失の上位3つである。示強性物性はゼロ付近に集まり、唯一の分類タスクが最大の改善。magnetic_susceptibility(58行)は範囲外のため省略。")}</figure>
-<div class="tablebox" style="max-width:640px"><table><thead><tr><th>{T("Reduced formula","约化化学式","既約化学式")}</th><th>{T("Atoms per cell","原胞原子数","単位胞の原子数")}</th><th>{T("Volume","体积","体積")}</th></tr></thead>
+{TH("Three formulas that are one and the same input to the descriptor, at different cell sizes","三个对描述符而言完全相同的输入,原胞大小却不同","記述子にとっては同一の入力である3つの化学式、単位胞サイズは異なる")}<div class="tablebox" style="max-width:640px"><table><thead><tr><th>{T("Reduced formula","约化化学式","既約化学式")}</th><th>{T("Atoms per cell","原胞原子数","単位胞の原子数")}</th><th>{T("Volume","体积","体積")}</th></tr></thead>
 <tbody><tr><td>AgSO<sub>4</sub></td><td>12 / 48</td><td>162.0 / 616.1</td></tr><tr><td>U(PO<sub>3</sub>)<sub>4</sub></td><td>34 / 136</td><td>450.1 / 1929.9</td></tr><tr><td>Ba(FeAs)<sub>2</sub></td><td>5 / 10</td><td>98.0 / 216.5</td></tr></tbody></table></div>
 <div class="col" style="margin-top:14px">{P("Why extensive properties: the descriptor returns atomic fractions, so Fe<sub>2</sub>O<sub>3</sub> and Fe<sub>4</sub>O<sub>6</sub> are identical to it — verified in code — and the three formulas above are the same input with a 4× difference in volume. Cell scale is not in the model's input at all. A single-task model recovers it from within-dataset composition-to-size correlations (corr(Volume, atoms) = +0.868); a shared encoder, pulled toward what 24 tasks have in common, keeps the scale-free part and loses that correlation. Replay explains the first two thirds of final_energy's loss; scale-blindness the rest. volume and dos_density follow the same pattern. This is the one part of the picture the replay mechanism does not explain, and the next experiment on the list.",
 "为什么是广延量:描述符返回原子分数,所以 Fe<sub>2</sub>O<sub>3</sub> 和 Fe<sub>4</sub>O<sub>6</sub> 对它完全相同——代码层面已验证——上表三个化学式是同一输入、体积相差 4 倍。原胞尺度根本不在模型输入里。单任务模型能从数据集内的组成–尺寸相关性把它推回来(corr(体积, 原子数) = +0.868);共享编码器被拉向 24 个任务的共性,保留了尺度无关的部分,丢掉了那条相关性。replay 解释了 final_energy 损失的前三分之二,尺度盲解释其余。volume 和 dos_density 遵循同一模式。这是 replay 机制解释不了的那一部分,也是清单上的下一个实验。",
@@ -361,7 +320,7 @@ out.append(f'''<section class="section">
 {P("Fixing the pretraining and varying how X is attached gives a 2×2. All four cells are done. The two unseen cells re-ran the first 23 steps of three transfer orderings with X dropped, same seed, to reproduce the step-23 encoder the pruner discarded — an encoder that has never seen X — and fine-tuned it with a fresh head.",
    "固定预训练、改变 X 的接入方式,得到一个 2×2。四格都已完成。两个未见过的格子把三个迁移顺序的前 23 步去掉 X 后同 seed 重跑,复现被裁剪器删掉的第 23 步编码器——一个从未见过 X 的编码器——再用新建的 head 微调。",
    "事前学習を固定しXのつなぎ方を変えると2×2になる。4マスすべて完了。未知の2マスは、3つの転移順序の最初の23ステップをXを除いて同じシードで再実行し、プルーナが捨てた第23ステップのエンコーダ — Xを一度も見ていないエンコーダ — を再現して、新規ヘッドで微調整した。")}</div>
-<div class="matrix">
+{TH("The 2×2 — whether the encoder saw X, by frozen or warm-start: better / worse / unresolved against alone","2×2——编码器是否见过 X,乘以冻结或 warm-start:相对单独的 好 / 差 / 不可分","2×2 — エンコーダがXを見たか × 凍結かウォームスタートか:単独に対する 改善 / 悪化 / 判定不能")}<div class="matrix">
 <div class="h"></div><div class="h">{T("frozen encoder","冻结编码器","エンコーダ凍結")}</div><div class="h">{T("encoder + head","编码器 + head","エンコーダ + ヘッド")}</div>
 <div class="h">{T("encoder saw X once","编码器见过 X 一次","エンコーダはXを一度見た")}</div><div class="done">{T("done · n=10 · 4 / 12 / 7","完成 · n=10 · 4 / 12 / 7","完了 · n=10 · 4 / 12 / 7")}</div><div class="done">{T("done · n=10 · 4 / 4 / 14","完成 · n=10 · 4 / 4 / 14","完了 · n=10 · 4 / 4 / 14")}</div>
 <div class="h">{T("encoder never saw X","编码器从未见过 X","エンコーダはXを見ていない")}</div>{cell_u("ftzu_vs_single")}{cell_u("ftfu_vs_single")}
