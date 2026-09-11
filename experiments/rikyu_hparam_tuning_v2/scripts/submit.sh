@@ -146,6 +146,8 @@ case "$STAGE" in
     # space-group study: the same head on UNWEIGHTED cross-entropy (TaskSpec.class_weights = "none").
     # Needs SRC_OVERRIDE — the knob is in no container yet.
     singlesgnw) CONFIG=probe6_mp2026_sgnw.toml;   OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
+    # ... and the same on the XenonPy classic descriptor (precomputed), to confirm the descriptor factor.
+    singlesgxc) CONFIG=probe6_mp2026_sgxc.toml;   OUT=stage_single_mp2026; DEFTIME=06:00:00 ;;
     *) echo "unknown stage '$STAGE'" >&2; exit 2 ;;
 esac
 TIME=${TIME:-$DEFTIME}

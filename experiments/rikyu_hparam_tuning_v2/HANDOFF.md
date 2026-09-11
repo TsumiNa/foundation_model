@@ -415,6 +415,40 @@ converts into score. So material_type's path to a gain **structurally cannot tra
      the transfer run's step-23 state (below). Presented in
      `summary_page/transferability_summary.html` §5.
 
+12. **Space group: why 0.24 here and 0.60 in the ShotgunCSP paper — done (2026-09-11).** The paper
+   (Liu et al., npj Comput. Mater. 2024, Fig. 3: 33,040 stable MP entries, 213 groups, XenonPy 290,
+   FC-NN, plain cross-entropy, top-1 60.22 ± 0.87%) and the pipeline's stN_space_group (151 groups,
+   KMD, encoder [256]→384 + head [64], sklearn-balanced class weights, last-epoch weights) were
+   compared with a local factorial on the SAME rows, label and split (`analysis/space_group_study.py`,
+   16 arms × 3 seeds, `summary/space_group_study{,_table}.json`). The arm built from the project's own
+   encoder/head classes reproduces the RIKYU run (0.247 ± 0.006 vs 0.241 ± 0.005, same stopping
+   epoch). Findings, as matched-pair effects on top-1 accuracy:
+   - **Loss weighting is the first-order cause**: unweighted cross-entropy +21 pt at the pipeline
+     shape (+27 mean over four pairs). With 151 classes the balanced weights range ×0.067 (Fm-3m) to
+     ×22 (10-row groups); the three largest groups are 26% of rows but 2% of the loss, and the
+     as-run head recalls 29% of Fm-3m, 4% of Pnma, 0% of P2_1/c and C2/c. Macro-F1 does not benefit
+     either (0.20 → 0.31 without weights). The weighted validation loss bottoms at epoch 6 and climbs,
+     so early stopping fires at 31 epochs with the training loss at 1.6.
+   - **The descriptor is the second cause**: XenonPy classic (290) +11 pt over KMD in every setting,
+     but classic WITHOUT its weighted-sum block only +1 — the gain is cell size. Atoms per cell alone
+     predicts the space group at 0.242 (majority 0.102; 1.9 bits MI). Same root as volume: KMD is
+     scale-blind. Third task that needs the cell scale.
+   - Model: the paper's 4-layer GELU/dropout net +4 pt (and −9 pt under balanced weights). Optimiser
+     recipe −0.3, input scaling −0.7, random split +1.6, best-val-loss vs last epoch −4 (last is right).
+   - All three switched: 0.611 on our data = the paper's 0.602.
+   - **Pipeline confirmation on RIKYU (5 seeds each, `summary/space_group_confirm.json`)** through the
+     new `[[tasks]] class_weights = "balanced" | "none"` knob (default unchanged), run via SRC_OVERRIDE on
+     a patched copy of the 0.3.2 container's package: stN as run 0.2412 ±
+     0.0053 / F1 0.2022; stW (none, KMD)
+     0.4650 ± 0.0064 / F1 0.3127; stX (none, XenonPy classic
+     precomputed) 0.5568 ± 0.0087 / F1 0.4002. Configs
+     `probe6_mp2026_sgnw.toml` / `_sgxc.toml`, grids `grid_singlesgnw/xc.txt`, stages `singlesgnw` /
+     `singlesgxc`. The space-group baseline to quote is 0.465 / 0.313 (KMD) or 0.557 / 0.400
+     (scale-aware descriptor), not 0.242 / 0.202; the labels page's "only high-symmetry families are
+     recognisable" is withdrawn. Presented in `summary_page/space_group_summary.html`.
+   - Open: whether magnetic_ordering / is_metal / is_gap_direct want the weights (two runs each);
+     the head shape for many-class tasks (the remaining 4–5 pt to the paper's net).
+
 **stage_xu, cost and caveats (2026-09-09).** One xu run is the matching transfer run minus its last
 step: 23 steps, 1,578 epochs, 24k → 78k rows per epoch as replay accumulates, 78.5 M sample-epochs —
 about 33 single-task trainings; the stage is 72 of them (≈ 28% of the transfer stage, ~200 GPU-hours
@@ -450,6 +484,10 @@ checkpoint in future transfer stages makes this whole stage unnecessary.
   warm-start (2 / 2 / 19) are the same picture, and material_type's gain is intact (0.694 vs 0.696).
   What the step-24 exposure buys is a trained head, which only matters when the encoder is frozen
   (4 tasks better, 0 worse).
+- "Space group is barely learnable from composition" cannot be said: the 0.24 was the balanced
+  class weights (−21 pt on 151 classes) plus KMD's blindness to cell size (−11 pt); the pipeline
+  reaches 0.47 with the weights off and 0.56 with a scale-aware descriptor, and the paper's 0.60 is
+  reproduced on our rows with its network.
 - "Warm-starting from the model library beats training alone" can be said for four tasks and
   denied for three; for the rest it is a wash. The library is a reasonable starting point, not a
   free win, and the extensive properties (final_energy, volume) should not be warm-started from it
