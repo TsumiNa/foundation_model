@@ -286,7 +286,7 @@ def fig_kmd_scale(out):
             ax.text(0.01, yi + 0.18, "not measured with XenonPy", va="center", fontsize=8.5, color=MUT)
     ax.set_yticks(y); ax.set_yticklabels([i[0] for i in items]); ax.set_xlim(0, 1.12); ax.invert_yaxis()
     fig.legend(loc="lower center", ncol=2, fontsize=9.5, frameon=False, bbox_to_anchor=(0.55, 0.0))
-    ax.set_title("Labels that depend on the size of the cell: KMD against a descriptor that carries the atom count", fontsize=11.5, color=INK)
+    ax.set_title("Cell-size labels: KMD vs a descriptor that carries the atom count", fontsize=11.5, color=INK)
     fig.tight_layout(rect=(0, 0.07, 1, 1)); fig.savefig(out / "kmd_scale.png"); plt.close(fig)
 
 
