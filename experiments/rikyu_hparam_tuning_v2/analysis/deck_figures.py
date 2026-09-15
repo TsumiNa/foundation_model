@@ -309,6 +309,24 @@ def fig_material_type(out):
             "test_rows": d["test_rows"], "losses": loss_end}
 
 
+def fig_added_transfer(out):
+    d = load("added_transfer.json"); rows = [r for r in d["per_task"] if r.get("warm")]
+    rows.sort(key=lambda r: r["relative_pct"] if r["relative_pct"] is not None else 0)
+    fig, ax = plt.subplots(figsize=(14, 8.5))
+    y = np.arange(len(rows))
+    for yi, r in zip(y, rows):
+        c = TEAL if r["verdict"] == "better" else ORANGE if r["verdict"] == "worse" else GREY
+        rel = r["relative_pct"]; se_rel = 2 * r["se_of_difference"] / abs(r["alone"]["mean"]) * 100
+        ax.barh(yi, rel, color=c, height=0.66, alpha=0.9); ax.errorbar(rel, yi, xerr=se_rel, color=INK, capsize=4, lw=1.4)
+        ax.text(rel + (0.6 if rel >= 0 else -0.6), yi, f"{rel:+.1f} %  ({r['alone']['mean']:.3f} → {r['warm']['mean']:.3f})", va="center", ha="left" if rel >= 0 else "right", fontsize=12.5, color=INK)
+    ax.axvline(0, color=INK, lw=1.2); ax.set_yticks(y); ax.set_yticklabels([f"{r['task'].replace('_', ' ')}  ({'macro-F1' if r['kind'] == 'classification' else 'R²'})" for r in rows], fontsize=13)
+    lo = min(r["relative_pct"] for r in rows); hi = max(r["relative_pct"] for r in rows); pad = 0.35 * (hi - lo + 1); ax.set_xlim(lo - pad, hi + pad)
+    ax.set_xlabel("warm-start − alone, as % of the alone mean (bar = 2×SE of the difference)"); ax.grid(axis="x", color="#E5E7EB", lw=0.8); ax.set_axisbelow(True)
+    handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in (TEAL, GREY, ORANGE)]
+    ax.legend(handles, [f"better ({d['counts']['better']})", f"unresolved ({d['counts']['unresolved']})", f"worse ({d['counts']['worse']})"], loc="lower right", frameon=False)
+    fig.tight_layout(); fig.savefig(out / "added_transfer.png"); plt.close(fig)
+
+
 def fig_kmd_scale(out):
     d = {r["task"]: r for r in load("descriptor.json")["per_task"]}
     sgc = load("space_group_confirm.json")["arms"]
@@ -345,6 +363,8 @@ def main():
     fig_confusions(rows, a.preds, a.out); fig_space_group(rows, a.preds, a.out)
     mt = fig_material_type(a.out); (a.out / "material_type_numbers.json").write_text(json.dumps(mt, indent=1))
     fig_kmd_scale(a.out)
+    if (S / "added_transfer.json").exists():
+        fig_added_transfer(a.out)
     print(f"{len(rows)} tasks; scatter figures {counts}; figures in {a.out}")
 
 

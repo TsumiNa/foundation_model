@@ -125,6 +125,8 @@ case "$STAGE" in
     # material_type warm-start with class weights OFF (seen encoders / never-seen encoders). Needs SRC_OVERRIDE.
     ftfn)       CONFIG=ft_full_mtnw.toml;     OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
     ftfun)      CONFIG=ft_full_new_mtnw.toml; OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
+    # the 17 added MP tasks warm-started from five 24-task library encoders (never saw them). Needs SRC_OVERRIDE.
+    ftadd)      CONFIG=ft_added_mp2026.toml;   OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
     # Long-budget check on the resolvable warm-start losers (final_energy, volume, dos_density):
     # 500 epochs, early stopping OFF, in both the warm-start arm and a single-task control, so the
     # budget is not the confound. Runs are 3-4x longer than the 150-epoch ones; 12h covers PACK=8.

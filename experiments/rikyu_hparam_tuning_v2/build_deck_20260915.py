@@ -322,6 +322,26 @@ def slide_mt_compare():
                 "Same encoders, same test rows, same fine-tune recipe in both columns; only the loss weighting of the material_type head differs."], y=3.7, size=15, h=2.5)
 
 
+def slide_added_transfer_table():
+    d = json.loads((S / "added_transfer.json").read_text()); rows = []
+    for r in sorted([r for r in d["per_task"] if r.get("warm")], key=lambda r: -(r["relative_pct"] or 0)):
+        rows.append([r["task"].replace("_", " "), "macro-F1" if r["kind"] == "classification" else "R²", f"{r['alone']['mean']:.3f} ± {r['alone']['sd']:.3f}", f"{r['warm']['mean']:.3f} ± {r['warm']['sd']:.3f}",
+                     f"{r['relative_pct']:+.1f} %", f"{2 * r['se_of_difference']:.3f}", r["verdict"], f"{st.fmean(r['epochs']):.0f}" if r["epochs"] else "—"])
+    c = d["counts"]
+    s = new("Transfer to the 17 added Materials Project tasks — the numbers", f"Warm-start from five 24-task library encoders that never saw the task vs training alone (5 seeds): {c['better']} better / {c['worse']} worse / {c['unresolved']} unresolved")
+    table(s, 0.4, 1.35, 12.5, ["task", "metric", "alone (5 seeds)", "warm-start (5 encoders)", "Δ rel.", "2×SE", "verdict", "epochs"], rows, col_w=[2.7, 1.1, 1.9, 2.1, 1.1, 0.9, 1.4, 0.9], size=11, head_size=11.5)
+
+
+def slide_added_transfer_setup():
+    s = new("Transfer to the 17 added Materials Project tasks — the setup", "The library's real use case: a property the encoder has never seen")
+    bullets(s, [
+        "• Encoders: five 24-task library checkpoints (five random pretraining orderings, the 2026-05-15 labels) — none of the 17 added tasks was in that pretraining.",
+        "• Fine-tune: fm finetune with a fresh head (add_new_tasks), encoder + head trained, unweighted cross-entropy for the classification heads, early stopping on the task's own validation loss, cap 150 epochs — the same recipe and rows as the from-scratch baselines on the 2026-09-11 dataset.",
+        "• Comparison: mean over 5 encoders vs mean over 5 seeds trained alone; 2×SE of the difference from both arms; better / worse needs separation at 2×SE and |Δ| ≥ 0.01.",
+        "• What it tests: whether a representation learned from 24 other properties transfers to new properties of the same compositions — the case a released model library is for.",
+    ], size=16)
+
+
 # ---- Part 3
 def slide_data_plan():
     s = new("Data plan — catalysts, high-entropy alloys, MOFs", "2–3 sets per family, ranked by fit for a composition-only model, adoption, and diversity; status = proposal")
@@ -455,6 +475,11 @@ def main():
     pic_slide("material_type: training and validation loss, alone vs warm-start", "Median over runs with the inter-quartile band; the warm-started runs start lower and stop earlier at the same floor", FIG / "mt_losses.png")
     slide_mt_why(); slide_mt_compare()
     pic_slide("material_type against pretraining breadth (continual arm)", "From the 240-run transfer stage, measured with the class weights on (the only breadth scan available): later in the sequence is better", FIG / "mt_position.png")
+    if (S / "added_transfer.json").exists():
+        divider("Part 2b — Transfer to tasks the encoder never saw", "The 17 Materials Project tasks added on 2026-09-11, warm-started from the 24-task library")
+        slide_added_transfer_setup()
+        pic_slide("Transfer to the 17 added tasks — overall result", "Bars = warm-start minus alone in % of the alone mean; whiskers = 2×SE; colour = verdict", FIG / "added_transfer.png")
+        slide_added_transfer_table()
     # ---- Part 3
     divider("Part 3 — Data plan", "Catalysts, high-entropy alloys, MOFs: what is selected, what is still being evaluated")
     slide_data_plan(); slide_data_notes()

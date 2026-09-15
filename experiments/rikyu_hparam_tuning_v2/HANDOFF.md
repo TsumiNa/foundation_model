@@ -499,6 +499,20 @@ converts into score. So material_type's path to a gain **structurally cannot tra
      is a learning curve: added MP tasks (never in the 24-task pretraining) fine-tuned from the library
      encoders at 5 / 10 / 25 / 50 / 100 % of their training rows vs from scratch. Not run.
 
+14. **Transfer to the 17 added MP tasks — done (2026-09-15, stage_ft ftA_*, 85 runs).** Warm-start from five
+   24-task library encoders (`_ckpt/density/o0..o4`, orderings that never contained the task), fresh head,
+   encoder + head trained, class weights off, 2026-09-11 dataset, vs the from-scratch 5-seed baselines
+   (`analysis/added_transfer.py`, `summary/added_transfer.json`, config `ft_added_mp2026.toml`, grid
+   `grid_ftadd.txt`, stage `ftadd`). Counts: **1 better / 5 worse / 11 unresolved**.
+   Better: is_gap_direct +6.2 %. Worse: reaction_energy -12.5 %, cbm -2.1 %, poisson_ratio -21.1 %, universal_anisotropy -6.9 %, space_group -8.0 %. Every other task is within 2×SE and under 1 %.
+   With the task's full training data (1k–23k rows) the library encoder brings no accuracy; it hurts the
+   low-signal tasks (reaction_energy, poisson_ratio, universal_anisotropy: R² 0.3 alone) and space_group.
+   Fine-tunes stop earlier than training alone (e.g. magnetic_ordering / is_metal / is_gap_direct ~30 epochs).
+   Together with experiment 13 (material_type: no gain under any fair protocol, weighted loss was the
+   "+22 %"), the transfer story at full data is closed: none. What remains untested — and what the
+   representation bound predicts — is the low-data regime: the same 17 tasks at 5 / 10 / 25 / 50 % of their
+   training rows (label-masked versioned datasets), warm-start vs alone. Not run.
+
 **stage_xu, cost and caveats (2026-09-09).** One xu run is the matching transfer run minus its last
 step: 23 steps, 1,578 epochs, 24k → 78k rows per epoch as replay accumulates, 78.5 M sample-epochs —
 about 33 single-task trainings; the stage is 72 of them (≈ 28% of the transfer stage, ~200 GPU-hours
@@ -538,6 +552,9 @@ checkpoint in future transfer stages makes this whole stage unnecessary.
   class weights (−21 pt on 151 classes) plus KMD's blindness to cell size (−11 pt); the pipeline
   reaches 0.47 with the weights off and 0.56 with a scale-aware descriptor, and the paper's 0.60 is
   reproduced on our rows with its network.
+- "A new property warm-started from the 24-task library beats training alone" cannot be said at full
+  data: 1 better / 5 worse / 11 unresolved over the 17 added MP tasks (experiment 14). Nor can it for
+  material_type once the loss is right (experiment 13). Transfer at low data volume is unmeasured.
 - "Warm-starting from the model library beats training alone" can be said for four tasks and
   denied for three; for the rest it is a wash. The library is a reasonable starting point, not a
   free win, and the extensive properties (final_energy, volume) should not be warm-started from it
