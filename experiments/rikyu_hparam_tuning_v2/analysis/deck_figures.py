@@ -311,17 +311,21 @@ def fig_material_type(out):
 
 def fig_added_transfer(out):
     d = load("added_transfer.json"); rows = [r for r in d["per_task"] if r.get("warm")]
-    rows.sort(key=lambda r: r["relative_pct"] if r["relative_pct"] is not None else 0)
-    fig, ax = plt.subplots(figsize=(14, 8.5))
+    rows.sort(key=lambda r: r["delta"])
+    fig, ax = plt.subplots(figsize=(15, 8.8))
     y = np.arange(len(rows))
     for yi, r in zip(y, rows):
         c = TEAL if r["verdict"] == "better" else ORANGE if r["verdict"] == "worse" else GREY
-        rel = r["relative_pct"]; se_rel = 2 * r["se_of_difference"] / abs(r["alone"]["mean"]) * 100
-        ax.barh(yi, rel, color=c, height=0.66, alpha=0.9); ax.errorbar(rel, yi, xerr=se_rel, color=INK, capsize=4, lw=1.4)
-        ax.text(rel + (0.6 if rel >= 0 else -0.6), yi, f"{rel:+.1f} %  ({r['alone']['mean']:.3f} → {r['warm']['mean']:.3f})", va="center", ha="left" if rel >= 0 else "right", fontsize=12.5, color=INK)
-    ax.axvline(0, color=INK, lw=1.2); ax.set_yticks(y); ax.set_yticklabels([f"{r['task'].replace('_', ' ')}  ({'macro-F1' if r['kind'] == 'classification' else 'R²'})" for r in rows], fontsize=13)
-    lo = min(r["relative_pct"] for r in rows); hi = max(r["relative_pct"] for r in rows); pad = 0.35 * (hi - lo + 1); ax.set_xlim(lo - pad, hi + pad)
-    ax.set_xlabel("warm-start − alone, as % of the alone mean (bar = 2×SE of the difference)"); ax.grid(axis="x", color="#E5E7EB", lw=0.8); ax.set_axisbelow(True)
+        ax.barh(yi, r["delta"], color=c, height=0.66, alpha=0.9); ax.errorbar(r["delta"], yi, xerr=2 * r["se_of_difference"], color=INK, capsize=4, lw=1.4)
+    lo = min(r["delta"] - 2 * r["se_of_difference"] for r in rows); hi = max(r["delta"] + 2 * r["se_of_difference"] for r in rows)
+    span = hi - lo; ax.set_xlim(lo - 0.06 * span, hi + 0.95 * span)
+    xt = hi + 0.08 * span
+    for yi, r in zip(y, rows):
+        rel = f"{r['relative_pct']:+.1f} %" if abs(r["alone"]["mean"]) >= 0.1 else "n/a (alone ≈ 0)"
+        ax.text(xt, yi, f"{r['alone']['mean']:.3f} → {r['warm']['mean']:.3f}   {rel}   {r['verdict']}", va="center", fontsize=13, color=INK, family="monospace")
+    ax.text(xt, len(rows) - 0.25, "alone → warm-start   relative   verdict", fontsize=12, color=MUT, family="monospace")
+    ax.axvline(0, color=INK, lw=1.2); ax.set_yticks(y); ax.set_yticklabels([f"{r['task'].replace('_', ' ')}  ({'macro-F1' if r['kind'] == 'classification' else 'R²'})" for r in rows], fontsize=13.5)
+    ax.set_xlabel("warm-start − alone (R² or macro-F1; whisker = 2×SE of the difference)"); ax.grid(axis="x", color="#E5E7EB", lw=0.8); ax.set_axisbelow(True)
     handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in (TEAL, GREY, ORANGE)]
     ax.legend(handles, [f"better ({d['counts']['better']})", f"unresolved ({d['counts']['unresolved']})", f"worse ({d['counts']['worse']})"], loc="lower right", frameon=False)
     fig.tight_layout(); fig.savefig(out / "added_transfer.png"); plt.close(fig)
