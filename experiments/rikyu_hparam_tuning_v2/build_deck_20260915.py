@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Build results/DECK_20260915.pptx — tasks & single-task performance, material_type transfer,
-the data plan, and the release / LLM proposal.
+the data plan, and the release / LLM roadmap.
 
 Numbers come from results/deck_20260915/performance_table.json and material_type_numbers.json
 (written by analysis/deck_figures.py) and from the summary JSONs; figures from results/deck_20260915.
-One idea per slide; the reader deletes what is not needed.
+One idea per slide, presentation-sized fonts; the reader deletes what is not needed.
 
     uv run --with python-pptx --with pillow python experiments/rikyu_hparam_tuning_v2/build_deck_20260915.py
 """
@@ -14,9 +14,13 @@ import json
 import statistics as st
 from pathlib import Path
 
+from lxml import etree
+from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
+from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 
-from build_report_pptx import BLANK, GREEN, INK, MUT, RED, WHITE, new, pic_slide, prs, table, txt  # noqa: F401
+from build_report_pptx import BLANK, GREEN, HEADGREY, INK, MUT, RED, WHITE, new, pic_slide, prs, txt  # noqa: F401
+from pptx.dml.color import RGBColor
 
 HERE = Path(__file__).resolve().parent
 S = HERE / "summary"
@@ -25,58 +29,60 @@ DATE = "2026-09-15"
 PERF = json.loads((FIG / "performance_table.json").read_text())
 MT = json.loads((FIG / "material_type_numbers.json").read_text())
 INV = {t["name"]: t for t in json.loads((S / "task_inventory_20260911.json").read_text())}
+TEAL = RGBColor(0x0E, 0x6E, 0x78); PURPLE = RGBColor(0x5B, 0x3F, 0x8C); PALE = RGBColor(0xE8, 0xEE, 0xF2); PALE2 = RGBColor(0xD5, 0xE8, 0xEA)
 
 # ------------------------------------------------------------------ task descriptions
-# (source, what it is, unit of the raw label; every label is trained on its normalised form)
 DESC = {
-    # Materials Project — DFT (GGA / GGA+U) properties of stable inorganic crystals, rebuilt 2026-09-11
     "final_energy": ("Materials Project", "DFT total energy per atom (GGA / GGA+U scheme)", "eV / atom"),
     "formation_energy": ("Materials Project", "Formation energy per atom relative to the elements", "eV / atom"),
-    "reaction_energy": ("Materials Project", "Equilibrium reaction energy: thermodynamic margin to the nearest competing phases", "eV / atom"),
-    "volume": ("Materials Project", "Volume of the cell as stored (KMD-limited: the descriptor cannot see the cell size)", "Å³"),
+    "reaction_energy": ("Materials Project", "Equilibrium reaction energy: margin to the nearest competing phases", "eV / atom"),
+    "volume": ("Materials Project", "Volume of the cell as stored (KMD-limited)", "Å³"),
     "density": ("Materials Project", "Mass density of the crystal", "g / cm³"),
-    "density_atomic": ("Materials Project", "Volume per atom (the intensive form of volume)", "Å³ / atom"),
+    "density_atomic": ("Materials Project", "Volume per atom (intensive form of volume)", "Å³ / atom"),
     "efermi": ("Materials Project", "Fermi energy", "eV"),
-    "band_gap": ("Materials Project", "Electronic band gap from the GGA band structure", "eV"),
+    "band_gap": ("Materials Project", "Electronic band gap (GGA band structure)", "eV"),
     "cbm": ("Materials Project", "Conduction-band minimum (non-metals only)", "eV"),
     "vbm": ("Materials Project", "Valence-band maximum (non-metals only)", "eV"),
-    "is_metal": ("Materials Project", "Metal or not (gap = 0) — 2 classes", "—"),
-    "is_gap_direct": ("Materials Project", "Direct or indirect gap (non-metals) — 2 classes", "—"),
-    "total_magnetization": ("Materials Project", "Net magnetic moment of the cell (KMD-limited, per-cell quantity)", "μB / cell"),
+    "is_metal": ("Materials Project", "Metal or not (gap = 0), 2 classes", "—"),
+    "is_gap_direct": ("Materials Project", "Direct or indirect gap (non-metals), 2 classes", "—"),
+    "total_magnetization": ("Materials Project", "Net magnetic moment of the cell (KMD-limited)", "μB / cell"),
     "magnetization_per_volume": ("Materials Project", "Net magnetic moment per unit volume", "μB / Å³"),
     "magnetization_per_fu": ("Materials Project", "Net magnetic moment per formula unit", "μB / f.u."),
-    "magnetic_ordering": ("Materials Project", "Magnetic ordering of the ground state: NM / FM / FiM / AFM — 4 classes", "—"),
+    "magnetic_ordering": ("Materials Project", "Ground-state ordering NM / FM / FiM / AFM, 4 classes", "—"),
     "dielectric_total": ("Materials Project", "Total dielectric constant (DFPT)", "—"),
-    "dielectric_ionic": ("Materials Project", "Ionic contribution to the dielectric constant", "—"),
-    "dielectric_electronic": ("Materials Project", "Electronic contribution to the dielectric constant", "—"),
-    "refractive_index": ("Materials Project", "Refractive index (√ of the electronic dielectric constant)", "—"),
-    "bulk_modulus": ("Materials Project", "Bulk modulus, Voigt–Reuss–Hill average of the elastic tensor", "GPa"),
+    "dielectric_ionic": ("Materials Project", "Ionic part of the dielectric constant", "—"),
+    "dielectric_electronic": ("Materials Project", "Electronic part of the dielectric constant", "—"),
+    "refractive_index": ("Materials Project", "Refractive index (√ electronic dielectric constant)", "—"),
+    "bulk_modulus": ("Materials Project", "Bulk modulus, Voigt–Reuss–Hill average", "GPa"),
     "shear_modulus": ("Materials Project", "Shear modulus, Voigt–Reuss–Hill average", "GPa"),
     "poisson_ratio": ("Materials Project", "Poisson ratio from the elastic tensor", "—"),
     "universal_anisotropy": ("Materials Project", "Universal elastic anisotropy index", "—"),
-    "piezoelectric_max": ("Materials Project", "Largest component of the piezoelectric tensor (DFPT)", "C / m²"),
-    "space_group": ("Materials Project", "Space group of the relaxed structure — 151 classes with ≥ 10 rows", "—"),
-    # thermoelectric curves (starry): one curve per composition, kernel regression over a coordinate t
-    "seebeck": ("thermoelectric (starry)", "Seebeck coefficient S(T) — curve over temperature", "V / K"),
-    "electrical_resistivity": ("thermoelectric (starry)", "Electrical resistivity ρ(T) — curve over temperature", "Ω·m"),
-    "thermal_conductivity": ("thermoelectric (starry)", "Thermal conductivity κ(T) — curve over temperature", "W / (m·K)"),
-    "power_factor": ("thermoelectric (starry)", "Power factor S²σ(T) — curve over temperature", "W / (m·K²)"),
-    "zt": ("thermoelectric (starry)", "Thermoelectric figure of merit ZT(T) — curve over temperature", "—"),
-    "magnetic_susceptibility": ("thermoelectric (starry)", "Magnetic susceptibility χ(T) — curve over temperature (58 compositions)", "A·m² / mol"),
-    "dos_density": ("thermoelectric (starry)", "Electronic density of states — curve over energy", "states / eV"),
-    # NEMAD (text-mined experimental magnetic / superconductor databases)
-    "magnetization": ("NEMAD magnetic", "Magnetization (experimental)", "A·m² / kg"),
+    "piezoelectric_max": ("Materials Project", "Largest piezoelectric tensor component (DFPT)", "C / m²"),
+    "space_group": ("Materials Project", "Space group of the relaxed structure, 151 classes (see the space-group slide)", "—"),
+    "seebeck": ("thermoelectric (starry)", "Seebeck coefficient S(T), curve over temperature", "V / K"),
+    "electrical_resistivity": ("thermoelectric (starry)", "Electrical resistivity ρ(T), curve over temperature", "Ω·m"),
+    "thermal_conductivity": ("thermoelectric (starry)", "Thermal conductivity κ(T), curve over temperature", "W / (m·K)"),
+    "power_factor": ("thermoelectric (starry)", "Power factor S²σ(T), curve over temperature", "W / (m·K²)"),
+    "zt": ("thermoelectric (starry)", "Figure of merit ZT(T), curve over temperature", "—"),
+    "magnetic_susceptibility": ("thermoelectric (starry)", "Magnetic susceptibility χ(T), curve over temperature (58 compositions)", "A·m² / mol"),
+    "dos_density": ("thermoelectric (starry)", "Electronic density of states, curve over energy", "states / eV"),
+    "magnetization": ("NEMAD magnetic", "Magnetization (experimental, text-mined)", "A·m² / kg"),
     "magnetic_moment": ("NEMAD magnetic", "Magnetic moment per formula unit (experimental)", "μB / f.u."),
     "curie": ("NEMAD magnetic", "Curie temperature", "K"),
     "neel": ("NEMAD magnetic", "Néel temperature", "K"),
     "tc": ("NEMAD superconductor", "Superconducting transition temperature", "K"),
-    # phonix-db (first-principles phonon transport)
-    "kp": ("phonix-db", "Particle-like (Peierls) part of the lattice thermal conductivity, κ_p", "W / (m·K)"),
-    "klat": ("phonix-db", "Lattice thermal conductivity, κ_lat", "W / (m·K)"),
-    # quasicrystal classification
-    "material_type": ("quasicrystal (qa/starry)", "DAC / DQC / IAC / IQC / others — approximant crystals, quasicrystals, everything else (5 classes, 99 % “others”)", "—"),
+    "kp": ("phonix-db", "Particle-like (Peierls) part of the lattice thermal conductivity κ_p", "W / (m·K)"),
+    "klat": ("phonix-db", "Lattice thermal conductivity κ_lat", "W / (m·K)"),
+    "material_type": ("quasicrystal (qa/starry)", "DAC / DQC / IAC / IQC / others — approximants, quasicrystals, everything else (5 classes, 99 % “others”)", "—"),
 }
-KIND_LABEL = {"regression": "regression", "kernel_regression": "curve (kernel regression over t)", "classification": "classification"}
+KIND_LABEL = {"regression": "regression", "kernel_regression": "curve", "classification": "classification"}
+ADDED = {"band_gap", "density_atomic", "magnetization_per_volume", "magnetization_per_fu", "reaction_energy", "cbm", "vbm", "bulk_modulus",
+         "shear_modulus", "poisson_ratio", "universal_anisotropy", "refractive_index", "piezoelectric_max", "magnetic_ordering", "is_metal",
+         "is_gap_direct", "space_group"}
+
+
+SHORT_STATUS = {"labels unchanged; same rows, measured 2026-08": "unchanged labels (2026-08 runs)", "relabelled, 2026-09-11 dataset": "relabelled (2026-09-11)",
+                "added, 2026-09-11 dataset": "added (2026-09-11)", "class weights off, 2026-09-11 dataset": "class weights off (2026-09-11)"}
 
 
 def perf(task):
@@ -87,47 +93,66 @@ def fmt_n(v):
     return "—" if v is None else f"{v:,}"
 
 
+# ------------------------------------------------------------------ helpers (bigger type than the old deck)
+def table(slide, x, y, w, headers, rows, col_w=None, size=13, head_size=13, section_rows=()):
+    shape = slide.shapes.add_table(len(rows) + 1, len(headers), Inches(x), Inches(y), Inches(w), Inches(0.42 * (len(rows) + 1)))
+    tbl = shape.table
+    if col_w:
+        for i, cw in enumerate(col_w):
+            tbl.columns[i].width = Inches(cw)
+    for j, head in enumerate(headers):
+        cell = tbl.cell(0, j); cell.text = str(head); para = cell.text_frame.paragraphs[0]
+        para.font.size = Pt(head_size); para.font.bold = True; para.font.color.rgb = WHITE
+        cell.fill.solid(); cell.fill.fore_color.rgb = HEADGREY
+    for i, row in enumerate(rows, start=1):
+        is_section = (i - 1) in section_rows
+        for j, value in enumerate(row):
+            cell = tbl.cell(i, j); cell.text = str(value); para = cell.text_frame.paragraphs[0]
+            para.font.size = Pt(size); para.font.color.rgb = INK
+            if is_section:
+                para.font.bold = True; para.font.color.rgb = WHITE; cell.fill.solid(); cell.fill.fore_color.rgb = TEAL
+            elif j:
+                para.alignment = PP_ALIGN.LEFT
+        if is_section and len(row) > 1:
+            tbl.cell(i, 0).merge(tbl.cell(i, len(row) - 1))
+    return tbl
+
+
+def divider(title, sub):
+    s = prs.slides.add_slide(BLANK)
+    bg = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height); bg.fill.solid(); bg.fill.fore_color.rgb = TEAL; bg.line.fill.background()
+    txt(s, 0.9, 2.6, 11.5, 1.4, [title], size=40, bold=True, color=WHITE)
+    txt(s, 0.9, 4.0, 11.5, 1.2, [sub], size=20, color=WHITE)
+    return s
+
+
+def bullets(s, lines, y=1.4, size=18, h=5.6):
+    txt(s, 0.6, y, 12.1, h, lines, size=size)
+
+
 # ------------------------------------------------------------------ slides
 def slide_title():
     s = prs.slides.add_slide(BLANK)
-    txt(s, 0.7, 2.2, 12, 1.2, ["Composition-only foundation model: tasks, transfer, data plan, release"], size=32, bold=True)
-    txt(s, 0.7, 3.5, 12, 1.5, [f"Status deck, {DATE} — dataset 2026-09-11, KMD descriptor, stage_single recipe, class weights off",
-                               "1 · What the model is trained on and how each task performs alone",
-                               "2 · material_type transfer: warm-start fine-tuning, with and without the target in pretraining",
-                               "3 · Data plan: catalysts, high-entropy alloys, MOFs",
-                               "4 · Pretrained-model release and LLM access (proposal)"], size=14, color=MUT)
-
-
-def slide_agenda():
-    s = new("How to read this deck", "One idea per slide; delete freely")
-    txt(s, 0.6, 1.4, 12, 5, [
-        "Part 1 — 41 tasks over five data sources. Every task has a single-task baseline: the same recipe, KMD descriptor, five seeds, early stopping, test split.",
-        "   Tasks whose labels changed or were added in the 2026-09-11 rebuild were re-measured on it; tasks whose rows and labels did not change keep their measured baselines.",
-        "   Classification heads are quoted with class weights OFF (the 2026-09-11 decision); the change against the old weighted numbers is on its own slide.",
-        "Part 2 — material_type transfer. Only warm-start fine-tuning with the encoder trained is shown; the key comparison is an encoder that saw the task during pretraining vs one that never did.",
-        "Part 3 — the datasets surveyed for catalysts, high-entropy alloys and MOFs, split into import-now and still-evaluating; HEA has not been surveyed yet.",
-        "Part 4 — release plan and LLM access. This part is a proposal, not a measurement.",
-        "",
-        "Conventions: ± is the sd over seeds; 2×SE is twice the standard error of a difference; every regression label is trained on its normalised form, so R² and MAE are on that scale.",
-    ], size=13)
+    txt(s, 0.7, 2.1, 12, 1.4, ["Composition-only foundation model:", "tasks, transfer, data plan, release"], size=34, bold=True)
+    txt(s, 0.7, 4.0, 12, 1.5, [f"Status deck, {DATE} — dataset 2026-09-11, KMD descriptor, class weights off everywhere",
+                               "1 · Tasks and single-task performance   2 · material_type transfer   3 · Data plan   4 · Release and LLM access"], size=16, color=MUT)
 
 
 def slide_dataset():
     s = new("The 2026-09-11 dataset", "One row per composition; every task is a column, missing where the source has no value")
     rows = [
-        ["Materials Project (stable entries, GGA / GGA+U only)", "33,829", "energies, structure, electronic, magnetic, elastic, dielectric, space group", "26 tasks"],
-        ["Thermoelectric curves (starry)", "14,838", "S, ρ, κ, PF, ZT, χ over temperature; DOS over energy", "7 curve tasks"],
-        ["Quasicrystal set (qa / starry)", "49,034 (all rows carry a label)", "material type: DAC / DQC / IAC / IQC / others", "1 task"],
-        ["NEMAD magnetic (text-mined, experimental)", f"{fmt_n(perf('curie')['n_train'])} train (Curie)", "magnetization, moment, Curie, Néel", "4 tasks"],
-        ["NEMAD superconductor", f"{fmt_n(perf('tc')['n_train'])} train", "transition temperature", "1 task"],
-        ["phonix-db (phonon transport)", f"{fmt_n(perf('klat')['n_train'])} train", "κ_p, κ_lat", "2 tasks"],
+        ["Materials Project — stable entries, GGA / GGA+U only", "33,829", "energies, structure, electronic, magnetic, elastic, dielectric, space group", "26"],
+        ["Thermoelectric curves (starry)", "14,838", "S, ρ, κ, PF, ZT, χ over temperature; DOS over energy", "7"],
+        ["Quasicrystal set (qa / starry)", "49,034 rows labelled", "material type: DAC / DQC / IAC / IQC / others", "1"],
+        ["NEMAD magnetic (text-mined, experimental)", f"{fmt_n(perf('curie')['n_train'])} (Curie)", "magnetization, moment, Curie, Néel", "4"],
+        ["NEMAD superconductor", fmt_n(perf("tc")["n_train"]), "transition temperature", "1"],
+        ["phonix-db (phonon transport)", fmt_n(perf("klat")["n_train"]), "κ_p, κ_lat", "2"],
     ]
-    table(s, 0.5, 1.4, 12.3, ["source", "compositions", "what it carries", "tasks"], rows, col_w=[4.0, 2.4, 4.6, 1.3], size=11)
-    txt(s, 0.5, 4.6, 12.3, 2.4, [
-        "Rebuild of the Materials Project part (2026-09-11): one level of theory per column family (thermo GGA_GGA+U; structure and magnetism from the GGA-family task; electronic values only where MP's origin is GGA-family),",
-        "per-cell quantities rescaled to the dataset's cell, provenance recorded, versioned files never overwritten. It fixed final_energy (R² 0.77 → 0.999) and added 17 properties.",
-        "Input to the model: the composition string only, turned into the KMD descriptor (464 columns, invertible — the property the inverse-design path needs).",
-    ], size=12, color=MUT)
+    table(s, 0.5, 1.4, 12.3, ["source", "compositions", "what it carries", "tasks"], rows, col_w=[4.3, 2.0, 5.0, 1.0], size=13)
+    txt(s, 0.5, 4.8, 12.3, 2.3, [
+        "Input to the model: the composition string only → KMD descriptor (464 columns, invertible).",
+        "Materials Project part rebuilt 2026-09-11 on one level of theory per column family; it fixed final_energy (R² 0.77 → 0.999) and added 17 properties.",
+    ], size=14, color=MUT)
 
 
 def slide_inventory(title, tasks, sub):
@@ -136,7 +161,7 @@ def slide_inventory(title, tasks, sub):
     for t in tasks:
         src, what, unit = DESC[t]; inv = INV[t]; n = inv["n"] or {}
         rows.append([t.replace("_", " "), what, unit, KIND_LABEL[inv["kind"]], fmt_n(n.get("train") or perf(t)["n_train"]), fmt_n(n.get("test") or perf(t)["n_test"])])
-    table(s, 0.4, 1.35, 12.5, ["task", "what it is", "unit", "kind", "train rows", "test rows"], rows, col_w=[2.2, 5.6, 1.2, 1.7, 0.9, 0.9], size=9.5, head_size=10)
+    table(s, 0.4, 1.35, 12.5, ["task", "what it is", "unit", "kind", "train", "test"], rows, col_w=[2.3, 5.9, 1.3, 1.3, 0.85, 0.85], size=12.5, head_size=12.5)
 
 
 def slide_perf_table(title, tasks, sub):
@@ -145,199 +170,243 @@ def slide_perf_table(title, tasks, sub):
     for t in tasks:
         r = perf(t)
         if r["metric"] == "R²":
-            rows.append([t.replace("_", " "), "R²", f"{r['mean']:.4f} ± {r['sd']:.4f}", f"{r.get('mae', float('nan')):.4f}" if r.get("mae") else "—", fmt_n(r["n_test"]), r["status"]])
+            rows.append([t.replace("_", " "), "R²", f"{r['mean']:.3f} ± {r['sd']:.3f}", f"{r['mae']:.3f}" if r.get("mae") else "—", fmt_n(r["n_test"]), SHORT_STATUS.get(r["status"], r["status"])])
         else:
-            rows.append([t.replace("_", " "), "macro-F1", f"{r['mean']:.4f} ± {r['sd']:.4f}", f"acc {r['accuracy']:.4f}", fmt_n(r["n_test"]), r["status"]])
-    table(s, 0.4, 1.35, 12.5, ["task", "metric", "mean ± sd (5 seeds)", "MAE / accuracy", "test rows", "measured on"], rows, col_w=[2.3, 1.0, 2.2, 1.6, 1.0, 4.4], size=9.5, head_size=10)
+            rows.append([t.replace("_", " "), "macro-F1", f"{r['mean']:.3f} ± {r['sd']:.3f}", f"acc {r['accuracy']:.3f}", fmt_n(r["n_test"]), SHORT_STATUS.get(r["status"], r["status"])])
+    table(s, 0.4, 1.35, 12.5, ["task", "metric", "mean ± sd (5 seeds)", "MAE / accuracy", "test rows", "measured on"], rows, col_w=[2.6, 1.1, 2.3, 1.7, 1.1, 3.7], size=12.5, head_size=12.5)
+
+
+def slide_space_group_why():
+    s = new("Space group: why 151 classes and not 230", "The count is data availability, not a physics choice")
+    bullets(s, [
+        "• 230 space groups exist. The stable Materials Project set contains 213 of them; 17 never occur among stable entries.",
+        "• A class needs enough examples to be learned and to be evaluated. We keep every group with ≥ 10 rows and at least one row in both the train and the test split: 151 groups.",
+        "• The other 62 groups hold 274 rows together (0.8 % of the rows). Their rows are not dropped: the space-group label is set to missing for them, exactly as any other task treats a missing value, and they still train every other head.",
+        "• The distribution is the physics of the crystal world: Fm-3m alone is 10 % of the rows, the 12 largest groups are half of them, and the tail is long. Macro-F1 is bounded by that tail; top-1 accuracy is the number to watch.",
+        "• Single-task result (class weights off, 5 seeds): top-1 accuracy 0.465, macro-F1 0.313. The ShotgunCSP classifier reaches 0.60 with a descriptor that carries the atom count and a wider network — see the space-group investigation page.",
+    ], size=17)
 
 
 def slide_clf_change():
-    s = new("Classification heads: class weights off", "Inverse-frequency weights were on for every classification head until 2026-09-11; switching them off helps every head on the aggregate metric")
+    s = new("Classification heads: class weights switched off", "Inverse-frequency weights were on for every classification head until 2026-09-11; every number in this deck is without them")
     cw = json.loads((S / "classification_weights.json").read_text())["tasks"]
     mt = json.loads((S / "material_type_weights.json").read_text())["arms"]
     sg = json.loads((S / "space_group_confirm.json").read_text())["arms"]
     def m(rs, k): return st.fmean(r[k] for r in rs)
-    rows = [["material_type (5 classes, 99 % majority)", f"{m(mt['balanced']['runs'], 'macro_f1'):.3f}", f"{m(mt['none']['runs'], 'macro_f1'):.3f}", f"{m(mt['balanced']['runs'], 'accuracy'):.4f} → {m(mt['none']['runs'], 'accuracy'):.4f}", "rare-class recall unchanged, precision doubles"],
-            ["space_group (151 classes)", f"{m(sg['balanced_kmd']['runs'], 'macro_f1'):.3f}", f"{m(sg['plain_kmd']['runs'], 'macro_f1'):.3f}", f"{m(sg['balanced_kmd']['runs'], 'accuracy'):.3f} → {m(sg['plain_kmd']['runs'], 'accuracy'):.3f}", "the large groups become learnable"],
-            ["magnetic_ordering (4 classes)", f"{m(cw['magnetic_ordering']['arms']['balanced']['runs'], 'macro_f1'):.3f}", f"{m(cw['magnetic_ordering']['arms']['none']['runs'], 'macro_f1'):.3f}", f"{m(cw['magnetic_ordering']['arms']['balanced']['runs'], 'accuracy'):.3f} → {m(cw['magnetic_ordering']['arms']['none']['runs'], 'accuracy'):.3f}", "AFM recall 0.56 → 0.14 (118 test rows)"],
+    rows = [["material_type (5 classes, 99 % majority)", f"{m(mt['balanced']['runs'], 'macro_f1'):.3f}", f"{m(mt['none']['runs'], 'macro_f1'):.3f}", f"{m(mt['balanced']['runs'], 'accuracy'):.3f} → {m(mt['none']['runs'], 'accuracy'):.3f}", "rare-class precision doubles"],
+            ["space_group (151 classes)", f"{m(sg['balanced_kmd']['runs'], 'macro_f1'):.3f}", f"{m(sg['plain_kmd']['runs'], 'macro_f1'):.3f}", f"{m(sg['balanced_kmd']['runs'], 'accuracy'):.3f} → {m(sg['plain_kmd']['runs'], 'accuracy'):.3f}", "large groups become learnable"],
+            ["magnetic_ordering (4 classes)", f"{m(cw['magnetic_ordering']['arms']['balanced']['runs'], 'macro_f1'):.3f}", f"{m(cw['magnetic_ordering']['arms']['none']['runs'], 'macro_f1'):.3f}", f"{m(cw['magnetic_ordering']['arms']['balanced']['runs'], 'accuracy'):.3f} → {m(cw['magnetic_ordering']['arms']['none']['runs'], 'accuracy'):.3f}", "AFM recall 0.56 → 0.14 (118 rows)"],
             ["is_metal (2 balanced classes)", f"{m(cw['is_metal']['arms']['balanced']['runs'], 'macro_f1'):.3f}", f"{m(cw['is_metal']['arms']['none']['runs'], 'macro_f1'):.3f}", "unchanged", "weights ≈ 1"],
-            ["is_gap_direct (13 % direct)", f"{m(cw['is_gap_direct']['arms']['balanced']['runs'], 'macro_f1'):.3f}", f"{m(cw['is_gap_direct']['arms']['none']['runs'], 'macro_f1'):.3f}", f"{m(cw['is_gap_direct']['arms']['balanced']['runs'], 'accuracy'):.3f} → {m(cw['is_gap_direct']['arms']['none']['runs'], 'accuracy'):.3f}", "direct-gap recall 0.79 → 0.25; threshold at inference if needed"]]
-    table(s, 0.5, 1.4, 12.3, ["head", "macro-F1 with weights", "macro-F1 without", "accuracy", "what moves"], rows, col_w=[3.3, 1.7, 1.7, 2.0, 3.6], size=11)
-    txt(s, 0.5, 4.3, 12.3, 2.5, ["Five seeds per arm, same recipe, same rows. Decision (2026-09-11): class_weights = \"none\" on every classification head; the knob is PR #57 (version 0.4.1).",
-                                 "Every material_type transfer number in Part 2 was measured with the weights ON in every arm (baseline 0.571); against the new 0.834 baseline the transfer gain is unmeasured."], size=12, color=MUT)
+            ["is_gap_direct (13 % direct)", f"{m(cw['is_gap_direct']['arms']['balanced']['runs'], 'macro_f1'):.3f}", f"{m(cw['is_gap_direct']['arms']['none']['runs'], 'macro_f1'):.3f}", f"{m(cw['is_gap_direct']['arms']['balanced']['runs'], 'accuracy'):.3f} → {m(cw['is_gap_direct']['arms']['none']['runs'], 'accuracy'):.3f}", "direct-gap recall 0.79 → 0.25"]]
+    table(s, 0.5, 1.4, 12.3, ["head", "macro-F1, weights on", "macro-F1, off", "accuracy on → off", "what moves"], rows, col_w=[3.6, 1.9, 1.7, 2.2, 2.9], size=13)
+    txt(s, 0.5, 4.6, 12.3, 2.2, ["Five seeds per arm, same recipe, same rows. The weights help no head on macro-F1 or accuracy; they only buy minority recall where the minority is a real class.",
+                                 "Decision (2026-09-11): class_weights = \"none\" on every classification head (knob released as PR #57, version 0.4.1)."], size=14, color=MUT)
 
 
 def slide_kmd():
-    s = pic_slide("Where the descriptor limits the label", "KMD works on atomic fractions, so Fe₂O₃ and Fe₄O₆ are the same input; labels that scale with the cell cannot be learned beyond what composition implies", FIG / "kmd_scale.png", top=1.35, bottom=1.3)
-    txt(s, 0.5, 6.2, 12.3, 1.2, ["Decision (2026-09-11): keep KMD — its invertibility is what inverse design needs. volume, total magnetisation and space group are reported with this caveat; the intensive forms (volume per atom 0.979, magnetisation per volume) are the ones to use."], size=12, color=MUT)
+    s = pic_slide("Where the descriptor limits the label", "KMD works on atomic fractions: Fe₂O₃ and Fe₄O₆ are the same input, so labels that scale with the cell stop at what composition implies", FIG / "kmd_scale.png", top=1.35, bottom=1.35)
+    txt(s, 0.5, 6.15, 12.3, 1.2, ["Decision (2026-09-11): keep KMD — its invertibility is what inverse design needs. volume, total magnetisation and space group carry this caveat; the intensive forms (volume per atom 0.979, magnetisation per volume) are the ones to use."], size=14, color=MUT)
 
 
-def slide_material_type_setup():
-    s = new("material_type transfer: the setup", "Only warm-start fine-tuning with the encoder trained is shown")
-    table(s, 0.5, 1.4, 12.3, ["arm", "encoder comes from", "head", "what trains", "n"], [
-        ["trained alone", "random init", "fresh", "encoder + head on material_type only", "5 seeds"],
-        ["warm-start, encoder SAW material_type", "23 tasks + material_type pretrained continually (material_type last, with replay)", "the head trained at that step", "encoder + head, fm finetune, replay off, early stopping on material_type's own loss", "10 orderings"],
-        ["warm-start, encoder NEVER saw it", "the same orderings stopped one step earlier (23 tasks, material_type dropped)", "fresh", "encoder + head, same fine-tune", "3 orderings"],
-    ], col_w=[2.9, 4.2, 1.8, 2.6, 0.8], size=10.5)
-    txt(s, 0.5, 3.8, 12.3, 3, [
-        f"Metric: macro-F1 over the five classes on the same {MT['test_rows']:,} test rows for every arm. Fine-tune cap 150 epochs, patience 24, last-epoch weights, encoder lr 2e-3, head lr 5e-3.",
-        "The question the third arm answers: does the encoder need to have met the task during pretraining, or is the 23-task representation what transfers?",
-        "Caveat: all three arms used the inverse-frequency class weights that were the default at the time (alone = 0.571). Without them the alone baseline is 0.834; the transfer has to be re-measured on that footing.",
-    ], size=12, color=MUT)
+# ---- Part 2
+def slide_mt_setup():
+    s = new("material_type transfer: the setup", "Warm-start fine-tuning with the encoder trained; class weights off in every arm")
+    table(s, 0.5, 1.4, 12.3, ["arm", "encoder comes from", "head", "n"], [
+        ["trained alone", "random init", "fresh", "5 seeds"],
+        ["warm-start, encoder SAW material_type", "23 tasks + material_type pretrained continually (material_type last, with replay)", "the head trained at that step", "10 orderings"],
+        ["warm-start, encoder NEVER saw it", "the same orderings stopped one step earlier (23 tasks, material_type dropped)", "fresh", "3 orderings"],
+    ], col_w=[3.4, 5.6, 2.3, 1.0], size=13)
+    txt(s, 0.5, 3.9, 12.3, 3.2, [
+        f"Fine-tune: fm finetune, encoder + head trained, replay off, early stopping on material_type's own validation loss (patience 24, cap 150), last-epoch weights.",
+        f"Metric: macro-F1 over the five classes on the same {MT['test_rows']:,} test rows for every arm; unweighted cross-entropy in the fine-tune and in the alone runs.",
+        "The pretraining itself ran with the weights on (it predates the decision); what is compared here is what a fine-tune with the right loss gets out of those encoders.",
+    ], size=14, color=MUT)
 
 
-def slide_material_type_numbers():
-    s = new("material_type transfer: the numbers", "Warm-start beats training alone by 22 %, whether or not the encoder ever saw the task")
-    a, se, un = MT["alone"], MT["seen"], MT["unseen"]
+def slide_mt_numbers():
+    a, se, un = MT["alone"]["values"], MT["seen"]["values"], MT["unseen"]["values"]
     def row(name, v, base=None):
-        m = st.fmean(v); sd = st.stdev(v); r = [name, f"{m:.4f} ± {sd:.4f}", str(len(v))]
+        m = st.fmean(v); sd = st.stdev(v); r = [name, f"{m:.3f} ± {sd:.3f}", str(len(v))]
         if base is not None:
             bm = st.fmean(base); d = m - bm; se2 = 2 * ((sd ** 2 / len(v)) + (st.stdev(base) ** 2 / len(base))) ** 0.5
-            r += [f"{d:+.4f} ({d / bm * 100:+.1f} %)", f"{se2:.4f}", "separated" if abs(d) > se2 else "unresolved"]
+            r += [f"{d:+.3f} ({d / bm * 100:+.1f} %)", f"{se2:.3f}", "separated" if abs(d) > se2 and abs(d) >= 0.01 else "unresolved"]
         else:
             r += ["—", "—", "reference"]
         return r
-    table(s, 0.5, 1.4, 12.3, ["arm", "macro-F1 (mean ± sd)", "n", "vs alone", "2×SE", "verdict"],
-          [row("trained alone", a), row("warm-start, encoder saw material_type", se, a), row("warm-start, encoder never saw it", un, a)], col_w=[3.8, 2.2, 0.6, 2.0, 1.2, 1.5], size=11)
     d = st.fmean(se) - st.fmean(un); se2 = 2 * ((st.stdev(se) ** 2 / len(se)) + (st.stdev(un) ** 2 / len(un))) ** 0.5
-    txt(s, 0.5, 3.3, 12.3, 3.5, [
-        f"Seen vs never-seen: {st.fmean(se):.4f} vs {st.fmean(un):.4f}, difference {d:+.4f} against 2×SE {se2:.4f} — indistinguishable.",
-        "So the +22 % is the 23-task representation, not the single exposure at the last pretraining step. Across all 23 tasks the same comparison is 2 better / 2 worse / 19 unresolved.",
-        "Consequence for the next phase: pretrain once on the existing tasks, then warm-start fine-tune each new task; the continual replay step for the new task is the most expensive part of the pipeline and adds nothing the fine-tune does not recover.",
-        "Read the never-seen arm generously: n = 3 orderings against n = 10.",
-    ], size=12)
+    s = new("material_type transfer: the numbers", "With the right loss, warm-start lands where training alone lands — and it does not matter whether the encoder ever saw the task")
+    table(s, 0.5, 1.4, 12.3, ["arm", "macro-F1 (mean ± sd)", "n", "vs alone", "2×SE", "verdict"],
+          [row("trained alone", a), row("warm-start, encoder saw material_type", se, a), row("warm-start, encoder never saw it", un, a)], col_w=[4.0, 2.4, 0.6, 2.2, 1.2, 1.9], size=13)
+    bullets(s, [
+        f"Seen vs never-seen: {st.fmean(se):.3f} vs {st.fmean(un):.3f}, difference {d:+.3f} against 2×SE {se2:.3f} — unresolved; the 23-task representation, not the exposure, is what the fine-tune starts from.",
+        f"Extending the never-seen arm from 3 to 5 orderings: two more 23-step pretraining runs (~10–15 GPU-hours each, about 1.5 days wall-clock in parallel) plus minutes of fine-tuning.",
+        "What the pretrained start does buy is shown on the next slides: the same endpoint reached in fewer epochs, with a lower loss from the first epoch.",
+    ], y=3.6, size=15, h=3.3)
 
 
-def slide_data_plan_intro():
-    s = new("Data plan: what the model needs next", "Diversity of chemical space and of label type, with one level of theory or one instrument per column")
-    txt(s, 0.6, 1.4, 12, 5.5, [
-        "What the current data is: inorganic crystals (Materials Project, quasicrystals), thermoelectric and magnetic measurements, phonon transport. Every label is a scalar per composition or a curve over one coordinate.",
-        "What is missing: metal–organic frameworks (organic–inorganic hybrids, a different composition distribution), catalysts (adsorption / reaction energies and experimental activity; often curves over temperature or current), high-entropy alloys (multi-principal-element metals, mechanical and phase labels).",
-        "Rules carried over from the 2026-09-11 rebuild: one source = one level of theory or one instrument per column; no pooling of heterogeneous literature values into one column; provenance stored with the value; versioned files.",
-        "Two design questions to settle before importing catalysts and MOFs: (a) supports and promoters — fold them into the composition string or hold them fixed; (b) MOFs — the organic part dominates the atomic fractions, so MOFs look alike to KMD; an auxiliary label (metal node) may be needed.",
-        "Status legend on the next slides: IMPORT NOW = selected, loader to be built; EVALUATING = fits the input format but a design question or the licence / size is open; NOT PLANNED = does not fit a composition-only model.",
-    ], size=13)
+def slide_mt_why():
+    L = MT["losses"]
+    s = new("Why material_type gains little from transfer once the loss is right", "Reading the loss curves")
+    bullets(s, [
+        f"• Start: the warm-started run's validation loss at epoch 1 ({L['warm_seen']['val_first']:.4f}, median) is already below what the from-scratch run reaches after {L['alone']['epochs']:.0f} epochs ({L['alone']['val_last']:.4f}) — the 23-task encoder is a good initialisation.",
+        f"• End: both arms converge to the same training loss ({L['alone']['train_last']:.4f} alone vs {L['warm_seen']['train_last']:.4f} warm-started, median of the last epoch) and the same validation loss ({L['alone']['val_min']:.4f} vs {L['warm_seen']['val_min']:.4f} at their minima); warm-start gets there in {L['warm_seen']['epochs']:.0f} epochs instead of {L['alone']['epochs']:.0f}.",
+        "• So the benefit is speed and stability of convergence, not a better optimum: with 34,000 labelled rows the task can learn its own representation from scratch, and the two arms end within their seed spread.",
+        "• The earlier “+22 %” was measured with the inverse-frequency weights on in every arm (alone 0.571): under that loss the from-scratch head over-predicts the rare classes (75 rows a run filed as IAC for 24 real ones) and the pretrained encoder's smoother features limited the damage. Switching the weights off removes the damage, and with it the gap.",
+        "• Minimal theory (shared-representation bound, Tripuraneni · Jordan · Jin 2020): the target task's excess risk ≈ C(representation) / (n·T) + C(head) / n. Transfer shrinks the first term; with n = 34,000 rows it is already small at T = 1. The gain appears where n is small — the campaign's real transfer wins were tasks with ~1,000 rows.",
+    ], size=15.5)
 
 
-def slide_data_mof():
-    s = new("Data plan — MOFs", "Surveyed 2026-09; sizes as published by the sources")
+def slide_mt_compare():
+    mtw = json.loads((S / "material_type_warmstart_runs.json").read_text())["arms"]
+    ws = [r["after"]["macro_f1"] for r in mtw["warm_seen"]]; wu = [r["after"]["macro_f1"] for r in mtw["warm_unseen"]]; wa = [r["macro_f1"] for r in mtw["alone"]]
+    s = new("The same experiment under the two losses", "Why the earlier reports said +22 % and this deck says a wash")
+    table(s, 0.5, 1.4, 12.3, ["arm", "class weights on (earlier reports)", "class weights off (this deck)"], [
+        ["trained alone (5 seeds)", f"{st.fmean(wa):.3f} ± {st.stdev(wa):.3f}", f"{MT['alone']['mean']:.3f} ± {MT['alone']['sd']:.3f}"],
+        ["warm-start, encoder saw it (10)", f"{st.fmean(ws):.3f} ± {st.stdev(ws):.3f}  (+{(st.fmean(ws) / st.fmean(wa) - 1) * 100:.0f} %)", f"{MT['seen']['mean']:.3f} ± {MT['seen']['sd']:.3f}  ({(MT['seen']['mean'] / MT['alone']['mean'] - 1) * 100:+.1f} %)"],
+        ["warm-start, never saw it (3)", f"{st.fmean(wu):.3f} ± {st.stdev(wu):.3f}  (+{(st.fmean(wu) / st.fmean(wa) - 1) * 100:.0f} %)", f"{MT['unseen']['mean']:.3f} ± {MT['unseen']['sd']:.3f}  ({(MT['unseen']['mean'] / MT['alone']['mean'] - 1) * 100:+.1f} %)"],
+    ], col_w=[4.0, 4.15, 4.15], size=14)
+    bullets(s, ["The weighted loss made training alone worse (0.571), not transfer better: every arm improves once the weights are off, and the from-scratch arm improves most.",
+                "Same encoders, same test rows, same fine-tune recipe in both columns; only the loss weighting of the material_type head differs."], y=3.7, size=15, h=2.5)
+
+
+# ---- Part 3
+def slide_data_plan():
+    s = new("Data plan — catalysts, high-entropy alloys, MOFs", "2–3 sets per family, ranked by fit for a composition-only model, adoption, and diversity; status = proposal")
     rows = [
-        ["QMOF (Rosen et al., figshare, CC BY 4.0)", "20,375 experimentally synthesised MOFs", "PBE band gap (all), HSE06 gap (subset), energies", "one DFT workflow", "IMPORT NOW — same task family as band_gap, new chemical space"],
-        ["MOFSimplify (Kulik group, MIT licence)", "≈ 3,000 decomposition temperatures (TGA) + ≈ 2,000 solvent-removal stability labels", "experimental", "literature-mined, conditions vary", "EVALUATING — small but experimental; composition from CSD refcode"],
-        ["CoRE MOF 2025 (Zenodo)", "43,439", "crystal density, pore metrics, surface area (computed)", "one workflow", "EVALUATING — density usable; pore labels are topology-driven"],
-        ["hMOF / MOFX-DB", "137k hypothetical MOFs", "GCMC gas uptake", "one workflow", "NOT PLANNED — Zn/Cu nodes and near-identical linkers, compositions indistinguishable"],
-        ["ODAC23 (Meta)", "8.4k MOFs, 176k adsorption energies", "CO₂ / H₂O adsorption energy (DFT)", "one workflow", "NOT PLANNED — labels depend on the adsorption site"],
+        ["CATALYSTS", "", "", "", ""],
+        ["Catalysis-Hub alloy adsorption set (Mamun et al. 2019)", "≈ 2,000 alloys × 11 adsorbates", "adsorption energies; one functional", "high — 11 regression tasks from composition", "IMPORT NOW"],
+        ["OCM high-throughput set (Nguyen et al. 2020)", "300 catalysts, 12,708 points", "C₂ yield, conversion, selectivity vs T; one rig", "high — temperature curves; support convention needed", "IMPORT NOW"],
+        ["OCx24 (Meta 2024)", "572 samples", "HER / CO₂RR voltage, Faradaic efficiency (exp.)", "medium — small; FE vs current as a curve", "EVALUATING"],
+        ["HIGH-ENTROPY ALLOYS", "", "", "", ""],
+        ["KKR-CPA equiatomic quaternary HEAs (Fukushima et al. 2022, PRMaterials; NIMS MDR / Zenodo)", "147,630 alloys, 38 elements", "total energy, magnetization, Curie T, residual resistivity; one method", "high — composition is the whole input; one level of theory", "IMPORT NOW (priority)"],
+        ["MPEA mechanical compilation (Borg et al., Sci. Data 2020)", "630 alloys", "hardness, yield strength, elongation, phases (exp.)", "medium — processing state to fix", "EVALUATING"],
+        ["HEA / CCA mechanical (Gorsse et al., Data in Brief 2018)", "≈ 370 alloys", "tensile properties, hardness (exp.)", "medium — small; overlaps Borg 2020", "EVALUATING"],
+        ["MOFs", "", "", "", ""],
+        ["QMOF (Rosen et al., CC BY 4.0)", "20,375 MOFs", "PBE band gap, energies; one workflow", "high — new chemical space for band_gap", "IMPORT NOW"],
+        ["MOFSimplify (Kulik group, MIT)", "≈ 3,000 + ≈ 2,000", "decomposition T, solvent-removal stability (exp.)", "medium — composition via CSD refcode", "EVALUATING"],
+        ["CoRE MOF 2025 (Zenodo)", "43,439 structures", "density, pore metrics (computed)", "medium-low — pore labels are topology", "EVALUATING"],
     ]
-    table(s, 0.4, 1.35, 12.5, ["dataset", "size", "labels", "consistency", "status"], rows, col_w=[2.7, 2.4, 2.6, 1.6, 3.2], size=9.5, head_size=10)
+    tbl = table(s, 0.3, 1.2, 12.75, ["dataset", "size", "labels / consistency", "fit for a composition-only model", "status"], rows,
+                col_w=[3.9, 2.1, 3.0, 2.6, 1.15], size=10.5, head_size=11, section_rows=(0, 4, 8))
+    for i in (1, 5, 9):
+        tbl.rows[i].height = Inches(0.3)
 
 
-def slide_data_catalyst():
-    s = new("Data plan — catalysts", "Surveyed 2026-09; the three IMPORT NOW sets bring new chemical space, a new label type and experimental curves")
-    rows = [
-        ["Catalysis-Hub bimetallic alloy set (Mamun et al. 2019)", "≈ 2,000 alloy surfaces × 11 adsorbates ≈ 37k energies", "adsorption energies of H, C, N, O, S, OH, CH, CH₂, CH₃, NH, SH (BEEF-vdW)", "one publication, one functional", "IMPORT NOW — 11 regression tasks from surface composition"],
-        ["OCM high-throughput set (Nguyen et al., ACS Catal. 2020)", "300 quaternary catalysts × conditions = 12,708 points", "C₂ yield, CH₄ conversion, selectivity vs temperature", "one rig, one operator", "IMPORT NOW — temperature curves map onto the kernel-regression tasks; support handling to decide"],
-        ["OCx24 (Meta, 2024, CC BY 4.0)", "572 samples, 441 electrodes", "HER / CO₂RR voltage and Faradaic efficiency at several current densities (experimental, XRF compositions)", "one pipeline", "EVALUATING — small; FE vs current density as a curve task"],
-        ["TheMeCat (Sci. Data 2025, Zenodo)", "literature compilation, size to confirm", "CO₂ → methanol conversion / selectivity", "conditions vary across papers", "EVALUATING — T, P, GHSV must be handled; we have one curve coordinate"],
-        ["Catalysis-Hub full database", "> 100k reaction energies", "reaction / activation energies", "MIXED functionals across publications", "NOT PLANNED as one column — usable only per publication"],
-        ["OC20 / OC22", "millions of structures", "structure-level adsorption energies", "one workflow", "NOT PLANNED — aggregating to composition discards the signal"],
-    ]
-    table(s, 0.4, 1.35, 12.5, ["dataset", "size", "labels", "consistency", "status"], rows, col_w=[2.8, 2.3, 3.0, 1.5, 2.9], size=9, head_size=10)
+def slide_data_notes():
+    s = new("Data plan — the two decisions before importing", "Both follow from the input being a composition string")
+    bullets(s, [
+        "• Catalysts: supports and promoters (SiO₂, Al₂O₃, alkali dopants) — fold them into the composition string, or keep only the active components and hold the support fixed. The choice sets what the descriptor sees; the OCM set needs it before import.",
+        "• MOFs: the organic part dominates the atomic fractions, so MOFs look alike to KMD. An auxiliary label (metal node type) or a per-node composition view may be needed; QMOF is the test case.",
+        "• HEAs: the KKR-CPA set is disordered and equiatomic — composition is the entire specification, which is exactly the input this model takes; it also brings magnetization and Curie temperature computed on one footing, comparable with our NEMAD tasks only as separate columns (different provenance, never pooled).",
+        "• Every import follows the 2026-09-11 standard: loader from a notebook, versioned parquet, provenance with the value, four validation gates, single-task baseline before the task joins the multi-task set. Nothing here has been downloaded yet; sizes are as published.",
+    ], size=16)
 
 
-def slide_data_hea():
-    s = new("Data plan — high-entropy alloys", "NOT YET SURVEYED — the rows below are well-known public sets to start from, sizes not yet verified by us")
-    rows = [
-        ["Borg et al., Sci. Data 7, 430 (2020) — multi-principal-element alloys", "≈ 1,500 alloys (literature compilation)", "hardness, yield strength, elongation, observed phases", "experimental, conditions vary", "TO EVALUATE — candidate for mechanical-property regression + phase classification"],
-        ["Gorsse et al., Data in Brief 21, 2664 (2018)", "≈ 370 HEAs / CCAs", "mechanical properties (tensile, hardness) with processing", "experimental", "TO EVALUATE — small; processing conditions are not in our input"],
-        ["HEA phase-formation compilations (e.g. FCC / BCC / intermetallic labels)", "hundreds to low thousands", "single-phase vs multi-phase, crystal structure", "literature-mined", "TO EVALUATE — natural classification task; sources overlap, deduplication needed"],
-    ]
-    table(s, 0.4, 1.35, 12.5, ["dataset", "size", "labels", "consistency", "status"], rows, col_w=[3.4, 2.2, 2.8, 1.6, 2.5], size=9.5, head_size=10)
-    txt(s, 0.5, 4.2, 12.3, 2.6, ["Why HEAs fit: compositions are the whole story (near-equimolar, 4–7 elements), so a composition-only model is the natural learner, and the KMD descriptor is invariant to how the formula is written.",
-                                 "Why care is needed: the literature values depend on processing (as-cast / annealed / temperature), which is not in the input; the import has to pick one processing state per label or add it as a coordinate.",
-                                 "Next step: run the same survey as for MOFs and catalysts (size, labels, composition availability, consistency, licence) and decide import-now vs evaluating."], size=12, color=MUT)
+# ---- Part 4: flowchart
+def _box(s, x, y, w, h, text, fill=PALE, size=13, bold=False, colour=INK):
+    shp = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
+    shp.fill.solid(); shp.fill.fore_color.rgb = fill; shp.line.color.rgb = RGBColor(0x9C, 0xA3, 0xAF); shp.line.width = Pt(1)
+    tf = shp.text_frame; tf.word_wrap = True
+    for i, line in enumerate(text.split("\n")):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph(); p.text = line; p.alignment = PP_ALIGN.CENTER
+        p.font.size = Pt(size); p.font.bold = bold if i == 0 else False; p.font.color.rgb = colour
+    return shp
 
 
-def slide_data_sequence():
-    s = new("Data plan — order of work", "Each import follows the 2026-09-11 standard: loader from a notebook, versioned parquet, four validation gates, single-task baseline before it joins the multi-task set")
-    table(s, 0.5, 1.4, 12.3, ["step", "what", "gate"], [
-        ["1", "QMOF band gap (20k MOFs) — loader, parquet, baseline; compare with the Materials Project band-gap task", "R² of the single-task baseline; overlap check against MP compositions"],
-        ["2", "Catalysis-Hub alloy adsorption energies — 11 tasks, ≈ 2,000 compositions", "surface composition convention fixed (bulk composition, facet held constant)"],
-        ["3", "OCM high-throughput curves — C₂ yield vs temperature as a kernel-regression task", "support / promoter convention decided; one rig only"],
-        ["4", "HEA survey → one mechanical-property set + one phase-label set", "processing state fixed or added as coordinate"],
-        ["5", "Evaluating tier (OCx24, MOFSimplify, CoRE density, TheMeCat) as small experimental complements", "only if step 1–3 baselines show the chemical space is learnable"],
-    ], col_w=[0.6, 7.6, 4.1], size=10.5)
-    txt(s, 0.5, 4.5, 12.3, 2, ["None of these has been downloaded yet; sizes and labels are as published by the sources. Selection between IMPORT NOW and EVALUATING is a proposal for discussion."], size=12, color=MUT)
+def _arrow(s, x1, y1, x2, y2):
+    c = s.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x1), Inches(y1), Inches(x2), Inches(y2))
+    c.line.color.rgb = RGBColor(0x4B, 0x55, 0x63); c.line.width = Pt(2)
+    ln = c.line._get_or_add_ln()
+    ln.append(etree.SubElement(ln, "{http://schemas.openxmlformats.org/drawingml/2006/main}tailEnd", type="triangle", w="med", len="med"))
+    return c
 
 
-def slide_release():
-    s = new("Pretrained-model release plan (proposal)", "What to release, in what order, and what each stage requires")
-    table(s, 0.5, 1.4, 12.3, ["stage", "what is released", "to whom", "prerequisite"], [
-        ["0 — now", "model library on RIKYU: 240 encoders + manifest (task, ordering, seed, every score); fm CLI (pretrain / finetune / predict / inverse)", "the group", "—"],
-        ["1 — after the re-run", "one pretrained encoder on the 2026-09-11 dataset + warm-start recipe + single-task baselines; dataset card and the data standard", "collaborators", "phase-B re-run on the 0.4.x image (tasks fixed, class weights off)"],
-        ["2 — public", "weights, KMD descriptor code, config schema, evaluation script that reproduces the baseline table; the 2026-09-11 dataset where licences allow", "public (GitHub + model hub)", "licence audit per source (MP, NEMAD, starry, phonix-db); a versioned release (0.5)"],
-        ["3 — service", "prediction and inverse-design endpoints backed by the released model", "collaborators, then public", "stage 2 + the LLM interface on the next slide"],
-    ], col_w=[1.6, 5.6, 2.2, 2.9], size=10.5)
-    txt(s, 0.5, 4.7, 12.3, 2, ["What a user gets: composition in → 41 properties out with a per-task uncertainty (seed spread), or a target property in → candidate compositions out (the invertible KMD path).",
-                               "What stays internal until stage 2: the raw source dumps and the RIKYU run trees. Everything on this slide is a proposal for discussion; nothing has been released."], size=12, color=MUT)
-
-
-def slide_llm():
-    s = new("LLM access (proposal)", "Expose the model as tools an LLM can call; the LLM plans, the model computes")
-    table(s, 0.5, 1.4, 12.3, ["tool", "input → output", "backed by"], [
-        ["describe_tasks", "— → the 41 tasks with meaning, unit, baseline R² / F1 and the KMD caveats", "task catalog + baseline table"],
-        ["predict", "composition(s) → property values with seed-spread uncertainty and a validity flag", "fm predict on the released encoder + heads"],
-        ["predict_curve", "composition + coordinate grid → S(T), ZT(T), DOS(E) …", "kernel-regression heads"],
-        ["inverse_design", "target property window (+ element constraints) → candidate compositions", "the invertible KMD path (fm inverse)"],
-        ["explain", "prediction → nearest training compositions and their measured values", "descriptor neighbours on the training set"],
-    ], col_w=[1.8, 6.6, 3.9], size=11)
-    txt(s, 0.5, 4.3, 12.3, 3, [
-        "Interface: an MCP server (the tool protocol Claude and other agents already speak) wrapping the fm CLI; the same tools serve a REST endpoint. The LLM never touches weights — it composes calls and reads results.",
-        "Guardrails the tools enforce, not the LLM: composition parsing and element coverage, out-of-distribution flag from descriptor distance, the KMD caveat attached to volume / magnetisation / space-group answers, uncertainty from the seed ensemble.",
-        "Example: “find Fe-free compositions with ZT > 1 at 600 K and a band gap under 0.5 eV” → inverse_design → predict_curve on the candidates → explain on the top three.",
-        "First milestone: describe_tasks + predict on the released stage-1 encoder, used internally; inverse_design once the KMD inversion is validated on held-out targets.",
-    ], size=12)
+def slide_roadmap():
+    s = new("Roadmap: from the pretrained model library to hosted and local services", "Proposal — what a user can do with the released models")
+    W = RGBColor(0xFF, 0xFF, 0xFF)
+    # lane labels
+    for y, lab in ((1.35, "Model base"), (3.55, "Web app"), (5.75, "Package + AI")):
+        txt(s, 0.3, y, 1.6, 0.4, [lab], size=12, color=MUT, bold=True)
+    # lane 1: library -> online service / download
+    lib = _box(s, 0.4, 1.75, 2.9, 1.3, "Pretrained model library\n(foundation base: encoder + task heads)", fill=TEAL, size=13, bold=True, colour=W)
+    _box(s, 4.3, 1.55, 2.9, 0.8, "Online prediction service\n(API)", size=12)
+    _box(s, 4.3, 2.55, 2.9, 0.8, "Download, run locally", size=12)
+    _arrow(s, 3.3, 2.2, 4.3, 1.95); _arrow(s, 3.3, 2.5, 4.3, 2.95)
+    # lane 2: web app chain
+    _box(s, 0.4, 3.95, 2.9, 1.1, "Web app: model preview\n(browse tasks, try compositions)", size=12)
+    _box(s, 3.7, 3.95, 2.9, 1.1, "Upload your own data\n→ AI-assisted fine-tuning", size=12)
+    _box(s, 7.0, 3.95, 2.6, 1.1, "Inspect and preview\nthe fine-tuned model online", size=12)
+    _box(s, 10.0, 3.6, 2.9, 0.75, "Download the model", size=12)
+    _box(s, 10.0, 4.55, 2.9, 0.75, "Host it online as a\nprediction service", size=12)
+    _arrow(s, 1.85, 3.05, 1.85, 3.95)  # library -> web app
+    _arrow(s, 3.3, 4.5, 3.7, 4.5); _arrow(s, 6.6, 4.5, 7.0, 4.5); _arrow(s, 9.6, 4.35, 10.0, 3.98); _arrow(s, 9.6, 4.65, 10.0, 4.92)
+    # lane 3: package + AI
+    _box(s, 0.4, 6.05, 3.6, 1.1, "foundation-model package\nwith preset skills (predict, fine-tune, inverse design)", size=12)
+    _box(s, 4.6, 6.05, 2.6, 1.1, "AI agent / LLM\n(uses the skills)", fill=PALE2, size=12)
+    _box(s, 7.8, 5.85, 2.4, 0.7, "Local model service", size=12)
+    _box(s, 7.8, 6.65, 2.4, 0.7, "Online service via API", size=12)
+    _arrow(s, 1.85, 5.05, 1.85, 6.05)  # web app -> package (same models)
+    _arrow(s, 4.0, 6.6, 4.6, 6.6); _arrow(s, 7.2, 6.45, 7.8, 6.2); _arrow(s, 7.2, 6.75, 7.8, 7.0)
+    _arrow(s, 5.75, 2.35, 5.9, 6.05)  # online service <-> agent (dashed would be nicer; keep simple)
+    txt(s, 10.4, 6.0, 2.7, 1.3, ["Skills work the same locally and through the API; the LLM plans, the model computes."], size=11, color=MUT)
 
 
 def slide_status():
-    s = new("Status and sources", f"Built {DATE} from the campaign's summary files; every number traces to a run on RIKYU")
-    txt(s, 0.6, 1.4, 12, 5.5, [
-        "Baselines: stage_single (unchanged tasks, 2026-08) and stage_single_mp2026 (relabelled + added tasks, class-weight arms) — summary/baselines_mp2026.json, ceilings_adopted_v2.json, classification_weights.json, material_type_weights.json, space_group_confirm.json.",
-        "Transfer: stage_xfer (240 continual runs), stage_ft warm-start (ftf, 10 orderings), stage_xu → ftfu never-seen (3 orderings) — summary/ft.json, material_type_warmstart_runs.json, position_runs.json.",
-        "Dataset: data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet (dated 2026-09-11 in the reports), CHANGES note and rebuild script alongside; NEMAD and phonix-db parquets as before.",
-        "Pages with the full evidence: transferability (four ways), two easy tasks that would not train (labels and descriptor), space group 0.24 vs 0.60 (class weights). HANDOFF.md experiments 1–12.",
-        "Open items: re-measure material_type transfer against the class-weights-off baseline; phase-B re-run on the 0.4.x image; HEA survey; import of the three IMPORT NOW sets.",
-    ], size=12.5)
+    s = new("Status and sources", f"Built {DATE}; every number traces to a run on RIKYU")
+    bullets(s, [
+        "• Baselines: stage_single (unchanged tasks, 2026-08) and stage_single_mp2026 (relabelled + added tasks; class-weight arms) — summary/baselines_mp2026.json, ceilings_adopted_v2.json, classification_weights.json, material_type_weights.json, space_group_confirm.json.",
+        "• Transfer: stage_xfer (240 continual runs, position curve), stage_ft ftfn / ftfun (warm-start with class weights off, 13 runs), stage_xu (never-seen encoders) — summary/material_type_warmstart_none.json, position_runs.json.",
+        "• Dataset: data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet (reported as 2026-09-11) with its CHANGES note and rebuild script; NEMAD and phonix-db parquets as before.",
+        "• Evidence pages: transferability (four ways), two easy tasks that would not train, space group 0.24 vs 0.60. HANDOFF.md experiments 1–12. Code: PR #57 (class_weights knob + fine-tune fix, version 0.4.1).",
+        "• Open: never-seen arm to 5 orderings; phase-B re-run on the 0.4.x image; the three IMPORT NOW datasets; HEA loader for the KKR-CPA set.",
+    ], size=14)
 
 
 def main():
-    slide_title(); slide_agenda(); slide_dataset()
+    slide_title()
+    # ---- Part 1
+    divider("Part 1 — Tasks and single-task performance", "41 tasks over five data sources; the same recipe, descriptor and five seeds for every task")
+    slide_dataset()
     mp = [t for t in DESC if DESC[t][0] == "Materials Project"]
-    slide_inventory("Tasks 1/3 — Materials Project (energies, structure, electronic)", mp[:13], "DFT, GGA / GGA+U; rebuilt 2026-09-11")
-    slide_inventory("Tasks 2/3 — Materials Project (magnetic, dielectric, elastic, symmetry)", mp[13:], "DFT, GGA / GGA+U; rebuilt 2026-09-11")
+    slide_inventory("Tasks 1/5 — Materials Project: energies and structure", mp[:9], "DFT, GGA / GGA+U; rebuilt 2026-09-11")
+    slide_inventory("Tasks 2/5 — Materials Project: electronic and magnetic", mp[9:18], "DFT, GGA / GGA+U; rebuilt 2026-09-11")
+    slide_inventory("Tasks 3/5 — Materials Project: dielectric, elastic, symmetry", mp[18:], "DFT, GGA / GGA+U; rebuilt 2026-09-11")
     curves = [t for t in DESC if DESC[t][0] == "thermoelectric (starry)"]
     rest = [t for t in DESC if DESC[t][0] not in ("Materials Project", "thermoelectric (starry)")]
-    slide_inventory("Tasks 3/4 — thermoelectric curves (starry)", curves, "Experimental curves; one curve per composition, learned as kernel regression over the coordinate t")
-    slide_inventory("Tasks 4/4 — NEMAD, phonon transport, quasicrystals", rest, "Text-mined experimental databases, first-principles phonon transport, and the quasicrystal classification")
-    pic_slide("Single-task performance, all 41 tasks", "Same recipe and descriptor for every task; bars = mean over 5 seeds, whiskers = sd; n = training rows", FIG / "overview_bar.png")
-    pic_slide("Single-task R² against training rows", "Data volume alone does not order the tasks: the weakest are the cell-scale labels and the noisiest experimental ones, not the smallest", FIG / "r2_vs_n.png")
+    slide_inventory("Tasks 4/5 — thermoelectric curves (starry)", curves, "Experimental curves; one curve per composition, learned as kernel regression over the coordinate t")
+    slide_inventory("Tasks 5/5 — NEMAD, phonon transport, quasicrystals", rest, "Text-mined experimental databases, first-principles phonon transport, the quasicrystal classification")
+    pic_slide("Single-task performance, all 41 tasks", "Bars = mean over 5 seeds, whiskers = sd; the number in brackets is the training rows", FIG / "overview_bar.png")
+    pic_slide("Single-task R² against training rows", "Data volume alone does not order the tasks: the weakest are cell-scale labels and noisy experimental ones, not the smallest", FIG / "r2_vs_n.png")
     reg = [r["task"] for r in sorted(PERF, key=lambda r: -r["mean"]) if r["metric"] == "R²"]
-    chunks = [reg[i:i + 12] for i in range(0, len(reg), 12)]
+    chunks = [reg[i:i + 8] for i in range(0, len(reg), 8)]
     for i, ch in enumerate(chunks, 1):
         slide_perf_table(f"Single-task metrics {i}/{len(chunks) + 1} — regression and curve tasks, ranked by R²", ch, "R² and MAE on the normalised scale, test split, mean ± sd over 5 seeds")
     slide_perf_table(f"Single-task metrics {len(chunks) + 1}/{len(chunks) + 1} — classification heads", [r["task"] for r in PERF if r["metric"] == "macro-F1"], "macro-F1 and accuracy, class weights off, 5 seeds")
-    n_sc = len(list(FIG.glob("scatter_*.png")))
-    for k in range(1, n_sc + 1):
-        pic_slide(f"Observed vs predicted {k}/{n_sc}", "One seed (2025), test split; dashed = y = x; curve tasks show sampled (t, value) points", FIG / f"scatter_{k}.png")
-    pic_slide("Classification heads: confusion matrices", "Unweighted cross-entropy, seed 2025; cell = share of the true row and the row count", FIG / "confusion_clf.png")
-    pic_slide("Space group: confusion over the twelve largest groups", "151 classes; the remaining 139 folded into “other”; cubic and hexagonal groups are recognised, low-symmetry monoclinic ones partly", FIG / "confusion_sg.png")
-    pic_slide("Space group: per-class F1 against class size", "The class imbalance is the physics of the crystal world; it sets what macro-F1 can reach", FIG / "sg_f1_vs_size.png")
+    n_ex = len(list(FIG.glob("scatter_existing_*.png"))); n_ad = len(list(FIG.glob("scatter_added_*.png")))
+    for k in range(1, n_ex + 1):
+        pic_slide(f"Observed vs predicted — existing tasks ({k}/{n_ex})", "One seed (2025), test split; dashed = y = x; curve tasks show sampled (t, value) points", FIG / f"scatter_existing_{k}.png")
+    for k in range(1, n_ad + 1):
+        pic_slide(f"Observed vs predicted — tasks added 2026-09-11 ({k}/{n_ad})", "One seed (2025), test split; dashed = y = x", FIG / f"scatter_added_{k}.png")
+    pic_slide("Added classification heads: confusion matrices", "Class weights off, seed 2025; cell = share of the true row and the row count", FIG / "confusion_clf.png")
+    slide_space_group_why()
+    pic_slide("Space group: confusion over the twelve largest groups", "151 classes; the remaining 139 folded into “other”; cubic and hexagonal groups are recognised, monoclinic ones partly", FIG / "confusion_sg.png")
+    pic_slide("Space group: per-class F1 against class size", "Groups with hundreds of examples are learned; groups with tens mostly are not", FIG / "sg_f1_vs_size.png")
     slide_clf_change(); slide_kmd()
-    slide_material_type_setup(); slide_material_type_numbers()
+    # ---- Part 2
+    divider("Part 2 — material_type transfer", "Warm-start fine-tuning with the encoder trained; with and without the target in pretraining; class weights off")
+    pic_slide("material_type: the task, trained alone", "Five classes, 99 % “others”; the rare classes are approximant crystals (DAC, IAC) and quasicrystals (DQC, IQC)", FIG / "confusion_material_type.png")
+    slide_mt_setup(); slide_mt_numbers()
     pic_slide("material_type: every run of the three arms", "Warm-start fine-tuning with the encoder trained; the dashed line is the alone mean", FIG / "mt_warmstart_strip.png")
-    pic_slide("material_type: before and after the fine-tune", "The never-seen encoder starts from a random head and ends where the seen one ends", FIG / "mt_before_after.png")
-    pic_slide("material_type: score against pretraining breadth (continual arm)", "From the 240-run transfer stage: the later material_type appears in the sequence, the better — the opposite of every regression task", FIG / "mt_position.png")
-    slide_data_plan_intro(); slide_data_mof(); slide_data_catalyst(); slide_data_hea(); slide_data_sequence()
-    slide_release(); slide_llm(); slide_status()
+    pic_slide("material_type: before and after the fine-tune", "The never-seen encoder starts from a random head and ends within the spread of the seen one", FIG / "mt_before_after.png")
+    pic_slide("material_type: training and validation loss, alone vs warm-start", "Median over runs with the inter-quartile band; the warm-started runs start lower and stop earlier at the same floor", FIG / "mt_losses.png")
+    slide_mt_why(); slide_mt_compare()
+    pic_slide("material_type against pretraining breadth (continual arm)", "From the 240-run transfer stage, measured with the class weights on (the only breadth scan available): later in the sequence is better", FIG / "mt_position.png")
+    # ---- Part 3
+    divider("Part 3 — Data plan", "Catalysts, high-entropy alloys, MOFs: what is selected, what is still being evaluated")
+    slide_data_plan(); slide_data_notes()
+    # ---- Part 4
+    divider("Part 4 — Release and LLM access", "The pretrained library as a base for hosted and local services (proposal)")
+    slide_roadmap(); slide_status()
     out = HERE / "results" / f"DECK_{DATE.replace('-', '')}.pptx"
     prs.save(str(out)); print(f"{out}  ({len(prs.slides._sldIdLst)} slides)")
 
