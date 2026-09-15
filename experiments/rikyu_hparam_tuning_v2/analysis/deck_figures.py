@@ -398,9 +398,9 @@ def fig_mt_perclass(out):
             ax.bar(x + (j - 1) * w, vals, w, color=c, label=lab)
             for xi, v in zip(x + (j - 1) * w, vals):
                 ax.text(xi, v + 0.015, f"{v:.2f}", ha="center", fontsize=11, color=INK)
-        ax.set_xticks(x); ax.set_xticklabels([f"{n}\n({d['alone'][0]['per_class'][n]['n_test']} test rows)" for n in names]); ax.set_ylim(0, 1.12)
+        ax.set_xticks(x); ax.set_xticklabels([f"{n}\nn = {d['alone'][0]['per_class'][n]['n_test']:,}" for n in names]); ax.set_ylim(0, 1.12)
         ax.set_title(ttl, fontsize=15, color=INK); ax.grid(axis="y", color="#E5E7EB", lw=0.8); ax.set_axisbelow(True)
-    axes[0].legend(frameon=False, fontsize=11.5, loc="lower left")
+    axes[1].legend(frameon=False, fontsize=11.5, loc="upper left")
     fig.tight_layout(); fig.savefig(out / "mt_perclass.png"); plt.close(fig)
 
 
