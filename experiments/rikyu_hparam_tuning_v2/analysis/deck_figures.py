@@ -327,7 +327,7 @@ def fig_added_transfer(out):
     ax.axvline(0, color=INK, lw=1.2); ax.set_yticks(y); ax.set_yticklabels([f"{r['task'].replace('_', ' ')}  ({'macro-F1' if r['kind'] == 'classification' else 'R²'})" for r in rows], fontsize=13.5)
     ax.set_xlabel("warm-start − alone (R² or macro-F1; whisker = 2×SE of the difference)"); ax.grid(axis="x", color="#E5E7EB", lw=0.8); ax.set_axisbelow(True)
     handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in (TEAL, GREY, ORANGE)]
-    ax.legend(handles, [f"better ({d['counts']['better']})", f"unresolved ({d['counts']['unresolved']})", f"worse ({d['counts']['worse']})"], loc="lower right", frameon=False)
+    ax.legend(handles, [f"better ({d['counts']['better']})", f"unresolved ({d['counts']['unresolved']})", f"worse ({d['counts']['worse']})"], loc="upper left", frameon=False)
     fig.tight_layout(); fig.savefig(out / "added_transfer.png"); plt.close(fig)
 
 
