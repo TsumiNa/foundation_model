@@ -78,13 +78,14 @@ def performance_table():
         group = "added" if name in ADDED else "existing"
         if kind == "classification":
             if name == "material_type":
-                vals = [r["macro_f1"] for r in mt]; acc = [r["accuracy"] for r in mt]
+                src_runs = load("material_type_weights.json")["arms"]["balanced" if MT_SOURCE_SEL == "weighted" else "none"]["runs"]
+                vals = [r["macro_f1"] for r in src_runs]; acc = [r["accuracy"] for r in src_runs]
             elif name == "space_group":
                 vals = [r["macro_f1"] for r in sg]; acc = [r["accuracy"] for r in sg]
             else:
                 rs = clf[name]["arms"]["none"]["runs"]; vals = [r["macro_f1"] for r in rs]; acc = [r["accuracy"] for r in rs]
             rows.append(dict(task=name, kind=kind, group=group, source=source_of(name), metric="macro-F1", mean=st.fmean(vals), sd=st.stdev(vals), n=len(vals),
-                             accuracy=st.fmean(acc), n_train=n_train, n_test=n_test, status="class weights off, 2026-09-11 dataset"))
+                             accuracy=st.fmean(acc), n_train=n_train, n_test=n_test, status="2026-09-11 dataset"))
         elif name in base and base[name].get("n_seeds"):
             b = base[name]
             rows.append(dict(task=name, kind=kind, group=group, source=source_of(name), metric="R²", mean=b["r2"]["mean"], sd=b["r2"]["sd"], n=b["n_seeds"], mae=b["mae"]["mean"],
@@ -172,6 +173,9 @@ def scatter_panels(rows, preds: Path, out):
     return counts
 
 
+MT_SOURCE_SEL = "weighted"
+
+
 def confusion_from_pred(df, k):
     t, p = df["true"].to_numpy(int), df["pred"].to_numpy(int)
     return np.array([[int(((t == i) & (p == j)).sum()) for j in range(k)] for i in range(k)])
@@ -199,7 +203,7 @@ def fig_confusions(rows, preds: Path, out):
         r = stats[task]; draw_cm(ax, confusion_from_pred(df, len(labels)), labels, f"{task.replace('_', ' ')}\nmacro-F1 {r['mean']:.3f} · accuracy {r['accuracy']:.3f}")
     fig.tight_layout(); fig.savefig(out / "confusion_clf.png"); plt.close(fig)
     fig, ax = plt.subplots(figsize=(8.5, 7.5))
-    df = pd.read_parquet(preds / "mtpred" / "stMn_2025.parquet"); r = stats["material_type"]
+    df = pd.read_parquet(preds / "mtpred" / ("stMb_2025.parquet" if MT_SOURCE_SEL == "weighted" else "stMn_2025.parquet")); r = stats["material_type"]
     draw_cm(ax, confusion_from_pred(df, 5), CLASSIFICATION["material_type"], f"material_type, trained alone (seed 2025)\nmacro-F1 {r['mean']:.3f} · accuracy {r['accuracy']:.3f}")
     fig.tight_layout(); fig.savefig(out / "confusion_material_type.png"); plt.close(fig)
 
@@ -239,8 +243,11 @@ def _median_curve(runs, col):
     return np.arange(L), np.array(med), np.array(lo), np.array(hi)
 
 
-def fig_material_type(out):
-    d = load("material_type_warmstart_none.json"); arms = d["arms"]
+MT_SOURCE = {"weighted": "material_type_warmstart_weighted.json", "none": "material_type_warmstart_none.json"}
+
+
+def fig_material_type(out, source="weighted"):
+    d = load(MT_SOURCE[source]); arms = d["arms"]
     alone = [r["macro_f1"] for r in arms["alone"]]; seen = [r["after"]["macro_f1"] for r in arms["warm_seen"]]; unseen = [r["after"]["macro_f1"] for r in arms["warm_unseen"]]
     seen_b = [r["before"]["macro_f1"] for r in arms["warm_seen"]]; unseen_b = [r["before"]["macro_f1"] for r in arms["warm_unseen"]]
     cols = {"alone": GREY, "seen": TEAL, "unseen": PURPLE}
@@ -276,7 +283,7 @@ def fig_material_type(out):
     med = [float(np.median(v)) for v in data]
     ax.plot(range(1, 25), med, color=TEAL, lw=3, marker="o", ms=7, zorder=5, label="median of the 10 runs at that position")
     wa = load("material_type_weights.json")["arms"]["balanced"]["runs"]; wal = [r["macro_f1"] for r in wa]
-    ax.axhspan(min(wal), max(wal), color=GREY, alpha=0.18); ax.axhline(st.fmean(wal), color=GREY, ls="--", lw=1.5, label=f"trained alone under the same (weighted) loss: mean {st.fmean(wal):.3f}, range of 5 seeds")
+    ax.axhspan(min(wal), max(wal), color=GREY, alpha=0.18); ax.axhline(st.fmean(wal), color=GREY, ls="--", lw=1.5, label=f"trained alone: mean {st.fmean(wal):.3f}, range of 5 seeds")
     ax.set_xlabel("number of tasks pretrained before material_type (its position in the 24-task sequence)"); ax.set_ylabel("macro-F1 at its own step")
     ax.set_xticks(range(1, 25)); ax.legend(loc="lower right", frameon=False); ax.grid(axis="y", color="#E5E7EB", lw=0.8); ax.set_axisbelow(True)
     fig.tight_layout(); fig.savefig(out / "mt_position.png"); plt.close(fig)
@@ -379,6 +386,24 @@ def fig_lowdata(out):
     return rows
 
 
+def fig_mt_perclass(out):
+    d = load("material_type_weighted_perclass.json")["arms"]
+    names = ["DAC", "DQC", "IAC", "IQC", "others"]
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6.4))
+    arms = (("alone", GREY, "trained alone (5 seeds)"), ("seen", TEAL, "warm-start, encoder saw material_type (10)"), ("unseen", PURPLE, "warm-start, encoder never saw it (3)"))
+    for ax, key, ttl in ((axes[0], "recall", "recall per class (share of the true class found)"), (axes[1], "precision", "precision per class (share of the predictions that are right)")):
+        x = np.arange(len(names)); w = 0.26
+        for j, (arm, c, lab) in enumerate(arms):
+            vals = [st.fmean(r["per_class"][n][key] for r in d[arm]) for n in names]
+            ax.bar(x + (j - 1) * w, vals, w, color=c, label=lab)
+            for xi, v in zip(x + (j - 1) * w, vals):
+                ax.text(xi, v + 0.015, f"{v:.2f}", ha="center", fontsize=11, color=INK)
+        ax.set_xticks(x); ax.set_xticklabels([f"{n}\n({d['alone'][0]['per_class'][n]['n_test']} test rows)" for n in names]); ax.set_ylim(0, 1.12)
+        ax.set_title(ttl, fontsize=15, color=INK); ax.grid(axis="y", color="#E5E7EB", lw=0.8); ax.set_axisbelow(True)
+    axes[0].legend(frameon=False, fontsize=11.5, loc="lower left")
+    fig.tight_layout(); fig.savefig(out / "mt_perclass.png"); plt.close(fig)
+
+
 def fig_kmd_scale(out):
     d = {r["task"]: r for r in load("descriptor.json")["per_task"]}
     sgc = load("space_group_confirm.json")["arms"]
@@ -413,7 +438,9 @@ def main():
     fig_overview(rows, a.out); fig_r2_vs_n(rows, a.out)
     counts = scatter_panels(rows, a.preds, a.out)
     fig_confusions(rows, a.preds, a.out); fig_space_group(rows, a.preds, a.out)
-    mt = fig_material_type(a.out); (a.out / "material_type_numbers.json").write_text(json.dumps(mt, indent=1))
+    mt = fig_material_type(a.out, MT_SOURCE_SEL); (a.out / "material_type_numbers.json").write_text(json.dumps(mt, indent=1))
+    if MT_SOURCE_SEL == "weighted":
+        fig_mt_perclass(a.out)
     fig_kmd_scale(a.out)
     if (S / "added_transfer.json").exists():
         fig_added_transfer(a.out)

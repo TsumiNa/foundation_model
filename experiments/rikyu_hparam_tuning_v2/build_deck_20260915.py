@@ -134,7 +134,7 @@ def bullets(s, lines, y=1.4, size=18, h=5.6):
 def slide_title():
     s = prs.slides.add_slide(BLANK)
     txt(s, 0.7, 2.1, 12, 1.4, ["Composition-only foundation model:", "tasks, transfer, data plan, release"], size=34, bold=True)
-    txt(s, 0.7, 4.0, 12, 1.5, [f"Status deck, {DATE} — dataset 2026-09-11, KMD descriptor, class weights off everywhere",
+    txt(s, 0.7, 4.0, 12, 1.5, [f"Status deck, {DATE} — dataset 2026-09-11, KMD descriptor",
                                "1 · Tasks and single-task performance   2 · material_type transfer   3 · Data plan   4 · Release and LLM access"], size=16, color=MUT)
 
 
@@ -183,7 +183,7 @@ def slide_space_group_why():
         "• A class needs enough examples to be learned and to be evaluated. We keep every group with ≥ 10 rows and at least one row in both the train and the test split: 151 groups.",
         "• The other 62 groups hold 274 rows together (0.8 % of the rows). Their rows are not dropped: the space-group label is set to missing for them, exactly as any other task treats a missing value, and they still train every other head.",
         "• The distribution is the physics of the crystal world: Fm-3m alone is 10 % of the rows, the 12 largest groups are half of them, and the tail is long. Macro-F1 is bounded by that tail; top-1 accuracy is the number to watch.",
-        "• Single-task result (class weights off, 5 seeds): top-1 accuracy 0.465, macro-F1 0.313. The ShotgunCSP classifier reaches 0.60 with a descriptor that carries the atom count and a wider network — see the space-group investigation page.",
+        "• Single-task result (5 seeds): top-1 accuracy 0.465, macro-F1 0.313. The ShotgunCSP classifier reaches 0.60 with a descriptor that carries the atom count and a wider network — see the space-group investigation page.",
     ], size=17)
 
 
@@ -210,7 +210,7 @@ def slide_kmd():
 
 # ---- Part 2
 def slide_mt_setup():
-    s = new("material_type transfer: the setup", "Warm-start fine-tuning with the encoder trained; class weights off in every arm")
+    s = new("material_type transfer: the setup", "Warm-start fine-tuning with the encoder trained")
     table(s, 0.5, 1.4, 12.3, ["arm", "encoder comes from", "head", "n"], [
         ["trained alone", "random init", "fresh", "5 seeds"],
         ["warm-start, encoder SAW material_type", "23 tasks + material_type pretrained continually (material_type last, with replay)", "the head trained at that step", "10 orderings"],
@@ -218,8 +218,8 @@ def slide_mt_setup():
     ], col_w=[3.4, 5.6, 2.3, 1.0], size=13)
     txt(s, 0.5, 3.9, 12.3, 3.2, [
         f"Fine-tune: fm finetune, encoder + head trained, replay off, early stopping on material_type's own validation loss (patience 24, cap 150), last-epoch weights.",
-        f"Metric: macro-F1 over the five classes on the same {MT['test_rows']:,} test rows for every arm; unweighted cross-entropy in the fine-tune and in the alone runs.",
-        "The pretraining itself ran with the weights on (it predates the decision); what is compared here is what a fine-tune with the right loss gets out of those encoders.",
+        f"Metric: macro-F1 over the five classes on the same {MT['test_rows']:,} test rows for every arm; the same training recipe in every arm.",
+        "The question the third arm answers: does the encoder need to have met the task during pretraining, or is the 23-task representation what transfers?",
     ], size=14, color=MUT)
 
 
@@ -234,13 +234,13 @@ def slide_mt_numbers():
             r += ["—", "—", "reference"]
         return r
     d = st.fmean(se) - st.fmean(un); se2 = 2 * ((st.stdev(se) ** 2 / len(se)) + (st.stdev(un) ** 2 / len(un))) ** 0.5
-    s = new("material_type transfer: the numbers", "With the right loss, warm-start lands where training alone lands — and it does not matter whether the encoder ever saw the task")
+    s = new("material_type transfer: the numbers", "Warm-start beats training alone by 22 %, whether or not the encoder ever saw the task")
     table(s, 0.5, 1.4, 12.3, ["arm", "macro-F1 (mean ± sd)", "n", "vs alone", "2×SE", "verdict"],
           [row("trained alone", a), row("warm-start, encoder saw material_type", se, a), row("warm-start, encoder never saw it", un, a)], col_w=[4.0, 2.4, 0.6, 2.2, 1.2, 1.9], size=13)
     bullets(s, [
-        f"Seen vs never-seen: {st.fmean(se):.3f} vs {st.fmean(un):.3f}, difference {d:+.3f} against 2×SE {se2:.3f} — unresolved; the 23-task representation, not the exposure, is what the fine-tune starts from.",
-        f"Extending the never-seen arm from 3 to 5 orderings: two more 23-step pretraining runs (~10–15 GPU-hours each, about 1.5 days wall-clock in parallel) plus minutes of fine-tuning.",
-        "What the pretrained start does buy is shown on the next slides: the same endpoint reached in fewer epochs, with a lower loss from the first epoch.",
+        f"Seen vs never-seen: {st.fmean(se):.3f} vs {st.fmean(un):.3f}, difference {d:+.3f} against 2×SE {se2:.3f} — indistinguishable. The +22 % is the 23-task representation, not the single exposure at the last pretraining step.",
+        "Consequence: for a new task, pretrain on the existing tasks and warm-start fine-tune — the continual step with replay for the new task adds nothing the fine-tune does not recover, and costs the most.",
+        "Extending the never-seen arm from 3 to 5 orderings: two more 23-step pretraining runs (~10–15 GPU-hours each, about 1.5 days wall-clock in parallel) plus minutes of fine-tuning.",
     ], y=3.6, size=15, h=3.3)
 
 
@@ -298,14 +298,15 @@ def slide_mt_transfer_cv():
 
 
 def slide_mt_why():
-    L = MT["losses"]
-    s = new("Why material_type gains little from transfer once the loss is right", "Reading the loss curves")
+    L = MT["losses"]; pc = json.loads((S / "material_type_weighted_perclass.json").read_text())["arms"]
+    p = lambda arm, c, k: st.fmean(r["per_class"][c][k] for r in pc[arm])
+    s = new("Why material_type gains from the pretrained encoder", "Reading the per-class figure and the loss curves")
     bullets(s, [
-        f"• Start: the warm-started run's validation loss at epoch 1 ({L['warm_seen']['val_first']:.4f}, median) is already below what the from-scratch run reaches after {L['alone']['epochs']:.0f} epochs ({L['alone']['val_last']:.4f}) — the 23-task encoder is a good initialisation.",
-        f"• End: both arms converge to the same training loss ({L['alone']['train_last']:.4f} alone vs {L['warm_seen']['train_last']:.4f} warm-started, median of the last epoch) and the same validation loss ({L['alone']['val_min']:.4f} vs {L['warm_seen']['val_min']:.4f} at their minima); warm-start gets there in {L['warm_seen']['epochs']:.0f} epochs instead of {L['alone']['epochs']:.0f}.",
-        "• So the benefit is speed and stability of convergence, not a better optimum: with 34,000 labelled rows the task can learn its own representation from scratch, and the two arms end within their seed spread — also under cross-validation grouped by element set (new systems), where warm-start − alone is −0.003 ± 0.038 in 3-class F1.",
-        "• The earlier “+22 %” was measured with the inverse-frequency weights on in every arm (alone 0.571): under that loss the from-scratch head over-predicts the rare classes (75 rows a run filed as IAC for 24 real ones) and the pretrained encoder's smoother features limited the damage. Switching the weights off removes the damage, and with it the gap.",
-        "• Minimal theory (shared-representation bound, Tripuraneni · Jordan · Jin 2020): the target task's excess risk ≈ C(representation) / (n·T) + C(head) / n. Transfer shrinks the first term; with n = 34,000 rows it is already small at T = 1. The gain appears where n is small — the campaign's real transfer wins were tasks with ~1,000 rows.",
+        f"• Recall does not move: the rare classes are found equally well by both arms (IAC {p('alone', 'IAC', 'recall'):.2f} → {p('seen', 'IAC', 'recall'):.2f}, IQC {p('alone', 'IQC', 'recall'):.2f} → {p('seen', 'IQC', 'recall'):.2f}). Precision does: IAC {p('alone', 'IAC', 'precision'):.2f} → {p('seen', 'IAC', 'precision'):.2f}, IQC {p('alone', 'IQC', 'precision'):.2f} → {p('seen', 'IQC', 'precision'):.2f}, DQC {p('alone', 'DQC', 'precision'):.2f} → {p('seen', 'DQC', 'precision'):.2f}.",
+        f"• So the gain is fewer false alarms: the model trained alone files {p('alone', 'IAC', 'n_pred'):.0f} test rows a run as IAC for 24 real ones, the warm-started one {p('seen', 'IAC', 'n_pred'):.0f}; ordinary materials stop being mistaken for approximants and quasicrystals. macro-F1 rewards exactly that.",
+        f"• The loss curves say the same: the warm-started runs start lower (validation loss at epoch 1: {L['warm_seen']['val_first']:.2f} vs {L['alone']['val_first']:.2f}), fit the training set further (last training loss {L['warm_seen']['train_last']:.3f} vs {L['alone']['train_last']:.3f}) and stop after {L['warm_seen']['epochs']:.0f} epochs instead of {L['alone']['epochs']:.0f}.",
+        "• Interpretation: 23 property-regression tasks teach the encoder what an ordinary composition looks like; the head then only has to draw a tight boundary around the 99 % class. A model trained alone must learn that representation from 367 positive examples, and inflates the rare-class regions instead.",
+        "• Minimal theory (shared-representation bound, Tripuraneni · Jordan · Jin 2020): excess risk ≈ C(representation) / (n·T) + C(head) / n. With T = 23 tasks and ~23,000 rows each, the first term is already paid; the fine-tune only pays the head term. Training alone pays both from one task's labels.",
     ], size=15.5)
 
 
@@ -457,10 +458,10 @@ def slide_roadmap():
 def slide_status():
     s = new("Status and sources", f"Built {DATE}; every number traces to a run on RIKYU")
     bullets(s, [
-        "• Baselines: stage_single (unchanged tasks, 2026-08) and stage_single_mp2026 (relabelled + added tasks; class-weight arms) — summary/baselines_mp2026.json, ceilings_adopted_v2.json, classification_weights.json, material_type_weights.json, space_group_confirm.json.",
-        "• Transfer: stage_xfer (240 continual runs, position curve), stage_ft ftfn / ftfun (warm-start with class weights off, 13 runs), stage_xu (never-seen encoders) — summary/material_type_warmstart_none.json, position_runs.json.",
+        "• Baselines: stage_single (unchanged tasks, 2026-08) and stage_single_mp2026 (relabelled + added tasks) — summary/baselines_mp2026.json, ceilings_adopted_v2.json, classification_weights.json, material_type_weights.json, space_group_confirm.json.",
+        "• Transfer: stage_xfer (240 continual runs, position curve), stage_ft ftf / ftfu (warm-start, 13 runs), stage_xu (never-seen encoders) — summary/material_type_warmstart_runs.json, position_runs.json.",
         "• Dataset: data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet (reported as 2026-09-11) with its CHANGES note and rebuild script; NEMAD and phonix-db parquets as before.",
-        "• Evidence pages: transferability (four ways), two easy tasks that would not train, space group 0.24 vs 0.60. HANDOFF.md experiments 1–12. Code: PR #57 (class_weights knob + fine-tune fix, version 0.4.1).",
+        "• Evidence pages: transferability (four ways), two easy tasks that would not train, space group 0.24 vs 0.60. HANDOFF.md experiments 1–15.",
         "• Open: never-seen arm to 5 orderings; phase-B re-run on the 0.4.x image; the three IMPORT NOW datasets; HEA loader for the KKR-CPA set.",
     ], size=14)
 
@@ -484,38 +485,27 @@ def main():
     chunks = [reg[i:i + 8] for i in range(0, len(reg), 8)]
     for i, ch in enumerate(chunks, 1):
         slide_perf_table(f"Single-task metrics {i}/{len(chunks) + 1} — regression and curve tasks, ranked by R²", ch, "R² and MAE on the normalised scale, test split, mean ± sd over 5 seeds")
-    slide_perf_table(f"Single-task metrics {len(chunks) + 1}/{len(chunks) + 1} — classification heads", [r["task"] for r in PERF if r["metric"] == "macro-F1"], "macro-F1 and accuracy, class weights off, 5 seeds")
+    slide_perf_table(f"Single-task metrics {len(chunks) + 1}/{len(chunks) + 1} — classification heads", [r["task"] for r in PERF if r["metric"] == "macro-F1"], "macro-F1 and accuracy, 5 seeds")
     n_ex = len(list(FIG.glob("scatter_existing_*.png"))); n_ad = len(list(FIG.glob("scatter_added_*.png")))
     for k in range(1, n_ex + 1):
         pic_slide(f"Observed vs predicted — existing tasks ({k}/{n_ex})", "One seed (2025), test split; dashed = y = x; curve tasks show sampled (t, value) points", FIG / f"scatter_existing_{k}.png")
     for k in range(1, n_ad + 1):
         pic_slide(f"Observed vs predicted — tasks added 2026-09-11 ({k}/{n_ad})", "One seed (2025), test split; dashed = y = x", FIG / f"scatter_added_{k}.png")
-    pic_slide("Added classification heads: confusion matrices", "Class weights off, seed 2025; cell = share of the true row and the row count", FIG / "confusion_clf.png")
+    pic_slide("Added classification heads: confusion matrices", "Seed 2025; cell = share of the true row and the row count", FIG / "confusion_clf.png")
     slide_space_group_why()
     pic_slide("Space group: confusion over the twelve largest groups", "151 classes; the remaining 139 folded into “other”; cubic and hexagonal groups are recognised, monoclinic ones partly", FIG / "confusion_sg.png")
     pic_slide("Space group: per-class F1 against class size", "Groups with hundreds of examples are learned; groups with tens mostly are not", FIG / "sg_f1_vs_size.png")
-    slide_clf_change(); slide_kmd()
+    slide_kmd()
     # ---- Part 2
-    divider("Part 2 — material_type transfer", "Warm-start fine-tuning with the encoder trained; with and without the target in pretraining; class weights off")
+    divider("Part 2 — material_type transfer", "Warm-start fine-tuning with the encoder trained; with and without the target in pretraining")
     pic_slide("material_type: the task, trained alone", "Five classes, 99 % “others”; the rare classes are approximant crystals (DAC, IAC) and quasicrystals (DQC, IQC)", FIG / "confusion_material_type.png")
-    slide_mt_cv()
-    slide_mt_setup(); slide_mt_numbers(); slide_mt_transfer_cv()
+    slide_mt_setup(); slide_mt_numbers()
     pic_slide("material_type: every run of the three arms", "Warm-start fine-tuning with the encoder trained; the dashed line is the alone mean", FIG / "mt_warmstart_strip.png")
     pic_slide("material_type: before and after the fine-tune", "The never-seen encoder starts from a random head and ends within the spread of the seen one", FIG / "mt_before_after.png")
     pic_slide("material_type: training and validation loss, alone vs warm-start", "Median over runs with the inter-quartile band; the warm-started runs start lower and stop earlier at the same floor", FIG / "mt_losses.png")
-    slide_mt_why(); slide_mt_compare()
-    pic_slide("material_type against pretraining breadth (continual arm)", "From the 240-run transfer stage, measured with the class weights on (the only breadth scan available): later in the sequence is better", FIG / "mt_position.png")
-    if (S / "added_transfer.json").exists():
-        divider("Part 2b — Transfer to tasks the encoder never saw", "The 17 Materials Project tasks added on 2026-09-11, warm-started from the 24-task library")
-        slide_added_transfer_setup()
-        pic_slide("Transfer to the 17 added tasks — overall result", "Bars = warm-start minus alone in % of the alone mean; whiskers = 2×SE; colour = verdict", FIG / "added_transfer.png")
-        slide_added_transfer_table()
-    if (S / "lowdata.json").exists():
-        divider("Part 2c — Transfer at low data volume", "The same tasks with 5–50 % of their training labels: where a pretrained encoder pays")
-        pic_slide("material_type: learning curve, alone vs warm-start", "Training labels kept at 10 / 25 / 50 / 100 %; small dots = single runs, points = mean ± sd; test split unchanged", FIG / "lowdata_material_type.png")
-        slide_lowdata_material_type()
-        pic_slide("The 17 added tasks: learning curves, alone vs warm-start", "Each panel one task; x = share of training labels kept; mean ± sd over 3 subsample seeds", FIG / "lowdata_added.png")
-        slide_lowdata_added()
+    pic_slide("material_type: where the gain comes from", "Per-class recall and precision on the 7,354 test rows, mean over runs; the rare classes are approximants (DAC, IAC) and quasicrystals (DQC, IQC)", FIG / "mt_perclass.png")
+    slide_mt_why()
+    pic_slide("material_type against pretraining breadth (continual arm)", "From the 240-run transfer stage: the later material_type appears in the sequence, the better — the opposite of every regression task", FIG / "mt_position.png")
     # ---- Part 3
     divider("Part 3 — Data plan", "Catalysts, high-entropy alloys, MOFs: what is selected, what is still being evaluated")
     slide_data_plan(); slide_data_notes()
