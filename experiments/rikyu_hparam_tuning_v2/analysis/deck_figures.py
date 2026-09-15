@@ -6,6 +6,7 @@ RIKYU; nothing is typed in here. Inputs:
 
   summary/baselines_mp2026.json          relabelled + added MP tasks on the 2026-09-11 dataset (5 seeds, scatter samples)
   summary/ceilings_adopted_v2.json       the tasks whose labels did not change (5 seeds, same rows)
+  summary/single_unchanged_metrics.json  their per-seed MAE and test rows (stA runs)
   summary/classification_weights.json, material_type_weights.json, space_group_confirm.json,
   summary/space_group_perclass.json, space_group_classes.json     the class_weights = "none" runs
   summary/material_type_warmstart_none.json                       material_type transfer, class weights off in every arm
@@ -66,6 +67,7 @@ def source_of(task: str) -> str:
 def performance_table():
     base = {r["task"]: r for r in load("baselines_mp2026.json")["per_task"]}
     ceil = load("ceilings_adopted_v2.json")
+    unchanged = load("single_unchanged_metrics.json")["per_task"]  # MAE and test rows of the stA runs behind those ceilings
     inv = {t["name"]: t for t in load("task_inventory_20260911.json")}
     ntr = {r["task"]: r["n_train"] for r in load("ft.json")["per_task"]}
     clf = load("classification_weights.json")["tasks"]
@@ -91,9 +93,9 @@ def performance_table():
             rows.append(dict(task=name, kind=kind, group=group, source=source_of(name), metric="R²", mean=b["r2"]["mean"], sd=b["r2"]["sd"], n=b["n_seeds"], mae=b["mae"]["mean"],
                              n_train=n_train, n_test=b["n_test"], status=("relabelled" if b["group"] == "updated" else "added") + ", 2026-09-11 dataset"))
         elif name in ceil:
-            c = ceil[name]
-            rows.append(dict(task=name, kind=kind, group=group, source=source_of(name), metric="R²", mean=c["mean"], sd=c["sd"], n=c["n"], n_train=n_train, n_test=n_test,
-                             status="labels unchanged; same rows, measured 2026-08"))
+            c = ceil[name]; u = unchanged.get(name, {})
+            rows.append(dict(task=name, kind=kind, group=group, source=source_of(name), metric="R²", mean=c["mean"], sd=c["sd"], n=c["n"], n_train=n_train,
+                             mae=(u.get("mae") or {}).get("mean"), n_test=u.get("n_test") or n_test, status="labels unchanged; same rows, measured 2026-08"))
     return rows
 
 

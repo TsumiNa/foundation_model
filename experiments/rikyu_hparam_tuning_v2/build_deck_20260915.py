@@ -160,6 +160,8 @@ def slide_inventory(title, tasks, sub):
     rows = []
     for t in tasks:
         src, what, unit = DESC[t]; inv = INV[t]; n = inv["n"] or {}
+        if unit == "—":
+            unit = "class label" if inv["kind"] == "classification" else "dimensionless"
         rows.append([t.replace("_", " "), what, unit, KIND_LABEL[inv["kind"]], fmt_n(n.get("train") or perf(t)["n_train"]), fmt_n(n.get("test") or perf(t)["n_test"])])
     table(s, 0.4, 1.35, 12.5, ["task", "what it is", "unit", "kind", "train", "test"], rows, col_w=[2.3, 5.9, 1.3, 1.3, 0.85, 0.85], size=12.5, head_size=12.5)
 
