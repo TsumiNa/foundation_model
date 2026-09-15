@@ -472,6 +472,33 @@ converts into score. So material_type's path to a gain **structurally cannot tra
      user's decision: future training uses the new code/image. 0.4.x also carries master's #42–#54
      training refactors that the 0.3.2 campaign never ran on — re-baseline before comparing.
 
+13. **material_type: the transfer gain was the weighted loss, and 0.83 is a leaky split — done (2026-09-15).**
+   - Warm-start re-run with `class_weights = "none"` in every arm (ftfn: 10 seen orderings, ftfun: 3
+     never-seen; alone = stMn): 0.829 ± 0.038 and 0.791 ± 0.067 vs alone 0.834 ± 0.018 macro-F1 — the
+     earlier +22 % (alone 0.571) was the inverse-frequency loss depressing the from-scratch baseline.
+     Warm-start reaches the same loss floor in ~40 epochs instead of ~70 (`summary/material_type_warmstart_none.json`).
+     The fine-tune needed a fix: the head's class_weights buffer came back from the checkpoint and
+     overrode the config (`finetune.reapply_class_weights`, in PR #57).
+   - Against the 2021 Adv. Mater. paper (3-class QC/AC/others, RF on XenonPy 232, random 80/20 × 100:
+     QC F1 0.650, AC F1 0.658): `analysis/material_type_cv.py`, same 48,998 rows, 5 folds
+     (`summary/material_type_cv.json`). 3-class macro-F1 — dataset split: RF/XenonPy 0.923,
+     NN/KMD 0.836; random row-wise CV: RF/XenonPy 0.898, NN/KMD 0.809;
+     **grouped by element set (new systems)**: RF/XenonPy 0.765, NN/XenonPy 0.718,
+     RF/KMD 0.694, NN/KMD 0.695. The minority classes (367 rows) span 95 element sets; 51 of
+     the 56 minority test rows share their element set with training minority rows, and 75 % have a
+     training row within L1 0.05 in atomic fractions (median 0.020). The 5-class macro-F1 swings on the
+     1-row DAC and 3-row DQC test classes and must not be quoted. XenonPy classic > KMD on this task under
+     every protocol.
+   - Warm-start vs alone under the same folds (`analysis/material_type_transfer_cv.py`, never-seen
+     encoders o0–o2, `summary/material_type_transfer_cv.json`), 3-class F1: random 0.820 → 0.847
+     (paired +0.027, 2×SE 0.043); grouped 0.681 → 0.677 (paired −0.003, 2×SE 0.038). No
+     transfer gain for material_type under any fair protocol; only faster convergence.
+   - What this leaves of the transfer story: the class-weight-independent regression gains under
+     warm-start on the old labels (zt +6.7 %, magnetization +4.9 %, dielectric_total +3.4 %; all
+     small-to-mid tasks) and the theory expectation that gains scale with 1/n. The decisive experiment
+     is a learning curve: added MP tasks (never in the 24-task pretraining) fine-tuned from the library
+     encoders at 5 / 10 / 25 / 50 / 100 % of their training rows vs from scratch. Not run.
+
 **stage_xu, cost and caveats (2026-09-09).** One xu run is the matching transfer run minus its last
 step: 23 steps, 1,578 epochs, 24k → 78k rows per epoch as replay accumulates, 78.5 M sample-epochs —
 about 33 single-task trainings; the stage is 72 of them (≈ 28% of the transfer stage, ~200 GPU-hours

@@ -244,13 +244,66 @@ def slide_mt_numbers():
     ], y=3.6, size=15, h=3.3)
 
 
+
+def _cv_table():
+    d = json.loads((S / "material_type_cv.json").read_text())["runs"]
+    by = {}
+    for r in d:
+        by.setdefault((r["protocol"], r["descriptor"], r["model"]), []).append(r)
+    def f1c(rs, c):
+        return st.fmean((2 * r["per_class_3"][c]["precision"] * r["per_class_3"][c]["recall"] / (r["per_class_3"][c]["precision"] + r["per_class_3"][c]["recall"]) if r["per_class_3"][c]["precision"] and r["per_class_3"][c]["recall"] else 0.0) for r in rs)
+    rows = [["2021 paper (Adv. Mater.): random 80/20 × 100, XenonPy 232, random forest, 80 QC / 78 AC / 10,090 others", "0.650", "0.658", "≈ 0.77", "—"]]
+    lab = {"dataset": "the dataset's own split (pipeline)", "random": "5-fold random CV over rows", "system": "5-fold CV grouped by element set (new systems)"}
+    for p in ("dataset", "random", "system"):
+        for desc, mdl in (("classic", "rf"), ("classic", "nn"), ("kmd", "rf"), ("kmd", "nn")):
+            rs = by.get((p, desc, mdl))
+            if not rs:
+                continue
+            f3 = [r["macro_f1_3class"] for r in rs]; f5 = [r["macro_f1"] for r in rs]
+            sd = (lambda v: f" ± {st.stdev(v):.3f}" if len(v) > 1 else "")
+            rows.append([f"{lab[p]} — {'XenonPy classic' if desc == 'classic' else 'KMD'} + {'random forest' if mdl == 'rf' else 'pipeline network'}",
+                         f"{f1c(rs, 'QC'):.3f}", f"{f1c(rs, 'AC'):.3f}", f"{st.fmean(f3):.3f}{sd(f3)}", f"{st.fmean(f5):.3f}{sd(f5)}"])
+    return rows
+
+
+def slide_mt_cv():
+    s = new("material_type, evaluated properly", "The 0.83 on the dataset's split is a leaky split, not a better model: 75 % of the minority test rows have a training row within L1 0.05 in atomic fractions")
+    table(s, 0.4, 1.35, 12.5, ["protocol — descriptor + model", "QC F1", "AC F1", "3-class macro-F1", "5-class macro-F1"], _cv_table(), col_w=[6.6, 1.2, 1.2, 1.9, 1.6], size=11.5, head_size=12)
+    txt(s, 0.4, 6.35, 12.5, 1.1, ["3-class = the 2021 paper's task (QC = DQC + IQC, AC = DAC + IAC, others). The 5-class macro-F1 swings on the 1-row DAC and 3-row DQC test classes and should not be quoted. Grouped by element set — the case of a new system — the numbers land where the 2021 paper's did; XenonPy classic beats KMD on this task under every protocol."], size=12.5, color=MUT)
+
+
+def slide_mt_transfer_cv():
+    d = json.loads((S / "material_type_transfer_cv.json").read_text())["runs"]
+    def agg(p, arm, key):
+        v = [r[key] for r in d if r["protocol"] == p and r["arm"] == arm]; return st.fmean(v), st.stdev(v), len(v)
+    rows = []
+    for p, lab in (("random", "5-fold random CV over rows"), ("system", "5-fold CV grouped by element set (new systems)")):
+        for arm, alab in (("alone", "trained alone (3 seeds × 5 folds)"), ("warm", "warm-start from a never-seen 23-task encoder (3 encoders × 5 folds)")):
+            m3, s3, n = agg(p, arm, "macro_f1_3class"); m5, s5, _ = agg(p, arm, "macro_f1"); ep, _, _ = agg(p, arm, "epochs")
+            rows.append([lab if arm == "alone" else "", alab, f"{m3:.3f} ± {s3:.3f}", f"{m5:.3f} ± {s5:.3f}", f"{ep:.0f}"])
+    diffs = {}
+    for p in ("random", "system"):
+        dd = []
+        for k in range(5):
+            al = [r["macro_f1_3class"] for r in d if r["protocol"] == p and r["fold"] == k and r["arm"] == "alone"]; wm = [r["macro_f1_3class"] for r in d if r["protocol"] == p and r["fold"] == k and r["arm"] == "warm"]
+            dd.append(st.fmean(wm) - st.fmean(al))
+        diffs[p] = (st.fmean(dd), 2 * st.stdev(dd) / len(dd) ** 0.5)
+    s = new("Warm-start vs alone under cross-validation", "KMD, pipeline network, class weights off; the never-seen encoders are the stage_xu checkpoints")
+    table(s, 0.5, 1.4, 12.3, ["protocol", "arm", "3-class macro-F1", "5-class macro-F1", "epochs"], rows, col_w=[3.9, 4.6, 1.5, 1.5, 0.8], size=12.5)
+    bullets(s, [
+        f"Paired by fold, warm-start − alone (3-class F1): random split {diffs['random'][0]:+.3f} (2×SE {diffs['random'][1]:.3f}); grouped by system {diffs['system'][0]:+.3f} (2×SE {diffs['system'][1]:.3f}) — neither is a resolved gain.",
+        "The pretrained encoder converges in fewer epochs and lifts the noisy 5-class number through the tiny DAC / DQC classes; on new systems it does not generalise better than training from scratch.",
+        "Conclusion for material_type: 34,000 rows and a 3-class problem the descriptor already separates — the task does not need the encoder. The transfer case has to be made on tasks with few rows or on tasks the encoder never saw.",
+    ], y=4.1, size=14, h=3.0)
+
+
 def slide_mt_why():
     L = MT["losses"]
     s = new("Why material_type gains little from transfer once the loss is right", "Reading the loss curves")
     bullets(s, [
         f"• Start: the warm-started run's validation loss at epoch 1 ({L['warm_seen']['val_first']:.4f}, median) is already below what the from-scratch run reaches after {L['alone']['epochs']:.0f} epochs ({L['alone']['val_last']:.4f}) — the 23-task encoder is a good initialisation.",
         f"• End: both arms converge to the same training loss ({L['alone']['train_last']:.4f} alone vs {L['warm_seen']['train_last']:.4f} warm-started, median of the last epoch) and the same validation loss ({L['alone']['val_min']:.4f} vs {L['warm_seen']['val_min']:.4f} at their minima); warm-start gets there in {L['warm_seen']['epochs']:.0f} epochs instead of {L['alone']['epochs']:.0f}.",
-        "• So the benefit is speed and stability of convergence, not a better optimum: with 34,000 labelled rows the task can learn its own representation from scratch, and the two arms end within their seed spread.",
+        "• So the benefit is speed and stability of convergence, not a better optimum: with 34,000 labelled rows the task can learn its own representation from scratch, and the two arms end within their seed spread — also under cross-validation grouped by element set (new systems), where warm-start − alone is −0.003 ± 0.038 in 3-class F1.",
         "• The earlier “+22 %” was measured with the inverse-frequency weights on in every arm (alone 0.571): under that loss the from-scratch head over-predicts the rare classes (75 rows a run filed as IAC for 24 real ones) and the pretrained encoder's smoother features limited the damage. Switching the weights off removes the damage, and with it the gap.",
         "• Minimal theory (shared-representation bound, Tripuraneni · Jordan · Jin 2020): the target task's excess risk ≈ C(representation) / (n·T) + C(head) / n. Transfer shrinks the first term; with n = 34,000 rows it is already small at T = 1. The gain appears where n is small — the campaign's real transfer wins were tasks with ~1,000 rows.",
     ], size=15.5)
@@ -395,7 +448,8 @@ def main():
     # ---- Part 2
     divider("Part 2 — material_type transfer", "Warm-start fine-tuning with the encoder trained; with and without the target in pretraining; class weights off")
     pic_slide("material_type: the task, trained alone", "Five classes, 99 % “others”; the rare classes are approximant crystals (DAC, IAC) and quasicrystals (DQC, IQC)", FIG / "confusion_material_type.png")
-    slide_mt_setup(); slide_mt_numbers()
+    slide_mt_cv()
+    slide_mt_setup(); slide_mt_numbers(); slide_mt_transfer_cv()
     pic_slide("material_type: every run of the three arms", "Warm-start fine-tuning with the encoder trained; the dashed line is the alone mean", FIG / "mt_warmstart_strip.png")
     pic_slide("material_type: before and after the fine-tune", "The never-seen encoder starts from a random head and ends within the spread of the seen one", FIG / "mt_before_after.png")
     pic_slide("material_type: training and validation loss, alone vs warm-start", "Median over runs with the inter-quartile band; the warm-started runs start lower and stop earlier at the same floor", FIG / "mt_losses.png")
