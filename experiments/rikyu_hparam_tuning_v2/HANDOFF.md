@@ -513,6 +513,29 @@ converts into score. So material_type's path to a gain **structurally cannot tra
    representation bound predicts — is the low-data regime: the same 17 tasks at 5 / 10 / 25 / 50 % of their
    training rows (label-masked versioned datasets), warm-start vs alone. Not run.
 
+15. **Low-data learning curves — done (2026-09-16, stages lowalone / lowwarm, 426 runs).** Training labels of each
+   task kept at 5 / 10 / 25 / 50 % (material_type 10 / 25 / 50; per-class subsampling for classification,
+   at least one row per class), val and test rows untouched, three subsample seeds; twelve versioned
+   label-masked copies of the 2026-09-11 dataset in `data/lowdata/` on RIKYU (`scripts/make_lowdata_datasets.py`,
+   MANIFEST.json). Alone = stage_single recipe on the masked file (stL_*); warm-start = fine-tune from a
+   library encoder that never saw the task (ftL_*; material_type from the stage_xu encoders o0–o2, the
+   added tasks from `_ckpt/density/o0–o2`), fresh head, class weights off (`analysis/lowdata.py`,
+   `summary/lowdata.json`; material_type 3-class F1 from the prediction files, `summary/lowdata_material_type.json`).
+   - material_type (3-class macro-F1, alone → warm): 10 % 0.661 ± 0.152 → 0.673 ± 0.059;
+     25 % 0.795 → 0.818; 50 % 0.858 → 0.852; 100 % 0.890 → 0.846.
+     Level on the mean; at 10 % the warm-started runs are far less scattered (sd 0.06 vs 0.15), at 25 % warm
+     leads by 0.02 (3-class) / 0.1 (5-class); from 50 % up no difference. The encoder's contribution is a
+     low-data stability effect, not a higher ceiling.
+   - The 17 added tasks: at 5–10 % of the labels warm-start leads on most regression tasks
+     (magnetization_per_volume 0.42 → 0.49 at 5 %; vbm 0.79 → 0.83; shear_modulus 0.60 → 0.64 / 0.68 → 0.72;
+     refractive_index 0.78 → 0.81 / 0.81 → 0.84; bulk_modulus 0.86 → 0.88 at 10 %; universal_anisotropy
+     −0.07 → 0.01); at 50–100 % level or slightly behind (1 better / 5 worse / 11 unresolved at 100 %,
+     experiment 14). The classification heads and the no-signal tasks (piezoelectric, space_group) do not
+     benefit at any fraction. Deck Part 2c.
+   - This is the transfer story the data supports: a pretrained composition encoder helps when a new
+     property has a few hundred to a few thousand labels, and the help fades as labels grow — consistent
+     with the shared-representation bound. It does not help a 34,000-row task.
+
 **stage_xu, cost and caveats (2026-09-09).** One xu run is the matching transfer run minus its last
 step: 23 steps, 1,578 epochs, 24k → 78k rows per epoch as replay accumulates, 78.5 M sample-epochs —
 about 33 single-task trainings; the stage is 72 of them (≈ 28% of the transfer stage, ~200 GPU-hours

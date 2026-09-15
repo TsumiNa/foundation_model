@@ -342,6 +342,36 @@ def slide_added_transfer_setup():
     ], size=16)
 
 
+def slide_lowdata_material_type():
+    mt = json.loads((S / "lowdata_material_type.json").read_text())
+    rows = []
+    for f, lab in (("f10", "10 % (≈ 3,400 rows; 16 QC, 9 AC)"), ("f25", "25 % (≈ 8,600 rows; 40 QC, 24 AC)"), ("f50", "50 % (≈ 17,000 rows; 80 QC, 48 AC)"), ("f100", "100 % (34,322 rows; 162 QC, 94 AC)")):
+        a = mt[f]["alone"]; w = mt[f]["warm"]; m = lambda rs, k: st.fmean(r[k] for r in rs); sd = lambda rs, k: st.stdev(r[k] for r in rs) if len(rs) > 1 else 0
+        rows.append([lab, f"{m(a, 'f1_3'):.3f} ± {sd(a, 'f1_3'):.3f} ({len(a)})", f"{m(w, 'f1_3'):.3f} ± {sd(w, 'f1_3'):.3f} ({len(w)})", f"{m(w, 'f1_3') - m(a, 'f1_3'):+.3f}", f"{m(a, 'f1_5'):.3f} → {m(w, 'f1_5'):.3f}", f"{m(a, 'QC_recall'):.2f} → {m(w, 'QC_recall'):.2f}"])
+    s = new("material_type at low data: warm-start vs alone", "Training labels kept at 10 / 25 / 50 / 100 % (test split unchanged, 7,357 rows); class weights off; the encoders never saw material_type")
+    table(s, 0.5, 1.4, 12.3, ["training labels kept", "alone, 3-class F1", "warm-start, 3-class F1", "Δ", "5-class F1 alone → warm", "QC recall alone → warm"], rows, col_w=[3.4, 2.1, 2.3, 0.8, 2.0, 1.7], size=12.5)
+    bullets(s, [
+        "• At 10 % of the labels the two arms are level on the mean, but the warm-started runs are far less scattered (sd 0.06 vs 0.15): the pretrained encoder makes a 16-QC / 9-AC training set trainable at all.",
+        "• At 25 % warm-start is ahead by 0.02–0.03 (3-class) and by 0.1 on the noisy 5-class number; from 50 % up the arms are level, and at 100 % alone is ahead by 0.04 (n = 5 vs 3).",
+        "• So the encoder's contribution to material_type is a low-data effect on stability and rare-class recall, and it fades once a few hundred QC / AC rows are available — the pattern the representation bound predicts.",
+    ], y=4.0, size=14.5, h=3.2)
+
+
+def slide_lowdata_added():
+    d = json.loads((FIG / "lowdata_deltas.json").read_text())
+    by = {}
+    for t, f, delta, se in d:
+        by.setdefault(f, []).append((t, delta, se))
+    rows = []
+    for f in sorted(by):
+        items = by[f]; better = [t for t, dd, se in items if se is not None and dd > 2 * se and dd >= 0.01]; worse = [t for t, dd, se in items if se is not None and dd < -2 * se and dd <= -0.01]
+        rows.append([f"{f} %", str(len(items)), str(sum(1 for _, dd, _ in items if dd > 0)), str(len(better)), str(len(worse)), ", ".join(t.replace("_", " ") for t in better) or "—"])
+    s = new("The 17 added tasks at low data — where warm-start wins", "Per fraction of training labels: how many tasks warm-start beats training alone, and how many are separated at 2×SE with |Δ| ≥ 0.01")
+    table(s, 0.5, 1.4, 12.3, ["labels kept", "tasks", "warm > alone (any margin)", "better (separated)", "worse (separated)", "separated gains"], rows, col_w=[1.4, 0.9, 2.3, 1.9, 1.9, 3.9], size=12.5)
+    bullets(s, ["Read with the figure on the previous slide: the gains concentrate at 5–10 % of the labels and on the tasks with a clear composition signal; at 100 % the count is 1 better / 5 worse / 11 unresolved.",
+                "Three subsample seeds per point (5 seeds / 5 encoders at 100 %); the same test rows throughout."], y=4.2, size=14, h=2.5)
+
+
 # ---- Part 3
 def slide_data_plan():
     s = new("Data plan — catalysts, high-entropy alloys, MOFs", "2–3 sets per family, ranked by fit for a composition-only model, adoption, and diversity; status = proposal")
@@ -480,6 +510,12 @@ def main():
         slide_added_transfer_setup()
         pic_slide("Transfer to the 17 added tasks — overall result", "Bars = warm-start minus alone in % of the alone mean; whiskers = 2×SE; colour = verdict", FIG / "added_transfer.png")
         slide_added_transfer_table()
+    if (S / "lowdata.json").exists():
+        divider("Part 2c — Transfer at low data volume", "The same tasks with 5–50 % of their training labels: where a pretrained encoder pays")
+        pic_slide("material_type: learning curve, alone vs warm-start", "Training labels kept at 10 / 25 / 50 / 100 %; small dots = single runs, points = mean ± sd; test split unchanged", FIG / "lowdata_material_type.png")
+        slide_lowdata_material_type()
+        pic_slide("The 17 added tasks: learning curves, alone vs warm-start", "Each panel one task; x = share of training labels kept; mean ± sd over 3 subsample seeds", FIG / "lowdata_added.png")
+        slide_lowdata_added()
     # ---- Part 3
     divider("Part 3 — Data plan", "Catalysts, high-entropy alloys, MOFs: what is selected, what is still being evaluated")
     slide_data_plan(); slide_data_notes()

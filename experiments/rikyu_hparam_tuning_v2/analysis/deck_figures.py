@@ -331,6 +331,54 @@ def fig_added_transfer(out):
     fig.tight_layout(); fig.savefig(out / "added_transfer.png"); plt.close(fig)
 
 
+def fig_lowdata(out):
+    """Learning curves: material_type in detail (3-class F1 from the prediction files) and the 17 added tasks as small multiples."""
+    mt = load("lowdata_material_type.json")
+    order = ["f10", "f25", "f50", "f100"]; xs = [10, 25, 50, 100]
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6.8))
+    for ax, key, ttl in ((axes[0], "f1_3", "3-class macro-F1 (QC / AC / others) — the 2021 paper's task"), (axes[1], "f1_5", "5-class macro-F1 (swings on the 1-row DAC and 3-row DQC test classes)")):
+        for arm, c, lab in (("alone", GREY, "trained alone"), ("warm", TEAL, "warm-start from a 23-task encoder that never saw material_type")):
+            m = [st.fmean(r[key] for r in mt[f][arm]) for f in order]; sd = [st.stdev(r[key] for r in mt[f][arm]) if len(mt[f][arm]) > 1 else 0 for f in order]
+            ax.errorbar(xs, m, yerr=sd, color=c, lw=2.5, marker="o", ms=9, capsize=5, label=lab)
+            for x, f in zip(xs, order):
+                for r in mt[f][arm]:
+                    ax.scatter(x, r[key], s=30, color=c, alpha=0.5, zorder=3)
+        ax.set_xscale("log"); ax.set_xticks(xs); ax.set_xticklabels([f"{x} %" for x in xs]); ax.set_xlabel("share of material_type training labels kept (test split unchanged)")
+        ax.set_title(ttl, fontsize=15, color=INK); ax.grid(color="#E5E7EB", lw=0.8); ax.set_axisbelow(True)
+    axes[0].set_ylabel("macro-F1 on the 7,357 test rows"); axes[0].legend(frameon=False, loc="lower right", fontsize=12.5)
+    fig.tight_layout(); fig.savefig(out / "lowdata_material_type.png"); plt.close(fig)
+    # 17 added tasks: small multiples of alone vs warm across 5 / 10 / 25 / 50 / 100 %
+    d = load("lowdata.json")["tasks"]
+    tasks = [t for t in d if t != "material_type"]
+    fig, axes = plt.subplots(3, 6, figsize=(20, 10.5)); axes = axes.ravel()
+    for ax, t in zip(axes, tasks):
+        pts = d[t]["points"]; fr = sorted(int(k) for k in pts)
+        for arm, c in (("alone", GREY), ("warm", TEAL)):
+            m, sd, xx = [], [], []
+            for f in fr:
+                v = [x for x in pts[str(f)][arm] if x is not None]
+                if v:
+                    xx.append(f); m.append(st.fmean(v)); sd.append(st.stdev(v) if len(v) > 1 else 0)
+            ax.errorbar(xx, m, yerr=sd, color=c, lw=2, marker="o", ms=5, capsize=3, label="alone" if arm == "alone" else "warm-start")
+        ax.set_xscale("log"); ax.set_xticks([5, 10, 25, 50, 100]); ax.set_xticklabels(["5", "10", "25", "50", "100"], fontsize=10)
+        ax.set_title(f"{t.replace('_', ' ')}  ({'macro-F1' if d[t]['metric'] == 'macro_f1' else 'R²'})", fontsize=12.5, color=INK); ax.tick_params(axis="y", labelsize=10)
+        ax.grid(color="#E5E7EB", lw=0.6); ax.set_axisbelow(True)
+    for ax in axes[len(tasks):]:
+        ax.axis("off")
+    axes[0].legend(frameon=False, fontsize=10, loc="lower right")
+    fig.text(0.5, 0.005, "share of the task's training labels kept (%), test split unchanged; mean ± sd over 3 subsample seeds (5 seeds / 5 encoders at 100 %)", ha="center", fontsize=13, color=MUT)
+    fig.tight_layout(rect=(0, 0.02, 1, 1)); fig.savefig(out / "lowdata_added.png"); plt.close(fig)
+    # paired deltas at each fraction, all 17 tasks: share of tasks where warm > alone
+    rows = []
+    for t in tasks:
+        pts = d[t]["points"]
+        for f in sorted(int(k) for k in pts):
+            al = [x for x in pts[str(f)]["alone"] if x is not None]; wm = [x for x in pts[str(f)]["warm"] if x is not None]
+            if al and wm:
+                rows.append((t, f, st.fmean(wm) - st.fmean(al), (st.stdev(wm) ** 2 / len(wm) + st.stdev(al) ** 2 / len(al)) ** 0.5 if len(wm) > 1 and len(al) > 1 else None))
+    return rows
+
+
 def fig_kmd_scale(out):
     d = {r["task"]: r for r in load("descriptor.json")["per_task"]}
     sgc = load("space_group_confirm.json")["arms"]
@@ -369,6 +417,8 @@ def main():
     fig_kmd_scale(a.out)
     if (S / "added_transfer.json").exists():
         fig_added_transfer(a.out)
+    if (S / "lowdata.json").exists():
+        rows = fig_lowdata(a.out); (a.out / "lowdata_deltas.json").write_text(json.dumps(rows))
     print(f"{len(rows)} tasks; scatter figures {counts}; figures in {a.out}")
 
 
