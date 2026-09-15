@@ -111,6 +111,28 @@ add_new_tasks = {"true" if add_new_tasks else "false"}
     return build_finetune_config(tomllib.loads(toml), output_dir=str(out), checkpoint=str(checkpoint))
 
 
+# --- class weights follow the fine-tune config, not the checkpoint --------------------------
+
+
+def test_reapply_class_weights_follows_config(data_dir) -> None:
+    from foundation_model.workflows.finetune import reapply_class_weights
+
+    cat, model = _model_with_heads(data_dir, ["c"])
+    head = model.task_heads["c"]
+    assert not torch.allclose(head.class_weights, torch.ones(3))  # the catalog's balanced weights
+    # a checkpoint pretrained with weights, fine-tuned with class_weights = "none": buffer becomes ones
+    model.task_configs_map["c"].class_weights = None
+    reapply_class_weights(model, ["c"])
+    assert torch.allclose(head.class_weights, torch.ones(3))
+    # and the other way round: the config's weights win over whatever the checkpoint held
+    model.task_configs_map["c"].class_weights = [1.0, 2.0, 3.0]
+    reapply_class_weights(model, ["c"])
+    assert torch.allclose(head.class_weights, torch.tensor([1.0, 2.0, 3.0]))
+    # regression heads are left alone
+    cat, model2 = _model_with_heads(data_dir, ["a"])
+    reapply_class_weights(model2, ["a"])
+
+
 # --- freeze policy -----------------------------------------------------------------------
 
 
