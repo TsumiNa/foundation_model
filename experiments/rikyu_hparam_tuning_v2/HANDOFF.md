@@ -198,6 +198,8 @@ as one that did — the library's value is the 23-task representation, not the f
 | Budget / optimisation checks (experiments 6–7) | `summary/long_budget.json` |
 | Labels page (trilingual, **in git**) | `summary_page/gen_labels_page.py` + `labels_page.js` → `summary_page/mp_labels_summary.html`; data `summary/mp_labels_page_data.json`, `summary/baselines_mp2026.json`, `summary/space_group_classes.json` |
 | Descriptor contrast (experiment 8) | `summary/descriptor.json`; tables `data/desc_xenonpy_{classic,nosum}_trans.parquet` (gitignored, rebuilt by `scripts/make_comp_descriptors.py`) |
+| Status deck 2026-09-15 (47 slides; Part 2 uses the campaign's original material_type runs) | `results/DECK_20260915.pptx` (gitignored) — built by `build_deck_20260915.py` from figures in `results/deck_20260915/` (`analysis/deck_figures.py`) |
+| Per-slide design brief + raw data for that deck (for outside polishing) | `results/DECK_20260915_NOTES.md` (gitignored) — regenerated from the built deck and the summary JSON by `build_deck_notes.py` |
 
 **The report and figures are not in git** (`experiments/**/results/` is ignored) and travel by rsync
 — but the summary JSON is in git, so every figure can be redrawn.
