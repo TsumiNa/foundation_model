@@ -140,6 +140,10 @@ class TaskSpec:
     column: str
     t_column: str | None = None  # required iff kind == KERNEL_REGRESSION
     num_classes: int | None = None  # required iff kind == CLASSIFICATION
+    # Classification only. "balanced": sklearn-style inverse-frequency weights in the cross-entropy
+    # (the historical default, which keeps minority classes alive on a few-class head but drags top-1
+    # accuracy down on a many-class head such as space groups); "none": unweighted cross-entropy.
+    class_weights: str = "balanced"
     lr: float | None = None  # per-task LR override
     weight_decay: float | None = None  # per-task weight-decay override
     scaler: ScalerSpec | None = None
@@ -162,6 +166,12 @@ class TaskSpec:
                 raise ValueError(f"Task '{self.name}': num_classes must be >= 2, got {self.num_classes}.")
         elif self.num_classes is not None:
             raise ValueError(f"Task '{self.name}': 'num_classes' is only valid for classification.")
+        if self.class_weights not in ("balanced", "none"):
+            raise ValueError(
+                f"Task '{self.name}': class_weights must be 'balanced' or 'none', got {self.class_weights!r}."
+            )
+        if self.class_weights != "balanced" and self.kind is not TaskKind.CLASSIFICATION:
+            raise ValueError(f"Task '{self.name}': 'class_weights' is only valid for classification.")
         # Per-task optimizer overrides are the only way to give one task a different learning rate
         # or weight decay, so a nonsensical value here silently trains that head badly rather than
         # failing — validate at config time.
@@ -607,7 +617,7 @@ class TaskCatalog:
                 # ClassificationHead appends the num_classes projection after these hidden layers.
                 dims=[latent_dim, *head_hidden],
                 num_classes=spec.num_classes,
-                class_weights=self._class_weights(name),
+                class_weights=self._class_weights(name) if spec.class_weights == "balanced" else None,
                 optimizer=optimizer,
                 task_masking_ratio=masking_ratio,
             )

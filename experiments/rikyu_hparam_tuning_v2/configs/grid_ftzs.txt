@@ -1,0 +1,2 @@
+ftz_magnetic_moment_o0	--checkpoint /out/_ckpt/magnetic_moment/o0.pt --set 'finetune.tasks=["magnetic_moment"]'
+ftz_material_type_o0	--checkpoint /out/_ckpt/material_type/o0.pt --set 'finetune.tasks=["material_type"]'

@@ -1,0 +1,3 @@
+ftfun_material_type_o0	--checkpoint /out/_ckpt_u/material_type/o0.pt --set 'finetune.tasks=["material_type"]'
+ftfun_material_type_o1	--checkpoint /out/_ckpt_u/material_type/o1.pt --set 'finetune.tasks=["material_type"]'
+ftfun_material_type_o2	--checkpoint /out/_ckpt_u/material_type/o2.pt --set 'finetune.tasks=["material_type"]'

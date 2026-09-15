@@ -1,0 +1,5 @@
+# scratch for matched_test: prediction parquets pulled from RIKYU on demand by finalise_xfer.sh
+.preds/
+
+# the generated summary pages and their shared partials travel in git (an *.html rule elsewhere ignores them)
+!summary_page/*.html
