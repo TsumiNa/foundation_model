@@ -181,7 +181,9 @@ function draw(){
     for(let f=0;f<=1.001;f+=0.25){svg.appendChild(el("line",{x1:m.l,x2:m.l+iw,y1:Y(f),y2:Y(f),stroke:cSoft}));txt(svg,m.l-10,Y(f)+4,f.toFixed(2),"axis",{"text-anchor":"end"});}
     [10,30,100,300,1000,3000].forEach(n=>{if(Math.log10(n)<=hi){svg.appendChild(el("line",{x1:X(n),x2:X(n),y1:m.t,y2:m.t+ih,stroke:cSoft}));txt(svg,X(n),m.t+ih+18,n.toLocaleString(),"axis",{"text-anchor":"middle"});}});
     pts.forEach(p=>{svg.appendChild(el("circle",{cx:X(p.n),cy:Y(p.f1),r:4.5,fill:C.frz,opacity:.7}));});
-    pts.filter(p=>p.n>=800).forEach(p=>txt(svg,X(p.n)+7,Y(p.f1)-6,p.cls,"val",{fill:C.frz}));
+    const lab=pts.filter(p=>p.n>=800).map(p=>({x:X(p.n)+7,y:Y(p.f1)-6,cls:p.cls})).sort((a,b)=>a.y-b.y);
+    lab.forEach((l,i)=>{for(let j=0;j<i;j++){if(Math.abs(l.x-lab[j].x)<72&&l.y-lab[j].y<13)l.y=lab[j].y+13;}});
+    lab.forEach(l=>txt(svg,l.x,l.y,l.cls,"val",{fill:C.frz}));
     svg.appendChild(el("line",{x1:m.l,x2:m.l+iw,y1:m.t+ih,y2:m.t+ih,stroke:cRule}));
     txt(svg,m.l,m.t-16,"F1 of each space group (seed 2025) against the group's number of entries","axis"); txt(svg,m.l+iw/2,H-8,"entries in the group (log scale)","axis",{"text-anchor":"middle"});
   })();}catch(e){console.error("fig-sg-f1 failed",e);}
