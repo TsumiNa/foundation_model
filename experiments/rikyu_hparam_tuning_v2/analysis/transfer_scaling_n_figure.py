@@ -133,6 +133,20 @@ def main():
         h, l = axes[0].get_legend_handles_labels(); fig.legend(h, l, loc="lower center", ncol=2, frameon=False, fontsize=14, bbox_to_anchor=(0.5, -0.01))
         fig.suptitle("Top axis: share of the task's labelled training rows · number above each point: fine-tuned minus from scratch (teal = significant at 95 %)", fontsize=14, color=MUT, y=0.995)
         fig.tight_layout(rect=(0, 0.05, 1, 0.97)); fig.savefig(a.out / "transfer_scaling_n_top.png", dpi=170); plt.close(fig)
+    # summary table: how many tasks gain / lose at each label count
+    summary = []
+    for pt in ("100", "300", "1000", "3000", "10000", "full"):
+        rows = [(t, s) for t, d in table.items() for s in d["points"] if s["point"] == pt]
+        g = [t for t, s in rows if s["gain"] > GONE]; gs = [t for t, s in rows if s["verdict"] == "significant gain"]
+        l = [t for t, s in rows if s["gain"] < -GONE]; ls = [t for t, s in rows if s["verdict"] == "significant loss"]
+        summary.append(dict(labelled_rows=pt, tasks_measured=len(rows), improved=len(g), improved_significant=len(gs), worse=len(l), worse_significant=len(ls),
+                            improved_tasks=g, improved_significant_tasks=gs, worse_tasks=l, worse_significant_tasks=ls))
+    (a.out / "transfer_scaling_n_summary.json").write_text(json.dumps(summary, indent=1) + "\n")
+    md = ["| labelled training rows | tasks measured | fine-tuning better (gain > 0.01) | of which significant (95 %) | fine-tuning worse (loss > 0.01) | of which significant (95 %) |", "|---|---|---|---|---|---|"]
+    for r in summary:
+        md.append(f"| {('full data' if r['labelled_rows'] == 'full' else format(int(r['labelled_rows']), ','))} | {r['tasks_measured']} | {r['improved']} | {r['improved_significant']}" + (f" ({', '.join(x.replace('_', ' ') for x in r['improved_significant_tasks'])})" if r['improved_significant_tasks'] else "") + f" | {r['worse']} | {r['worse_significant']}" + (f" ({', '.join(x.replace('_', ' ') for x in r['worse_significant_tasks'])})" if r['worse_significant_tasks'] else "") + " |")
+    (a.out / "transfer_scaling_n_summary.md").write_text("\n".join(md) + "\n")
+    print("\n".join(md))
     print("top:", top)
     for t, d in table.items():
         print(f"{t:26s} " + "  ".join(f"{s['point']:>5s}: {s['gain']:+.3f}±{s['gain_ci95']:.3f} p={s['p_value']:.2f} ({100 * s['share']:.1f} %)" for s in d["points"]))
