@@ -61,7 +61,7 @@ def stats(pt, full):
                 gain=diff, gain_ci95=ci, p_value=p, verdict=verdict)
 
 
-def panel(ax, t, pts, metric):
+def panel(ax, t, pts, metric, fs=11):
     x = [s["rows"] for s in pts]
     for key, col, lab in (("alone", BLUE, "trained from scratch"), ("warm", TEAL, "fine-tuned from the pretrained encoder")):
         ax.errorbar(x, [s[f"{key}_mean"] for s in pts], yerr=[s[f"{key}_sd"] for s in pts], color=col, lw=2.2, marker="o", ms=7, capsize=3, label=lab)
@@ -71,7 +71,7 @@ def panel(ax, t, pts, metric):
     top.xaxis.set_minor_locator(NullLocator()); top.xaxis.set_minor_formatter(NullFormatter())
     for i, s in enumerate(pts):
         ha = "left" if i == 0 else ("right" if i == len(pts) - 1 else "center")
-        ax.annotate(f"{s['gain']:+.3f}", (s["rows"], max(s["alone_mean"] + s["alone_sd"], s["warm_mean"] + s["warm_sd"])), xytext=(0, 6), textcoords="offset points", ha=ha, fontsize=11,
+        ax.annotate(f"{s['gain']:+.3f}", (s["rows"], max(s["alone_mean"] + s["alone_sd"], s["warm_mean"] + s["warm_sd"])), xytext=(0, 6), textcoords="offset points", ha=ha, fontsize=fs,
                     color=(TEAL if s["verdict"] == "significant gain" else MUT))
     ax.set_title(t.replace("_", " "), color=INK, fontsize=16, pad=24); ax.set_ylabel("R²" if metric == "r2" else "macro-F1"); ax.set_xlabel("labelled training rows")
     lo = min(min(s["alone_mean"] - s["alone_sd"], s["warm_mean"] - s["warm_sd"]) for s in pts); hi = max(max(s["alone_mean"] + s["alone_sd"], s["warm_mean"] + s["warm_sd"]) for s in pts)
@@ -102,7 +102,7 @@ def main():
     tasks = list(table); ncol = 6; nrow = (len(tasks) + ncol - 1) // ncol
     fig, axes = plt.subplots(nrow, ncol, figsize=(5.5 * ncol, 4.8 * nrow)); axes = axes.ravel()
     for ax, t in zip(axes, tasks):
-        panel(ax, t, table[t]["points"], table[t]["metric"])
+        panel(ax, t, table[t]["points"], table[t]["metric"], fs=9)
     for ax in axes[len(tasks):]:
         ax.axis("off")
     h, l = axes[0].get_legend_handles_labels(); fig.legend(h, l, loc="lower center", ncol=2, frameon=False, fontsize=14, bbox_to_anchor=(0.5, -0.005))
@@ -110,20 +110,22 @@ def main():
     fig.tight_layout(rect=(0, 0.03, 1, 0.98)); fig.savefig(a.out / "transfer_scaling_n_all.png", dpi=150); plt.close(fig)
     # the clearest low-data gains
     def early_gain(t):
-        pts = [s for s in table[t]["points"] if s["point"] in ("100", "300")]
-        return max((s["gain"] for s in pts), default=-1)
+        """Largest gain at 100 or 300 rows among points where both models work (metric ≥ 0.2), so a gain over a failed from-scratch model does not count."""
+        pts = [s for s in table[t]["points"] if s["point"] in ("100", "300") and s["alone_mean"] >= 0.2 and s["warm_mean"] >= 0.2]
+        return max((s["gain"] for s in pts), default=-1.0)
     cand = [t for t in tasks if t not in a.exclude.split(",") and early_gain(t) > GONE]
     cand.sort(key=early_gain, reverse=True); top = cand[:a.top]
     if top:
         ncol = 3; nrow = (len(top) + ncol - 1) // ncol
         fig, axes = plt.subplots(nrow, ncol, figsize=(16.5, 4.8 * nrow), squeeze=False); axes = axes.ravel()
         for ax, t in zip(axes, top):
-            pts = table[t]["points"]; peak = max(range(len(pts)), key=lambda i: pts[i]["gain"]); shown = []
-            for i, s in enumerate(pts):
+            pts = table[t]["points"]; peak = max(range(len(pts)), key=lambda i: pts[i]["gain"]); shown = []; gone = 0
+            for i, s in enumerate(pts):  # keep the curve through the point where the gain is gone and one more, so the flat part is visible
                 shown.append(s)
-                if i > peak and s["gain"] <= GONE:
+                gone += int(i > peak and s["gain"] <= GONE)
+                if gone == 2:
                     break
-            if pts[-1]["verdict"] == "significant loss":
+            if any(s["verdict"] == "significant loss" for s in pts[peak + 1:]):  # a gain that turns into a loss is part of the story
                 shown = pts
             panel(ax, t, shown, table[t]["metric"])
         for ax in axes[len(top):]:

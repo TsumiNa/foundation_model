@@ -200,7 +200,7 @@ as one that did — the library's value is the 23-task representation, not the f
 | Descriptor contrast (experiment 8) | `summary/descriptor.json`; tables `data/desc_xenonpy_{classic,nosum}_trans.parquet` (gitignored, rebuilt by `scripts/make_comp_descriptors.py`) |
 | Space-group baseline shown on the labels page (stW runs, 5 seeds; swapped in for the stN entry at page build) | `summary/space_group_baseline_adopted.json`, built by `analysis/space_group_baseline_entry.py` from `space_group_confirm.json` + the seed-2025 stW predictions |
 | MAE and test rows of the 14 tasks whose labels did not change (stA runs; stB for seebeck / power_factor) | `summary/single_unchanged_metrics.json` — fills the deck's metrics tables via `analysis/deck_figures.py` |
-| Transfer gain against target data volume (six added tasks, from the low-data curves) | `analysis/transfer_scaling_figure.py` → `results/optimized/raw_v4/transfer_scaling*.{png,json,csv}` (gitignored); row counts from `summary/lowdata_manifest.json` |
+| Transfer gain against the number of labelled rows (fixed counts, experiment 16) | `analysis/transfer_scaling_n_figure.py` → `results/optimized/raw_v5/transfer_scaling_n*.{png,json,csv}` (gitignored); data `summary/lowdata_n.json`, `summary/lowdata_n_material_type.json`, rows kept from `summary/lowdata_n_manifest.json`. The fraction-based figure (`analysis/transfer_scaling_figure.py`) is superseded. |
 | Raw material for the polished deck's v4 additions (transfer-scaling slide, data-plan table with citations, added-property descriptions) | `results/optimized/HANDOFF_polish_v4.md` + `results/optimized/raw_v4/` (gitignored; travel with the results directory) |
 | Status deck 2026-09-15 (47 slides; Part 2 uses the campaign's original material_type runs) | `results/DECK_20260915.pptx` (gitignored) — built by `build_deck_20260915.py` from figures in `results/deck_20260915/` (`analysis/deck_figures.py`) |
 | Per-slide design brief + raw data for that deck (for outside polishing) | `results/DECK_20260915_NOTES.md` (gitignored) — regenerated from the built deck and the summary JSON by `build_deck_notes.py` |
@@ -552,6 +552,29 @@ uninterrupted run — steps 1–21 of xu_curie_o2 reproduce xf_curie_o2 epoch fo
 not (49 / 69 epochs vs 61 / 63). The xu encoders are therefore "same ordering, same seed, never saw
 X" but not bit-identical to the transfer run's step-23 state. Keeping the penultimate step's
 checkpoint in future transfer stages makes this whole stage unnecessary.
+
+16. **Low-data curves at fixed label counts — done (2026-09-17, stages lowalone_n / lowwarm_n, 474 runs).**
+   Experiment 15 compared tasks at equal *fractions* of their labels, which puts 1,000 rows of band_gap and
+   50 rows of piezoelectric_max at the same x; rejected by the user ("固定数量,汇总时给出百分比"). Redone with
+   the same *number* of labelled training rows for every task — 100 / 300 / 1,000 / 3,000 / 10,000, a count
+   used only while it is ≤ 80 % of the task's rows — three subsample seeds, classification stratified per
+   class with at least one row per class (space_group "100" = 193 rows; x = rows actually kept), val and test
+   untouched; files `data/lowdata_n/` on RIKYU (`scripts/make_lowdata_datasets.py --counts`, MANIFEST in
+   `summary/lowdata_n_manifest.json`). From scratch = stLn_*; fine-tuned = ftLn_* from a library encoder that
+   never saw the task (material_type from the stage_xu encoders), fresh head, encoder trained. Gain = fine-tuned −
+   from scratch paired by seed, 95 % CI from a paired t-test (`analysis/lowdata_n.py` → `summary/lowdata_n.json`;
+   material_type 3-class F1 in `summary/lowdata_n_material_type.json`; figure `analysis/transfer_scaling_n_figure.py`).
+   - At 100 rows fine-tuning gains > 0.01 on 12 of 18 tasks (significant on band_gap +0.044, refractive_index
+     +0.080, universal_anisotropy +0.108, material_type 5-class +0.084); at 300 rows on 10 (none significant);
+     at 1,000 rows on 4; at 3,000 rows 5 gain and 2 lose significantly (band_gap −0.019, space_group −0.013);
+     at 10,000 rows none gains and 7 lose; at full data 1 gains (is_gap_direct +0.039) and 5 lose significantly
+     (reaction_energy, cbm, poisson_ratio, universal_anisotropy, space_group).
+   - material_type 3-class F1, from scratch → fine-tuned: 100 rows 0.394 → 0.460; 300 0.488 → 0.539;
+     1,000 0.453 → 0.570; 3,000 0.641 → 0.730; 10,000 0.835 → 0.827; full 0.890 → 0.846. The gain lasts to
+     3,000 rows (≈ 30 positive examples) and is gone at 10,000.
+   - Reading: the pretrained encoder is worth 0.04–0.16 R² while a task has a few hundred labelled rows and
+     nothing from about a thousand rows on; the six clearest curves (vbm, refractive_index, shear_modulus,
+     cbm, bulk_modulus, band_gap) are the deck's new Part 2 slide (`results/optimized/HANDOFF_polish_v4.md`).
 
 ### What can and cannot be said now
 
