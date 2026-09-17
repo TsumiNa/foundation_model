@@ -1,0 +1,953 @@
+{
+ "source": "data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet",
+ "files": [
+  {
+   "file": "qc_20260912_f05_s0.parquet",
+   "fraction": 0.05,
+   "seed": 0,
+   "kept": {
+    "material_type": {
+     "train_before": 34322,
+     "train_kept": 1717
+    },
+    "band_gap": {
+     "train_before": 21535,
+     "train_kept": 1077
+    },
+    "density_atomic": {
+     "train_before": 23224,
+     "train_kept": 1161
+    },
+    "magnetization_per_volume": {
+     "train_before": 23224,
+     "train_kept": 1161
+    },
+    "magnetization_per_fu": {
+     "train_before": 23224,
+     "train_kept": 1161
+    },
+    "reaction_energy": {
+     "train_before": 21460,
+     "train_kept": 1073
+    },
+    "cbm": {
+     "train_before": 11841,
+     "train_kept": 592
+    },
+    "vbm": {
+     "train_before": 11841,
+     "train_kept": 592
+    },
+    "bulk_modulus": {
+     "train_before": 4557,
+     "train_kept": 228
+    },
+    "shear_modulus": {
+     "train_before": 4498,
+     "train_kept": 225
+    },
+    "poisson_ratio": {
+     "train_before": 4526,
+     "train_kept": 226
+    },
+    "universal_anisotropy": {
+     "train_before": 4262,
+     "train_kept": 213
+    },
+    "refractive_index": {
+     "train_before": 3121,
+     "train_kept": 156
+    },
+    "piezoelectric_max": {
+     "train_before": 961,
+     "train_kept": 48
+    },
+    "magnetic_ordering": {
+     "train_before": 23224,
+     "train_kept": 1161
+    },
+    "is_metal": {
+     "train_before": 21525,
+     "train_kept": 1076
+    },
+    "is_gap_direct": {
+     "train_before": 21535,
+     "train_kept": 1076
+    },
+    "space_group": {
+     "train_before": 23487,
+     "train_kept": 1186
+    }
+   }
+  },
+  {
+   "file": "qc_20260912_f05_s1.parquet",
+   "fraction": 0.05,
+   "seed": 1,
+   "kept": {
+    "material_type": {
+     "train_before": 34322,
+     "train_kept": 1717
+    },
+    "band_gap": {
+     "train_before": 21535,
+     "train_kept": 1077
+    },
+    "density_atomic": {
+     "train_before": 23224,
+     "train_kept": 1161
+    },
+    "magnetization_per_volume": {
+     "train_before": 23224,
+     "train_kept": 1161
+    },
+    "magnetization_per_fu": {
+     "train_before": 23224,
+     "train_kept": 1161
+    },
+    "reaction_energy": {
+     "train_before": 21460,
+     "train_kept": 1073
+    },
+    "cbm": {
+     "train_before": 11841,
+     "train_kept": 592
+    },
+    "vbm": {
+     "train_before": 11841,
+     "train_kept": 592
+    },
+    "bulk_modulus": {
+     "train_before": 4557,
+     "train_kept": 228
+    },
+    "shear_modulus": {
+     "train_before": 4498,
+     "train_kept": 225
+    },
+    "poisson_ratio": {
+     "train_before": 4526,
+     "train_kept": 226
+    },
+    "universal_anisotropy": {
+     "train_before": 4262,
+     "train_kept": 213
+    },
+    "refractive_index": {
+     "train_before": 3121,
+     "train_kept": 156
+    },
+    "piezoelectric_max": {
+     "train_before": 961,
+     "train_kept": 48
+    },
+    "magnetic_ordering": {
+     "train_before": 23224,
+     "train_kept": 1161
+    },
+    "is_metal": {
+     "train_before": 21525,
+     "train_kept": 1076
+    },
+    "is_gap_direct": {
+     "train_before": 21535,
+     "train_kept": 1076
+    },
+    "space_group": {
+     "train_before": 23487,
+     "train_kept": 1186
+    }
+   }
+  },
+  {
+   "file": "qc_20260912_f05_s2.parquet",
+   "fraction": 0.05,
+   "seed": 2,
+   "kept": {
+    "material_type": {
+     "train_before": 34322,
+     "train_kept": 1717
+    },
+    "band_gap": {
+     "train_before": 21535,
+     "train_kept": 1077
+    },
+    "density_atomic": {
+     "train_before": 23224,
+     "train_kept": 1161
+    },
+    "magnetization_per_volume": {
+     "train_before": 23224,
+     "train_kept": 1161
+    },
+    "magnetization_per_fu": {
+     "train_before": 23224,
+     "train_kept": 1161
+    },
+    "reaction_energy": {
+     "train_before": 21460,
+     "train_kept": 1073
+    },
+    "cbm": {
+     "train_before": 11841,
+     "train_kept": 592
+    },
+    "vbm": {
+     "train_before": 11841,
+     "train_kept": 592
+    },
+    "bulk_modulus": {
+     "train_before": 4557,
+     "train_kept": 228
+    },
+    "shear_modulus": {
+     "train_before": 4498,
+     "train_kept": 225
+    },
+    "poisson_ratio": {
+     "train_before": 4526,
+     "train_kept": 226
+    },
+    "universal_anisotropy": {
+     "train_before": 4262,
+     "train_kept": 213
+    },
+    "refractive_index": {
+     "train_before": 3121,
+     "train_kept": 156
+    },
+    "piezoelectric_max": {
+     "train_before": 961,
+     "train_kept": 48
+    },
+    "magnetic_ordering": {
+     "train_before": 23224,
+     "train_kept": 1161
+    },
+    "is_metal": {
+     "train_before": 21525,
+     "train_kept": 1076
+    },
+    "is_gap_direct": {
+     "train_before": 21535,
+     "train_kept": 1076
+    },
+    "space_group": {
+     "train_before": 23487,
+     "train_kept": 1186
+    }
+   }
+  },
+  {
+   "file": "qc_20260912_f10_s0.parquet",
+   "fraction": 0.1,
+   "seed": 0,
+   "kept": {
+    "material_type": {
+     "train_before": 34322,
+     "train_kept": 3432
+    },
+    "band_gap": {
+     "train_before": 21535,
+     "train_kept": 2154
+    },
+    "density_atomic": {
+     "train_before": 23224,
+     "train_kept": 2322
+    },
+    "magnetization_per_volume": {
+     "train_before": 23224,
+     "train_kept": 2322
+    },
+    "magnetization_per_fu": {
+     "train_before": 23224,
+     "train_kept": 2322
+    },
+    "reaction_energy": {
+     "train_before": 21460,
+     "train_kept": 2146
+    },
+    "cbm": {
+     "train_before": 11841,
+     "train_kept": 1184
+    },
+    "vbm": {
+     "train_before": 11841,
+     "train_kept": 1184
+    },
+    "bulk_modulus": {
+     "train_before": 4557,
+     "train_kept": 456
+    },
+    "shear_modulus": {
+     "train_before": 4498,
+     "train_kept": 450
+    },
+    "poisson_ratio": {
+     "train_before": 4526,
+     "train_kept": 453
+    },
+    "universal_anisotropy": {
+     "train_before": 4262,
+     "train_kept": 426
+    },
+    "refractive_index": {
+     "train_before": 3121,
+     "train_kept": 312
+    },
+    "piezoelectric_max": {
+     "train_before": 961,
+     "train_kept": 96
+    },
+    "magnetic_ordering": {
+     "train_before": 23224,
+     "train_kept": 2323
+    },
+    "is_metal": {
+     "train_before": 21525,
+     "train_kept": 2153
+    },
+    "is_gap_direct": {
+     "train_before": 21535,
+     "train_kept": 2154
+    },
+    "space_group": {
+     "train_before": 23487,
+     "train_kept": 2358
+    }
+   }
+  },
+  {
+   "file": "qc_20260912_f10_s1.parquet",
+   "fraction": 0.1,
+   "seed": 1,
+   "kept": {
+    "material_type": {
+     "train_before": 34322,
+     "train_kept": 3432
+    },
+    "band_gap": {
+     "train_before": 21535,
+     "train_kept": 2154
+    },
+    "density_atomic": {
+     "train_before": 23224,
+     "train_kept": 2322
+    },
+    "magnetization_per_volume": {
+     "train_before": 23224,
+     "train_kept": 2322
+    },
+    "magnetization_per_fu": {
+     "train_before": 23224,
+     "train_kept": 2322
+    },
+    "reaction_energy": {
+     "train_before": 21460,
+     "train_kept": 2146
+    },
+    "cbm": {
+     "train_before": 11841,
+     "train_kept": 1184
+    },
+    "vbm": {
+     "train_before": 11841,
+     "train_kept": 1184
+    },
+    "bulk_modulus": {
+     "train_before": 4557,
+     "train_kept": 456
+    },
+    "shear_modulus": {
+     "train_before": 4498,
+     "train_kept": 450
+    },
+    "poisson_ratio": {
+     "train_before": 4526,
+     "train_kept": 453
+    },
+    "universal_anisotropy": {
+     "train_before": 4262,
+     "train_kept": 426
+    },
+    "refractive_index": {
+     "train_before": 3121,
+     "train_kept": 312
+    },
+    "piezoelectric_max": {
+     "train_before": 961,
+     "train_kept": 96
+    },
+    "magnetic_ordering": {
+     "train_before": 23224,
+     "train_kept": 2323
+    },
+    "is_metal": {
+     "train_before": 21525,
+     "train_kept": 2153
+    },
+    "is_gap_direct": {
+     "train_before": 21535,
+     "train_kept": 2154
+    },
+    "space_group": {
+     "train_before": 23487,
+     "train_kept": 2358
+    }
+   }
+  },
+  {
+   "file": "qc_20260912_f10_s2.parquet",
+   "fraction": 0.1,
+   "seed": 2,
+   "kept": {
+    "material_type": {
+     "train_before": 34322,
+     "train_kept": 3432
+    },
+    "band_gap": {
+     "train_before": 21535,
+     "train_kept": 2154
+    },
+    "density_atomic": {
+     "train_before": 23224,
+     "train_kept": 2322
+    },
+    "magnetization_per_volume": {
+     "train_before": 23224,
+     "train_kept": 2322
+    },
+    "magnetization_per_fu": {
+     "train_before": 23224,
+     "train_kept": 2322
+    },
+    "reaction_energy": {
+     "train_before": 21460,
+     "train_kept": 2146
+    },
+    "cbm": {
+     "train_before": 11841,
+     "train_kept": 1184
+    },
+    "vbm": {
+     "train_before": 11841,
+     "train_kept": 1184
+    },
+    "bulk_modulus": {
+     "train_before": 4557,
+     "train_kept": 456
+    },
+    "shear_modulus": {
+     "train_before": 4498,
+     "train_kept": 450
+    },
+    "poisson_ratio": {
+     "train_before": 4526,
+     "train_kept": 453
+    },
+    "universal_anisotropy": {
+     "train_before": 4262,
+     "train_kept": 426
+    },
+    "refractive_index": {
+     "train_before": 3121,
+     "train_kept": 312
+    },
+    "piezoelectric_max": {
+     "train_before": 961,
+     "train_kept": 96
+    },
+    "magnetic_ordering": {
+     "train_before": 23224,
+     "train_kept": 2323
+    },
+    "is_metal": {
+     "train_before": 21525,
+     "train_kept": 2153
+    },
+    "is_gap_direct": {
+     "train_before": 21535,
+     "train_kept": 2154
+    },
+    "space_group": {
+     "train_before": 23487,
+     "train_kept": 2358
+    }
+   }
+  },
+  {
+   "file": "qc_20260912_f25_s0.parquet",
+   "fraction": 0.25,
+   "seed": 0,
+   "kept": {
+    "material_type": {
+     "train_before": 34322,
+     "train_kept": 8580
+    },
+    "band_gap": {
+     "train_before": 21535,
+     "train_kept": 5384
+    },
+    "density_atomic": {
+     "train_before": 23224,
+     "train_kept": 5806
+    },
+    "magnetization_per_volume": {
+     "train_before": 23224,
+     "train_kept": 5806
+    },
+    "magnetization_per_fu": {
+     "train_before": 23224,
+     "train_kept": 5806
+    },
+    "reaction_energy": {
+     "train_before": 21460,
+     "train_kept": 5365
+    },
+    "cbm": {
+     "train_before": 11841,
+     "train_kept": 2960
+    },
+    "vbm": {
+     "train_before": 11841,
+     "train_kept": 2960
+    },
+    "bulk_modulus": {
+     "train_before": 4557,
+     "train_kept": 1139
+    },
+    "shear_modulus": {
+     "train_before": 4498,
+     "train_kept": 1124
+    },
+    "poisson_ratio": {
+     "train_before": 4526,
+     "train_kept": 1132
+    },
+    "universal_anisotropy": {
+     "train_before": 4262,
+     "train_kept": 1066
+    },
+    "refractive_index": {
+     "train_before": 3121,
+     "train_kept": 780
+    },
+    "piezoelectric_max": {
+     "train_before": 961,
+     "train_kept": 240
+    },
+    "magnetic_ordering": {
+     "train_before": 23224,
+     "train_kept": 5806
+    },
+    "is_metal": {
+     "train_before": 21525,
+     "train_kept": 5381
+    },
+    "is_gap_direct": {
+     "train_before": 21535,
+     "train_kept": 5384
+    },
+    "space_group": {
+     "train_before": 23487,
+     "train_kept": 5869
+    }
+   }
+  },
+  {
+   "file": "qc_20260912_f25_s1.parquet",
+   "fraction": 0.25,
+   "seed": 1,
+   "kept": {
+    "material_type": {
+     "train_before": 34322,
+     "train_kept": 8580
+    },
+    "band_gap": {
+     "train_before": 21535,
+     "train_kept": 5384
+    },
+    "density_atomic": {
+     "train_before": 23224,
+     "train_kept": 5806
+    },
+    "magnetization_per_volume": {
+     "train_before": 23224,
+     "train_kept": 5806
+    },
+    "magnetization_per_fu": {
+     "train_before": 23224,
+     "train_kept": 5806
+    },
+    "reaction_energy": {
+     "train_before": 21460,
+     "train_kept": 5365
+    },
+    "cbm": {
+     "train_before": 11841,
+     "train_kept": 2960
+    },
+    "vbm": {
+     "train_before": 11841,
+     "train_kept": 2960
+    },
+    "bulk_modulus": {
+     "train_before": 4557,
+     "train_kept": 1139
+    },
+    "shear_modulus": {
+     "train_before": 4498,
+     "train_kept": 1124
+    },
+    "poisson_ratio": {
+     "train_before": 4526,
+     "train_kept": 1132
+    },
+    "universal_anisotropy": {
+     "train_before": 4262,
+     "train_kept": 1066
+    },
+    "refractive_index": {
+     "train_before": 3121,
+     "train_kept": 780
+    },
+    "piezoelectric_max": {
+     "train_before": 961,
+     "train_kept": 240
+    },
+    "magnetic_ordering": {
+     "train_before": 23224,
+     "train_kept": 5806
+    },
+    "is_metal": {
+     "train_before": 21525,
+     "train_kept": 5381
+    },
+    "is_gap_direct": {
+     "train_before": 21535,
+     "train_kept": 5384
+    },
+    "space_group": {
+     "train_before": 23487,
+     "train_kept": 5869
+    }
+   }
+  },
+  {
+   "file": "qc_20260912_f25_s2.parquet",
+   "fraction": 0.25,
+   "seed": 2,
+   "kept": {
+    "material_type": {
+     "train_before": 34322,
+     "train_kept": 8580
+    },
+    "band_gap": {
+     "train_before": 21535,
+     "train_kept": 5384
+    },
+    "density_atomic": {
+     "train_before": 23224,
+     "train_kept": 5806
+    },
+    "magnetization_per_volume": {
+     "train_before": 23224,
+     "train_kept": 5806
+    },
+    "magnetization_per_fu": {
+     "train_before": 23224,
+     "train_kept": 5806
+    },
+    "reaction_energy": {
+     "train_before": 21460,
+     "train_kept": 5365
+    },
+    "cbm": {
+     "train_before": 11841,
+     "train_kept": 2960
+    },
+    "vbm": {
+     "train_before": 11841,
+     "train_kept": 2960
+    },
+    "bulk_modulus": {
+     "train_before": 4557,
+     "train_kept": 1139
+    },
+    "shear_modulus": {
+     "train_before": 4498,
+     "train_kept": 1124
+    },
+    "poisson_ratio": {
+     "train_before": 4526,
+     "train_kept": 1132
+    },
+    "universal_anisotropy": {
+     "train_before": 4262,
+     "train_kept": 1066
+    },
+    "refractive_index": {
+     "train_before": 3121,
+     "train_kept": 780
+    },
+    "piezoelectric_max": {
+     "train_before": 961,
+     "train_kept": 240
+    },
+    "magnetic_ordering": {
+     "train_before": 23224,
+     "train_kept": 5806
+    },
+    "is_metal": {
+     "train_before": 21525,
+     "train_kept": 5381
+    },
+    "is_gap_direct": {
+     "train_before": 21535,
+     "train_kept": 5384
+    },
+    "space_group": {
+     "train_before": 23487,
+     "train_kept": 5869
+    }
+   }
+  },
+  {
+   "file": "qc_20260912_f50_s0.parquet",
+   "fraction": 0.5,
+   "seed": 0,
+   "kept": {
+    "material_type": {
+     "train_before": 34322,
+     "train_kept": 17161
+    },
+    "band_gap": {
+     "train_before": 21535,
+     "train_kept": 10768
+    },
+    "density_atomic": {
+     "train_before": 23224,
+     "train_kept": 11612
+    },
+    "magnetization_per_volume": {
+     "train_before": 23224,
+     "train_kept": 11612
+    },
+    "magnetization_per_fu": {
+     "train_before": 23224,
+     "train_kept": 11612
+    },
+    "reaction_energy": {
+     "train_before": 21460,
+     "train_kept": 10730
+    },
+    "cbm": {
+     "train_before": 11841,
+     "train_kept": 5920
+    },
+    "vbm": {
+     "train_before": 11841,
+     "train_kept": 5920
+    },
+    "bulk_modulus": {
+     "train_before": 4557,
+     "train_kept": 2278
+    },
+    "shear_modulus": {
+     "train_before": 4498,
+     "train_kept": 2249
+    },
+    "poisson_ratio": {
+     "train_before": 4526,
+     "train_kept": 2263
+    },
+    "universal_anisotropy": {
+     "train_before": 4262,
+     "train_kept": 2131
+    },
+    "refractive_index": {
+     "train_before": 3121,
+     "train_kept": 1560
+    },
+    "piezoelectric_max": {
+     "train_before": 961,
+     "train_kept": 480
+    },
+    "magnetic_ordering": {
+     "train_before": 23224,
+     "train_kept": 11611
+    },
+    "is_metal": {
+     "train_before": 21525,
+     "train_kept": 10763
+    },
+    "is_gap_direct": {
+     "train_before": 21535,
+     "train_kept": 10768
+    },
+    "space_group": {
+     "train_before": 23487,
+     "train_kept": 11747
+    }
+   }
+  },
+  {
+   "file": "qc_20260912_f50_s1.parquet",
+   "fraction": 0.5,
+   "seed": 1,
+   "kept": {
+    "material_type": {
+     "train_before": 34322,
+     "train_kept": 17161
+    },
+    "band_gap": {
+     "train_before": 21535,
+     "train_kept": 10768
+    },
+    "density_atomic": {
+     "train_before": 23224,
+     "train_kept": 11612
+    },
+    "magnetization_per_volume": {
+     "train_before": 23224,
+     "train_kept": 11612
+    },
+    "magnetization_per_fu": {
+     "train_before": 23224,
+     "train_kept": 11612
+    },
+    "reaction_energy": {
+     "train_before": 21460,
+     "train_kept": 10730
+    },
+    "cbm": {
+     "train_before": 11841,
+     "train_kept": 5920
+    },
+    "vbm": {
+     "train_before": 11841,
+     "train_kept": 5920
+    },
+    "bulk_modulus": {
+     "train_before": 4557,
+     "train_kept": 2278
+    },
+    "shear_modulus": {
+     "train_before": 4498,
+     "train_kept": 2249
+    },
+    "poisson_ratio": {
+     "train_before": 4526,
+     "train_kept": 2263
+    },
+    "universal_anisotropy": {
+     "train_before": 4262,
+     "train_kept": 2131
+    },
+    "refractive_index": {
+     "train_before": 3121,
+     "train_kept": 1560
+    },
+    "piezoelectric_max": {
+     "train_before": 961,
+     "train_kept": 480
+    },
+    "magnetic_ordering": {
+     "train_before": 23224,
+     "train_kept": 11611
+    },
+    "is_metal": {
+     "train_before": 21525,
+     "train_kept": 10763
+    },
+    "is_gap_direct": {
+     "train_before": 21535,
+     "train_kept": 10768
+    },
+    "space_group": {
+     "train_before": 23487,
+     "train_kept": 11747
+    }
+   }
+  },
+  {
+   "file": "qc_20260912_f50_s2.parquet",
+   "fraction": 0.5,
+   "seed": 2,
+   "kept": {
+    "material_type": {
+     "train_before": 34322,
+     "train_kept": 17161
+    },
+    "band_gap": {
+     "train_before": 21535,
+     "train_kept": 10768
+    },
+    "density_atomic": {
+     "train_before": 23224,
+     "train_kept": 11612
+    },
+    "magnetization_per_volume": {
+     "train_before": 23224,
+     "train_kept": 11612
+    },
+    "magnetization_per_fu": {
+     "train_before": 23224,
+     "train_kept": 11612
+    },
+    "reaction_energy": {
+     "train_before": 21460,
+     "train_kept": 10730
+    },
+    "cbm": {
+     "train_before": 11841,
+     "train_kept": 5920
+    },
+    "vbm": {
+     "train_before": 11841,
+     "train_kept": 5920
+    },
+    "bulk_modulus": {
+     "train_before": 4557,
+     "train_kept": 2278
+    },
+    "shear_modulus": {
+     "train_before": 4498,
+     "train_kept": 2249
+    },
+    "poisson_ratio": {
+     "train_before": 4526,
+     "train_kept": 2263
+    },
+    "universal_anisotropy": {
+     "train_before": 4262,
+     "train_kept": 2131
+    },
+    "refractive_index": {
+     "train_before": 3121,
+     "train_kept": 1560
+    },
+    "piezoelectric_max": {
+     "train_before": 961,
+     "train_kept": 480
+    },
+    "magnetic_ordering": {
+     "train_before": 23224,
+     "train_kept": 11611
+    },
+    "is_metal": {
+     "train_before": 21525,
+     "train_kept": 10763
+    },
+    "is_gap_direct": {
+     "train_before": 21535,
+     "train_kept": 10768
+    },
+    "space_group": {
+     "train_before": 23487,
+     "train_kept": 11747
+    }
+   }
+  }
+ ]
+}
