@@ -1,0 +1,152 @@
+{
+ "counts": [
+  100,
+  300,
+  1000,
+  3000,
+  10000
+ ],
+ "max_share": 0.8,
+ "seeds": [
+  0,
+  1,
+  2
+ ],
+ "train_rows": {
+  "material_type": 34322,
+  "band_gap": 21535,
+  "density_atomic": 23224,
+  "magnetization_per_volume": 23224,
+  "magnetization_per_fu": 23224,
+  "reaction_energy": 21460,
+  "cbm": 11841,
+  "vbm": 11841,
+  "bulk_modulus": 4557,
+  "shear_modulus": 4498,
+  "poisson_ratio": 4526,
+  "universal_anisotropy": 4262,
+  "refractive_index": 3121,
+  "piezoelectric_max": 961,
+  "magnetic_ordering": 23224,
+  "is_metal": 21525,
+  "is_gap_direct": 21535,
+  "space_group": 23487
+ },
+ "plan": {
+  "material_type": [
+   100,
+   300,
+   1000,
+   3000,
+   10000
+  ],
+  "band_gap": [
+   100,
+   300,
+   1000,
+   3000,
+   10000
+  ],
+  "density_atomic": [
+   100,
+   300,
+   1000,
+   3000,
+   10000
+  ],
+  "magnetization_per_volume": [
+   100,
+   300,
+   1000,
+   3000,
+   10000
+  ],
+  "magnetization_per_fu": [
+   100,
+   300,
+   1000,
+   3000,
+   10000
+  ],
+  "reaction_energy": [
+   100,
+   300,
+   1000,
+   3000,
+   10000
+  ],
+  "cbm": [
+   100,
+   300,
+   1000,
+   3000
+  ],
+  "vbm": [
+   100,
+   300,
+   1000,
+   3000
+  ],
+  "bulk_modulus": [
+   100,
+   300,
+   1000,
+   3000
+  ],
+  "shear_modulus": [
+   100,
+   300,
+   1000,
+   3000
+  ],
+  "poisson_ratio": [
+   100,
+   300,
+   1000,
+   3000
+  ],
+  "universal_anisotropy": [
+   100,
+   300,
+   1000,
+   3000
+  ],
+  "refractive_index": [
+   100,
+   300,
+   1000
+  ],
+  "piezoelectric_max": [
+   100,
+   300
+  ],
+  "magnetic_ordering": [
+   100,
+   300,
+   1000,
+   3000,
+   10000
+  ],
+  "is_metal": [
+   100,
+   300,
+   1000,
+   3000,
+   10000
+  ],
+  "is_gap_direct": [
+   100,
+   300,
+   1000,
+   3000,
+   10000
+  ],
+  "space_group": [
+   100,
+   300,
+   1000,
+   3000,
+   10000
+  ]
+ }
+}

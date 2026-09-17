@@ -130,6 +130,9 @@ case "$STAGE" in
     # low-data learning curves (train labels kept at 5/10/25/50 %, data/lowdata/*): alone vs warm-start. Needs SRC_OVERRIDE.
     lowalone)   CONFIG=probe6_mp2026_lowdata.toml; OUT=stage_single_mp2026; DEFTIME=04:00:00 ;;
     lowwarm)    CONFIG=ft_lowdata_mp2026.toml;     OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
+    # the same curves at fixed label counts (100 / 300 / 1k / 3k / 10k rows for every task, data/lowdata_n/*). Needs SRC_OVERRIDE.
+    lowalone_n) CONFIG=probe6_mp2026_lowdata.toml; OUT=stage_single_mp2026; DEFTIME=04:00:00 ;;
+    lowwarm_n)  CONFIG=ft_lowdata_mp2026.toml;     OUT=stage_ft; DEFTIME=04:00:00; MODE=finetune ;;
     # Long-budget check on the resolvable warm-start losers (final_energy, volume, dos_density):
     # 500 epochs, early stopping OFF, in both the warm-start arm and a single-task control, so the
     # budget is not the confound. Runs are 3-4x longer than the 150-epoch ones; 12h covers PACK=8.
