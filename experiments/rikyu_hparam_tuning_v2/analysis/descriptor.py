@@ -9,7 +9,7 @@ labels that depend on it (Volume (normalized) is a Yeo-Johnson transform of the 
 
   kmd      the campaign's descriptor (stage_single, stA / stB — the adopted ceilings)
   classic  XenonPy classic composition descriptor, StandardScaler + Yeo-Johnson, exactly as
-           data/data/scripts/calculate_compositional_desc.ipynb produced it (stage_desc, stXc)
+           data/scripts/calculate_compositional_desc.ipynb produced it (stage_desc, stXc)
   nosum    the same table without the weighted-sum block, the one block carrying cell scale (stXn)
 
 If classic beats kmd and nosum does not, scale-blindness is what caps these tasks. If both beat

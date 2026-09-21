@@ -324,7 +324,7 @@ converts into score. So material_type's path to a gain **structurally cannot tra
    (stage_xu → ftzu / ftfu) do that — and whether the descriptor is the reason, which is experiment 8.
 8. **Descriptor contrast on the extensive properties** — **done (2026-09-12, jobs 86328 / 86329).**
    Single task, the stage_single recipe, 5 seeds, three tasks. The descriptors are the ones
-   `data/data/scripts/calculate_compositional_desc.ipynb` produced — XenonPy
+   `data/scripts/calculate_compositional_desc.ipynb` produced — XenonPy
    `Compositions(featurizers="classic")` (weighted sum / average / variance / max / min, 290 columns)
    followed by StandardScaler → PowerTransformer(yeo-johnson) — re-keyed by the pipeline's canonical,
    non-reduced composition (`scripts/make_comp_descriptors.py`); `nosum` drops the weighted-sum
@@ -369,7 +369,7 @@ converts into score. So material_type's path to a gain **structurally cannot tra
    The same mixing sits behind `formation_energy_per_atom`, and the summary's structure and magnetism
    come from r2SCAN tasks for ~23k of the 33.8k entries. The dataset was rebuilt on GGA / GGA+U only
    (`data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet`, script
-   `data/data/scripts/rebuild_mp_gga_20260912.py`, details in `..._CHANGES.md`), with per-cell values
+   `data/scripts/rebuild_mp_gga_20260912.py`, details in `..._CHANGES.md`), with per-cell values
    rescaled to the dataset's cell, electronic-structure values kept only where MP's own origin task is
    GGA-family, and the extra MP properties added (band gap and its labels, per-atom volume, per-volume
    magnetisation, magnetic ordering, elastic, dielectric + refractive index, piezoelectric maxima).

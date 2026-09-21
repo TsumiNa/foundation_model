@@ -144,7 +144,7 @@ case "$STAGE" in
     singlec)    CONFIG=probe6_long.toml;  OUT=stage_single; DEFTIME=12:00:00 ;;
     ftflr)      CONFIG=ft_full.toml;      OUT=stage_ft;     DEFTIME=08:00:00; MODE=finetune ;;
     # Descriptor contrast on the extensive properties, single task, same recipe as stage_single: the
-    # XenonPy classic composition descriptor from data/data/scripts/calculate_compositional_desc.ipynb
+    # XenonPy classic composition descriptor from data/scripts/calculate_compositional_desc.ipynb
     # (with its scale-bearing weighted-sum block) vs the same table without that block.
     descxc)     CONFIG=probe6_desc_xclassic.toml; OUT=stage_desc; DEFTIME=06:00:00 ;;
     descxn)     CONFIG=probe6_desc_xnosum.toml;   OUT=stage_desc; DEFTIME=06:00:00 ;;

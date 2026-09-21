@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Composition-keyed descriptor tables for the descriptor-contrast experiment.
 
-The descriptors are NOT computed here. They are the ones data/data/scripts/calculate_compositional_desc.ipynb
+The descriptors are NOT computed here. They are the ones data/scripts/calculate_compositional_desc.ipynb
 produced: XenonPy `Compositions(featurizers="classic")` on the qc dataset (weighted sum / average /
 variance / max / min over 58 element properties, 290 columns), then StandardScaler -> PowerTransformer
 (yeo-johnson) fitted on all rows, stored as data/qc_ac_te_mp_dos_composition_desc_trans_20250615.pd.parquet
