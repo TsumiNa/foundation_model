@@ -80,6 +80,16 @@ Colocate tests next to the source file and name them after that source file.
 - If a single source file's tests grow large enough to warrant splitting, split by feature into additional files that still start with the source file's basename (for example `model_parse_test.py`, `model_loss_test.py`).
 - Use pytest conventions: test functions named `test_*`, fixtures over ad-hoc setup, and `pytest.mark.parametrize` for input variations.
 
+## 4. Verification Proportionate to the Change
+
+Run the checks that exercise what changed, at a cost proportionate to the change's type and risk. Never report a check as passed unless it was actually run and succeeded.
+
+- **Code changes** (`src/`, scripts, configs that code reads): run `uv run ruff format` and `uv run ruff check` on the touched files, `uv run mypy src/` over the whole package for any Python change (inference crosses module boundaries, so a per-file run can pass while an untouched caller breaks; see `AGENTS.md`), and the focused tests of Section 3. Run the full suite when the change warrants it.
+- **Instruction- or documentation-only changes** (`AGENTS.md`, `.github/instructions/`, `docs/`, `README.md`): no code build, lint, or test run is required. The commit hook still runs `mypy src/` on every commit; if it fails on a change that touched no Python, that is a pre-existing failure to report, not a blocker to fix in the same change.
+- **Data, notebook, or experiment-artifact changes**: run the validation the touched pipeline defines; do not claim code checks that exercise nothing in the change.
+- Do not fix unrelated pre-existing formatting, lint, type, test, or build failures inside the current change. Report them separately and fix them only in a separate task or PR when the user authorizes it (see "No cross-PR fixes" in `branch-and-pr-workflow.instructions.md`). When the fix is the stated purpose of the change, it is in scope and needs proportionate evidence.
+- The final report must distinguish four outcomes: checks that passed on the current change; failures the current change caused; failures that are demonstrably pre-existing and unrelated (with the evidence); and checks that were not run, with the reason.
+
 ## Quick Self-Check Before Finishing
 
 Before reporting an implementation as complete, confirm:
@@ -91,3 +101,4 @@ Before reporting an implementation as complete, confirm:
 5. Public APIs are type-hinted and follow the existing module organization (model config dataclasses/enums in `models/model_config.py`).
 6. A `<source>_test.py` file exists next to the changed source and exercises the core path plus the most likely failure patterns.
 7. The new and existing tests for the touched modules pass (`pytest`).
+8. The report separates passed checks, failures this change caused, demonstrably pre-existing unrelated failures (with evidence), and checks not run (Section 4).
