@@ -18,9 +18,8 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-import torch
 from lightning import Trainer, seed_everything
 from lightning.pytorch.callbacks import Callback
 from loguru import logger
@@ -34,6 +33,7 @@ from ._engine import (
     build_head_config,
     build_trainer_extras,
     evaluate_task,
+    reapply_class_weights,
 )
 from ._sections import (
     ModelSectionConfig,
@@ -45,8 +45,6 @@ from ._sections import (
 from .recording import RunRecorder, load_checkpoint_state
 from .task_catalog import TaskCatalog, TaskCatalogConfig, build_task_catalog_config
 
-if TYPE_CHECKING:
-    from ..models.flexible_multi_task_model import FlexibleMultiTaskModel
 
 _FINETUNE_ROOT_KEYS = {"data", "descriptor", "datasets", "tasks", "model", "training", "finetune", "output"}
 _CATALOG_KEYS = {"data", "descriptor", "datasets", "tasks"}
@@ -142,27 +140,6 @@ class _FrozenEncoderEval(Callback):
 
     def on_train_epoch_start(self, trainer: Any, pl_module: Any) -> None:
         pl_module.encoder.eval()
-
-
-def reapply_class_weights(model: FlexibleMultiTaskModel, task_names: list[str]) -> None:
-    """Reset every classification head's ``class_weights`` buffer to what its config says.
-
-    ``load_state_dict`` restores the buffer from the checkpoint, so a fine-tune configured with
-    ``class_weights = "none"`` would otherwise train on the pretraining's balanced weights (and vice
-    versa). ``None`` in the config means unweighted, i.e. a buffer of ones.
-    """
-    for name in task_names:
-        head = model.task_heads[name]
-        cfg = model.task_configs_map.get(name)
-        if not hasattr(head, "class_weights") or not isinstance(head.class_weights, torch.Tensor):
-            continue
-        weights = getattr(cfg, "class_weights", None)
-        target = (
-            torch.ones_like(head.class_weights)
-            if weights is None
-            else torch.as_tensor(weights, dtype=head.class_weights.dtype, device=head.class_weights.device)
-        )
-        head.class_weights.copy_(target)
 
 
 def run(cfg: FinetuneConfig, recorder: RunRecorder | None = None) -> dict[str, Any]:

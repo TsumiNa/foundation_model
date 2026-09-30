@@ -241,8 +241,10 @@ class_weights = "%s"
         _build(base % ok)
 
 
-def test_class_weights_on_regression_raises() -> None:
-    toml = """
+@pytest.mark.parametrize("value", ["none", "balanced"])
+def test_class_weights_on_regression_raises(value: str) -> None:
+    toml = (
+        """
 [datasets.qc]
 path = "data/qc.parquet"
 
@@ -251,8 +253,10 @@ name = "density"
 kind = "regression"
 dataset = "qc"
 column = "density"
-class_weights = "none"
+class_weights = "%s"
 """
+        % value
+    )
     with pytest.raises(ValueError, match="only valid for classification"):
         _build(toml)
 
