@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import joblib
+from lightning import Trainer
 import numpy as np
 import pandas as pd
 
@@ -20,6 +21,7 @@ from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.model_config import RegressionTaskConfig
 from ._engine import (
     ReplayResampleCallback,
+    DropLastTrainCompoundDataModule,
     as_float_array,
     build_empty_model,
     build_head_config,
@@ -180,6 +182,35 @@ def test_drop_last_datamodule_propagates_persistent_workers() -> None:
     loader = dm.train_dataloader()
     assert loader is not None and loader.drop_last and loader.persistent_workers
     assert loader.pin_memory is False and loader.prefetch_factor == 3  # rebuild keeps tuning knobs
+
+
+def test_fixed_budget_trainer_can_fit_without_validation_rows(tmp_path: Path) -> None:
+    dataset = tmp_path / "property.parquet"
+    pd.DataFrame(
+        {"composition": ["Fe2O3", "Al2O3", "NaCl"], "y": [0.0, 1.0, 2.0], "split": ["train", "train", "test"]}
+    ).to_parquet(dataset)
+    catalog = TaskCatalog(
+        build_task_catalog_config(
+            {
+                "data": {"batch_size": 2, "val_split": 0.0, "test_split": 0.0},
+                "descriptor": {"kind": "kmd", "n_grids": 4},
+                "datasets": {"property": {"path": str(dataset)}},
+                "tasks": [{"name": "property", "kind": "regression", "dataset": "property", "column": "y"}],
+            }
+        )
+    )
+    config = ModelSectionConfig(latent_dim=8, encoder_hidden_dims=[16])
+    training = TrainingSectionConfig(max_epochs=1, accelerator="cpu")
+    model = build_empty_model(catalog, config, training)
+    model.add_task(build_head_config(catalog, config, training, "property"))
+    datamodule = catalog.build_datamodule(["property"], datamodule_cls=DropLastTrainCompoundDataModule)
+    trainer = Trainer(
+        max_epochs=1, accelerator="cpu", logger=False, enable_checkpointing=False, enable_progress_bar=False
+    )
+    trainer.fit(model, datamodule=datamodule)
+    assert trainer.current_epoch == 1
+    assert datamodule.val_dataset is None
+    assert datamodule.train_dataset is not None and len(datamodule.train_dataset) == 2
 
 
 def test_replay_resample_callback_accepts_non_persistent_workers() -> None:

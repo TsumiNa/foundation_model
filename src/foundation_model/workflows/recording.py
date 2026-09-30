@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -54,6 +56,20 @@ def _git_info() -> dict[str, Any]:
         return {"commit": commit, "dirty": bool(status.strip())}
     except Exception:
         return {"commit": None, "dirty": None}
+
+
+def _save_checkpoint(path: Path, payload: dict[str, Any]) -> None:
+    """Publish a fully written checkpoint; interrupted writes leave the previous file intact."""
+    descriptor, filename = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    temporary = Path(filename)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            torch.save(payload, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 @dataclass(kw_only=True)
@@ -115,7 +131,8 @@ class RunRecorder:
         step_dir = self.paths.step_dir(step, task)
         step_dir.mkdir(parents=True, exist_ok=True)
         path = step_dir / "checkpoint.pt"
-        torch.save(
+        _save_checkpoint(
+            path,
             {
                 "model": model.state_dict(),
                 "task_sequence": list(active_tasks),
@@ -123,7 +140,6 @@ class RunRecorder:
                 "new_task": task,
                 "active_tasks": list(active_tasks),
             },
-            path,
         )
         return path
 
@@ -132,7 +148,7 @@ class RunRecorder:
 
         self.paths.training.mkdir(parents=True, exist_ok=True)
         path = self.paths.training / "final_model.pt"
-        torch.save({"model": model.state_dict(), "task_sequence": list(task_sequence)}, path)
+        _save_checkpoint(path, {"model": model.state_dict(), "task_sequence": list(task_sequence)})
         (self.paths.training / "final_model_taskconfigs.json").write_text(
             json.dumps(task_spec_dump, indent=2, default=_json_default), encoding="utf-8"
         )
