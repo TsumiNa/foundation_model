@@ -1,0 +1,5 @@
+stX_space_group_s2025	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --set 'pretrain.task_sequence=["space_group"]' --seed 2025
+stX_space_group_s2026	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --set 'pretrain.task_sequence=["space_group"]' --seed 2026
+stX_space_group_s2027	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --set 'pretrain.task_sequence=["space_group"]' --seed 2027
+stX_space_group_s2028	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --set 'pretrain.task_sequence=["space_group"]' --seed 2028
+stX_space_group_s2029	--set model.latent_dim=384 --set training.encoder_lr=0.002 --set training.scheduler.min_lr=1e-05 --set training.scheduler.patience=5 --set 'pretrain.task_sequence=["space_group"]' --seed 2029

@@ -1,0 +1,384 @@
+[
+ {
+  "name": "density",
+  "kind": "regression",
+  "column": "Density (normalized)",
+  "n": {
+   "train": 23224,
+   "val": 4972,
+   "test": 4970
+  }
+ },
+ {
+  "name": "efermi",
+  "kind": "regression",
+  "column": "Efermi (normalized)",
+  "n": {
+   "train": 21525,
+   "val": 4600,
+   "test": 4616
+  }
+ },
+ {
+  "name": "final_energy",
+  "kind": "regression",
+  "column": "Final energy per atom (normalized)",
+  "n": {
+   "train": 23224,
+   "val": 4972,
+   "test": 4970
+  }
+ },
+ {
+  "name": "total_magnetization",
+  "kind": "regression",
+  "column": "Total magnetization (normalized)",
+  "n": {
+   "train": 23224,
+   "val": 4972,
+   "test": 4970
+  }
+ },
+ {
+  "name": "volume",
+  "kind": "regression",
+  "column": "Volume (normalized)",
+  "n": {
+   "train": 23224,
+   "val": 4972,
+   "test": 4970
+  }
+ },
+ {
+  "name": "dielectric_total",
+  "kind": "regression",
+  "column": "Dielectric total (normalized)",
+  "n": {
+   "train": 3122,
+   "val": 670,
+   "test": 709
+  }
+ },
+ {
+  "name": "dielectric_ionic",
+  "kind": "regression",
+  "column": "Dielectric ionic (normalized)",
+  "n": {
+   "train": 3123,
+   "val": 671,
+   "test": 709
+  }
+ },
+ {
+  "name": "dielectric_electronic",
+  "kind": "regression",
+  "column": "Dielectric electronic (normalized)",
+  "n": {
+   "train": 3122,
+   "val": 670,
+   "test": 709
+  }
+ },
+ {
+  "name": "formation_energy",
+  "kind": "regression",
+  "column": "Formation energy per atom (normalized)",
+  "n": {
+   "train": 23224,
+   "val": 4972,
+   "test": 4970
+  }
+ },
+ {
+  "name": "magnetization",
+  "kind": "regression",
+  "column": "Magnetization (normalized)",
+  "n": null
+ },
+ {
+  "name": "curie",
+  "kind": "regression",
+  "column": "Curie temperature (normalized)",
+  "n": null
+ },
+ {
+  "name": "neel",
+  "kind": "regression",
+  "column": "Neel temperature (normalized)",
+  "n": null
+ },
+ {
+  "name": "magnetic_moment",
+  "kind": "regression",
+  "column": "Magnetic moment (normalized)",
+  "n": null
+ },
+ {
+  "name": "tc",
+  "kind": "regression",
+  "column": "Transition temperature (normalized)",
+  "n": null
+ },
+ {
+  "name": "kp",
+  "kind": "regression",
+  "column": "kp (normalized)",
+  "n": null
+ },
+ {
+  "name": "klat",
+  "kind": "regression",
+  "column": "klat (normalized)",
+  "n": null
+ },
+ {
+  "name": "magnetic_susceptibility",
+  "kind": "kernel_regression",
+  "column": "Magnetic susceptibility (normalized)",
+  "n": {
+   "train": 63,
+   "val": 14,
+   "test": 21
+  }
+ },
+ {
+  "name": "zt",
+  "kind": "kernel_regression",
+  "column": "ZT (normalized)",
+  "n": {
+   "train": 3479,
+   "val": 744,
+   "test": 748
+  }
+ },
+ {
+  "name": "power_factor",
+  "kind": "kernel_regression",
+  "column": "Power factor (normalized)",
+  "n": {
+   "train": 3674,
+   "val": 769,
+   "test": 780
+  }
+ },
+ {
+  "name": "thermal_conductivity",
+  "kind": "kernel_regression",
+  "column": "Thermal conductivity (normalized)",
+  "n": {
+   "train": 4329,
+   "val": 928,
+   "test": 901
+  }
+ },
+ {
+  "name": "electrical_resistivity",
+  "kind": "kernel_regression",
+  "column": "Electrical resistivity (normalized)",
+  "n": {
+   "train": 5178,
+   "val": 1117,
+   "test": 1039
+  }
+ },
+ {
+  "name": "dos_density",
+  "kind": "kernel_regression",
+  "column": "DOS density (normalized)",
+  "n": {
+   "train": 7196,
+   "val": 1527,
+   "test": 1598
+  }
+ },
+ {
+  "name": "seebeck",
+  "kind": "kernel_regression",
+  "column": "Seebeck coefficient (normalized)",
+  "n": {
+   "train": 8219,
+   "val": 1737,
+   "test": 1766
+  }
+ },
+ {
+  "name": "material_type",
+  "kind": "classification",
+  "column": "Material type (label)",
+  "n": {
+   "train": 34322,
+   "val": 7355,
+   "test": 7357
+  }
+ },
+ {
+  "name": "band_gap",
+  "kind": "regression",
+  "column": "Band gap (normalized)",
+  "n": {
+   "train": 21535,
+   "val": 4605,
+   "test": 4619
+  }
+ },
+ {
+  "name": "density_atomic",
+  "kind": "regression",
+  "column": "Density atomic (normalized)",
+  "n": {
+   "train": 23224,
+   "val": 4972,
+   "test": 4970
+  }
+ },
+ {
+  "name": "magnetization_per_volume",
+  "kind": "regression",
+  "column": "Total magnetization per volume (normalized)",
+  "n": {
+   "train": 23224,
+   "val": 4972,
+   "test": 4970
+  }
+ },
+ {
+  "name": "magnetization_per_fu",
+  "kind": "regression",
+  "column": "Total magnetization per formula unit (normalized)",
+  "n": {
+   "train": 23224,
+   "val": 4972,
+   "test": 4970
+  }
+ },
+ {
+  "name": "reaction_energy",
+  "kind": "regression",
+  "column": "Equilibrium reaction energy per atom (normalized)",
+  "n": {
+   "train": 21460,
+   "val": 4614,
+   "test": 4615
+  }
+ },
+ {
+  "name": "cbm",
+  "kind": "regression",
+  "column": "CBM (normalized)",
+  "n": {
+   "train": 11841,
+   "val": 2550,
+   "test": 2466
+  }
+ },
+ {
+  "name": "vbm",
+  "kind": "regression",
+  "column": "VBM (normalized)",
+  "n": {
+   "train": 11841,
+   "val": 2550,
+   "test": 2466
+  }
+ },
+ {
+  "name": "bulk_modulus",
+  "kind": "regression",
+  "column": "Bulk modulus (normalized)",
+  "n": {
+   "train": 4557,
+   "val": 972,
+   "test": 1022
+  }
+ },
+ {
+  "name": "shear_modulus",
+  "kind": "regression",
+  "column": "Shear modulus (normalized)",
+  "n": {
+   "train": 4498,
+   "val": 953,
+   "test": 1015
+  }
+ },
+ {
+  "name": "poisson_ratio",
+  "kind": "regression",
+  "column": "Poisson ratio (normalized)",
+  "n": {
+   "train": 4526,
+   "val": 958,
+   "test": 1015
+  }
+ },
+ {
+  "name": "universal_anisotropy",
+  "kind": "regression",
+  "column": "Universal anisotropy (normalized)",
+  "n": {
+   "train": 4262,
+   "val": 895,
+   "test": 967
+  }
+ },
+ {
+  "name": "refractive_index",
+  "kind": "regression",
+  "column": "Refractive index (normalized)",
+  "n": {
+   "train": 3121,
+   "val": 670,
+   "test": 709
+  }
+ },
+ {
+  "name": "piezoelectric_max",
+  "kind": "regression",
+  "column": "Piezoelectric max (normalized)",
+  "n": {
+   "train": 961,
+   "val": 205,
+   "test": 196
+  }
+ },
+ {
+  "name": "magnetic_ordering",
+  "kind": "classification",
+  "column": "Magnetic ordering (label)",
+  "n": {
+   "train": 23224,
+   "val": 4972,
+   "test": 4970
+  }
+ },
+ {
+  "name": "is_metal",
+  "kind": "classification",
+  "column": "Is metal (label)",
+  "n": {
+   "train": 21525,
+   "val": 4600,
+   "test": 4616
+  }
+ },
+ {
+  "name": "is_gap_direct",
+  "kind": "classification",
+  "column": "Is gap direct (label)",
+  "n": {
+   "train": 21535,
+   "val": 4605,
+   "test": 4619
+  }
+ },
+ {
+  "name": "space_group",
+  "kind": "classification",
+  "column": "Space group (task label)",
+  "n": {
+   "train": 23487,
+   "val": 5006,
+   "test": 5031
+  }
+ }
+]
