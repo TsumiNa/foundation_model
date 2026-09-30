@@ -33,6 +33,7 @@ from ._engine import (
     build_head_config,
     build_trainer_extras,
     evaluate_task,
+    reapply_class_weights,
 )
 from ._sections import (
     ModelSectionConfig,
@@ -43,6 +44,7 @@ from ._sections import (
 )
 from .recording import RunRecorder, load_checkpoint_state
 from .task_catalog import TaskCatalog, TaskCatalogConfig, build_task_catalog_config
+
 
 _FINETUNE_ROOT_KEYS = {"data", "descriptor", "datasets", "tasks", "model", "training", "finetune", "output"}
 _CATALOG_KEYS = {"data", "descriptor", "datasets", "tasks"}
@@ -171,6 +173,10 @@ def run(cfg: FinetuneConfig, recorder: RunRecorder | None = None) -> dict[str, A
             logger.info(
                 f"load_state_dict unexpected keys ({len(incompatible.unexpected_keys)}): {incompatible.unexpected_keys[:8]}"
             )
+        # A classification head stores its class weights as a buffer, so the checkpoint just
+        # overwrote them with whatever the pretraining used. The fine-tune's own config decides the
+        # weighting (`[[tasks]] class_weights`), so re-apply it from the head configs built above.
+        reapply_class_weights(model, ckpt_tasks)
 
         added_tasks = [t for t in cfg.tasks if t not in model.task_heads]
         if added_tasks and not cfg.add_new_tasks:

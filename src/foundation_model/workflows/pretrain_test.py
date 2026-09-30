@@ -376,6 +376,35 @@ def test_warm_start_continues_sequence(smoke_dir, tmp_path) -> None:
     assert (out2 / "training" / "step02_b" / "a_metrics.json").exists()
 
 
+def test_warm_start_applies_configured_class_weights(smoke_dir, tmp_path) -> None:
+    """A checkpoint pretrained with balanced weights, warm-started with class_weights = "none":
+    the configured policy, not the checkpoint's buffer, must reach the loaded head."""
+    from foundation_model.workflows.task_catalog import TaskCatalog
+
+    df = pd.read_parquet(smoke_dir / "x.parquet")
+    df["c"] = [0] * (len(df) - 4) + [1, 1, 2, 2]  # skewed, so balanced weights are far from ones
+    df.to_parquet(smoke_dir / "x.parquet")
+
+    def toml(weights: str) -> str:
+        return _ws_toml(smoke_dir, ["c"]).replace(
+            "[model]",
+            f'[[tasks]]\nname = "c"\nkind = "classification"\ndataset = "d1"\ncolumn = "c"\nnum_classes = 3\n{weights}\n\n[model]',
+        )
+
+    out1 = tmp_path / "run1"
+    _run_pretrain(build_pretrain_config(tomllib.loads(toml("")), output_dir=str(out1)), out1)
+    ckpt = out1 / "training" / "final_model.pt"
+    saved = torch.load(ckpt, weights_only=True)["model"]["task_heads.c.class_weights"]
+    assert not torch.allclose(saved, torch.ones(3))
+
+    cfg2 = build_pretrain_config(
+        tomllib.loads(toml('class_weights = "none"')), output_dir=str(tmp_path / "run2"), checkpoint=str(ckpt)
+    )
+    model, preloaded, _ = pretrain_module._warm_start(cfg2, TaskCatalog(cfg2.catalog), ckpt)
+    assert preloaded == ["c"]
+    assert torch.allclose(model.task_heads["c"].class_weights, torch.ones(3))
+
+
 def _no_replay_kr_config(smoke_dir, output_dir):
     kr = pd.DataFrame(
         {

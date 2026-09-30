@@ -40,6 +40,7 @@ from ._engine import (
     build_trainer_extras,
     checkpoint_task_order,
     evaluate_task,
+    reapply_class_weights,
 )
 from ._sections import (
     ModelSectionConfig,
@@ -355,6 +356,8 @@ def _warm_start(
         built[name] = build_head_config(catalog, cfg.model, cfg.training, name, init_from_data=False)
         model.add_task(built[name])
     incompatible = model.load_state_dict(state["model"], strict=False)
+    # the checkpoint's class_weights buffers would otherwise override this run's configured policy
+    reapply_class_weights(model, list(preloaded))
     if incompatible.missing_keys:
         logger.info(f"warm-start: {len(incompatible.missing_keys)} missing key(s) e.g. {incompatible.missing_keys[:6]}")
     logger.info(f"warm-started from {source} with heads {preloaded}")
