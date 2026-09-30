@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -13,14 +15,19 @@ import numpy as np
 import pytest
 import torch
 
+import campaign
+
 from campaign import (
     CampaignSettings,
     Route,
     RunUnit,
     build_units,
     final_config,
+    execute_unit,
+    file_sha256,
     fit_spec,
     initialize_target,
+    plan_campaign,
     warm_config,
 )
 
@@ -162,3 +169,104 @@ def test_scratch_fit_runs_with_seven_train_compounds_and_no_validation(manifest:
     assert (output / "DONE").is_file()
     summary = json.loads((output / "training/finetune_summary.json").read_text())
     assert summary["epochs_run"] == 2 and summary["freeze_encoder"] is False
+
+
+def test_plan_records_the_consumed_input_artifacts(manifest: dict, tmp_path: Path) -> None:
+    selection = tmp_path / "data/agis_pretrained_20261001/selection_20261001.json"
+    selection.parent.mkdir()
+    selection.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "sha256": str(i),
+                        "hyperparameters": {"latent_dim": 8, "encoder_hidden_dims": [16], "head_hidden_dims": [8]},
+                    }
+                    for i in range(10)
+                ]
+            }
+        )
+    )
+    folder = tmp_path / "data/agis_preprocessing_20261001/fold_01"
+    scaler = folder / "scalers_20261001.joblib"
+    scaler.write_bytes(b"serialized scaler")
+    tasks = folder / "tasks_20261001.toml"
+    with tasks.open("a") as stream:
+        stream.write(f'\n[tasks.scaler]\npath = "{scaler}"\n')
+    curves = tmp_path / "data/curves.parquet"
+    curves.write_bytes(b"audit curves")
+    preprocessing = folder.parent / "manifest_20261001.json"
+    preprocessing.write_text(
+        json.dumps(
+            {"n_compounds": 8, "n_curves": 24, "curves_path": str(curves), "folds": [{"directory": str(folder)}] * 8}
+        )
+    )
+    base = tmp_path / "base.toml"
+    base.write_text("[datasets]\n[model]\n[pretrain.replay]\n")
+    path = plan_campaign(base, tmp_path / "plan", CampaignSettings())
+    recorded = json.loads(path.read_text())["input_sha256"]
+    assert str(tasks) in recorded and str(scaler) in recorded and str(curves) in recorded
+    assert all(str(folder / f"p{p}.parquet") in recorded for p in (0, 10, 20))
+    assert all(file_sha256(Path(filename)) == digest for filename, digest in recorded.items())
+
+
+@pytest.fixture
+def completed_unit(manifest: dict, tmp_path: Path) -> tuple[Path, Path, Path]:
+    unit = RunUnit(route=Route.SCRATCH, fold=1, checkpoint_index=None, pressure=0)
+    input_path = tmp_path / "input.parquet"
+    input_path.write_bytes(b"original input")
+    manifest.update(
+        units=[vars(unit)],
+        input_sha256={str(input_path): file_sha256(input_path)},
+        preprocessing={"folds": [{"heldout_composition": "La3 Ni2 O7"}]},
+    )
+    path = tmp_path / "campaign.json"
+    path.write_text(json.dumps(manifest))
+    root = tmp_path / "outputs" / unit.name
+    root.mkdir(parents=True)
+    (root / "DONE").write_text("completed")
+    (root / "campaign_identity.json").write_text(json.dumps({"manifest_sha256": file_sha256(path)}))
+    return path, root, input_path
+
+
+def test_completed_unit_rejects_input_drift(completed_unit: tuple[Path, Path, Path]) -> None:
+    path, root, input_path = completed_unit
+    input_path.write_bytes(b"changed input")
+    with pytest.raises(ValueError, match="input hash mismatch"):
+        execute_unit(path, 0, root.parent)
+
+
+def test_completed_unit_rejects_a_different_manifest(completed_unit: tuple[Path, Path, Path]) -> None:
+    path, root, _ = completed_unit
+    value = json.loads(path.read_text())
+    value["settings"]["final_epochs"] += 1
+    path.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match="different campaign manifest"):
+        execute_unit(path, 0, root.parent)
+
+
+def test_unbound_outputs_cannot_be_reused(completed_unit: tuple[Path, Path, Path]) -> None:
+    path, root, _ = completed_unit
+    (root / "campaign_identity.json").unlink()
+    with pytest.raises(ValueError, match="no campaign identity"):
+        execute_unit(path, 0, root.parent)
+
+
+def test_matching_completed_unit_revalidates_final_outputs(
+    completed_unit: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path, root, _ = completed_unit
+    seen = []
+    monkeypatch.setattr(campaign, "verify_final", lambda *args: seen.append(args))
+    execute_unit(path, 0, root.parent)
+    assert seen == [(root / "unfrozen", "agis_rho_0gpa", "La3 Ni2 O7", 1000)]
+
+
+def test_worker_requires_an_array_submission() -> None:
+    env = dict(os.environ)
+    env.pop("SLURM_ARRAY_TASK_ID", None)
+    result = subprocess.run(
+        ["bash", str(Path(__file__).with_name("array.sbatch"))], env=env, capture_output=True, text=True
+    )
+    assert result.returncode != 0
+    assert "Submit this worker with sbatch --array" in result.stderr

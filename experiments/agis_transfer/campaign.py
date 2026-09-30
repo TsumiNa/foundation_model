@@ -42,6 +42,11 @@ from foundation_model.workflows.task_catalog import TaskCatalog
 PRESSURES = (0, 10, 20)
 
 
+def file_sha256(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
 class Route(StrEnum):
     DIRECT = "direct"
     WARM = "warm"
@@ -120,13 +125,21 @@ def plan_campaign(base_config: Path, output: Path, settings: CampaignSettings) -
         if any(selected["hyperparameters"][key] != architecture[key] for key in model_keys):
             raise ValueError("The selected checkpoint architectures differ")
     base["model"].update(architecture)
+    inputs = {folds_path, selection_path, Path(preprocessing["curves_path"])}
+    inputs.update(Path(dataset["path"]) for dataset in base["datasets"].values())
+    for fold in preprocessing["folds"]:
+        task_path = Path(fold["directory"]) / f"tasks_{settings.date}.toml"
+        fragment = tomllib.loads(task_path.read_text())
+        inputs.add(task_path)
+        inputs.update(Path(dataset["path"]) for dataset in fragment["datasets"].values())
+        inputs.update(Path(task["scaler"]["path"]) for task in fragment["tasks"] if "scaler" in task)
     first_warm = 8 * settings.first_warm_checkpoints * 3 * 2
     manifest = {
         "settings": asdict(settings),
         "base_config": base,
         "selection": selection,
         "preprocessing": preprocessing,
-        "preprocessing_sha256": hashlib.sha256(folds_path.read_bytes()).hexdigest(),
+        "input_sha256": {str(path): file_sha256(path) for path in sorted(inputs)},
         "units": [asdict(unit) for unit in build_units()],
         "expected_final_models": {
             "direct": 480,
@@ -299,12 +312,28 @@ def fit_spec(path: Path) -> None:
 
 
 def execute_unit(manifest_path: Path, index: int, output_root: Path) -> None:
-    manifest = json.loads(manifest_path.read_text())
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = json.loads(manifest_bytes)
+    for filename, expected in manifest["input_sha256"].items():
+        if file_sha256(Path(filename)) != expected:
+            raise ValueError(f"Campaign input hash mismatch: {filename}")
     unit = RunUnit(**manifest["units"][index])
     settings = CampaignSettings(**manifest["settings"])
     root = output_root / unit.name
     root.mkdir(parents=True, exist_ok=True)
+    identity = {"manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest()}
+    identity_path = root / "campaign_identity.json"
+    if identity_path.exists():
+        if json.loads(identity_path.read_text()) != identity:
+            raise ValueError("Existing unit belongs to a different campaign manifest")
+    elif any(root.iterdir()):
+        raise ValueError("Existing unit outputs have no campaign identity; choose a new output root")
+    else:
+        identity_path.write_text(json.dumps(identity, indent=2))
     if (root / "DONE").exists():
+        heldout = manifest["preprocessing"]["folds"][unit.fold - 1]["heldout_composition"]
+        for label in ["unfrozen"] if unit.route == Route.SCRATCH else ["frozen", "unfrozen"]:
+            verify_final(root / label, f"agis_rho_{unit.pressure}gpa", heldout, settings.final_epochs)
         logger.info("Already complete: {}", unit.name)
         return
     heldout = manifest["preprocessing"]["folds"][unit.fold - 1]["heldout_composition"]
@@ -312,7 +341,7 @@ def execute_unit(manifest_path: Path, index: int, output_root: Path) -> None:
     if unit.checkpoint_index is not None:
         selected = manifest["selection"]["models"][unit.checkpoint_index]
         source = Path(f"data/agis_pretrained_{settings.date}") / f"{selected['run']}.pt"
-        if hashlib.sha256(source.read_bytes()).hexdigest() != selected["sha256"]:
+        if file_sha256(source) != selected["sha256"]:
             raise ValueError("Pretrained source checkpoint hash mismatch")
         state = load_checkpoint_state(source)
         if len(state["task_sequence"]) != 24 or any(name.startswith("agis_") for name in state["task_sequence"]):

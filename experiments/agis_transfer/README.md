@@ -133,6 +133,11 @@ uv run python experiments/agis_transfer/campaign.py plan \
 
 The plan writes an immutable manifest and four grids of unit indices:
 
+The manifest hashes the preprocessing manifest, audit curves, fold task fragments, parquet
+files, fitted scalers, checkpoint selection and original replay data. Every unit checks those
+hashes before running or reusing outputs. Completion markers are bound to the exact campaign
+manifest; a changed manifest or unbound existing output requires a new output root.
+
 | Grid | Units | Final models |
 |---|---:|---:|
 | `direct.txt` | 8 folds × 10 checkpoints × 3 pressures = 240 | 480, frozen/unfrozen |
@@ -167,6 +172,8 @@ logs and completion markers. Set `PROJ`, `IMAGE`, `MANIFEST`, `GRID`, `OUTROOT` 
 submitting; supply the project account outside the repository. It checks package version 0.4.1,
 the mounted source path and single-GPU visibility before training. Calibrate packing using
 identical completed units in separate roots (`CALIBRATE=1`), and read utilization from `sacct`.
+The worker requires `sbatch --array`: for `N` grid entries and pack size `P`, submit array indices
+`0` through `ceil(N/P)-1`, with a concurrency limit suited to the measured workload.
 Submit the remaining five warm-start checkpoints only when measured throughput leaves time
 for completion and reporting. No unbounded resubmission is performed.
 

@@ -8,6 +8,8 @@
 #SBATCH --output=%x_%A_%a.out
 #SBATCH --error=%x_%A_%a.err
 set -euo pipefail
+: "${SLURM_ARRAY_TASK_ID:?Submit this worker with sbatch --array}"
+[[ "$SLURM_ARRAY_TASK_ID" =~ ^[0-9]+$ ]]
 module purge
 : "${PROJ:?}"
 : "${IMAGE:?}"
@@ -21,7 +23,7 @@ test -r "$IMAGE"
 test -r "$PROJ/$MANIFEST"
 test -r "$GRID"
 mkdir -p "$OUTROOT"
-START=$(( ${SLURM_ARRAY_TASK_ID:-0} * PACK ))
+START=$(( SLURM_ARRAY_TASK_ID * PACK ))
 COUNT=$(wc -l < "$GRID")
 printf 'job=%s pack=%s start=%s count=%s host=%s\n' "$SLURM_JOB_ID" "$PACK" "$START" "$COUNT" "$(hostname)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
