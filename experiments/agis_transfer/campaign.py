@@ -14,14 +14,17 @@ import copy
 import hashlib
 import json
 import os
+import platform
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import StrEnum
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +61,32 @@ def source_fingerprint() -> str:
     ]
     content = {str(path.relative_to(project)): file_sha256(path) for path in sorted(files) if path.is_file()}
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+
+
+def runtime_identity() -> dict[str, Any]:
+    return {
+        "python": sys.version,
+        "architecture": platform.machine(),
+        "cuda": torch.version.cuda,
+        "image_sha256": os.environ.get("AGIS_IMAGE_SHA256"),
+        "packages": {dist.metadata["Name"]: dist.version for dist in metadata.distributions() if dist.metadata["Name"]},
+    }
+
+
+def bind_identity(path: Path, identity: dict[str, Any]) -> None:
+    """Atomically establish one identity across concurrent workers without overwriting it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+        stream.write(json.dumps(identity, sort_keys=True, indent=2))
+        temporary = Path(stream.name)
+    try:
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            if json.loads(path.read_text()) != identity:
+                raise ValueError("Existing outputs belong to a different campaign manifest, source or runtime")
+    finally:
+        temporary.unlink()
 
 
 class Route(StrEnum):
@@ -304,6 +333,8 @@ def fit_spec(path: Path) -> None:
     spec = json.loads(path.read_text())
     if source_fingerprint() != spec["source_sha256"]:
         raise ValueError("Campaign source changed before starting this fit")
+    if runtime_identity() != spec["runtime"]:
+        raise ValueError("Campaign runtime changed before starting this fit")
     raw = spec["raw"]
     output = Path(spec["output"])
     source = Path(spec["source"]) if spec["source"] else None
@@ -339,16 +370,21 @@ def execute_unit(manifest_path: Path, index: int, output_root: Path) -> None:
     unit = RunUnit(**manifest["units"][index])
     settings = CampaignSettings(**manifest["settings"])
     root = output_root / unit.name
+    runtime = runtime_identity()
+    identity = {
+        "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "source_sha256": source_digest,
+        "runtime": runtime,
+    }
+    bind_identity(output_root / "campaign_identity.json", identity)
     root.mkdir(parents=True, exist_ok=True)
-    identity = {"manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(), "source_sha256": source_digest}
     identity_path = root / "campaign_identity.json"
     if identity_path.exists():
-        if json.loads(identity_path.read_text()) != identity:
-            raise ValueError("Existing unit belongs to a different campaign manifest")
+        bind_identity(identity_path, identity)
     elif any(root.iterdir()):
         raise ValueError("Existing unit outputs have no campaign identity; choose a new output root")
     else:
-        identity_path.write_text(json.dumps(identity, indent=2))
+        bind_identity(identity_path, identity)
     if (root / "DONE").exists():
         heldout = manifest["preprocessing"]["folds"][unit.fold - 1]["heldout_composition"]
         for label in ["unfrozen"] if unit.route == Route.SCRATCH else ["frozen", "unfrozen"]:
@@ -384,6 +420,7 @@ def execute_unit(manifest_path: Path, index: int, output_root: Path) -> None:
                 "output": str(out),
                 "heldout": heldout,
                 "source_sha256": source_digest,
+                "runtime": runtime,
             }
             spec_path = out / "fit_spec.json"
             spec_path.write_text(json.dumps(spec, indent=2))

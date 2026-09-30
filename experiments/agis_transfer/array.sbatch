@@ -33,7 +33,9 @@ if [[ -n "$WORKTREE_STATUS" ]]; then
     exit 1
 fi
 GIT_SHA=$(git -C "$PROJ" rev-parse HEAD)
+IMAGE_SHA256=$(sha256sum "$IMAGE" | cut -d ' ' -f1)
 printf '%s\n' "$GIT_SHA" > "$OUTROOT/SOURCE_${SLURM_JOB_ID}.txt"
+printf '%s\n' "$IMAGE_SHA256" > "$OUTROOT/IMAGE_${SLURM_JOB_ID}.txt"
 apptainer exec --nv --bind "$PROJ:/workspace:ro" --env PYTHONPATH=/workspace/src --pwd /workspace "$IMAGE" \
     python -c 'import importlib.metadata as m, foundation_model, torch; assert m.version("foundation-model") == "0.4.1"; assert foundation_model.__file__.startswith("/workspace/src/"); assert torch.cuda.device_count() == 1; print("Validated:", m.version("foundation-model"), foundation_model.__file__, torch.__version__, torch.cuda.get_device_name())'
 pids=()
@@ -46,7 +48,7 @@ for ((k=0; k<PACK; k++)); do
     if [[ ${CALIBRATE:-0} == 1 ]]; then RUNROOT="/campaign/replica_${row}"; fi
     apptainer exec --nv \
         --bind "$PROJ:/workspace:ro" --bind "$OUTROOT:/campaign" \
-        --env PYTHONPATH=/workspace/src,MPLCONFIGDIR=/tmp/agis-mpl-$SLURM_JOB_ID-$k,OMP_NUM_THREADS=2,MKL_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2 \
+        --env PYTHONPATH=/workspace/src,AGIS_IMAGE_SHA256=$IMAGE_SHA256,MPLCONFIGDIR=/tmp/agis-mpl-$SLURM_JOB_ID-$k,OMP_NUM_THREADS=2,MKL_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2 \
         --pwd /workspace "$IMAGE" \
         python experiments/agis_transfer/campaign.py run --manifest "$MANIFEST" \
         --index "$INDEX" --output-root "$RUNROOT" \

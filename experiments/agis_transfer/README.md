@@ -140,6 +140,10 @@ manifest; a changed manifest or unbound existing output requires a new output ro
 The plan also fingerprints the package source, campaign files and dependency specification.
 Units and their fit subprocesses reject source changes, and the Slurm worker requires a clean
 tracked checkout. The per-job Git commit is recorded alongside this content fingerprint.
+The first worker atomically establishes a shared campaign runtime identity containing the
+container image hash, Python/architecture/CUDA and resolved package versions. New units,
+completion reuse and fit subprocesses must match that identity; changing runtime requires a
+new output root. This prevents later submissions from silently mixing container environments.
 
 | Grid | Units | Final models |
 |---|---:|---:|

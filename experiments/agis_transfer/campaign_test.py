@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from campaign import (
     Route,
     RunUnit,
     build_units,
+    bind_identity,
     final_config,
     execute_unit,
     file_sha256,
@@ -29,6 +31,7 @@ from campaign import (
     initialize_target,
     plan_campaign,
     source_fingerprint,
+    runtime_identity,
     warm_config,
 )
 
@@ -172,6 +175,7 @@ def test_scratch_fit_runs_with_seven_train_compounds_and_no_validation(manifest:
                 "output": str(output),
                 "heldout": "La3 Ni2 O7",
                 "source_sha256": source_fingerprint(),
+                "runtime": runtime_identity(),
             }
         )
     )
@@ -226,7 +230,7 @@ def completed_unit(manifest: dict, tmp_path: Path) -> tuple[Path, Path, Path]:
     input_path = tmp_path / "input.parquet"
     input_path.write_bytes(b"original input")
     manifest.update(
-        units=[vars(unit)],
+        units=[vars(unit), vars(RunUnit(route=Route.SCRATCH, fold=1, checkpoint_index=None, pressure=10))],
         input_sha256={str(input_path): file_sha256(input_path)},
         preprocessing={"folds": [{"heldout_composition": "La3 Ni2 O7"}]},
         source_sha256=source_fingerprint(),
@@ -237,7 +241,9 @@ def completed_unit(manifest: dict, tmp_path: Path) -> tuple[Path, Path, Path]:
     root.mkdir(parents=True)
     (root / "DONE").write_text("completed")
     (root / "campaign_identity.json").write_text(
-        json.dumps({"manifest_sha256": file_sha256(path), "source_sha256": source_fingerprint()})
+        json.dumps(
+            {"manifest_sha256": file_sha256(path), "source_sha256": source_fingerprint(), "runtime": runtime_identity()}
+        )
     )
     return path, root, input_path
 
@@ -300,3 +306,35 @@ def test_fit_rejects_source_changes_between_parent_and_child(tmp_path: Path, mon
     monkeypatch.setattr(campaign, "source_fingerprint", lambda: "changed implementation")
     with pytest.raises(ValueError, match="source changed"):
         fit_spec(path)
+
+
+def test_new_units_cannot_change_an_existing_campaign_runtime(
+    completed_unit: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path, root, _ = completed_unit
+    monkeypatch.setattr(campaign, "verify_final", lambda *args: None)
+    execute_unit(path, 0, root.parent)
+    changed = {**runtime_identity(), "image_sha256": "a different image"}
+    monkeypatch.setattr(campaign, "runtime_identity", lambda: changed)
+    with pytest.raises(ValueError, match="runtime"):
+        execute_unit(path, 1, root.parent)
+    assert not (root.parent / "scratch_f01_scratch_p10").exists()
+
+
+def test_fit_rejects_runtime_changes_between_parent_and_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "fit.json"
+    path.write_text(json.dumps({"source_sha256": source_fingerprint(), "runtime": runtime_identity()}))
+    monkeypatch.setattr(campaign, "runtime_identity", lambda: {"python": "a different Python"})
+    with pytest.raises(ValueError, match="runtime changed"):
+        fit_spec(path)
+
+
+def test_concurrent_workers_establish_one_readable_identity(tmp_path: Path) -> None:
+    path = tmp_path / "identity.json"
+    identity = {"image": "fixed", "packages": {"torch": "fixed"}}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        list(pool.map(lambda _: bind_identity(path, identity), range(12)))
+    assert json.loads(path.read_text()) == identity
+    with pytest.raises(ValueError, match="different campaign"):
+        bind_identity(path, {"image": "different"})
+    assert json.loads(path.read_text()) == identity
