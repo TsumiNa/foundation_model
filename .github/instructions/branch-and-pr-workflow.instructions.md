@@ -12,13 +12,13 @@ When the user asks for a code change, feature, fix, refactor, upgrade, or any mo
 
 Check these conditions in order and stop at the first match:
 
-1. **User explicitly opts out.** If the user says they do not want a new branch or PR (for example "just edit on main", "no PR needed", "直接改", "不用开 PR"), honor that and work wherever they indicate.
+1. **User explicitly selects the work location.** If the user names where to work (for example "just edit on main", "stay on this branch", "use a worktree", "直接在 main 上改"), honor that location. A request that only declines a PR ("no PR needed", "不用开 PR") is a remote-action opt-out, not a branch choice: it does not match this case.
 
-2. **Current branch already has an open PR.** Continue working on the current branch. Do not create a new branch. Push follow-up commits to the same branch so they land on the existing PR.
+2. **Current branch already has an open PR.** Continue working on the current branch. Do not create a new branch. When remote work is authorized, push follow-up commits to the same branch so they land on the existing PR.
 
 3. **Current branch is ahead of the default branch but has no PR yet.** Continue working on the same branch. When remote PR work is authorized, open a PR for the branch against the default branch before adding further related commits, so the work is reviewable; new commits will land on that PR.
 
-4. **Default case (current branch is the default branch, or is in sync with it, or none of the above apply).** Create a new branch off the default branch, make the change there, and open a PR when the change is ready to share.
+4. **Default case (current branch is the default branch, or is in sync with it, or none of the above apply).** Create a new branch off the default branch and make the change there. Open a PR when the change is ready to share and remote work is authorized; without that authorization, keep the commits on the local branch and report that no PR was opened.
 
 Decide the local work location separately from remote actions. A request such as "no PR needed" disables remote PR work but does not by itself select a local branch or authorize commits to the default branch.
 
@@ -26,8 +26,8 @@ Decide the local work location separately from remote actions. A request such as
 
 - Determine the current branch and its PR status before making code changes, not after. Use the repository's PR metadata (for example `currentActivePullRequest`) or `git` commands to check.
 - Name new branches descriptively for the change (for example `feat/...`, `fix/...`, `docs/...`, `refactor/...`).
-- Do not commit directly to the default branch unless case 1 applies.
-- When case 3 applies, do not silently keep committing without a PR; open the PR first so the work is reviewable.
+- Do not commit directly to the default branch unless the user selected it under case 1.
+- When case 3 applies and remote work is authorized, open the PR before adding further commits so the work is reviewable. Without authorization, keep the commits local and report that the branch has no PR.
 - When case 2 applies, do not open a second PR for the same branch.
 - If it is unclear whether an existing branch is "ahead but unpushed" versus "already has a PR", prefer checking remote state before deciding.
 - Remote actions are opt-in: push commits, create or update a PR, request review, or merge only when the user requested or explicitly agreed to that remote work. When authorized, update the existing PR for the branch rather than opening a duplicate.
