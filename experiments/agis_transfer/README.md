@@ -196,6 +196,32 @@ Each final output must have 300 finite predictions on the shared grid, one heldo
 the full epoch budget and a checkpoint before receiving its completion marker. Partial units
 are resumable; successful final fits are verified again before a unit is marked complete.
 
+## Results
+
+Run `report.py` from a separate analysis checkout; keep the production checkout immutable while
+training is active. It validates the recorded campaign/runtime identities, input hashes, heldout
+truth and grid, epoch budget and freeze setting, and exports final-checkpoint hashes with metrics.
+
+```bash
+uv run python experiments/agis_transfer/report.py \
+  --manifest /path/to/production-checkout/data/agis_campaign_v6_20261001/manifest.json \
+  --project /path/to/production-checkout --root /path/to/production-outputs \
+  --output artifacts/agis_transfer_20261001/report_first5
+```
+
+The default requires the complete first-five warm cohort plus all ten direct checkpoints and
+24 scratch fits (744 final models). Use `--warm-checkpoints 10` after the optional cohort finishes.
+`--allow-partial` creates an explicitly incomplete progress report and lists every missing unit.
+The collector reads final checkpoints to hash them, so run it where those files are available.
+
+The primary comparison uses RMSE in each fold's training normalization, and compares warm with
+the same first five direct checkpoints. Exported paired differences retain checkpoint identity.
+Within each compound/pressure, summarize checkpoint repeats by their median, then weight the
+24 curves equally. Full-ten direct summaries are also exported separately. Physical-unit RMSE,
+MAE, relative RMSE, R² and low-temperature (6–100 K) normalized RMSE remain available per model.
+Plots show observed curves, prediction medians and checkpoint interquartile ranges. There are
+eight independent heldout compounds; checkpoint repeats do not create additional materials.
+
 ```bash
 uv run pytest experiments/agis_transfer/campaign_test.py \
   src/foundation_model/workflows/_engine_test.py
