@@ -47,6 +47,19 @@ def file_sha256(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def source_fingerprint() -> str:
+    """Hash the executing package, campaign code and dependency specification across hosts."""
+    project = Path(__file__).resolve().parents[2]
+    files = [
+        *project.joinpath("src").rglob("*.py"),
+        *project.joinpath("experiments/agis_transfer").glob("*.*"),
+        project / "pyproject.toml",
+        project / "uv.lock",
+    ]
+    content = {str(path.relative_to(project)): file_sha256(path) for path in sorted(files) if path.is_file()}
+    return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+
+
 class Route(StrEnum):
     DIRECT = "direct"
     WARM = "warm"
@@ -136,6 +149,7 @@ def plan_campaign(base_config: Path, output: Path, settings: CampaignSettings) -
     first_warm = 8 * settings.first_warm_checkpoints * 3 * 2
     manifest = {
         "settings": asdict(settings),
+        "source_sha256": source_fingerprint(),
         "base_config": base,
         "selection": selection,
         "preprocessing": preprocessing,
@@ -288,6 +302,8 @@ def verify_final(output: Path, target: str, heldout: str, epochs: int) -> None:
 
 def fit_spec(path: Path) -> None:
     spec = json.loads(path.read_text())
+    if source_fingerprint() != spec["source_sha256"]:
+        raise ValueError("Campaign source changed before starting this fit")
     raw = spec["raw"]
     output = Path(spec["output"])
     source = Path(spec["source"]) if spec["source"] else None
@@ -314,6 +330,9 @@ def fit_spec(path: Path) -> None:
 def execute_unit(manifest_path: Path, index: int, output_root: Path) -> None:
     manifest_bytes = manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes)
+    source_digest = source_fingerprint()
+    if source_digest != manifest["source_sha256"]:
+        raise ValueError("Campaign source differs from the planned implementation")
     for filename, expected in manifest["input_sha256"].items():
         if file_sha256(Path(filename)) != expected:
             raise ValueError(f"Campaign input hash mismatch: {filename}")
@@ -321,7 +340,7 @@ def execute_unit(manifest_path: Path, index: int, output_root: Path) -> None:
     settings = CampaignSettings(**manifest["settings"])
     root = output_root / unit.name
     root.mkdir(parents=True, exist_ok=True)
-    identity = {"manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest()}
+    identity = {"manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(), "source_sha256": source_digest}
     identity_path = root / "campaign_identity.json"
     if identity_path.exists():
         if json.loads(identity_path.read_text()) != identity:
@@ -364,6 +383,7 @@ def execute_unit(manifest_path: Path, index: int, output_root: Path) -> None:
                 "source": str(source) if source is not None else None,
                 "output": str(out),
                 "heldout": heldout,
+                "source_sha256": source_digest,
             }
             spec_path = out / "fit_spec.json"
             spec_path.write_text(json.dumps(spec, indent=2))

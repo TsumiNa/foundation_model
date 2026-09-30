@@ -28,6 +28,7 @@ from campaign import (
     fit_spec,
     initialize_target,
     plan_campaign,
+    source_fingerprint,
     warm_config,
 )
 
@@ -163,7 +164,16 @@ def test_scratch_fit_runs_with_seven_train_compounds_and_no_validation(manifest:
     output = tmp_path / "fit"
     spec = tmp_path / "spec.json"
     spec.write_text(
-        json.dumps({"raw": raw, "mode": "finetune", "source": None, "output": str(output), "heldout": "La3 Ni2 O7"})
+        json.dumps(
+            {
+                "raw": raw,
+                "mode": "finetune",
+                "source": None,
+                "output": str(output),
+                "heldout": "La3 Ni2 O7",
+                "source_sha256": source_fingerprint(),
+            }
+        )
     )
     fit_spec(spec)
     assert (output / "DONE").is_file()
@@ -219,13 +229,16 @@ def completed_unit(manifest: dict, tmp_path: Path) -> tuple[Path, Path, Path]:
         units=[vars(unit)],
         input_sha256={str(input_path): file_sha256(input_path)},
         preprocessing={"folds": [{"heldout_composition": "La3 Ni2 O7"}]},
+        source_sha256=source_fingerprint(),
     )
     path = tmp_path / "campaign.json"
     path.write_text(json.dumps(manifest))
     root = tmp_path / "outputs" / unit.name
     root.mkdir(parents=True)
     (root / "DONE").write_text("completed")
-    (root / "campaign_identity.json").write_text(json.dumps({"manifest_sha256": file_sha256(path)}))
+    (root / "campaign_identity.json").write_text(
+        json.dumps({"manifest_sha256": file_sha256(path), "source_sha256": source_fingerprint()})
+    )
     return path, root, input_path
 
 
@@ -270,3 +283,20 @@ def test_worker_requires_an_array_submission() -> None:
     )
     assert result.returncode != 0
     assert "Submit this worker with sbatch --array" in result.stderr
+
+
+def test_completed_unit_rejects_source_drift(
+    completed_unit: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path, root, _ = completed_unit
+    monkeypatch.setattr(campaign, "source_fingerprint", lambda: "changed implementation")
+    with pytest.raises(ValueError, match="planned implementation"):
+        execute_unit(path, 0, root.parent)
+
+
+def test_fit_rejects_source_changes_between_parent_and_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "fit.json"
+    path.write_text(json.dumps({"source_sha256": source_fingerprint()}))
+    monkeypatch.setattr(campaign, "source_fingerprint", lambda: "changed implementation")
+    with pytest.raises(ValueError, match="source changed"):
+        fit_spec(path)

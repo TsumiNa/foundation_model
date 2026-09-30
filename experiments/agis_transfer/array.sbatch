@@ -27,6 +27,11 @@ START=$(( SLURM_ARRAY_TASK_ID * PACK ))
 COUNT=$(wc -l < "$GRID")
 printf 'job=%s pack=%s start=%s count=%s host=%s\n' "$SLURM_JOB_ID" "$PACK" "$START" "$COUNT" "$(hostname)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+WORKTREE_STATUS=$(git -C "$PROJ" status --porcelain --untracked-files=no)
+if [[ -n "$WORKTREE_STATUS" ]]; then
+    printf 'Refusing to run from a dirty source checkout\n' >&2
+    exit 1
+fi
 GIT_SHA=$(git -C "$PROJ" rev-parse HEAD)
 printf '%s\n' "$GIT_SHA" > "$OUTROOT/SOURCE_${SLURM_JOB_ID}.txt"
 apptainer exec --nv --bind "$PROJ:/workspace:ro" --env PYTHONPATH=/workspace/src --pwd /workspace "$IMAGE" \

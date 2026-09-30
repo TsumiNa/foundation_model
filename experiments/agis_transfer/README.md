@@ -137,6 +137,9 @@ The manifest hashes the preprocessing manifest, audit curves, fold task fragment
 files, fitted scalers, checkpoint selection and original replay data. Every unit checks those
 hashes before running or reusing outputs. Completion markers are bound to the exact campaign
 manifest; a changed manifest or unbound existing output requires a new output root.
+The plan also fingerprints the package source, campaign files and dependency specification.
+Units and their fit subprocesses reject source changes, and the Slurm worker requires a clean
+tracked checkout. The per-job Git commit is recorded alongside this content fingerprint.
 
 | Grid | Units | Final models |
 |---|---:|---:|
