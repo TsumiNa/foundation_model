@@ -24,7 +24,7 @@ d=\$(ls -d \$B/ft*_o*/DONE 2>/dev/null | wc -l)
 m=0
 for r in \$B/ft*_o*/; do
   [ -e "\$r/DONE" ] || continue
-  t=\$(basename \$r); t=\${t#ft?_}; t=\${t%_o*}
+  t=\$(basename \$r); t=\${t#*_}; t=\${t%_o*}  # arm prefix is ftz / ftfx / ftfu ...: strip up to the first _
   [ -f "\$r/training/finetune/\${t}_metrics.json" ] || m=\$((m+1))
 done
 echo "\$d \$m"
@@ -40,7 +40,7 @@ rsync -aq analysis/ "$HOST:$REMOTE_EXP/analysis/" || fail "rsync analysis/"
 remote <<REMOTE || fail "ft.py"
 set -e
 cd $REMOTE_EXP
-python3 analysis/ft.py --runs $OUT/stage_ft --ceilings summary/ceilings_adopted.json \
+python3 analysis/ft.py --runs $OUT/stage_ft --ceilings summary/ceilings_adopted_v2.json \
     --xfer summary/matched_xfer.json -o summary/ft.json
 REMOTE
 scp -q "$HOST:$REMOTE_EXP/summary/ft.json" summary/ft.json || fail "scp ft.json"

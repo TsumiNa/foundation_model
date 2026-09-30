@@ -43,12 +43,19 @@ def metric_of(path: Path) -> float | None:
     return float(v) if v is not None else None
 
 
+def rerun_complete(runs: Path, arm: str, task: str) -> bool:
+    """True only when every 400-epoch rerun ({arm}x_) that exists has finished and they cover at
+    least as many orderings as the original arm: a partial rerun must not replace ten observations."""
+    reruns = list(runs.glob(f"{arm}x_{task}_o*"))
+    originals = [r for r in runs.glob(f"{arm}_{task}_o*") if (r / "DONE").exists()]
+    return bool(reruns) and all((r / "DONE").exists() for r in reruns) and len(reruns) >= len(originals)
+
+
 def collect(runs: Path, arm: str, task: str) -> list[float]:
-    """Prefer the 400-epoch rerun ({arm}x_) when it exists: seebeck and power_factor hit the
+    """Prefer the 400-epoch rerun ({arm}x_) once it is complete: seebeck and power_factor hit the
     150-epoch cap in every arm, and the rerun is the converged measurement."""
     out = []
-    pattern = f"{arm}x_{task}_o*" if any((r / "DONE").exists() for r in runs.glob(f"{arm}x_{task}_o*")) \
-        else f"{arm}_{task}_o*"
+    pattern = f"{arm}x_{task}_o*" if rerun_complete(runs, arm, task) else f"{arm}_{task}_o*"
     for run in sorted(runs.glob(pattern)):
         if not (run / "DONE").exists():
             continue
@@ -94,25 +101,28 @@ def main() -> None:
         # The unseen arms: same two fine-tunes on a 23-task encoder that never saw X, fresh head.
         ftzu, ftfu = collect(args.runs, "ftzu", task), collect(args.runs, "ftfu", task)
         xr = xfer.get(task)
-        # xfer's per-task spread is in transfer_xfer.json; matched_xfer carries only the mean.
-        # Against a single number the SE is one-sided, which is the honest reading of that column.
-        ftf_vs_xfer = diff(ftf, xr["multi_task"], 0.0, 1) if (ftf and xr) else None
+        # matched_xfer carries the replay arm's spread (multi_task_sd over n_multi orderings); both
+        # arms' variance enters the SE.
+        ftf_vs_xfer = diff(ftf, xr["multi_task"], xr["multi_task_sd"], xr["n_multi"]) if (ftf and xr) else None
         ftf_vs_ftz = None
         if ftf and len(ftz) > 1:
             ftf_vs_ftz = diff(ftf, statistics.fmean(ftz), statistics.stdev(ftz), len(ftz))
         xfer_vs_single = None
         if xr:
-            views = pct_views(xr["transfer"], base["mean"])
-            xfer_vs_single = {"delta": xr["transfer"], "relative_pct": xr["relative_pct"],
-                              "separated": bool(xr["separated"]),
-                              "practically_significant": views["practically_significant"],
-                              "matters": bool(xr["separated"]) and views["practically_significant"]}
+            # Recomputed against the selected baseline (--ceilings), not copied from matched_xfer, which
+            # may have been scored against an earlier single-task set (seebeck, power_factor).
+            d = xr["multi_task"] - base["mean"]
+            se = math.sqrt(xr["multi_task_sd"] ** 2 / xr["n_multi"] + base["sd"] ** 2 / base["n"])
+            views = pct_views(d, base["mean"])
+            sep = abs(d) > 2 * se
+            xfer_vs_single = {"delta": d, "relative_pct": views["relative_pct"], "se_of_difference": se,
+                              "separated": sep, "practically_significant": views["practically_significant"],
+                              "matters": sep and views["practically_significant"]}
         rows.append({
             "task": task, "group": size_group(task), "n_train": N_TRAIN[task],
             "metric": "macro_f1" if task == "material_type" else "r2",
-            "ft_source": {arm: ("rerun_400_epochs" if any((r / "DONE").exists()
-                                                          for r in args.runs.glob(f"{arm}x_{task}_o*"))
-                                 else "original") for arm in ("ftz", "ftf")},
+            "ft_source": {arm: ("rerun_400_epochs" if rerun_complete(args.runs, arm, task) else "original")
+                          for arm in ("ftz", "ftf")},
             "single_task": base["mean"], "single_task_sd": base["sd"], "single_task_n": base["n"],
             "xfer_with_replay": xr["multi_task"] if xr else None,
             "ftz": {"mean": statistics.fmean(ftz), "sd": statistics.stdev(ftz) if len(ftz) > 1 else 0.0,

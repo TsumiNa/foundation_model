@@ -81,6 +81,7 @@ def read_run(run: Path) -> dict | None:
             continue
         final_metrics[task] = {
             "primary": data.get("primary"),
+            "macro_f1": data.get("macro_f1"),
             "r2": data.get("r2"),
             "mae": data.get("mae"),
             "samples": data.get("samples"),
@@ -165,8 +166,11 @@ def main() -> None:
     by_task: dict[str, list] = defaultdict(list)
     for e in entries:
         for task, m in e["final_metrics"].items():
-            if m["primary"] is not None:
-                by_task[task].append((m["primary"], e["run"]))
+            # classification is ranked by macro-F1: its `primary` (accuracy) sits near 0.99 for every
+            # checkpoint and does not track the minority classes the task exists for
+            score = m.get("macro_f1") if m.get("macro_f1") is not None else m["primary"]
+            if score is not None:
+                by_task[task].append((score, e["run"]))
 
     task_summary = {}
     for task, vals in by_task.items():

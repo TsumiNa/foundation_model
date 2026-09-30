@@ -102,9 +102,11 @@ mapfile -t TASKS < <(ssh -o ConnectTimeout=30 "$HOST" \
 [ "${#TASKS[@]}" -gt 0 ] || fail "could not list the tasks under test"
 echo "  ${#TASKS[@]} tasks to pull"
 for task in "${TASKS[@]}"; do
-    rsync -aq --prune-empty-dirs \
+    # --relative with a /./ anchor keeps each stA_<task>_s<seed>/ directory; without it the
+    # trailing-slash sources are merged flat into stage_single/ and matched_test.py finds no runs.
+    rsync -aq --prune-empty-dirs --relative \
         --include='*/' --include="${task}_pred.parquet" --include='DONE' --exclude='*' \
-        "$HOST:$OUT/stage_single/stA_${task}_s*/" "$PRED/stage_single/" 2>/dev/null
+        "$HOST:$OUT/stage_single/./stA_${task}_s*/" "$PRED/stage_single/" 2>/dev/null
     rsync -aq --prune-empty-dirs --relative \
         --include='*/' --include="step24_${task}/${task}_pred.parquet" --include='DONE' \
         --exclude='*' \

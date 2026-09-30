@@ -39,9 +39,11 @@ PACK=${PACK:-4}
 : "${CONFIG:?set CONFIG=repo-relative path to the TOML}"
 : "${OUTROOT:?set OUTROOT=/abs/path for run outputs}"
 
-test -r "$IMAGE"
-test -r "$GRID"
-test -r "$PROJ/$CONFIG"
+# No global `set -e` in this worker (each co-tenant run records its own exit code), so the
+# preflight checks must exit explicitly.
+test -r "$IMAGE" || { echo "cannot read IMAGE=$IMAGE" >&2; exit 2; }
+test -r "$GRID" || { echo "cannot read GRID=$GRID" >&2; exit 2; }
+test -r "$PROJ/$CONFIG" || { echo "cannot read $PROJ/$CONFIG" >&2; exit 2; }
 
 # SRC_OVERRIDE runs the container's environment against a DIFFERENT source tree, by putting it
 # ahead of the installed package on PYTHONPATH. Used to probe a change that is not in any image

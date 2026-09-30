@@ -220,10 +220,15 @@ final checkpoint and training the same task with replay removed:
 
 | Comparison | Better | Worse | Unresolved |
 |---|---|---|---|
-| xfer (replay, placed last) vs alone | 1 | 19 | 4 |
+| xfer (replay, placed last) vs alone | 1 | 17 | 5 |
 | frozen encoder vs alone | 4 | 12 | 7 |
 | **warm-start (encoder + head) vs alone** | **4** | **4** | **14** |
-| warm-start vs the replay step | **19** | **0** | 2 |
+| warm-start vs the replay step | **17** | **0** | 4 |
+
+*Rescored 2026-09-30 (PR #56 review):* the two xfer rows had been scored against a stale n = 3 copy of
+`matched_xfer.json` on the RIKYU mirror and with zero variance for the replay arm; with the n = 10 file,
+both arms' variance, and the xfer delta recomputed against the converged baselines, they read 1 / 17 / 5
+(was 1 / 19 / 4) and 17 / 0 / 4 (was 19 / 0 / 2). The fine-tune rows are unchanged.
 
 So the loss in the transfer stage was mostly **replay dilution at the task's own step**, not a bad
 representation. Warm-starting from the 24-task encoder is roughly break-even against training alone:
