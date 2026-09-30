@@ -123,6 +123,10 @@ existing prediction/evaluation paths reporting both targets and predictions in o
 `campaign.py` implements the agreed three routes. The base catalog is the original 24-task
 non-AGIS catalog in `base_pretrained.toml`. The dated selection file records a uniform random
 sample of ten checkpoints without replacement (sampling seed `20261001`) and their hashes.
+The dated population file freezes all 240 source checkpoint identities. Planning verifies its
+pinned SHA-256 and reproduces the ordered draw from the sorted population, rejecting a different
+seed, library, selection method or manually substituted checkpoint. Its hash is part of the
+campaign manifest.
 The current package loads all ten selected checkpoint states without changing any weights.
 
 ```bash

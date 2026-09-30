@@ -17,6 +17,7 @@ import json
 import os
 import pickle
 import platform
+import random
 import re
 import subprocess
 import sys
@@ -47,6 +48,9 @@ from foundation_model.workflows.recording import RunRecorder, load_checkpoint_st
 from foundation_model.workflows.task_catalog import TaskCatalog
 
 PRESSURES = (0, 10, 20)
+PRETRAINED_LIBRARY = "rikyu_hparam_tuning_v2 / transfer stage final encoders"
+PRETRAINED_POPULATION_SHA256 = "c0254aad322ed4507c146947829fdf56fc8fadc9998d8de4f697b37188332f01"
+SELECTION_METHOD = "Uniform random sample without replacement; no AGIS evaluation used"
 
 
 def file_sha256(path: Path) -> str:
@@ -139,6 +143,29 @@ def prepare_warm_resume(output: Path, tasks: Sequence[str]) -> None:
         marker.rename(marker.with_name(f"invalid_DONE_{time.time_ns()}"))
 
 
+def validate_selection(selection: dict[str, Any], population_path: Path, seed: int) -> None:
+    if file_sha256(population_path) != PRETRAINED_POPULATION_SHA256:
+        raise ValueError("Pretrained population differs from the recorded 240-model source library")
+    population = json.loads(population_path.read_text())
+    if (
+        selection["sampling_seed"] != seed
+        or selection["selection_method"] != SELECTION_METHOD
+        or selection["source_library"] != PRETRAINED_LIBRARY
+        or population["library"] != PRETRAINED_LIBRARY
+        or selection["population"] != 240
+        or population["n_models"] != 240
+    ):
+        raise ValueError("Checkpoint sampling provenance differs from the agreed uniform sample")
+    models = sorted(population["models"], key=lambda model: model["run"])
+    if len(models) != 240 or len({model["run"] for model in models}) != 240:
+        raise ValueError("Require the complete distinct 240-model population")
+    expected = random.Random(seed).sample(models, 10)
+    if [(model["run"], model["sha256"]) for model in selection["models"]] != [
+        (model["run"], model["sha256"]) for model in expected
+    ]:
+        raise ValueError("Selected checkpoints do not reproduce the recorded uniform random draw")
+
+
 class Route(StrEnum):
     DIRECT = "direct"
     WARM = "warm"
@@ -201,6 +228,8 @@ def build_units() -> list[RunUnit]:
 def plan_campaign(base_config: Path, output: Path, settings: CampaignSettings) -> Path:
     selection_path = Path(f"data/agis_pretrained_{settings.date}/selection_{settings.date}.json")
     selection = json.loads(selection_path.read_text())
+    population_path = selection_path.with_name(f"population_{settings.date}.json")
+    validate_selection(selection, population_path, settings.seed)
     if len(selection["models"]) != 10 or len({m["sha256"] for m in selection["models"]}) != 10:
         raise ValueError("Require ten distinct randomly selected non-AGIS checkpoints")
     folds_path = Path(f"data/agis_preprocessing_{settings.date}/manifest_{settings.date}.json")
@@ -217,7 +246,7 @@ def plan_campaign(base_config: Path, output: Path, settings: CampaignSettings) -
         if any(selected["hyperparameters"][key] != architecture[key] for key in model_keys):
             raise ValueError("The selected checkpoint architectures differ")
     base["model"].update(architecture)
-    inputs = {folds_path, selection_path, Path(preprocessing["curves_path"])}
+    inputs = {folds_path, selection_path, population_path, Path(preprocessing["curves_path"])}
     inputs.update(Path(dataset["path"]) for dataset in base["datasets"].values())
     for fold in preprocessing["folds"]:
         task_path = Path(fold["directory"]) / f"tasks_{settings.date}.toml"

@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import random
 import subprocess
 import sys
 from collections import Counter
@@ -36,6 +38,7 @@ from campaign import (
     runtime_identity,
     prepare_warm_resume,
     verify_warm,
+    validate_selection,
     warm_config,
 )
 
@@ -189,22 +192,74 @@ def test_scratch_fit_runs_with_seven_train_compounds_and_no_validation(manifest:
     assert summary["epochs_run"] == 2 and summary["freeze_encoder"] is False
 
 
-def test_plan_records_the_consumed_input_artifacts(manifest: dict, tmp_path: Path) -> None:
-    selection = tmp_path / "data/agis_pretrained_20261001/selection_20261001.json"
-    selection.parent.mkdir()
-    selection.write_text(
-        json.dumps(
-            {
-                "models": [
-                    {
-                        "sha256": str(i),
-                        "hyperparameters": {"latent_dim": 8, "encoder_hidden_dims": [16], "head_hidden_dims": [8]},
-                    }
-                    for i in range(10)
-                ]
-            }
-        )
-    )
+@pytest.fixture
+def selection_population(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict, Path]:
+    folder = tmp_path / "data/agis_pretrained_20261001"
+    folder.mkdir(parents=True)
+    models = [
+        {
+            "run": f"run{i:03d}",
+            "sha256": hashlib.sha256(str(i).encode()).hexdigest(),
+            "hyperparameters": {"latent_dim": 8, "encoder_hidden_dims": [16], "head_hidden_dims": [8]},
+        }
+        for i in range(240)
+    ]
+    population = folder / "population_20261001.json"
+    population.write_text(json.dumps({"library": campaign.PRETRAINED_LIBRARY, "n_models": 240, "models": models}))
+    monkeypatch.setattr(campaign, "PRETRAINED_POPULATION_SHA256", file_sha256(population))
+    selection = {
+        "sampling_seed": 20261001,
+        "source_library": campaign.PRETRAINED_LIBRARY,
+        "population": 240,
+        "selection_method": campaign.SELECTION_METHOD,
+        "models": random.Random(20261001).sample(models, 10),
+    }
+    (folder / "selection_20261001.json").write_text(json.dumps(selection))
+    return selection, population
+
+
+def test_selection_reproduces_the_frozen_population_draw(selection_population: tuple[dict, Path]) -> None:
+    selection, population = selection_population
+    validate_selection(selection, population, 20261001)
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("sampling_seed", 20261002),
+        ("source_library", "another library"),
+        ("selection_method", "best models"),
+        ("population", 239),
+    ],
+)
+def test_selection_rejects_changed_provenance(selection_population: tuple[dict, Path], key: str, value: Any) -> None:
+    selection, population = selection_population
+    selection[key] = value
+    with pytest.raises(ValueError, match="sampling provenance"):
+        validate_selection(selection, population, 20261001)
+
+
+def test_selection_rejects_manual_checkpoint_substitution(selection_population: tuple[dict, Path]) -> None:
+    selection, population = selection_population
+    pool = json.loads(population.read_text())["models"]
+    chosen = {model["run"] for model in selection["models"]}
+    selection["models"][0] = next(model for model in pool if model["run"] not in chosen)
+    with pytest.raises(ValueError, match="uniform random draw"):
+        validate_selection(selection, population, 20261001)
+
+
+def test_selection_rejects_a_replaced_population(selection_population: tuple[dict, Path]) -> None:
+    selection, population = selection_population
+    pool = json.loads(population.read_text())
+    pool["models"][0]["sha256"] = "substituted checkpoint"
+    population.write_text(json.dumps(pool))
+    with pytest.raises(ValueError, match="recorded 240-model source library"):
+        validate_selection(selection, population, 20261001)
+
+
+def test_plan_records_the_consumed_input_artifacts(
+    manifest: dict, tmp_path: Path, selection_population: tuple[dict, Path]
+) -> None:
     folder = tmp_path / "data/agis_preprocessing_20261001/fold_01"
     scaler = folder / "scalers_20261001.joblib"
     scaler.write_bytes(b"serialized scaler")
@@ -225,6 +280,7 @@ def test_plan_records_the_consumed_input_artifacts(manifest: dict, tmp_path: Pat
     recorded = json.loads(path.read_text())["input_sha256"]
     assert str(tasks) in recorded and str(scaler) in recorded and str(curves) in recorded
     assert all(str(folder / f"p{p}.parquet") in recorded for p in (0, 10, 20))
+    assert str(selection_population[1].relative_to(tmp_path)) in recorded
     assert all(file_sha256(Path(filename)) == digest for filename, digest in recorded.items())
 
 
