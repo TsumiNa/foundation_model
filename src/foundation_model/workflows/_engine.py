@@ -270,9 +270,12 @@ class DropLastTrainCompoundDataModule(CompoundDataModule):
 
 
 def as_float_array(cell: Any) -> np.ndarray:
+    if cell is pd.NA:
+        return np.array([])
     if isinstance(cell, str):
         cell = ast.literal_eval(cell)
-    return np.asarray(cell, dtype=float).ravel()
+    values = np.asarray(cell, dtype=float).ravel()
+    return np.array([]) if values.size == 1 and np.isnan(values[0]) else values
 
 
 def test_rows(catalog: TaskCatalog, name: str, test_keys: set[str] | None) -> list[str]:
@@ -427,7 +430,7 @@ def evaluate_task(
                 continue
             keep.append(comp)
             t_list.append(t_arr)
-            true_parts.append(y_arr)
+            true_parts.append(catalog.inverse_transform(name, y_arr))
         if not keep:
             return {"primary": float("nan"), "samples": 0}
         xk, _ = descriptor_tensor(catalog, keep, device)
@@ -435,7 +438,7 @@ def evaluate_task(
         t_tensors = [torch.tensor(t, dtype=torch.float32, device=device) for t in t_list]
         expanded_h, expanded_t = expand_for_kernel_regression(h_k, t_tensors)
         pred = catalog.inverse_transform(name, head(expanded_h, t=expanded_t).squeeze(-1).cpu().numpy())
-        true = catalog.inverse_transform(name, np.concatenate(true_parts))
+        true = np.concatenate(true_parts)
         r2 = float(r2_score(true, pred))
         metric = {
             "r2": r2,

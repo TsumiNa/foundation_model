@@ -21,11 +21,58 @@ from foundation_model.workflows.predict import run as predict_run
 from foundation_model.workflows.recording import RunRecorder
 from foundation_model.workflows.task_catalog import TaskCatalog, build_task_catalog_config
 
+from .predict import _predict_kr
+
 _ELEMENTS = ["Fe", "Al", "Cu", "Ni", "Ti", "Zn", "Mg", "Ca", "Na", "Cl", "O", "Si"]
 _FORMULAS = [f"{a}2 {b}3" for i, a in enumerate(_ELEMENTS) for b in _ELEMENTS[i + 1 :]][:24]
 
 _MODEL = ModelSectionConfig(latent_dim=8, encoder_hidden_dims=[16], head_hidden_dims=[8], n_kernel=4)
 _TRAIN = TrainingSectionConfig(max_epochs=1, accelerator="cpu", seed=1)
+
+
+def test_kr_parquet_arrays_missing_labels_and_missing_grid(tmp_path) -> None:
+    dataset = tmp_path / "curve.parquet"
+    pd.DataFrame(
+        {
+            "composition": ["Fe2O3", "Al2O3", "NaCl"],
+            "y": [np.array([0.0, 1.0]), None, np.array([2.0, 3.0])],
+            "t": [np.array([6.0, 7.0]), np.array([6.0, 7.0]), None],
+            "split": ["test"] * 3,
+        }
+    ).to_parquet(dataset)
+    scaler_path = tmp_path / "scaler.joblib"
+    joblib.dump(StandardScaler().fit([[100.0], [200.0]]), scaler_path)
+    catalog = TaskCatalog(
+        build_task_catalog_config(
+            {
+                "descriptor": {"kind": "kmd", "n_grids": 4},
+                "datasets": {"curve": {"path": str(dataset)}},
+                "tasks": [
+                    {
+                        "name": "curve",
+                        "kind": "kernel_regression",
+                        "dataset": "curve",
+                        "column": "y",
+                        "t_column": "t",
+                        "scaler": {"path": str(scaler_path)},
+                    }
+                ],
+            }
+        )
+    )
+    model = build_empty_model(catalog, _MODEL, _TRAIN)
+    model.add_task(build_head_config(catalog, _MODEL, _TRAIN, "curve"))
+    for parameter in model.task_heads["curve"].parameters():
+        parameter.data.zero_()
+    model.eval()
+    comps = list(catalog.task_frames(["curve"])["curve"].index)
+    metrics = _predict_kr(model, catalog, "curve", comps, torch.device("cpu"), tmp_path, with_metrics=True)
+    predictions = pd.read_parquet(tmp_path / "curve_pred.parquet")
+    assert len(predictions) == 4  # no t-grid: skip; missing y: predict with NaN true values
+    assert predictions.true.isna().sum() == 2
+    np.testing.assert_allclose(predictions.true.dropna(), [150, 200])
+    np.testing.assert_allclose(predictions.pred, 150)
+    assert metrics["points"] == 2
 
 
 @pytest.fixture

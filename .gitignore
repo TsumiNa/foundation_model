@@ -37,6 +37,7 @@ lightning_logs/
 !/data/scripts/
 !/data/scripts/**
 /data/scripts/.ipynb_checkpoints
+/data/scripts/__pycache__/
 /samples/example_logs
 /notebooks/logs
 /artifacts
