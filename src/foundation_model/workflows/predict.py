@@ -238,8 +238,8 @@ def _predict_kr(
     for comp in comps:
         if comp not in available or comp not in frame.index:
             continue
-        y = as_float_array(frame.at[comp, spec.column]) if pd.notna(frame.at[comp, spec.column]) else np.array([])
-        t = as_float_array(frame.at[comp, spec.t_column]) if pd.notna(frame.at[comp, spec.t_column]) else np.array([])
+        y = as_float_array(frame.at[comp, spec.column])
+        t = as_float_array(frame.at[comp, spec.t_column])
         if t.size == 0:
             continue
         keep.append(comp)

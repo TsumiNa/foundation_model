@@ -3,19 +3,94 @@
 
 """Tests for shared engine internals (currently the replay resampling callback)."""
 
+from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
+import joblib
 import numpy as np
 import pandas as pd
-from typing import cast
 
 import pytest
 import torch
 from torch.utils.data import DataLoader
+from sklearn.preprocessing import StandardScaler  # type: ignore[import-untyped]
 
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.model_config import RegressionTaskConfig
-from foundation_model.workflows._engine import ReplayResampleCallback
+from ._engine import (
+    ReplayResampleCallback,
+    as_float_array,
+    build_empty_model,
+    build_head_config,
+    evaluate_task,
+)
+from ._sections import ModelSectionConfig, TrainingSectionConfig
+from .recording import RunRecorder
+from .task_catalog import TaskCatalog, build_task_catalog_config
+
+
+@pytest.mark.parametrize("cell", [None, np.nan, pd.NA, np.array(np.nan), np.array([np.nan])])
+def test_missing_sequence_is_empty(cell: object) -> None:
+    assert as_float_array(cell).size == 0
+
+
+@pytest.mark.parametrize("cell", [[0, 1], np.array([0, 1]), "[0, 1]"])
+def test_sequence_cells_convert_without_scalar_truth_test(cell: object) -> None:
+    np.testing.assert_array_equal(as_float_array(cell), [0, 1])
+
+
+def test_kr_evaluation_exports_and_plots_both_values_in_original_units(tmp_path: Path, monkeypatch) -> None:
+    dataset = tmp_path / "curve.parquet"
+    pd.DataFrame({"composition": ["Fe2O3"], "y": [[0.0, 1.0]], "t": [[6.0, 7.0]], "split": ["test"]}).to_parquet(
+        dataset
+    )
+    scaler_path = tmp_path / "scaler.joblib"
+    joblib.dump(StandardScaler().fit([[100.0], [200.0]]), scaler_path)
+    catalog = TaskCatalog(
+        build_task_catalog_config(
+            {
+                "descriptor": {"kind": "kmd", "n_grids": 4},
+                "datasets": {"curve": {"path": str(dataset)}},
+                "tasks": [
+                    {
+                        "name": "curve",
+                        "kind": "kernel_regression",
+                        "dataset": "curve",
+                        "column": "y",
+                        "t_column": "t",
+                        "scaler": {"path": str(scaler_path)},
+                    }
+                ],
+            }
+        )
+    )
+    model_config = ModelSectionConfig(latent_dim=8, encoder_hidden_dims=[16], n_kernel=4)
+    training = TrainingSectionConfig(max_epochs=1, accelerator="cpu")
+    model = build_empty_model(catalog, model_config, training)
+    model.add_task(build_head_config(catalog, model_config, training, "curve"))
+    for parameter in model.task_heads["curve"].parameters():
+        parameter.data.zero_()
+    plotted = {}
+
+    def capture_plot(*args, **kwargs):
+        plotted["true"] = args[2]
+        plotted["pred"] = args[3]
+        return None
+
+    monkeypatch.setattr("foundation_model.workflows._engine.plots.plot_kr_sequences", capture_plot)
+    recorder = RunRecorder(tmp_path / "out")
+    step_dir = recorder.paths.training / "step01_curve"
+    try:
+        metrics = evaluate_task(model, catalog, "curve", recorder, step_dir, is_new=True, test_keys=None)
+    finally:
+        recorder.close()
+    result = pd.read_parquet(step_dir / "curve_pred.parquet")
+    np.testing.assert_allclose(result.true, [150, 200])
+    np.testing.assert_allclose(result.pred, [150, 150])
+    np.testing.assert_allclose(plotted["true"][0], [150, 200])
+    np.testing.assert_allclose(plotted["pred"], [150, 150])
+    assert metrics["mae"] == 25
 
 
 def _masked_datamodule() -> CompoundDataModule:
