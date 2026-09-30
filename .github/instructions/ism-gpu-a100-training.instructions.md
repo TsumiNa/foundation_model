@@ -12,7 +12,7 @@ Use this when a model-training job should run on the remote A100 machine instead
 - Connect with `ssh -o ClearAllForwardings=yes ism-gpu-a100`.
 - Host alias `ism-gpu-a100` resolves to `megalith3`.
 - Hardware: 128 CPU cores and 4x A100-40GB GPUs.
-- Repository workdir for this project: `/data/claude/geo_pfn_20260710/repo`.
+- Repository workdir for this project: `/data/claude/foundation_model`.
 - `uv` is available at `~/.local/bin/uv`.
 
 ## SSH Rules
@@ -32,7 +32,7 @@ Use this when a model-training job should run on the remote A100 machine instead
 2. Enter the repository:
 
     ```bash
-    cd /data/claude/geo_pfn_20260710/repo
+    cd /data/claude/foundation_model
     ```
 
 3. Check GPU availability before starting:
