@@ -452,3 +452,24 @@ def evaluate_task(
                 recorder.save_figure(fig_rel(recorder, step_dir, f"{name}_sequences.png"), kr_fig)
                 plots.plt.close(kr_fig)
         return metric
+
+
+def reapply_class_weights(model: FlexibleMultiTaskModel, task_names: list[str]) -> None:
+    """Reset every classification head's ``class_weights`` buffer to what its config says.
+
+    ``load_state_dict`` restores the buffer from the checkpoint, so a fine-tune configured with
+    ``class_weights = "none"`` would otherwise train on the pretraining's balanced weights (and vice
+    versa). ``None`` in the config means unweighted, i.e. a buffer of ones.
+    """
+    for name in task_names:
+        head = model.task_heads[name]
+        cfg = model.task_configs_map.get(name)
+        if not hasattr(head, "class_weights") or not isinstance(head.class_weights, torch.Tensor):
+            continue
+        weights = getattr(cfg, "class_weights", None)
+        target = (
+            torch.ones_like(head.class_weights)
+            if weights is None
+            else torch.as_tensor(weights, dtype=head.class_weights.dtype, device=head.class_weights.device)
+        )
+        head.class_weights.copy_(target)

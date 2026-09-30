@@ -143,7 +143,8 @@ class TaskSpec:
     # Classification only. "balanced": sklearn-style inverse-frequency weights in the cross-entropy
     # (the historical default, which keeps minority classes alive on a few-class head but drags top-1
     # accuracy down on a many-class head such as space groups); "none": unweighted cross-entropy.
-    class_weights: str = "balanced"
+    # Omitted = "balanced" for classification; setting it on any other kind is an error.
+    class_weights: str | None = None
     lr: float | None = None  # per-task LR override
     weight_decay: float | None = None  # per-task weight-decay override
     scaler: ScalerSpec | None = None
@@ -166,12 +167,15 @@ class TaskSpec:
                 raise ValueError(f"Task '{self.name}': num_classes must be >= 2, got {self.num_classes}.")
         elif self.num_classes is not None:
             raise ValueError(f"Task '{self.name}': 'num_classes' is only valid for classification.")
-        if self.class_weights not in ("balanced", "none"):
-            raise ValueError(
-                f"Task '{self.name}': class_weights must be 'balanced' or 'none', got {self.class_weights!r}."
-            )
-        if self.class_weights != "balanced" and self.kind is not TaskKind.CLASSIFICATION:
+        if self.class_weights is not None and self.kind is not TaskKind.CLASSIFICATION:
             raise ValueError(f"Task '{self.name}': 'class_weights' is only valid for classification.")
+        if self.kind is TaskKind.CLASSIFICATION:
+            if self.class_weights is None:
+                self.class_weights = "balanced"
+            if self.class_weights not in ("balanced", "none"):
+                raise ValueError(
+                    f"Task '{self.name}': class_weights must be 'balanced' or 'none', got {self.class_weights!r}."
+                )
         # Per-task optimizer overrides are the only way to give one task a different learning rate
         # or weight decay, so a nonsensical value here silently trains that head badly rather than
         # failing — validate at config time.

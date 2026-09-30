@@ -8,7 +8,9 @@
 - For selected files, use frontmatter `applyTo` only to narrow their file scope. An `applyTo: "**"` value
   does not make a purpose-specific instruction relevant to every task.
 - A selected instruction without `applyTo` applies repository-wide.
-- Follow all applicable supplemental instructions alongside this file.
+- Follow all applicable supplemental instructions alongside this file. The first four files in the table
+  are mandatory extensions of `AGENTS.md`, not optional guidance; when this file and an instruction file
+  overlap, the instruction file holds the detailed rule and this file only summarizes it.
 
 | Instruction | Use for |
 |---|---|
@@ -93,7 +95,11 @@
 
 - Commit messages: `<type>: <imperative summary>`, preferably under 72 characters.
 - PRs state scope, motivation, validation, and backward-incompatible behavior.
-- Follow `.github/instructions/branch-and-pr-workflow.instructions.md` before editing.
+- Follow `.github/instructions/branch-and-pr-workflow.instructions.md` before editing; it also defines
+  how PR checks are attributed (no checks, pre-existing failures, blocking failures) and the pre-merge
+  re-confirmation.
+- Run the checks `implementation-and-tests.instructions.md` requires for the change type; instruction-
+  or documentation-only changes do not require the code build, lint, or test runs.
 
 ## Commit Attribution
 
