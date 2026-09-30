@@ -87,6 +87,25 @@ subset. For single-pressure fits, set the batch size to at most 7: the existing 
 drops incomplete batches, so a batch size of 256 would drop every AGIS training sample. Replay
 stages can retain their larger batch size because their active dataset includes the old tasks.
 
+For the fixed-budget outer-fold fits, explicitly disable validation-monitored callbacks:
+
+```toml
+[data]
+batch_size = 7
+
+[training.early_stopping]
+enabled = false
+
+[training.checkpoint]
+enabled = false
+```
+
+The default early-stopping monitor is `val_final_loss`, which does not exist for these
+train/test-only folds. Keep the scheduler's training-loss monitor. Warm-start replay may
+use validation from the original non-AGIS tasks, while excluding the held-out compound.
+The preprocessing script rejects any missing or unexpected compound, including a completely
+missing directory, before writing outputs.
+
 ## Verification
 
 ```bash

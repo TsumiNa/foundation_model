@@ -23,7 +23,16 @@ from foundation_model.workflows.task_catalog import TaskCatalog, build_task_cata
 
 from process_agis_data import AGISPreprocessingConfig, load_agis_curves, prepare_agis, standardize_fold
 
-_FORMULAS = ["La3Ni2O7", "La2NdNi2O7", "La2EuNi2O7"]
+_FORMULAS = [
+    "La3Ni2O7",
+    "La2.9Sr0.1Ni2O7",
+    "La2NdNi2O7",
+    "La1.9NdSr0.1Ni2O7",
+    "La1.8NdSr0.2Ni2O7",
+    "La2EuNi2O7",
+    "La1.9EuSr0.1Ni2O7",
+    "La1.8EuSr0.2Ni2O7",
+]
 _CONFIG = AGISPreprocessingConfig(temperature_min_K=6, temperature_max_K=10, n_points=5, date_suffix="20261001")
 
 
@@ -54,7 +63,7 @@ def raw_dir(tmp_path: Path) -> Path:
 
 def test_read_sort_duplicates_units_and_pressure_selection(raw_dir: Path) -> None:
     curves = load_agis_curves(raw_dir, _CONFIG)
-    assert len(curves) == 9
+    assert len(curves) == 24
     assert set(curves.pressure_GPa) == {0, 10, 20}
     row = curves.iloc[0]
     np.testing.assert_allclose(row.temperature_K, [6, 7, 8, 9, 10])
@@ -131,6 +140,13 @@ def test_empty_or_missing_input_rejected(tmp_path: Path) -> None:
         load_agis_curves(tmp_path, _CONFIG)
 
 
+def test_entire_compound_missing_rejected(raw_dir: Path) -> None:
+    for path in (raw_dir / "8 La1.8EuSr0.2Ni2O7").glob("*.dat"):
+        path.unlink()
+    with pytest.raises(ValueError, match="all eight AGIS compounds"):
+        load_agis_curves(raw_dir, _CONFIG)
+
+
 def test_fold_scalers_ignore_heldout_all_pressures_and_restore_values(raw_dir: Path) -> None:
     curves = load_agis_curves(raw_dir, _CONFIG)
     heldout = curves.composition.iloc[0]
@@ -147,7 +163,7 @@ def test_fold_scalers_ignore_heldout_all_pressures_and_restore_values(raw_dir: P
         for step in ("prescale", "standardscaler"):
             np.testing.assert_array_equal(scaler[step].scale_, other_scaler[step].scale_)
             np.testing.assert_array_equal(scaler[step].mean_, other_scaler[step].mean_)
-            assert scaler[step].n_samples_seen_ == 10
+            assert scaler[step].n_samples_seen_ == 35
         group = fold[fold.pressure_GPa == pressure]
         train = np.concatenate(group.loc[group.split == "train", "rho_normalized"].to_list())
         np.testing.assert_allclose(train.mean(), 0, atol=1e-14)
@@ -180,8 +196,8 @@ def test_export_and_existing_prediction_inverse(raw_dir: Path, tmp_path: Path) -
     out = tmp_path / "processed"
     manifest_path = prepare_agis(raw_dir, out, _CONFIG)
     manifest = json.loads(manifest_path.read_text())
-    assert manifest["n_curves"] == 9 and len(manifest["folds"]) == 3
-    assert pd.read_parquet(out / "agis_resistivity_20261001.pd.parquet").shape[0] == 9
+    assert manifest["n_curves"] == 24 and len(manifest["folds"]) == 8
+    assert pd.read_parquet(out / "agis_resistivity_20261001.pd.parquet").shape[0] == 24
     fold_dir = out / "agis_preprocessing_20261001" / "fold_01"
     raw = tomllib.loads((fold_dir / "tasks_20261001.toml").read_text())
     raw["descriptor"] = {"kind": "kmd", "n_grids": 4}

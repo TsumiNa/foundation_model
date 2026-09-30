@@ -30,6 +30,16 @@ from foundation_model.data.composition_sources import normalize_composition
 
 _PRESSURES_GPA = (0, 10, 20)
 _RHO_COLUMNS = {"rho (muOhm cm)", "rho_xx (muOhm cm)"}
+_EXPECTED_FORMULAS = (
+    "La3Ni2O7",
+    "La2.9Sr0.1Ni2O7",
+    "La2NdNi2O7",
+    "La1.9NdSr0.1Ni2O7",
+    "La1.8NdSr0.2Ni2O7",
+    "La2EuNi2O7",
+    "La1.9EuSr0.1Ni2O7",
+    "La1.8EuSr0.2Ni2O7",
+)
 
 
 @dataclass(kw_only=True)
@@ -144,8 +154,15 @@ def load_agis_curves(input_dir: Path, config: AGISPreprocessingConfig | None = N
         missing = set(_PRESSURES_GPA) - set(group.pressure_GPa)
         if missing:
             raise ValueError(f"Missing pressures {sorted(missing)} GPa for composition {compound}")
-    if curves.composition.nunique() < 2:
-        raise ValueError("Need at least two compounds for leave-one-compound-out preparation.")
+    expected = {
+        composition for formula in _EXPECTED_FORMULAS if (composition := normalize_composition(formula)) is not None
+    }
+    observed = set(curves.composition)
+    if observed != expected:
+        raise ValueError(
+            f"Require all eight AGIS compounds; missing={sorted(expected - observed)}, "
+            f"unexpected={sorted(observed - expected)}"
+        )
     return curves
 
 
