@@ -144,6 +144,10 @@ The first worker atomically establishes a shared campaign runtime identity conta
 container image hash, Python/architecture/CUDA and resolved package versions. New units,
 completion reuse and fit subprocesses must match that identity; changing runtime requires a
 new output root. This prevents later submissions from silently mixing container environments.
+Each unit holds an exclusive file lock, inherited by its fit child; interrupted holders are
+released by the kernel. Checkpoints are published atomically, and incomplete warm final files
+are archived before resuming the latest completed task step. Warm completion requires a
+readable finite checkpoint with exactly the two expected added pressure heads.
 
 | Grid | Units | Final models |
 |---|---:|---:|

@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import argparse
 import copy
+import fcntl
 import hashlib
 import json
 import os
+import pickle
 import platform
 import re
 import subprocess
@@ -22,11 +24,13 @@ import tempfile
 import time
 import tomllib
 from dataclasses import asdict, dataclass
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from datetime import datetime
 from enum import StrEnum
 from importlib import metadata
 from pathlib import Path
-from typing import Any
+from typing import Any, IO
 
 import numpy as np
 import pandas as pd
@@ -87,6 +91,52 @@ def bind_identity(path: Path, identity: dict[str, Any]) -> None:
                 raise ValueError("Existing outputs belong to a different campaign manifest, source or runtime")
     finally:
         temporary.unlink()
+
+
+@contextmanager
+def claim_unit(root: Path) -> Iterator[IO[str]]:
+    """Claim one route; the kernel releases interrupted holders without stale-lock cleanup."""
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / ".run.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError(f"Unit is already active in another worker: {root.name}") from exc
+        yield lock
+
+
+def verify_warm(output: Path, tasks: Sequence[str]) -> None:
+    state = load_checkpoint_state(output / "training/final_model.pt")
+    heads = state["task_sequence"]
+    if len(heads) != 26 or {name for name in heads if name.startswith("agis_")} != set(tasks):
+        raise ValueError("Warm-start learned the wrong pressure heads")
+    if any(not torch.isfinite(value).all() for value in state["model"].values() if value.is_floating_point()):
+        raise ValueError("Warm-start checkpoint contains nonfinite parameters")
+
+
+def prepare_warm_resume(output: Path, tasks: Sequence[str]) -> None:
+    """Archive an incomplete warm final checkpoint so the engine resumes its completed steps."""
+    final = output / "training/final_model.pt"
+    marker = output / "DONE"
+    if final.exists():
+        try:
+            verify_warm(output, tasks)
+            return
+        except (
+            OSError,
+            EOFError,
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            IndexError,
+            AttributeError,
+            pickle.UnpicklingError,
+        ):
+            final.rename(final.with_name(f"invalid_final_model_{time.time_ns()}.pt"))
+            logger.warning("Archived invalid warm final checkpoint at {}; resuming completed steps", output)
+    if marker.exists():
+        marker.rename(marker.with_name(f"invalid_DONE_{time.time_ns()}"))
 
 
 class Route(StrEnum):
@@ -343,6 +393,7 @@ def fit_spec(path: Path) -> None:
         initial = initialize_target(raw, source, output / "initial_model.pt")
         cfg = build_finetune_config(raw, checkpoint=initial, output_dir=output)
     else:
+        prepare_warm_resume(output, raw["pretrain"]["task_sequence"])
         cfg = build_pretrain_config(raw, checkpoint=source, output_dir=output, resume=True)
     recorder = RunRecorder(output)
     try:
@@ -355,6 +406,8 @@ def fit_spec(path: Path) -> None:
         recorder.close()
     if isinstance(cfg, FinetuneConfig):
         verify_final(output, cfg.tasks[0], spec["heldout"], cfg.epochs)
+    else:
+        verify_warm(output, raw["pretrain"]["task_sequence"])
     (output / "DONE").write_text("completed\n")
 
 
@@ -378,80 +431,81 @@ def execute_unit(manifest_path: Path, index: int, output_root: Path) -> None:
     }
     bind_identity(output_root / "campaign_identity.json", identity)
     root.mkdir(parents=True, exist_ok=True)
-    identity_path = root / "campaign_identity.json"
-    if identity_path.exists():
-        bind_identity(identity_path, identity)
-    elif any(root.iterdir()):
-        raise ValueError("Existing unit outputs have no campaign identity; choose a new output root")
-    else:
-        bind_identity(identity_path, identity)
-    if (root / "DONE").exists():
-        heldout = manifest["preprocessing"]["folds"][unit.fold - 1]["heldout_composition"]
-        for label in ["unfrozen"] if unit.route == Route.SCRATCH else ["frozen", "unfrozen"]:
-            verify_final(root / label, f"agis_rho_{unit.pressure}gpa", heldout, settings.final_epochs)
-        logger.info("Already complete: {}", unit.name)
-        return
-    heldout = manifest["preprocessing"]["folds"][unit.fold - 1]["heldout_composition"]
-    source: Path | None = None
-    if unit.checkpoint_index is not None:
-        selected = manifest["selection"]["models"][unit.checkpoint_index]
-        source = Path(f"data/agis_pretrained_{settings.date}") / f"{selected['run']}.pt"
-        if file_sha256(source) != selected["sha256"]:
-            raise ValueError("Pretrained source checkpoint hash mismatch")
-        state = load_checkpoint_state(source)
-        if len(state["task_sequence"]) != 24 or any(name.startswith("agis_") for name in state["task_sequence"]):
-            raise ValueError("Source must have exactly 24 non-AGIS tasks")
-    started = time.monotonic()
-    fits: list[tuple[str, dict[str, Any], bool | None]] = []
-    if unit.route == Route.WARM:
-        fits.append(("warm", warm_config(manifest, unit), None))
-    for freeze_setting in [False] if unit.route == Route.SCRATCH else [True, False]:
-        raw = final_config(manifest, unit)
-        raw["finetune"]["freeze_encoder"] = freeze_setting
-        fits.append(("frozen" if freeze_setting else "unfrozen", raw, freeze_setting))
-    for label, raw, frozen in fits:
-        out = root / label
-        out.mkdir(exist_ok=True)
-        if not (out / "DONE").exists():
-            spec = {
-                "mode": "pretrain" if frozen is None else "finetune",
-                "raw": raw,
-                "source": str(source) if source is not None else None,
-                "output": str(out),
-                "heldout": heldout,
-                "source_sha256": source_digest,
-                "runtime": runtime,
-            }
-            spec_path = out / "fit_spec.json"
-            spec_path.write_text(json.dumps(spec, indent=2))
-            with (out / "console.log").open("a") as log:
-                subprocess.run(
-                    [sys.executable, str(Path(__file__).resolve()), "fit", "--spec", str(spec_path)],
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    check=True,
-                )
-        if frozen is None:
-            source = out / "training/final_model.pt"
-            heads = load_checkpoint_state(source)["task_sequence"]
-            expected = {f"agis_rho_{p}gpa" for p in PRESSURES if p != unit.pressure}
-            if {name for name in heads if name.startswith("agis_")} != expected:
-                raise ValueError("Warm-start learned the wrong pressure heads")
+    with claim_unit(root) as lock:
+        identity_path = root / "campaign_identity.json"
+        if identity_path.exists():
+            bind_identity(identity_path, identity)
+        elif any(path.name != ".run.lock" for path in root.iterdir()):
+            raise ValueError("Existing unit outputs have no campaign identity; choose a new output root")
         else:
-            verify_final(out, f"agis_rho_{unit.pressure}gpa", heldout, settings.final_epochs)
-    (root / "result.json").write_text(
-        json.dumps(
-            {
-                **asdict(unit),
-                "heldout": heldout,
-                "elapsed_seconds": time.monotonic() - started,
-                "slurm_job": os.environ.get("SLURM_JOB_ID"),
-            },
-            indent=2,
+            bind_identity(identity_path, identity)
+        if (root / "DONE").exists():
+            heldout = manifest["preprocessing"]["folds"][unit.fold - 1]["heldout_composition"]
+            for label in ["unfrozen"] if unit.route == Route.SCRATCH else ["frozen", "unfrozen"]:
+                verify_final(root / label, f"agis_rho_{unit.pressure}gpa", heldout, settings.final_epochs)
+            logger.info("Already complete: {}", unit.name)
+            return
+        heldout = manifest["preprocessing"]["folds"][unit.fold - 1]["heldout_composition"]
+        source: Path | None = None
+        if unit.checkpoint_index is not None:
+            selected = manifest["selection"]["models"][unit.checkpoint_index]
+            source = Path(f"data/agis_pretrained_{settings.date}") / f"{selected['run']}.pt"
+            if file_sha256(source) != selected["sha256"]:
+                raise ValueError("Pretrained source checkpoint hash mismatch")
+            state = load_checkpoint_state(source)
+            if len(state["task_sequence"]) != 24 or any(name.startswith("agis_") for name in state["task_sequence"]):
+                raise ValueError("Source must have exactly 24 non-AGIS tasks")
+        started = time.monotonic()
+        fits: list[tuple[str, dict[str, Any], bool | None]] = []
+        if unit.route == Route.WARM:
+            fits.append(("warm", warm_config(manifest, unit), None))
+        for freeze_setting in [False] if unit.route == Route.SCRATCH else [True, False]:
+            raw = final_config(manifest, unit)
+            raw["finetune"]["freeze_encoder"] = freeze_setting
+            fits.append(("frozen" if freeze_setting else "unfrozen", raw, freeze_setting))
+        for label, raw, frozen in fits:
+            out = root / label
+            out.mkdir(exist_ok=True)
+            if frozen is None:
+                prepare_warm_resume(out, raw["pretrain"]["task_sequence"])
+            if not (out / "DONE").exists():
+                spec = {
+                    "mode": "pretrain" if frozen is None else "finetune",
+                    "raw": raw,
+                    "source": str(source) if source is not None else None,
+                    "output": str(out),
+                    "heldout": heldout,
+                    "source_sha256": source_digest,
+                    "runtime": runtime,
+                }
+                spec_path = out / "fit_spec.json"
+                spec_path.write_text(json.dumps(spec, indent=2))
+                with (out / "console.log").open("a") as log:
+                    subprocess.run(
+                        [sys.executable, str(Path(__file__).resolve()), "fit", "--spec", str(spec_path)],
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        check=True,
+                        pass_fds=(lock.fileno(),),
+                    )
+            if frozen is None:
+                source = out / "training/final_model.pt"
+                verify_warm(out, raw["pretrain"]["task_sequence"])
+            else:
+                verify_final(out, f"agis_rho_{unit.pressure}gpa", heldout, settings.final_epochs)
+        (root / "result.json").write_text(
+            json.dumps(
+                {
+                    **asdict(unit),
+                    "heldout": heldout,
+                    "elapsed_seconds": time.monotonic() - started,
+                    "slurm_job": os.environ.get("SLURM_JOB_ID"),
+                },
+                indent=2,
+            )
         )
-    )
-    (root / "DONE").write_text("completed\n")
-    logger.info("Completed {} in {:.1f} seconds", unit.name, time.monotonic() - started)
+        (root / "DONE").write_text("completed\n")
+        logger.info("Completed {} in {:.1f} seconds", unit.name, time.monotonic() - started)
 
 
 def main() -> None:

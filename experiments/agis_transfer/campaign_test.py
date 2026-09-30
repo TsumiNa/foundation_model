@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -24,6 +25,7 @@ from campaign import (
     RunUnit,
     build_units,
     bind_identity,
+    claim_unit,
     final_config,
     execute_unit,
     file_sha256,
@@ -32,6 +34,8 @@ from campaign import (
     plan_campaign,
     source_fingerprint,
     runtime_identity,
+    prepare_warm_resume,
+    verify_warm,
     warm_config,
 )
 
@@ -338,3 +342,79 @@ def test_concurrent_workers_establish_one_readable_identity(tmp_path: Path) -> N
     with pytest.raises(ValueError, match="different campaign"):
         bind_identity(path, {"image": "different"})
     assert json.loads(path.read_text()) == identity
+
+
+def test_unit_lock_excludes_another_process_and_recovers_after_kill(tmp_path: Path) -> None:
+    lock_path = tmp_path / ".run.lock"
+    script = "import fcntl,sys; f=open(sys.argv[1],'a'); fcntl.flock(f,fcntl.LOCK_EX); print('ready',flush=True); sys.stdin.read()"
+    process = subprocess.Popen(
+        [sys.executable, "-c", script, str(lock_path)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
+    try:
+        assert process.stdout is not None and process.stdout.readline().strip() == "ready"
+        with pytest.raises(RuntimeError, match="already active"):
+            with claim_unit(tmp_path):
+                pass
+        process.kill()
+        process.wait(timeout=5)
+        with claim_unit(tmp_path):
+            pass
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def test_partial_warm_checkpoint_is_archived_for_step_resume(tmp_path: Path) -> None:
+    training = tmp_path / "training"
+    training.mkdir()
+    final = training / "final_model.pt"
+    final.write_bytes(b"truncated checkpoint")
+    (tmp_path / "DONE").write_text("completed")
+    completed_step = training / "step25_agis_rho_10gpa/checkpoint.pt"
+    completed_step.parent.mkdir()
+    completed_step.write_bytes(b"previous completed step")
+    prepare_warm_resume(tmp_path, ["agis_rho_10gpa", "agis_rho_20gpa"])
+    assert not final.exists() and not (tmp_path / "DONE").exists()
+    assert next(training.glob("invalid_final_model_*.pt")).read_bytes() == b"truncated checkpoint"
+    assert completed_step.read_bytes() == b"previous completed step"
+
+
+def test_fit_child_keeps_unit_claim_after_parent_closes_its_descriptor(tmp_path: Path) -> None:
+    with claim_unit(tmp_path) as lock:
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import sys; print('ready',flush=True); sys.stdin.read()"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            pass_fds=(lock.fileno(),),
+        )
+        assert process.stdout is not None and process.stdout.readline().strip() == "ready"
+    try:
+        with pytest.raises(RuntimeError, match="already active"):
+            with claim_unit(tmp_path):
+                pass
+        process.kill()
+        process.wait(timeout=5)
+        with claim_unit(tmp_path):
+            pass
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        if process.stdin is not None:
+            process.stdin.close()
+        if process.stdout is not None:
+            process.stdout.close()
+
+
+def test_valid_warm_checkpoint_and_completion_are_retained(tmp_path: Path) -> None:
+    (tmp_path / "training").mkdir()
+    heads = [f"old{i}" for i in range(24)] + ["agis_rho_10gpa", "agis_rho_20gpa"]
+    torch.save(
+        {"model": {"encoder.weight": torch.ones(2)}, "task_sequence": heads}, tmp_path / "training/final_model.pt"
+    )
+    (tmp_path / "DONE").write_text("completed")
+    verify_warm(tmp_path, heads[-2:])
+    prepare_warm_resume(tmp_path, heads[-2:])
+    assert (tmp_path / "training/final_model.pt").exists() and (tmp_path / "DONE").exists()

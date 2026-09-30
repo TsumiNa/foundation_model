@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+import pytest
 import torch
 from torch import nn
 
@@ -80,6 +81,41 @@ def test_save_final_model(tmp_path) -> None:
     assert set(raw) == {"model", "task_sequence"}
     dumped = json.loads((tmp_path / "training" / "final_model_taskconfigs.json").read_text())
     assert dumped == spec_dump
+
+
+@pytest.mark.parametrize("kind", ["step", "final"])
+@pytest.mark.parametrize("already_exists", [False, True])
+def test_interrupted_checkpoint_save_does_not_publish_partial_data(tmp_path, monkeypatch, kind, already_exists) -> None:
+    rec = RunRecorder(tmp_path)
+    model = _TinyModel()
+    save = (
+        (lambda: rec.save_step_checkpoint(1, "density", model, ["density"]))
+        if kind == "step"
+        else (lambda: rec.save_final_model(model, ["density"], {}))
+    )
+    path = (
+        rec.paths.step_dir(1, "density") / "checkpoint.pt" if kind == "step" else rec.paths.training / "final_model.pt"
+    )
+    previous = None
+    if already_exists:
+        save()
+        previous = path.read_bytes()
+
+    def interrupted(payload, stream):
+        stream.write(b"partial checkpoint")
+        raise OSError("interrupted write")
+
+    monkeypatch.setattr(torch, "save", interrupted)
+    try:
+        with pytest.raises(OSError, match="interrupted write"):
+            save()
+        if previous is None:
+            assert not path.exists()
+        else:
+            assert path.read_bytes() == previous
+        assert not list(path.parent.glob(f".{path.name}.*.tmp"))
+    finally:
+        rec.close()
 
 
 def test_load_checkpoint_state_normalizes_bare_state_dict(tmp_path) -> None:
