@@ -247,7 +247,13 @@ class DropLastTrainCompoundDataModule(CompoundDataModule):
     affected; val/test/predict keep every held-out row. A non-default sampler is preserved
     rather than replaced with ``shuffle=True`` — nothing sets one today, but the wrapper must not
     be what silently discards it when distributed training is added back.
+    With no validation rows, return an empty loader list: Lightning rejects a ``None`` loader
+    even when validation-monitored callbacks are disabled for a fixed-budget fit.
     """
+
+    def val_dataloader(self) -> DataLoader | list[DataLoader]:
+        loader = super().val_dataloader()
+        return [] if loader is None else loader
 
     def train_dataloader(self) -> DataLoader | None:  # type: ignore[override]
         base = super().train_dataloader()
