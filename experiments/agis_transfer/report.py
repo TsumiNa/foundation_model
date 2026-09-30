@@ -191,7 +191,12 @@ def collect_results(
     if {"direct", "warm"}.issubset(paired.columns):
         paired = paired.dropna(subset=["direct", "warm"])
         paired["warm_minus_direct"] = paired["warm"] - paired["direct"]
-        paired.reset_index().to_csv(destination / f"paired_warm_direct_{date}.csv", index=False)
+        paired = paired.reset_index()
+    else:
+        paired = pd.DataFrame(
+            columns=["fold", "pressure", "checkpoint_index", "setting", "direct", "warm", "warm_minus_direct"]
+        )
+    paired.to_csv(destination / f"paired_warm_direct_{date}.csv", index=False)
     (destination / f"report_manifest_{date}.json").write_text(
         json.dumps(
             {

@@ -108,11 +108,14 @@ def test_collect_validates_provenance_and_exports_original_unit_metrics(
 
 def test_missing_units_cannot_be_reported_as_complete(cohort: tuple[Path, Path, Path], tmp_path: Path) -> None:
     path, root, project = cohort
+    collect_results(path, root, project, tmp_path / "report", ReportSettings())
+    assert len(pd.read_csv(tmp_path / "report/paired_warm_direct_20261001.csv")) == 2
     (root / "warm_f01_c01_p0/DONE").unlink()
     with pytest.raises(ValueError, match="Incomplete agreed cohort"):
         collect_results(path, root, project, tmp_path / "report", ReportSettings())
     collect_results(path, root, project, tmp_path / "report", ReportSettings(allow_partial=True))
     assert not json.loads((tmp_path / "report/report_manifest_20261001.json").read_text())["complete_cohort"]
+    assert pd.read_csv(tmp_path / "report/paired_warm_direct_20261001.csv").empty
 
 
 @pytest.mark.parametrize(
