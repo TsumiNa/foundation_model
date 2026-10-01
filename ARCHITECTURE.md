@@ -240,6 +240,12 @@ An `nn.ModuleDict`. All heads consume `h_task` of shape `(B, latent_dim)`.
 `disabled_task_heads` holds heads taken offline mid-run (e.g. by `model.disable_task(...)` during
 `fm finetune`'s head-only fine-tune), preserving their weights in the state-dict.
 
+During supervised training, kernel-regression point masks are applied before the head's forward
+pass, so missing or replay-masked curve points do not update its BatchNorm statistics. Masked
+positions return zero placeholders to preserve the sequence layout used by the loss. An entirely
+masked head is skipped; one valid point uses stored BatchNorm statistics without updating them.
+Prediction omits these masks so requested points without labels can still be predicted.
+
 ### 5. Model outputs
 `forward` returns a `Dict[str, Tensor]` keyed by task name. `predict_step` further unwraps each
 head's output via the head's own `predict` method (so e.g. classification gives both `*_logits`

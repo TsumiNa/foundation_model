@@ -671,6 +671,8 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
         self,
         x: torch.Tensor | tuple[torch.Tensor, torch.Tensor | None],
         t_sequences: dict[str, List[torch.Tensor] | torch.Tensor] | None = None,  # Renamed from temps_batch
+        *,
+        task_masks: dict[str, torch.Tensor | list[torch.Tensor]] | None = None,
     ) -> dict[str, torch.Tensor]:
         """
         Forward pass through the model.
@@ -685,6 +687,10 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
             A dictionary where keys are KernelRegression task names and values are the
             corresponding sequence input data (e.g., temperature points, time steps)
             for the batch. Required if KernelRegression tasks are present. Defaults to None.
+        task_masks : dict[str, torch.Tensor | list[torch.Tensor]] | None, optional
+            Supervised point masks. Missing kernel-regression points are excluded before
+            head normalization, then restored as zero placeholders in the returned layout.
+            Prediction callers omit masks so unlabeled requested points remain predictable.
 
         Returns
         -------
@@ -712,7 +718,16 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
                 if task_sequence_input is not None:
                     # DOSDataset-style expansion: expand h_task and t for KernelRegressionHead
                     expanded_h_task, expanded_t = expand_for_kernel_regression(h_task, task_sequence_input)
-                    outputs[name] = head(expanded_h_task, t=expanded_t)
+                    point_mask = task_masks.get(name) if task_masks is not None else None
+                    if isinstance(point_mask, list):
+                        if len(point_mask) != len(task_sequence_input) or any(
+                            mask.numel() != sequence.numel() for mask, sequence in zip(point_mask, task_sequence_input)
+                        ):
+                            raise ValueError(f"Kernel-regression point masks for '{name}' must match each t-sequence.")
+                        point_mask = (
+                            torch.cat(point_mask) if point_mask else torch.empty(0, dtype=torch.bool, device=x.device)
+                        )
+                    outputs[name] = head(expanded_h_task, t=expanded_t, mask=point_mask)
                 else:
                     # For KernelRegressionHead, t parameter is required
                     raise ValueError(
@@ -889,7 +904,7 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
             raise TypeError(f"Expected tensor inputs in training_step, received {type(x)}")
 
         logs: dict[str, torch.Tensor] = {}
-        preds = self(x, task_sequence_data_batch)
+        preds = self(x, task_sequence_data_batch, task_masks=task_masks_batch)
         collected = self._collect_batch_losses(
             stage="train",
             x=x,

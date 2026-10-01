@@ -11,14 +11,132 @@ paired with a variable-length t-sequence, so the batch is flattened for the head
 afterwards, and the flatten/regroup pair has to be each other's inverse.
 """
 
+from copy import deepcopy
+
 import numpy as np
 import pytest
 import torch
 
+from foundation_model.models.model_config import KernelRegressionTaskConfig
 from foundation_model.models.task_head.kernel_regression import (
+    KernelRegressionHead,
     expand_for_kernel_regression,
     reshape_kernel_regression_predictions,
 )
+
+
+@pytest.fixture
+def batchnorm_head():
+    torch.manual_seed(20261001)
+    return KernelRegressionHead(
+        KernelRegressionTaskConfig(
+            name="rho", x_dim=[3, 6], t_dim=[6, 4], norm=True, residual=False, kernel_num_centers=3
+        )
+    ).train()
+
+
+def test_masked_points_do_not_change_valid_predictions_statistics_or_gradients(batchnorm_head):
+    reference = deepcopy(batchnorm_head)
+    valid_x = torch.randn(4, 3, requires_grad=True)
+    valid_t = torch.tensor([0.0, 6.0, 50.0, 290.0])
+    x = torch.cat([valid_x.detach(), torch.full((96, 3), float("nan"))]).requires_grad_()
+    t = torch.cat([valid_t, torch.full((96,), float("nan"))])
+    mask = torch.arange(100) < 4
+    expected = reference(valid_x, valid_t)
+    actual = batchnorm_head(x, t, mask=mask)
+    torch.testing.assert_close(actual[mask], expected, rtol=0, atol=0)
+    assert torch.equal(actual[~mask], torch.zeros(96, 1))
+    for name, buffer in reference.named_buffers():
+        torch.testing.assert_close(dict(batchnorm_head.named_buffers())[name], buffer, rtol=0, atol=0)
+    actual[mask].sum().backward()
+    expected.sum().backward()
+    assert x.grad is not None and valid_x.grad is not None
+    torch.testing.assert_close(x.grad[:4], valid_x.grad, rtol=0, atol=0)
+    assert torch.equal(x.grad[4:], torch.zeros(96, 3))
+    for name, parameter in reference.named_parameters():
+        actual_grad = dict(batchnorm_head.named_parameters())[name].grad
+        if parameter.grad is None:
+            assert actual_grad is None
+        else:
+            torch.testing.assert_close(actual_grad, parameter.grad, rtol=0, atol=0)
+
+
+def test_all_missing_replay_batches_leave_head_statistics_and_inference_unchanged(batchnorm_head):
+    x = torch.randn(300, 3)
+    t = torch.linspace(6, 290, 300)
+    batchnorm_head(x, t)
+    reference = deepcopy(batchnorm_head).eval()
+    buffers = {name: value.clone() for name, value in batchnorm_head.named_buffers()}
+    for _ in range(60):
+        result = batchnorm_head(torch.randn(16, 3), torch.zeros(16), mask=torch.zeros(16, dtype=torch.bool))
+        assert torch.equal(result, torch.zeros(16, 1))
+    for name, value in batchnorm_head.named_buffers():
+        torch.testing.assert_close(value, buffers[name], rtol=0, atol=0)
+    batchnorm_head.eval()
+    torch.testing.assert_close(batchnorm_head(x, t), reference(x, t), rtol=0, atol=0)
+
+
+def test_one_valid_point_uses_stored_batchnorm_statistics_without_updating_them(batchnorm_head):
+    reference = deepcopy(batchnorm_head).eval()
+    x = torch.randn(2, 3, requires_grad=True)
+    t = torch.tensor([0.0, float("nan")])
+    buffers = {name: value.clone() for name, value in batchnorm_head.named_buffers()}
+    result = batchnorm_head(x, t, mask=torch.tensor([True, False]))
+    torch.testing.assert_close(result[:1], reference(x[:1], t[:1]), rtol=0, atol=0)
+    assert torch.isfinite(result).all()
+    result.sum().backward()
+    assert x.grad is not None
+    for name, value in batchnorm_head.named_buffers():
+        torch.testing.assert_close(value, buffers[name], rtol=0, atol=0)
+    assert batchnorm_head.training
+    assert all(m.training for m in batchnorm_head.modules() if isinstance(m, torch.nn.BatchNorm1d))
+
+
+@pytest.mark.parametrize("training", [True, False])
+def test_all_valid_mask_preserves_unmasked_behavior(batchnorm_head, training):
+    batchnorm_head.train(training)
+    reference = deepcopy(batchnorm_head)
+    x = torch.randn(4, 3)
+    t = torch.tensor([0.0, 6.0, 50.0, 290.0])
+    actual = batchnorm_head(x, t, mask=torch.ones(4, 1, dtype=torch.bool))
+    expected = reference(x, t)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    actual.sum().backward()
+    expected.sum().backward()
+    for name, parameter in reference.named_parameters():
+        actual_grad = dict(batchnorm_head.named_parameters())[name].grad
+        if parameter.grad is None:
+            assert actual_grad is None
+        else:
+            torch.testing.assert_close(actual_grad, parameter.grad, rtol=0, atol=0)
+
+
+def test_singleton_forward_restores_norm_modes_after_failure(batchnorm_head, monkeypatch):
+    batchnorm_head.mu1_net.eval()
+    modes = {name: module.training for name, module in batchnorm_head.named_modules()}
+
+    def fail(_):
+        raise RuntimeError("injected branch failure")
+
+    monkeypatch.setattr(batchnorm_head.mu2_net, "forward", fail)
+    with pytest.raises(RuntimeError, match="injected"):
+        batchnorm_head(torch.randn(2, 3), torch.zeros(2), mask=torch.tensor([True, False]))
+    assert {name: module.training for name, module in batchnorm_head.named_modules()} == modes
+
+
+def test_empty_mask_preserves_empty_point_layout(batchnorm_head):
+    result = batchnorm_head(torch.empty(0, 3), torch.empty(0), mask=torch.empty(0, dtype=torch.bool))
+    assert result.shape == (0, 1)
+    for module in batchnorm_head.modules():
+        if isinstance(module, torch.nn.BatchNorm1d):
+            assert module.num_batches_tracked is not None
+            assert int(module.num_batches_tracked) == 0
+
+
+@pytest.mark.parametrize("mask", [torch.ones(3, dtype=torch.bool), torch.ones(4), torch.ones(2, 2, dtype=torch.bool)])
+def test_kernel_head_rejects_malformed_point_masks(batchnorm_head, mask):
+    with pytest.raises(ValueError, match="mask"):
+        batchnorm_head(torch.randn(4, 3), torch.zeros(4), mask=mask)
 
 
 def test_expand_replicates_each_row_once_per_t_value():
