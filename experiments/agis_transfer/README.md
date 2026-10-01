@@ -225,6 +225,52 @@ The worker requires `sbatch --array`: for `N` grid entries and pack size `P`, su
 Submit the remaining five warm-start checkpoints only when measured throughput leaves time
 for completion and reporting. No unbounded resubmission is performed.
 
+## Training-size comparison
+
+`process_agis_learning_curve.py` creates six additional dated parquet cohorts, from
+six training/two test compounds down to one training/seven test compounds. Eight rotations
+of a seeded material order provide nested training sets and balanced material exposure at
+every size. Each original LOCO test compound remains a fixed reference test throughout its
+ladder. Every test composition is excluded at all three pressures, including warm replay
+and scaler fitting. The raw curves, ten selected checkpoints, fixed epoch budgets and
+initialization seeds follow the original seven-training experiment.
+
+```bash
+uv run python data/scripts/process_agis_learning_curve.py
+uv run python experiments/agis_transfer/learning_curve.py plan \
+  --splits data/agis_learning_curve_20261001.json \
+  --output data/agis_learning_curve_campaign_20261001
+```
+
+The additional six cohorts produce **5,904 final models**; scratch has one initialization
+per split/pressure and no checkpoint repeats. Mixed grids contain a manifest path and unit
+index on each line. The array worker places these outputs in separate `n1`–`n6` roots;
+ordinary single-manifest grids keep their original layout. Calibrate packing before launch.
+
+For one composition, the encoder and reconstruction layers use stored BatchNorm statistics
+while retaining parameter gradients. Kernel composition branches also use stored statistics
+when all temperature points share the same composition. The temperature branch still learns
+from the varying temperature grid. Larger, varying-composition batches keep their original
+calculation; check seven-training output parity before reusing its completed baseline.
+
+Collect each cohort with `report.py --warm-checkpoints 10 --metric-preprocessing-manifest`
+pointing to the original seven-training preprocessing manifest. Cross-size scoring uses
+that reference scaler for each **test composition and pressure**; it is never used by the
+new training runs. Report both the same eight reference holdouts and all balanced test
+materials. Reduce checkpoints by their median before averaging splits and materials.
+
+```bash
+uv run python experiments/agis_transfer/learning_curve.py summarize \
+  --reports /path/to/learning-curve-reports \
+  --baseline artifacts/agis_transfer_20261001/report_agis_only_full10_20261001 \
+  --output artifacts/agis_learning_curve_20261001/analysis
+```
+
+Only eight materials supply independent evidence. The exported paired bootstrap intervals
+resample material blocks and retain their three pressures; checkpoints do not count as
+additional materials. These balanced subsets do not enumerate all combinations at the
+intermediate training sizes.
+
 Each final output must have 300 finite predictions on the shared grid, one heldout composition,
 the full epoch budget and a checkpoint before receiving its completion marker. Partial units
 are resumable; successful final fits are verified again before a unit is marked complete.
