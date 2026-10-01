@@ -26,14 +26,37 @@ are never overwritten. Results and raw data remain ignored by Git.
 - Drop and count nonfinite temperature/resistivity pairs. Sort by temperature and average
   readings with exactly equal temperatures. Preserve finite negative readings around zero.
 - Linearly interpolate onto **300 equally spaced points from 6 to 290 K**, shared by every
-  curve. Require complete coverage and perform no extrapolation. No smoothing is applied:
-  the starrydata notebook's 30 K Savitzky–Golay window could broaden a narrow transition.
+  curve. Require complete coverage and perform no extrapolation. Smoothing is disabled by default.
 
 `data/agis_resistivity_20261001.pd.parquet` holds the 24 raw/resampled curves. Assets are grouped
 under `data/agis_preprocessing_20261001/`. Each `fold_01` through `fold_08` holds three
 pressure-specific parquet datasets, each with 7 `train` compounds and 1 `test` compound.
 The root audit file has multiple pressures per composition; train from the pressure-specific
 fold files, which have one row per composition. The manifest maps fold numbers to compounds.
+
+For a paired smoothing experiment, use `--smooth-window-K 9`. This applies a second-order
+Savitzky–Golay filter (`mode="interp"`) to each training curve after interpolation, before
+fitting its fold/pressure scaler. The nominal kelvin window is converted to samples by flooring
+then increasing an even count to the next odd count, matching the notebook convention. At the
+default grid, 9 K gives 9 samples (7.60 K between the first and last sample). Heldout targets
+remain unsmoothed. Negative values are preserved; no clipping is applied. The root audit
+parquet remains unsmoothed, and fold files also retain `unsmoothed_rho_uohm_cm` and
+`smoothing_applied`. Outputs use `agis_resistivity_smoothed_YYYYMMDD.pd.parquet` and
+`agis_preprocessing_smoothed_YYYYMMDD/`, preserving the original dated data.
+
+```bash
+uv run python data/scripts/process_agis_data.py --date 20261001 --smooth-window-K 9
+uv run python experiments/agis_transfer/campaign.py plan \
+  --base-config experiments/agis_transfer/base_pretrained.toml \
+  --preprocessing-manifest data/agis_preprocessing_smoothed_20261001/manifest_20261001.json \
+  --direct-only --output data/agis_campaign_smoothed_20261001
+```
+
+The direct-only manifest contains 240 units / 480 frozen and unfrozen fits; its other grids
+are empty. The ordinary strict collector requires all 480 fits for this manifest. Keep the
+same checkpoints, seeds and epoch budget as the unsmoothed experiment. Compare physical
+predictions against the same unsmoothed heldout curves, and use the original unsmoothed
+fold scalers for paired normalized-error comparisons because the two fitted scalers differ.
 
 ## Standardization and inverse transform
 

@@ -23,6 +23,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from loguru import logger
+from scipy.signal import savgol_filter
 from sklearn.pipeline import Pipeline  # type: ignore[import-untyped]
 from sklearn.preprocessing import FunctionTransformer, StandardScaler  # type: ignore[import-untyped]
 
@@ -49,6 +50,7 @@ class AGISPreprocessingConfig:
     temperature_min_K: float = 6.0
     temperature_max_K: float = 290.0
     n_points: int = 300
+    smooth_window_K: float | None = None
     date_suffix: str = field(default_factory=lambda: datetime.now().astimezone().strftime("%Y%m%d"))
 
     def __post_init__(self) -> None:
@@ -61,6 +63,20 @@ class AGISPreprocessingConfig:
         if not re.fullmatch(r"\d{8}", self.date_suffix):
             raise ValueError("date_suffix must be a YYYYMMDD date.")
         datetime.strptime(self.date_suffix, "%Y%m%d")
+        if self.smooth_window_K is not None:
+            if not np.isfinite(self.smooth_window_K) or self.smooth_window_K <= 0:
+                raise ValueError("smooth_window_K must be finite and positive.")
+            if not 3 <= self.smoothing_points <= self.n_points:
+                raise ValueError("Smoothing requires an odd window of 3 through n_points samples.")
+
+    @property
+    def smoothing_points(self) -> int:
+        """Match the notebook's floor-to-samples, next-odd window convention."""
+        if self.smooth_window_K is None:
+            return 0
+        step = (self.temperature_max_K - self.temperature_min_K) / (self.n_points - 1)
+        points = int(self.smooth_window_K / step)
+        return points + (points % 2 == 0)
 
 
 def load_agis_curves(input_dir: Path, config: AGISPreprocessingConfig | None = None) -> pd.DataFrame:
@@ -166,7 +182,9 @@ def load_agis_curves(input_dir: Path, config: AGISPreprocessingConfig | None = N
     return curves
 
 
-def standardize_fold(curves: pd.DataFrame, heldout_composition: str) -> tuple[pd.DataFrame, dict[str, Pipeline]]:
+def standardize_fold(
+    curves: pd.DataFrame, heldout_composition: str, config: AGISPreprocessingConfig | None = None
+) -> tuple[pd.DataFrame, dict[str, Pipeline]]:
     """Fit one invertible resistivity pipeline per pressure on training compounds only.
 
     Like the starrydata notebook, fit on concatenated resampled sequence values and restore
@@ -179,6 +197,18 @@ def standardize_fold(curves: pd.DataFrame, heldout_composition: str) -> tuple[pd
         raise ValueError(f"Unknown held-out composition: {heldout_composition}")
     fold = curves.copy(deep=True)
     fold["split"] = np.where(fold.composition == heldout_composition, "test", "train")
+    if config is not None and config.smooth_window_K is not None:
+        grid = np.linspace(config.temperature_min_K, config.temperature_max_K, config.n_points)
+        fold["unsmoothed_rho_uohm_cm"] = fold.rho_uohm_cm.map(lambda values: np.asarray(values).tolist())
+        fold["smoothing_applied"] = fold.split == "train"
+        for idx in fold.index:
+            if not np.array_equal(np.asarray(fold.at[idx, "temperature_K"]), grid):
+                raise ValueError("Smoothing requires the configured uniform temperature grid.")
+            values = np.asarray(fold.at[idx, "rho_uohm_cm"], dtype=float)
+            if values.shape != grid.shape or not np.isfinite(values).all():
+                raise ValueError("Smoothing requires one finite resistivity per temperature.")
+            if fold.at[idx, "split"] == "train":
+                fold.at[idx, "rho_uohm_cm"] = savgol_filter(values, config.smoothing_points, 2, mode="interp").tolist()
     fold["rho_normalized"] = pd.Series([None] * len(fold), index=fold.index, dtype=object)
     scalers: dict[str, Pipeline] = {}
     for pressure in _PRESSURES_GPA:
@@ -219,14 +249,15 @@ def prepare_agis(input_dir: Path, output_dir: Path, config: AGISPreprocessingCon
     config = config or AGISPreprocessingConfig()
     output_dir = Path(output_dir)
     suffix = config.date_suffix
-    curves_path = output_dir / f"agis_resistivity_{suffix}.pd.parquet"
-    campaign_dir = output_dir / f"agis_preprocessing_{suffix}"
+    variant = "_smoothed" if config.smooth_window_K is not None else ""
+    curves_path = output_dir / f"agis_resistivity{variant}_{suffix}.pd.parquet"
+    campaign_dir = output_dir / f"agis_preprocessing{variant}_{suffix}"
     if curves_path.exists() or campaign_dir.exists():
         raise FileExistsError(
             f"AGIS dated outputs already exist for {suffix} in {output_dir}; choose a new date/directory"
         )
     curves = load_agis_curves(input_dir, config)
-    prepared = [standardize_fold(curves, c) for c in curves.composition.drop_duplicates()]
+    prepared = [standardize_fold(curves, c, config) for c in curves.composition.drop_duplicates()]
     output_dir.mkdir(parents=True, exist_ok=True)
     campaign_dir.mkdir()
     curves.to_parquet(curves_path, index=False)
@@ -288,6 +319,15 @@ def prepare_agis(input_dir: Path, output_dir: Path, config: AGISPreprocessingCon
         "pressures_GPa": list(_PRESSURES_GPA),
         "units": {"temperature": "K", "resistivity": "muOhm cm"},
         "interpolation": "linear, exact-temperature duplicates averaged; no smoothing or extrapolation",
+        "smoothing": {
+            "method": "Savitzky-Golay" if config.smooth_window_K is not None else "none",
+            "nominal_window_K": config.smooth_window_K,
+            "window_points": config.smoothing_points,
+            "polynomial_order": 2,
+            "mode": "interp",
+            "scope": "training compounds only, after interpolation and before fitting scalers; heldout truth unchanged",
+            "audit_curves": "root parquet remains unsmoothed; fold files retain unsmoothed_rho_uohm_cm when smoothing",
+        },
         "transform": "StandardScaler(with_mean=False) -> asinh -> StandardScaler",
         "inverse_transform": "fitted Pipeline.inverse_transform via tasks.scaler; original muOhm cm",
         "validation": "outer folds contain train/test only; heldout labels cannot select epochs or hyperparameters",
@@ -305,12 +345,19 @@ def main() -> None:
     parser.add_argument("--input-dir", type=Path, default=Path("data/AGIS"))
     parser.add_argument("--output-dir", type=Path, default=Path("data"))
     parser.add_argument(
+        "--smooth-window-K", type=float, default=None, help="Optional training-only SG window in kelvin"
+    )
+    parser.add_argument(
         "--date",
         default=datetime.now().astimezone().strftime("%Y%m%d"),
         help="Filename suffix YYYYMMDD (default: local date)",
     )
     args = parser.parse_args()
-    prepare_agis(args.input_dir, args.output_dir, AGISPreprocessingConfig(date_suffix=args.date))
+    prepare_agis(
+        args.input_dir,
+        args.output_dir,
+        AGISPreprocessingConfig(date_suffix=args.date, smooth_window_K=args.smooth_window_K),
+    )
 
 
 if __name__ == "__main__":

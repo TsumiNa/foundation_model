@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
+from scipy.signal import savgol_filter
 
 from foundation_model.models.model_config import KernelRegressionTaskConfig
 from foundation_model.workflows._engine import build_empty_model, build_head_config
@@ -87,6 +88,61 @@ def test_read_sort_duplicates_units_and_pressure_selection(raw_dir: Path) -> Non
 def test_invalid_config(kwargs: dict[str, float | str]) -> None:
     with pytest.raises(ValueError):
         AGISPreprocessingConfig(**kwargs)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("window", [0, -1, float("nan"), float("inf"), 1, 1000])
+def test_invalid_smoothing_window(window: float) -> None:
+    with pytest.raises(ValueError):
+        AGISPreprocessingConfig(smooth_window_K=window)
+
+
+def test_training_smoothing_preserves_raw_holdout_and_fits_only_smoothed_train(raw_dir: Path, tmp_path: Path) -> None:
+    config = AGISPreprocessingConfig(
+        temperature_min_K=6, temperature_max_K=10, n_points=5, date_suffix="20261001", smooth_window_K=5
+    )
+    curves = load_agis_curves(raw_dir, config)
+    originals = [np.asarray(v).copy() for v in curves.rho_uohm_cm]
+    heldout = curves.composition.iloc[0]
+    fold, scalers = standardize_fold(curves, heldout, config)
+    for row, original in zip(fold.itertuples(), originals, strict=True):
+        np.testing.assert_array_equal(row.unsmoothed_rho_uohm_cm, original)
+        expected = original if row.split == "test" else savgol_filter(original, 5, 2, mode="interp")
+        np.testing.assert_array_equal(row.rho_uohm_cm, expected)
+        assert row.smoothing_applied == (row.split == "train")
+    for current, original in zip(curves.rho_uohm_cm, originals, strict=True):
+        np.testing.assert_array_equal(current, original)
+    modified = curves.copy(deep=True)
+    for idx in modified.index[modified.composition == heldout]:
+        modified.at[idx, "rho_uohm_cm"] = (np.asarray(modified.at[idx, "rho_uohm_cm"]) * 1000).tolist()
+    _, other = standardize_fold(modified, heldout, config)
+    for pressure in (0, 10, 20):
+        scaler = scalers[f"agis_rho_{pressure}gpa_scaler"]
+        values = np.concatenate(
+            fold.loc[(fold.pressure_GPa == pressure) & (fold.split == "train"), "rho_uohm_cm"].to_list()
+        )
+        np.testing.assert_allclose(scaler["prescale"].scale_, [values.std()], rtol=1e-12)
+        np.testing.assert_array_equal(
+            scaler["standardscaler"].mean_, other[f"agis_rho_{pressure}gpa_scaler"]["standardscaler"].mean_
+        )
+        assert scaler["prescale"].n_samples_seen_ == 35
+    manifest_path = prepare_agis(raw_dir, tmp_path, config)
+    manifest = json.loads(manifest_path.read_text())
+    assert "agis_preprocessing_smoothed_20261001" in str(manifest_path)
+    assert manifest["smoothing"]["window_points"] == 5
+    np.testing.assert_array_equal(pd.read_parquet(manifest["curves_path"]).rho_uohm_cm.iloc[0], originals[0])
+
+
+def test_smoothing_rejects_wrong_grid_or_nonfinite_curves(raw_dir: Path) -> None:
+    config = AGISPreprocessingConfig(temperature_min_K=6, temperature_max_K=10, n_points=5, smooth_window_K=5)
+    curves = load_agis_curves(raw_dir, config)
+    malformed = curves.copy(deep=True)
+    malformed.at[0, "temperature_K"] = [6, 7, 8, 9, 11]
+    with pytest.raises(ValueError, match="uniform"):
+        standardize_fold(malformed, curves.composition.iloc[0], config)
+    malformed = curves.copy(deep=True)
+    malformed.at[0, "rho_uohm_cm"] = [1, 2, float("nan"), 4, 5]
+    with pytest.raises(ValueError, match="finite resistivity"):
+        standardize_fold(malformed, curves.composition.iloc[0], config)
 
 
 @pytest.mark.parametrize("date", ["2026-10-01", "20260230", "../20261001", "00000000"])
