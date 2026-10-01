@@ -220,8 +220,11 @@ class KernelRegressionHead(BaseTaskHead):
             valid_indices = mask.reshape(-1).nonzero().flatten().to(x.device)
             if valid_indices.numel() == 0:
                 return x.new_zeros((point_count, 1))
-            x = x.index_select(0, valid_indices)
-            t = t.index_select(0, valid_indices)
+            if valid_indices.numel() == point_count and point_count > 1:
+                valid_indices = None  # Fully labeled batches retain the original computation.
+            else:
+                x = x.index_select(0, valid_indices)
+                t = t.index_select(0, valid_indices)
 
         # Repeated points from one composition are not independent composition samples.
         # Constant branch inputs cannot estimate a BatchNorm variance; use stored statistics

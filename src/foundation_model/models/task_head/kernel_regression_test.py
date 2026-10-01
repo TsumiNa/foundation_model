@@ -108,8 +108,11 @@ def test_repeated_single_branch_input_uses_stored_statistics(batchnorm_head, con
         for module in branch.modules():
             if isinstance(module, torch.nn.BatchNorm1d):
                 module.eval()
+    padded_x = torch.cat([x, torch.full((16, 3), float("nan"))])
+    padded_t = torch.cat([t, torch.full((16,), float("nan"))])
+    mask = torch.arange(32) < 16
     for _ in range(60):
-        result = batchnorm_head(x, t, mask=torch.ones(16, dtype=torch.bool))
+        result = batchnorm_head(padded_x, padded_t, mask=mask)[:16]
         expected = reference(x, t)
         torch.testing.assert_close(result, expected, rtol=0, atol=0)
     for name, value in batchnorm_head.named_buffers():
@@ -119,11 +122,15 @@ def test_repeated_single_branch_input_uses_stored_statistics(batchnorm_head, con
 
 
 @pytest.mark.parametrize("training", [True, False])
-def test_all_valid_mask_preserves_unmasked_behavior(batchnorm_head, training):
+@pytest.mark.parametrize("constant_inputs", [True, False])
+def test_all_valid_mask_preserves_unmasked_behavior(batchnorm_head, training, constant_inputs):
     batchnorm_head.train(training)
     reference = deepcopy(batchnorm_head)
     x = torch.randn(4, 3)
     t = torch.tensor([0.0, 6.0, 50.0, 290.0])
+    if constant_inputs:
+        x = x[:1].expand_as(x).clone()
+        t = torch.zeros_like(t)
     actual = batchnorm_head(x, t, mask=torch.ones(4, 1, dtype=torch.bool))
     expected = reference(x, t)
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
