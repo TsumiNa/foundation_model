@@ -258,11 +258,14 @@ pointing to the original seven-training preprocessing manifest. Cross-size scori
 that reference scaler for each **test composition and pressure**; it is never used by the
 new training runs. Report both the same eight reference holdouts and all balanced test
 materials. Reduce checkpoints by their median before averaging splits and materials.
+The collector requires the reference digest saved during preprocessing, and the summary
+rejects cohorts with different reference digests. Recollect the completed seven-training
+baseline with this same explicit reference option; its model weights are reused.
 
 ```bash
 uv run python experiments/agis_transfer/learning_curve.py summarize \
   --reports /path/to/learning-curve-reports \
-  --baseline artifacts/agis_transfer_20261001/report_agis_only_full10_20261001 \
+  --baseline /path/to/learning-curve-reports/n7 \
   --output artifacts/agis_learning_curve_20261001/analysis
 ```
 

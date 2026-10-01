@@ -86,6 +86,7 @@ def aggregate_learning_curve(metrics: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
 def summarize_learning_curve(reports: Path, baseline: Path, output: Path, date: str) -> pd.DataFrame:
     frames = []
     provenance = []
+    reference_digest = None
     for n_train in range(1, 8):
         folder = baseline if n_train == 7 else reports / f"n{n_train}"
         path = folder / f"metrics_{date}.parquet"
@@ -93,6 +94,15 @@ def summarize_learning_curve(reports: Path, baseline: Path, output: Path, date: 
         report = json.loads(report_path.read_text())
         if not report["complete_cohort"] or report["n_final_models"] != 984 or report["warm_checkpoints"] != 10:
             raise ValueError("Require the complete 984-model, ten-checkpoint cohort at each size")
+        reference = report.get("metric_preprocessing_manifest")
+        if not isinstance(reference, dict) or not reference.get("sha256"):
+            raise ValueError(
+                "Every cohort, including the seven-training baseline, requires recorded reference-scaler provenance"
+            )
+        if reference_digest is None:
+            reference_digest = reference["sha256"]
+        elif reference["sha256"] != reference_digest:
+            raise ValueError("Learning-curve cohorts use different reference-scaler manifest digests")
         frame = pd.read_parquet(path)
         if n_train == 7:
             frame["is_anchor"] = True
@@ -182,6 +192,7 @@ def summarize_learning_curve(reports: Path, baseline: Path, output: Path, date: 
                 "n_final_models": 6888,
                 "new_final_models": 5904,
                 "n_independent_materials": 8,
+                "reference_scaler_manifest_sha256": reference_digest,
                 "metric_scale": "Original seven-train LOCO scaler for each test composition and pressure, used only in scoring",
                 "aggregation": "Median over checkpoints per split/material/pressure; mean over balanced splits; equal material/pressure weights",
                 "intervals": "Descriptive paired bootstrap of eight material blocks, keeping pressure measurements together; checkpoint repeats are not samples",

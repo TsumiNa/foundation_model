@@ -108,8 +108,9 @@ def test_collect_validates_provenance_and_exports_original_unit_metrics(
     assert len(paired) == 2 and np.allclose(paired["warm_minus_direct"], 0)
 
 
+@pytest.mark.parametrize("wrong_reference", [False, True])
 def test_multiple_test_materials_use_fixed_material_scalers_and_count_models_once(
-    cohort: tuple[Path, Path, Path], tmp_path: Path
+    cohort: tuple[Path, Path, Path], tmp_path: Path, wrong_reference: bool
 ) -> None:
     path, root, project = cohort
     manifest = json.loads(path.read_text())
@@ -128,6 +129,7 @@ def test_multiple_test_materials_use_fixed_material_scalers_and_count_models_onc
     reference["folds"][1]["scalers"]["0"]["asinh_std"] = 4.0
     reference_path = tmp_path / "reference.json"
     reference_path.write_text(json.dumps(reference))
+    preprocessing["reference_sha256"] = sha256(reference_path) if not wrong_reference else "wrong digest"
     data_path = project / "data/fold_01/data.parquet"
     frame = pd.read_parquet(data_path)
     second = frame.copy()
@@ -149,6 +151,10 @@ def test_multiple_test_materials_use_fixed_material_scalers_and_count_models_onc
         second["composition"] = "other"
         pd.concat([frame, second], ignore_index=True).to_parquet(pred_path)
     out = tmp_path / "multi_report"
+    if wrong_reference:
+        with pytest.raises(ValueError, match="digest"):
+            collect_results(path, root, project, out, ReportSettings(metric_preprocessing_manifest=reference_path))
+        return
     metrics = collect_results(path, root, project, out, ReportSettings(metric_preprocessing_manifest=reference_path))
     assert len(metrics) == 10 and metrics.is_anchor.sum() == 5
     provenance = json.loads((out / "report_manifest_20261001.json").read_text())
@@ -169,6 +175,7 @@ def test_missing_units_cannot_be_reported_as_complete(cohort: tuple[Path, Path, 
     collect_results(path, root, project, tmp_path / "report", ReportSettings(allow_partial=True))
     assert not json.loads((tmp_path / "report/report_manifest_20261001.json").read_text())["complete_cohort"]
     assert pd.read_csv(tmp_path / "report/paired_warm_direct_20261001.csv").empty
+    assert "composition" in pd.read_csv(tmp_path / "report/paired_warm_direct_20261001.csv").columns
 
 
 @pytest.mark.parametrize("failure", [None, "holdout", "train", "grid", "scale", "pressures", "folds"])

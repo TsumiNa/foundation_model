@@ -114,6 +114,12 @@ def collect_results(
         metric_provenance = {"path": str(metric_path), "sha256": sha256(metric_path)}
     if learning_curve and metric_provenance is None:
         raise ValueError("Learning curves require fixed reference scalers for cross-size metrics")
+    if (
+        learning_curve
+        and metric_provenance is not None
+        and metric_provenance["sha256"] != manifest["preprocessing"].get("reference_sha256")
+    ):
+        raise ValueError("Comparison manifest digest differs from the recorded seven-training reference")
     metric_by_composition = {f["heldout_composition"]: f["scalers"] for f in metric_preprocessing["folds"]}
     rows: list[dict[str, Any]] = []
     curves: list[pd.DataFrame] = []
@@ -269,7 +275,16 @@ def collect_results(
         paired = paired.reset_index()
     else:
         paired = pd.DataFrame(
-            columns=["fold", "pressure", "checkpoint_index", "setting", "direct", "warm", "warm_minus_direct"]
+            columns=[
+                "fold",
+                "pressure",
+                "composition",
+                "checkpoint_index",
+                "setting",
+                "direct",
+                "warm",
+                "warm_minus_direct",
+            ]
         )
     paired.to_csv(destination / f"paired_warm_direct_{date}.csv", index=False)
     (destination / f"report_manifest_{date}.json").write_text(
