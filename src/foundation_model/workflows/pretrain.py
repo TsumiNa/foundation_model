@@ -456,15 +456,22 @@ def _run_single(
             test_keys = set(resolved.index[resolved == "test"].astype(str))
 
         step_dir = recorder.paths.step_dir(step, task_name)
+        # Evaluation is a diagnostic: retain the trained weights even when a metric fails.
+        recorder.save_step_checkpoint(step, task_name, model, list(active))
         step_metrics: dict[str, dict[str, float]] = {}
         for name in [*preloaded, *new_tasks[: i + 1]]:  # ALL learned heads (preloaded + new-so-far)
-            metric = evaluate_task(
-                model, catalog, name, recorder, step_dir, is_new=(name == task_name), test_keys=test_keys
-            )
+            try:
+                with np.errstate(over="raise"):
+                    metric = evaluate_task(
+                        model, catalog, name, recorder, step_dir, is_new=(name == task_name), test_keys=test_keys
+                    )
+            except FloatingPointError as exc:
+                logger.warning("Post-fit evaluation overflow for {} at step {}: {}", name, step, exc)
+                metric = {"primary": float("nan"), "evaluation_overflow": 1.0}
+                recorder.dump_metrics(step_dir, name, metric)
             step_metrics[name] = metric
             metric_history[name].append((step, metric["primary"]))
 
-        recorder.save_step_checkpoint(step, task_name, model, list(active))
         record = {"step": step, "new_task": task_name, "epochs_run": trainer.current_epoch, "metrics": step_metrics}
         records.append(record)
         recorder.append_record(record)

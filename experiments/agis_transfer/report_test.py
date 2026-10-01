@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -116,6 +117,80 @@ def test_missing_units_cannot_be_reported_as_complete(cohort: tuple[Path, Path, 
     collect_results(path, root, project, tmp_path / "report", ReportSettings(allow_partial=True))
     assert not json.loads((tmp_path / "report/report_manifest_20261001.json").read_text())["complete_cohort"]
     assert pd.read_csv(tmp_path / "report/paired_warm_direct_20261001.csv").empty
+
+
+def recovery_source(cohort: tuple[Path, Path, Path], tmp_path: Path) -> ReportSettings:
+    path, root, project = cohort
+    manifest = json.loads(path.read_text())
+    manifest["source_sha256"] = "reviewed diagnostic-only fix"
+    recovery_manifest = project / "recovery.json"
+    recovery_manifest.write_text(json.dumps(manifest))
+    recovery = tmp_path / "recovery"
+    recovery.mkdir()
+    identity = json.loads((root / "campaign_identity.json").read_text())
+    identity.update(source_sha256=manifest["source_sha256"], manifest_sha256=sha256(recovery_manifest))
+    (recovery / "campaign_identity.json").write_text(json.dumps(identity))
+    unit = "warm_f01_c01_p0"
+    shutil.move(root / unit, recovery / unit)
+    (recovery / unit / "campaign_identity.json").write_text(json.dumps(identity))
+    return ReportSettings(recovery_manifest=recovery_manifest, recovery_root=recovery)
+
+
+def test_recovery_is_complete_with_explicit_per_model_source(cohort: tuple[Path, Path, Path], tmp_path: Path) -> None:
+    settings = recovery_source(cohort, tmp_path)
+    path, root, project = cohort
+    output = tmp_path / "combined_report"
+    frame = collect_results(path, root, project, output, settings)
+    assert len(frame) == 5 and frame["recovered"].sum() == 2
+    assert set(frame.loc[frame["route"] == "warm", "campaign_source_sha256"]) == {"reviewed diagnostic-only fix"}
+    provenance = json.loads((output / "report_manifest_20261001.json").read_text())
+    assert provenance["complete_cohort"]
+    assert provenance["recovered_units"] == ["warm_f01_c01_p0"]
+    assert provenance["recovery_campaign_identity"]["source_sha256"] == "reviewed diagnostic-only fix"
+
+
+@pytest.mark.parametrize("change", ["protocol", "runtime", "manifest_hash", "unit_identity", "duplicate"])
+def test_recovery_rejects_protocol_or_identity_drift(
+    cohort: tuple[Path, Path, Path], tmp_path: Path, change: str
+) -> None:
+    settings = recovery_source(cohort, tmp_path)
+    assert settings.recovery_manifest is not None and settings.recovery_root is not None
+    path, root, project = cohort
+    recovery = settings.recovery_root
+    identity_file = recovery / "campaign_identity.json"
+    identity = json.loads(identity_file.read_text())
+    if change == "protocol":
+        manifest = json.loads(settings.recovery_manifest.read_text())
+        manifest["settings"]["final_epochs"] = 2000
+        settings.recovery_manifest.write_text(json.dumps(manifest))
+        identity["manifest_sha256"] = sha256(settings.recovery_manifest)
+    elif change == "runtime":
+        identity["runtime"]["image_sha256"] = "different runtime"
+    elif change == "manifest_hash":
+        identity["manifest_sha256"] = "unbound manifest"
+    elif change == "unit_identity":
+        (recovery / "warm_f01_c01_p0/campaign_identity.json").write_text("{}")
+    else:
+        shutil.copytree(recovery / "warm_f01_c01_p0", root / "warm_f01_c01_p0")
+    identity_file.write_text(json.dumps(identity))
+    with pytest.raises(ValueError):
+        collect_results(path, root, project, tmp_path / "report", settings)
+
+
+def test_recovery_paths_must_be_paired(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="both"):
+        ReportSettings(recovery_manifest=tmp_path)
+    with pytest.raises(ValueError, match="both"):
+        ReportSettings(recovery_root=tmp_path)
+
+
+def test_recovery_cannot_replace_direct_training(cohort: tuple[Path, Path, Path], tmp_path: Path) -> None:
+    settings = recovery_source(cohort, tmp_path)
+    assert settings.recovery_root is not None
+    path, root, project = cohort
+    shutil.move(root / "direct_f01_c01_p0", settings.recovery_root / "direct_f01_c01_p0")
+    with pytest.raises(ValueError, match="restricted"):
+        collect_results(path, root, project, tmp_path / "report", settings)
 
 
 @pytest.mark.parametrize(

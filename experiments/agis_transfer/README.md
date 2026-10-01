@@ -214,6 +214,19 @@ The default requires the complete first-five warm cohort plus all ten direct che
 `--allow-partial` creates an explicitly incomplete progress report and lists every missing unit.
 The collector reads final checkpoints to hash them, so run it where those files are available.
 
+Pretraining saves each trained stage before evaluating its heads. A numerical overflow in a
+post-fit diagnostic is recorded with `evaluation_overflow = 1` and a NaN primary metric, without
+discarding the model or clipping predictions. Other evaluation errors still fail the run.
+This does not change fitting, validation, early stopping or final prediction requirements.
+
+When a reviewed diagnostic fix requires interrupted warm routes to run from another immutable
+checkout, use a separate recovery output root and manifest. The two manifests must differ only
+in `source_sha256`: inputs, selected checkpoints, seeds and training settings stay identical.
+Supply `--recovery-manifest PATH --recovery-root PATH` to the collector. It checks both source
+identities and the same runtime, rejects duplicate completed units, and records the source hash
+and recovery status of every final model. Review the code difference before combining sources;
+matching manifest settings alone does not prove two implementations train identically.
+
 The primary comparison uses RMSE in each fold's training normalization, and compares warm with
 the same first five direct checkpoints. Exported paired differences retain checkpoint identity.
 Within each compound/pressure, summarize checkpoint repeats by their median, then weight the
