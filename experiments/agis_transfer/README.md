@@ -214,8 +214,8 @@ The default requires the complete first-five warm cohort plus all ten direct che
 `--allow-partial` creates an explicitly incomplete progress report and lists every missing unit.
 The collector reads final checkpoints to hash them, so run it where those files are available.
 
-Pretraining saves each trained stage before evaluating its heads. A numerical overflow in a
-post-fit diagnostic is recorded with `evaluation_overflow = 1` and a NaN primary metric, without
+Pretraining records a numerical overflow in a post-fit diagnostic with `evaluation_overflow = 1`
+and a NaN primary metric, then saves the trained stage without
 discarding the model or clipping predictions. Other evaluation errors still fail the run.
 This does not change fitting, validation, early stopping or final prediction requirements.
 

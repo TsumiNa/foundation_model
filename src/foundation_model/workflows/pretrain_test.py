@@ -290,7 +290,6 @@ def test_diagnostic_overflow_preserves_training_and_continues(smoke_dir, tmp_pat
     pretrain_run(_smoke_config(smoke_dir, baseline))
 
     def overflowing(model, catalog, name, recorder, step_dir, **kwargs):
-        assert (step_dir / "checkpoint.pt").is_file()
         if name == "a":
             scaler = Pipeline(
                 [("asinh", FunctionTransformer(np.arcsinh, inverse_func=np.sinh)), ("scale", StandardScaler())]
@@ -305,6 +304,8 @@ def test_diagnostic_overflow_preserves_training_and_continues(smoke_dir, tmp_pat
     assert all(np.isnan(record["metrics"]["a"]["primary"]) for record in records)
     assert all(record["metrics"]["a"]["evaluation_overflow"] == 1 for record in records)
     assert records[-1]["metrics"]["b"]["primary"] == 0
+    assert (recovered / "training/step01_a/checkpoint.pt").is_file()
+    assert (recovered / "training/step02_b/checkpoint.pt").is_file()
     metric = json.loads((recovered / "training/step01_a/a_metrics.json").read_text())
     assert metric["evaluation_overflow"] == 1
     normal_state = torch.load(baseline / "training/final_model.pt", weights_only=True)["model"]
@@ -313,16 +314,23 @@ def test_diagnostic_overflow_preserves_training_and_continues(smoke_dir, tmp_pat
     assert all(torch.equal(value, overflow_state[key]) for key, value in normal_state.items())
 
 
-def test_malformed_diagnostic_still_raises_after_saving_progress(smoke_dir, tmp_path, monkeypatch) -> None:
+def test_malformed_diagnostic_still_raises_on_resume(smoke_dir, tmp_path, monkeypatch) -> None:
     output = tmp_path / "malformed"
 
-    def malformed(*args, **kwargs):
-        raise ValueError("malformed labels")
+    def malformed(model, catalog, name, recorder, step_dir, **kwargs):
+        if name == "b":
+            raise ValueError("malformed labels")
+        return {"primary": 0.0, "samples": 1}
 
     monkeypatch.setattr(pretrain_module, "evaluate_task", malformed)
+    cfg = _smoke_config(smoke_dir, output)
     with pytest.raises(ValueError, match="malformed labels"):
-        pretrain_run(_smoke_config(smoke_dir, output))
+        pretrain_run(cfg)
     assert (output / "training/step01_a/checkpoint.pt").is_file()
+    assert not (output / "training/step02_b/checkpoint.pt").exists()
+    cfg.resume = True
+    with pytest.raises(ValueError, match="malformed labels"):
+        pretrain_run(cfg)
     assert not (output / "training/final_model.pt").exists()
 
 
