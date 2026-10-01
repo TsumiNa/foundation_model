@@ -458,9 +458,15 @@ def _run_single(
         step_dir = recorder.paths.step_dir(step, task_name)
         step_metrics: dict[str, dict[str, float]] = {}
         for name in [*preloaded, *new_tasks[: i + 1]]:  # ALL learned heads (preloaded + new-so-far)
-            metric = evaluate_task(
-                model, catalog, name, recorder, step_dir, is_new=(name == task_name), test_keys=test_keys
-            )
+            try:
+                with np.errstate(over="raise"):
+                    metric = evaluate_task(
+                        model, catalog, name, recorder, step_dir, is_new=(name == task_name), test_keys=test_keys
+                    )
+            except FloatingPointError as exc:
+                logger.warning("Post-fit evaluation overflow for {} at step {}: {}", name, step, exc)
+                metric = {"primary": float("nan"), "evaluation_overflow": 1.0}
+                recorder.dump_metrics(step_dir, name, metric)
             step_metrics[name] = metric
             metric_history[name].append((step, metric["primary"]))
 

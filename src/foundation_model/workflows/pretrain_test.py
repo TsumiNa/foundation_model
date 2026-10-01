@@ -12,6 +12,8 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
+from sklearn.pipeline import Pipeline  # type: ignore[import-untyped]
+from sklearn.preprocessing import FunctionTransformer, StandardScaler  # type: ignore[import-untyped]
 
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
@@ -275,6 +277,61 @@ interval = 1
 amount = 0.5
 """
     return build_pretrain_config(tomllib.loads(toml), output_dir=str(output_dir))
+
+
+def test_diagnostic_overflow_preserves_training_and_continues(smoke_dir, tmp_path, monkeypatch) -> None:
+    baseline = tmp_path / "baseline"
+    recovered = tmp_path / "overflow"
+
+    def healthy(*args, **kwargs):
+        return {"primary": 0.0, "samples": 1}
+
+    monkeypatch.setattr(pretrain_module, "evaluate_task", healthy)
+    pretrain_run(_smoke_config(smoke_dir, baseline))
+
+    def overflowing(model, catalog, name, recorder, step_dir, **kwargs):
+        if name == "a":
+            scaler = Pipeline(
+                [("asinh", FunctionTransformer(np.arcsinh, inverse_func=np.sinh)), ("scale", StandardScaler())]
+            ).fit(np.array([[0.0], [1.0], [2.0]]))
+            scaler.inverse_transform(np.array([[10000.0]]))
+        return healthy()
+
+    monkeypatch.setattr(pretrain_module, "evaluate_task", overflowing)
+    result = pretrain_run(_smoke_config(smoke_dir, recovered))
+    records = result["records"]
+    assert len(records) == 2
+    assert all(np.isnan(record["metrics"]["a"]["primary"]) for record in records)
+    assert all(record["metrics"]["a"]["evaluation_overflow"] == 1 for record in records)
+    assert records[-1]["metrics"]["b"]["primary"] == 0
+    assert (recovered / "training/step01_a/checkpoint.pt").is_file()
+    assert (recovered / "training/step02_b/checkpoint.pt").is_file()
+    metric = json.loads((recovered / "training/step01_a/a_metrics.json").read_text())
+    assert metric["evaluation_overflow"] == 1
+    normal_state = torch.load(baseline / "training/final_model.pt", weights_only=True)["model"]
+    overflow_state = torch.load(recovered / "training/final_model.pt", weights_only=True)["model"]
+    assert normal_state.keys() == overflow_state.keys()
+    assert all(torch.equal(value, overflow_state[key]) for key, value in normal_state.items())
+
+
+def test_malformed_diagnostic_still_raises_on_resume(smoke_dir, tmp_path, monkeypatch) -> None:
+    output = tmp_path / "malformed"
+
+    def malformed(model, catalog, name, recorder, step_dir, **kwargs):
+        if name == "b":
+            raise ValueError("malformed labels")
+        return {"primary": 0.0, "samples": 1}
+
+    monkeypatch.setattr(pretrain_module, "evaluate_task", malformed)
+    cfg = _smoke_config(smoke_dir, output)
+    with pytest.raises(ValueError, match="malformed labels"):
+        pretrain_run(cfg)
+    assert (output / "training/step01_a/checkpoint.pt").is_file()
+    assert not (output / "training/step02_b/checkpoint.pt").exists()
+    cfg.resume = True
+    with pytest.raises(ValueError, match="malformed labels"):
+        pretrain_run(cfg)
+    assert not (output / "training/final_model.pt").exists()
 
 
 # --- warm-start from a checkpoint --------------------------------------------------------

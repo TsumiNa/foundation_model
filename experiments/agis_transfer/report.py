@@ -22,10 +22,14 @@ import pandas as pd
 class ReportSettings:
     warm_checkpoints: int = 5
     allow_partial: bool = False
+    recovery_manifest: Path | None = None
+    recovery_root: Path | None = None
 
     def __post_init__(self) -> None:
         if self.warm_checkpoints not in (5, 10):
             raise ValueError("Report the agreed first-five or full-ten warm cohort")
+        if (self.recovery_manifest is None) != (self.recovery_root is None):
+            raise ValueError("Recovery requires both its manifest and output root")
 
 
 def sha256(path: Path) -> str:
@@ -63,12 +67,27 @@ def collect_results(
     identity = json.loads((root / "campaign_identity.json").read_text())
     if identity["manifest_sha256"] != sha256(manifest_path) or identity["source_sha256"] != manifest["source_sha256"]:
         raise ValueError("Production outputs belong to another manifest or source")
+    recovery_identity = None
+    if settings.recovery_manifest is not None and settings.recovery_root is not None:
+        recovery_manifest = json.loads(settings.recovery_manifest.read_text())
+        if {k: v for k, v in recovery_manifest.items() if k != "source_sha256"} != {
+            k: v for k, v in manifest.items() if k != "source_sha256"
+        }:
+            raise ValueError("Recovery changes the experiment protocol or input artifacts")
+        recovery_identity = json.loads((settings.recovery_root / "campaign_identity.json").read_text())
+        if (
+            recovery_identity["manifest_sha256"] != sha256(settings.recovery_manifest)
+            or recovery_identity["source_sha256"] != recovery_manifest["source_sha256"]
+            or recovery_identity["runtime"] != identity["runtime"]
+        ):
+            raise ValueError("Recovery manifest, source or runtime identity mismatch")
     for path, expected in manifest["input_sha256"].items():
         if sha256(project / path) != expected:
             raise ValueError(f"Input artifact drift: {path}")
     rows: list[dict[str, Any]] = []
     curves: list[pd.DataFrame] = []
     missing = []
+    recovered_units = []
     for unit in manifest["units"]:
         checkpoint = unit["checkpoint_index"]
         if unit["route"] == "warm" and checkpoint >= settings.warm_checkpoints:
@@ -76,10 +95,20 @@ def collect_results(
         tag = "scratch" if checkpoint is None else f"c{checkpoint + 1:02d}"
         name = f"{unit['route']}_f{unit['fold']:02d}_{tag}_p{unit['pressure']}"
         folder = root / name
+        unit_identity = identity
+        if settings.recovery_root is not None and (settings.recovery_root / name / "DONE").is_file():
+            assert recovery_identity is not None
+            if (folder / "DONE").is_file():
+                raise ValueError(f"Duplicate completed unit in production and recovery: {name}")
+            if unit["route"] != "warm":
+                raise ValueError("Recovery is restricted to interrupted warm-start routes")
+            folder = settings.recovery_root / name
+            unit_identity = recovery_identity
+            recovered_units.append(name)
         if not (folder / "DONE").is_file():
             missing.append(name)
             continue
-        if json.loads((folder / "campaign_identity.json").read_text()) != identity:
+        if json.loads((folder / "campaign_identity.json").read_text()) != unit_identity:
             raise ValueError(f"Unit identity mismatch: {name}")
         result = json.loads((folder / "result.json").read_text())
         if any(result[key] != value for key, value in unit.items()):
@@ -122,6 +151,8 @@ def collect_results(
             metadata = {
                 **unit,
                 "unit": name,
+                "campaign_source_sha256": unit_identity["source_sha256"],
+                "recovered": name in recovered_units,
                 "setting": label,
                 "composition": heldout,
                 "formula": gold["formula"],
@@ -209,6 +240,8 @@ def collect_results(
                     for (route, setting), group in metrics.groupby(["route", "setting"])
                 },
                 "campaign_identity": identity,
+                "recovery_campaign_identity": recovery_identity,
+                "recovered_units": recovered_units,
                 "collector_sha256": sha256(Path(__file__)),
                 "metric_units": {
                     "z_rmse": "fold training normalized units",
@@ -291,13 +324,20 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--warm-checkpoints", type=int, default=5)
     parser.add_argument("--allow-partial", action="store_true")
+    parser.add_argument("--recovery-manifest", type=Path)
+    parser.add_argument("--recovery-root", type=Path)
     args = parser.parse_args()
     frame = collect_results(
         args.manifest,
         args.root,
         args.project,
         args.output,
-        ReportSettings(warm_checkpoints=args.warm_checkpoints, allow_partial=args.allow_partial),
+        ReportSettings(
+            warm_checkpoints=args.warm_checkpoints,
+            allow_partial=args.allow_partial,
+            recovery_manifest=args.recovery_manifest,
+            recovery_root=args.recovery_root,
+        ),
     )
     print(f"Collected {len(frame)} validated final models")
 
