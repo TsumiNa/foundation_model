@@ -23,6 +23,7 @@ class ReportSettings:
     warm_checkpoints: int = 5
     allow_partial: bool = False
     recovery_manifest: Path | None = None
+    metric_preprocessing_manifest: Path | None = None
     recovery_root: Path | None = None
 
     def __post_init__(self) -> None:
@@ -84,6 +85,27 @@ def collect_results(
     for path, expected in manifest["input_sha256"].items():
         if sha256(project / path) != expected:
             raise ValueError(f"Input artifact drift: {path}")
+    metric_preprocessing = manifest["preprocessing"]
+    metric_provenance = None
+    if settings.metric_preprocessing_manifest is not None:
+        metric_path = settings.metric_preprocessing_manifest
+        metric_preprocessing = json.loads(metric_path.read_text())
+        original = manifest["preprocessing"]
+        if len(metric_preprocessing["folds"]) != len(original["folds"]):
+            raise ValueError("Comparison scaler manifest has different holdout folds")
+        for key in ("temperature_min_K", "temperature_max_K", "n_points"):
+            if metric_preprocessing["config"][key] != original["config"][key]:
+                raise ValueError("Comparison scaler manifest has a different temperature grid")
+        for a, b in zip(original["folds"], metric_preprocessing["folds"], strict=True):
+            if a["heldout_composition"] != b["heldout_composition"] or a["fit_compositions"] != b["fit_compositions"]:
+                raise ValueError("Comparison scaler manifest has different train/test compositions")
+            for pressure, scaler in b["scalers"].items():
+                values = [scaler[key] for key in ("prescale_std", "asinh_mean", "asinh_std")]
+                if pressure not in a["scalers"] or not np.isfinite(values).all() or values[0] <= 0 or values[2] <= 0:
+                    raise ValueError("Invalid comparison scaler parameters")
+            if set(a["scalers"]) != set(b["scalers"]):
+                raise ValueError("Comparison scaler manifest has different pressures")
+        metric_provenance = {"path": str(metric_path), "sha256": sha256(metric_path)}
     rows: list[dict[str, Any]] = []
     curves: list[pd.DataFrame] = []
     missing = []
@@ -128,6 +150,7 @@ def collect_results(
         truth = np.asarray(gold["rho_uohm_cm"], dtype=float)
         temperature = np.asarray(gold["temperature_K"], dtype=float)
         scaler = fold["scalers"][str(unit["pressure"])]
+        metric_scaler = metric_preprocessing["folds"][unit["fold"] - 1]["scalers"][str(unit["pressure"])]
         for label in ["unfrozen"] if unit["route"] == "scratch" else ["frozen", "unfrozen"]:
             fit = folder / label
             frame = pd.read_parquet(fit / "training/finetune" / f"{target}_pred.parquet")
@@ -167,7 +190,7 @@ def collect_results(
                 "prediction_sha256": sha256(fit / "training/finetune" / f"{target}_pred.parquet"),
                 "unit_elapsed_seconds": result["elapsed_seconds"],
                 "slurm_job": result["slurm_job"],
-                **curve_metrics(truth, frame["pred"].to_numpy(), temperature, scaler),
+                **curve_metrics(truth, frame["pred"].to_numpy(), temperature, metric_scaler),
             }
             rows.append(metadata)
             curves.append(
@@ -243,8 +266,11 @@ def collect_results(
                 "recovery_campaign_identity": recovery_identity,
                 "recovered_units": recovered_units,
                 "collector_sha256": sha256(Path(__file__)),
+                "metric_preprocessing_manifest": metric_provenance,
                 "metric_units": {
-                    "z_rmse": "fold training normalized units",
+                    "z_rmse": "comparison fold normalized units"
+                    if metric_provenance
+                    else "fold training normalized units",
                     "rmse_uohm_cm": "microohm cm",
                     "mae_uohm_cm": "microohm cm",
                 },
@@ -326,6 +352,7 @@ def main() -> None:
     parser.add_argument("--allow-partial", action="store_true")
     parser.add_argument("--recovery-manifest", type=Path)
     parser.add_argument("--recovery-root", type=Path)
+    parser.add_argument("--metric-preprocessing-manifest", type=Path)
     args = parser.parse_args()
     frame = collect_results(
         args.manifest,
@@ -336,6 +363,7 @@ def main() -> None:
             warm_checkpoints=args.warm_checkpoints,
             allow_partial=args.allow_partial,
             recovery_manifest=args.recovery_manifest,
+            metric_preprocessing_manifest=args.metric_preprocessing_manifest,
             recovery_root=args.recovery_root,
         ),
     )

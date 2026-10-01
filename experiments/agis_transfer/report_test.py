@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import shutil
 from pathlib import Path
 
@@ -117,6 +118,57 @@ def test_missing_units_cannot_be_reported_as_complete(cohort: tuple[Path, Path, 
     collect_results(path, root, project, tmp_path / "report", ReportSettings(allow_partial=True))
     assert not json.loads((tmp_path / "report/report_manifest_20261001.json").read_text())["complete_cohort"]
     assert pd.read_csv(tmp_path / "report/paired_warm_direct_20261001.csv").empty
+
+
+@pytest.mark.parametrize("failure", [None, "holdout", "train", "grid", "scale", "pressures", "folds"])
+def test_comparison_scalers_are_shared_validated_and_recorded(
+    cohort: tuple[Path, Path, Path], tmp_path: Path, failure: str | None
+) -> None:
+    path, root, project = cohort
+    manifest = json.loads(path.read_text())
+    preprocessing = manifest["preprocessing"]
+    preprocessing["config"] = {"temperature_min_K": 6, "temperature_max_K": 290, "n_points": 300}
+    preprocessing["folds"][0]["fit_compositions"] = ["La2 Eu1 Ni2 O7"]
+    path.write_text(json.dumps(manifest))
+    identity_path = root / "campaign_identity.json"
+    identity = json.loads(identity_path.read_text())
+    identity["manifest_sha256"] = sha256(path)
+    for target in [identity_path, *root.glob("*/campaign_identity.json")]:
+        target.write_text(json.dumps(identity))
+    comparison = copy.deepcopy(preprocessing)
+    scaler = {"prescale_std": 200.0, "asinh_mean": 2.0, "asinh_std": 3.0}
+    comparison["folds"][0]["scalers"]["0"] = scaler
+    if failure == "holdout":
+        comparison["folds"][0]["heldout_composition"] = "other"
+    elif failure == "train":
+        comparison["folds"][0]["fit_compositions"] = ["other"]
+    elif failure == "grid":
+        comparison["config"]["n_points"] = 299
+    elif failure == "scale":
+        scaler["asinh_std"] = 0
+    elif failure == "pressures":
+        comparison["folds"][0]["scalers"] = {}
+    elif failure == "folds":
+        comparison["folds"] = []
+    metric_path = tmp_path / "original_scalers.json"
+    metric_path.write_text(json.dumps(comparison))
+    settings = ReportSettings(metric_preprocessing_manifest=metric_path)
+    output = tmp_path / "paired_report"
+    if failure is not None:
+        with pytest.raises(ValueError, match="[Cc]omparison"):
+            collect_results(path, root, project, output, settings)
+        return
+    frame = collect_results(path, root, project, output, settings)
+    truth = np.linspace(-2, 100, 300)
+    expected = curve_metrics(truth, truth + 1, np.linspace(6, 290, 300), scaler)
+    assert np.allclose(frame.z_rmse, expected["z_rmse"])
+    assert np.allclose(frame.rmse_uohm_cm, 1)
+    own_scale_error = curve_metrics(
+        truth, truth + 1, np.linspace(6, 290, 300), preprocessing["folds"][0]["scalers"]["0"]
+    )
+    assert not np.isclose(expected["z_rmse"], own_scale_error["z_rmse"])
+    provenance = json.loads((output / "report_manifest_20261001.json").read_text())
+    assert provenance["metric_preprocessing_manifest"] == {"path": str(metric_path), "sha256": sha256(metric_path)}
 
 
 def recovery_source(cohort: tuple[Path, Path, Path], tmp_path: Path) -> ReportSettings:

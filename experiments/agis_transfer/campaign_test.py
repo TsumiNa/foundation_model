@@ -77,6 +77,7 @@ def manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     (folder / "tasks_20261001.toml").write_text("\n".join(sections))
     return {
         "settings": vars(CampaignSettings()),
+        "preprocessing": {"folds": [{"directory": str(folder)}]},
         "base_config": {
             "data": {"batch_size": 256},
             "descriptor": {"kind": "kmd", "n_grids": 4},
@@ -282,6 +283,23 @@ def test_plan_records_the_consumed_input_artifacts(
     assert all(str(folder / f"p{p}.parquet") in recorded for p in (0, 10, 20))
     assert str(selection_population[1].relative_to(tmp_path)) in recorded
     assert all(file_sha256(Path(filename)) == digest for filename, digest in recorded.items())
+    alternative = tmp_path / "alternative_preprocessing.json"
+    alternative.write_bytes(preprocessing.read_bytes())
+    direct = plan_campaign(
+        base, tmp_path / "direct", CampaignSettings(direct_only=True), preprocessing_manifest=alternative
+    )
+    planned = json.loads(direct.read_text())
+    assert len(planned["units"]) == 240 and all(unit["route"] == "direct" for unit in planned["units"])
+    assert planned["expected_final_models"] == {"direct": 480, "warm_first": 0, "warm_rest": 0, "scratch": 0}
+    assert str(alternative) in planned["input_sha256"]
+    assert (direct.parent / "scratch.txt").read_text() == ""
+    moved = tmp_path / "data/alternative_fold"
+    moved.mkdir()
+    (moved / "tasks_20261001.toml").write_bytes(tasks.read_bytes())
+    planned["preprocessing"]["folds"][0]["directory"] = str(moved)
+    planned["base_config"] = manifest["base_config"]
+    raw = final_config(planned, RunUnit(route=Route.DIRECT, fold=1, checkpoint_index=0, pressure=0))
+    assert raw["training"]["seed"] == 20261101
 
 
 @pytest.fixture

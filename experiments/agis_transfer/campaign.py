@@ -179,8 +179,11 @@ class CampaignSettings:
     warm_epochs: int = 150
     first_warm_checkpoints: int = 5
     seed: int = 20261001
+    direct_only: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.direct_only, bool):
+            raise ValueError("direct_only must be a boolean")
         if not re.fullmatch(r"\d{8}", self.date):
             raise ValueError("date must have YYYYMMDD format")
         datetime.strptime(self.date, "%Y%m%d")
@@ -225,14 +228,18 @@ def build_units() -> list[RunUnit]:
     ]
 
 
-def plan_campaign(base_config: Path, output: Path, settings: CampaignSettings) -> Path:
+def plan_campaign(
+    base_config: Path, output: Path, settings: CampaignSettings, *, preprocessing_manifest: Path | None = None
+) -> Path:
     selection_path = Path(f"data/agis_pretrained_{settings.date}/selection_{settings.date}.json")
     selection = json.loads(selection_path.read_text())
     population_path = selection_path.with_name(f"population_{settings.date}.json")
     validate_selection(selection, population_path, settings.seed)
     if len(selection["models"]) != 10 or len({m["sha256"] for m in selection["models"]}) != 10:
         raise ValueError("Require ten distinct randomly selected non-AGIS checkpoints")
-    folds_path = Path(f"data/agis_preprocessing_{settings.date}/manifest_{settings.date}.json")
+    folds_path = preprocessing_manifest or Path(
+        f"data/agis_preprocessing_{settings.date}/manifest_{settings.date}.json"
+    )
     preprocessing = json.loads(folds_path.read_text())
     if preprocessing["n_compounds"] != 8 or preprocessing["n_curves"] != 24:
         raise ValueError("Require the complete eight-compound, three-pressure dataset")
@@ -255,6 +262,7 @@ def plan_campaign(base_config: Path, output: Path, settings: CampaignSettings) -
         inputs.update(Path(dataset["path"]) for dataset in fragment["datasets"].values())
         inputs.update(Path(task["scaler"]["path"]) for task in fragment["tasks"] if "scaler" in task)
     first_warm = 8 * settings.first_warm_checkpoints * 3 * 2
+    units = [unit for unit in build_units() if not settings.direct_only or unit.route == Route.DIRECT]
     manifest = {
         "settings": asdict(settings),
         "source_sha256": source_fingerprint(),
@@ -262,12 +270,12 @@ def plan_campaign(base_config: Path, output: Path, settings: CampaignSettings) -
         "selection": selection,
         "preprocessing": preprocessing,
         "input_sha256": {str(path): file_sha256(path) for path in sorted(inputs)},
-        "units": [asdict(unit) for unit in build_units()],
+        "units": [asdict(unit) for unit in units],
         "expected_final_models": {
             "direct": 480,
-            "warm_first": first_warm,
-            "warm_rest": 480 - first_warm,
-            "scratch": 24,
+            "warm_first": 0 if settings.direct_only else first_warm,
+            "warm_rest": 0 if settings.direct_only else 480 - first_warm,
+            "scratch": 0 if settings.direct_only else 24,
         },
         "head_initialization": "Identical new target-head state per fold/pressure across all arms and checkpoints",
         "holdout": "All AGIS pressures held out; no AGIS held-out label drives fit, scaler or epoch selection",
@@ -286,8 +294,8 @@ def plan_campaign(base_config: Path, output: Path, settings: CampaignSettings) -
                 unit_stage = "warm_first" if unit.checkpoint_index < settings.first_warm_checkpoints else "warm_rest"
             if stage == unit_stage:
                 indices.append(str(index))
-        (output / f"{stage}.txt").write_text("\n".join(indices) + "\n")
-    logger.info("Planned {} units / 984 final models at {}", len(manifest["units"]), path)
+        (output / f"{stage}.txt").write_text("".join(f"{index}\n" for index in indices))
+    logger.info("Planned {} units / {} final models at {}", len(units), 480 if settings.direct_only else 984, path)
     return path
 
 
@@ -298,7 +306,9 @@ def final_config(manifest: dict[str, Any], unit: RunUnit) -> dict[str, Any]:
     raw.pop("pretrain", None)
     raw.pop("output", None)
     fragment = tomllib.loads(
-        Path(f"data/agis_preprocessing_{settings.date}/fold_{unit.fold:02d}/tasks_{settings.date}.toml").read_text()
+        (
+            Path(manifest["preprocessing"]["folds"][unit.fold - 1]["directory"]) / f"tasks_{settings.date}.toml"
+        ).read_text()
     )
     raw["datasets"].update(fragment["datasets"])
     raw["tasks"].extend(fragment["tasks"])
@@ -545,6 +555,8 @@ def main() -> None:
     plan.add_argument("--output", type=Path, required=True)
     plan.add_argument("--final-epochs", type=int, default=1000)
     plan.add_argument("--warm-epochs", type=int, default=150)
+    plan.add_argument("--preprocessing-manifest", type=Path)
+    plan.add_argument("--direct-only", action="store_true")
     run = sub.add_parser("run")
     run.add_argument("--manifest", type=Path, required=True)
     run.add_argument("--index", type=int, required=True)
@@ -556,7 +568,10 @@ def main() -> None:
         plan_campaign(
             args.base_config,
             args.output,
-            CampaignSettings(final_epochs=args.final_epochs, warm_epochs=args.warm_epochs),
+            CampaignSettings(
+                final_epochs=args.final_epochs, warm_epochs=args.warm_epochs, direct_only=args.direct_only
+            ),
+            preprocessing_manifest=args.preprocessing_manifest,
         )
     elif args.command == "run":
         execute_unit(args.manifest, args.index, args.output_root)
