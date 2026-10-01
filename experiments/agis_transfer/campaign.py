@@ -280,6 +280,11 @@ def plan_campaign(
         "head_initialization": "Identical new target-head state per fold/pressure across all arms and checkpoints",
         "holdout": "All AGIS pressures held out; no AGIS held-out label drives fit, scaler or epoch selection",
         "pretraining_overlap": "La3Ni2O7 has an original non-AGIS Tc label; this is an AGIS-label holdout",
+        "warm_protocol": {
+            "active_tasks": "Two non-target AGIS pressure heads only; original pretrained heads retained but inactive",
+            "replay": "All seven training compounds of previously appended AGIS pressures only",
+            "epoch_selection": "Fixed warm_epochs per appended task; no validation or early stopping",
+        },
     }
     output.mkdir(parents=True, exist_ok=False)
     path = output / "manifest.json"
@@ -351,24 +356,19 @@ def warm_config(manifest: dict[str, Any], unit: RunUnit) -> dict[str, Any]:
     settings = CampaignSettings(**manifest["settings"])
     raw = final_config(manifest, unit)
     raw.pop("finetune")
-    raw["data"].update(batch_size=256, val_split=0.1, test_split=0.1)
+    raw["data"].update(batch_size=7, val_split=0.0, test_split=0.0)
     raw["training"].update(max_epochs=settings.warm_epochs)
-    # Validation comes exclusively from the original non-AGIS tasks, never the heldout curve.
-    raw["training"]["early_stopping"] = {
-        "enabled": True,
-        "monitor": "val_final_loss",
-        "mode": "min",
-        "patience": 24,
-        "min_delta": 1e-4,
-    }
+    # Seven AGIS training compounds, no inner validation; preserve a fixed warm-stage budget.
+    raw["training"]["early_stopping"] = {"enabled": False}
+    raw["training"]["checkpoint"] = {"enabled": False}
     raw["training"]["scheduler"]["patience"] = 5
-    replay = copy.deepcopy(manifest["base_config"]["pretrain"]["replay"])
-    replay.setdefault("per_task", {}).update({f"agis_rho_{p}gpa": 7 for p in PRESSURES})
+    sequence = [f"agis_rho_{p}gpa" for p in PRESSURES if p != unit.pressure]
     raw["pretrain"] = {
-        "task_sequence": [f"agis_rho_{p}gpa" for p in PRESSURES if p != unit.pressure],
+        "task_sequence": sequence,
+        "active_tasks": sequence,
         "n_runs": 1,
         "task_order": "fixed",
-        "replay": replay,
+        "replay": {"interval": 1, "amount": 0.3, "resample": "epoch", "per_task": dict.fromkeys(sequence, 7)},
     }
     return raw
 
