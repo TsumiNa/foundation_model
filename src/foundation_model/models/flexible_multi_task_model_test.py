@@ -5,6 +5,7 @@
 Tests for FlexibleMultiTaskModel, including integration with CompoundDataModule.
 """
 
+from copy import deepcopy
 from pathlib import Path  # To use Path objects for directory manipulation
 from types import SimpleNamespace
 
@@ -38,6 +39,7 @@ from foundation_model.models.model_config import (
     TransformerEncoderConfig,
 )
 from foundation_model.models.task_head.classification import ClassificationHead
+from foundation_model.models.task_head.kernel_regression import expand_for_kernel_regression
 from foundation_model.models.task_head.regression import RegressionHead
 
 # from ...data.dataset import CompoundDataset
@@ -134,6 +136,90 @@ def sample_batch_mixed_tasks(model_config_mixed_tasks):
 
 
 # --- Unit Tests for Model Components ---
+
+
+@pytest.mark.parametrize("all_missing", [True, False])
+def test_training_step_excludes_missing_kernel_points_from_head_statistics(monkeypatch, all_missing):
+    model = FlexibleMultiTaskModel(
+        task_configs=[
+            KernelRegressionTaskConfig(name="rho", x_dim=[4, 6], t_dim=[6, 4], norm=True, residual=False),
+            RegressionTaskConfig(name="scalar", dims=[4, 4, 1], norm=False),
+        ],
+        encoder_config=MLPEncoderConfig(hidden_dims=[3, 4], norm=False),
+    ).train()
+    monkeypatch.setattr(model, "log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(model, "log_dict", lambda *args, **kwargs: None)
+    x = torch.randn(3, 3)
+    ts = [torch.tensor([0.0, 3.0, 6.0]), torch.zeros(1), torch.tensor([10.0, 20.0])]
+    masks = [torch.tensor([True, False, True]), torch.zeros(1, dtype=torch.bool), torch.ones(2, dtype=torch.bool)]
+    if all_missing:
+        masks = [torch.zeros_like(t, dtype=torch.bool) for t in ts]
+    head = model.task_heads["rho"]
+    reference = deepcopy(head)
+    if not all_missing:
+        h, t = expand_for_kernel_regression(torch.tanh(model.encoder(x)), ts)
+        valid = torch.cat(masks)
+        reference(h[valid], t[valid])
+    batch = (
+        x,
+        {"rho": [torch.zeros_like(t) for t in ts], "scalar": torch.ones(3, 1)},
+        {"rho": masks, "scalar": torch.ones(3, 1, dtype=torch.bool)},
+        {"rho": ts},
+    )
+    loss = model.training_step(batch, 0)
+    assert loss is not None and torch.isfinite(loss)
+    loss.backward()
+    for name, value in head.named_buffers():
+        torch.testing.assert_close(value, dict(reference.named_buffers())[name], rtol=0, atol=0)
+    if all_missing:
+        assert all(p.grad is None for p in head.parameters())
+
+
+def test_kernel_point_masks_validate_each_sequence_even_when_total_lengths_match():
+    model = _make_full_model()
+    ts = [torch.tensor([0.0, 3.0, 6.0]), torch.zeros(1), torch.tensor([10.0, 20.0])]
+    masks = [torch.ones(2, dtype=torch.bool) for _ in range(3)]
+    with pytest.raises(ValueError, match="match each t-sequence"):
+        model(torch.randn(3, INPUT_DIM), {"curve": ts}, task_masks={"curve": masks})
+
+
+def test_legacy_tensor_kernel_masks_match_list_training_layout(monkeypatch):
+    model = FlexibleMultiTaskModel(
+        task_configs=[KernelRegressionTaskConfig(name="rho", x_dim=[4, 6], t_dim=[6, 4], norm=True, residual=False)],
+        encoder_config=MLPEncoderConfig(hidden_dims=[3, 4], norm=False),
+    ).train()
+    reference = deepcopy(model)
+    for instance in (model, reference):
+        monkeypatch.setattr(instance, "log", lambda *args, **kwargs: None)
+        monkeypatch.setattr(instance, "log_dict", lambda *args, **kwargs: None)
+    x = torch.randn(2, 3)
+    t = torch.tensor([[0.0, 6.0, 290.0], [0.0, 0.0, 0.0]])
+    y = torch.tensor([[0.2, 0.5, 0.8], [0.0, 0.0, 0.0]])
+    mask = torch.tensor([[True, True, True], [False, False, False]])
+    loss = model.training_step((x, {"rho": y}, {"rho": mask}, {"rho": t}), 0)
+    expected = reference.training_step((x, {"rho": list(y)}, {"rho": list(mask)}, {"rho": list(t)}), 0)
+    assert loss is not None and expected is not None
+    torch.testing.assert_close(loss, expected, rtol=0, atol=0)
+    loss.backward()
+    expected.backward()
+    for name, value in model.state_dict().items():
+        torch.testing.assert_close(value, reference.state_dict()[name], rtol=0, atol=0)
+    for name, parameter in reference.named_parameters():
+        actual_grad = dict(model.named_parameters())[name].grad
+        if parameter.grad is None:
+            assert actual_grad is None
+        else:
+            torch.testing.assert_close(actual_grad, parameter.grad, rtol=0, atol=0)
+
+
+def test_legacy_tensor_kernel_masks_reject_a_different_total_point_count():
+    model = _make_full_model()
+    with pytest.raises(ValueError, match="match the expanded grid"):
+        model(
+            torch.randn(2, INPUT_DIM),
+            {"curve": torch.zeros(2, 3)},
+            task_masks={"curve": torch.ones(2, 2, dtype=torch.bool)},
+        )
 
 
 def test_model_initialization(model_config_mixed_tasks):

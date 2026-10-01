@@ -203,24 +203,68 @@ class KernelRegressionHead(BaseTaskHead):
 
         return torch.full((self.n_kernels,), float(config.kernel_init_sigma), dtype=torch.float32)
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor, **_) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor, *, mask: torch.Tensor | None = None, **_) -> torch.Tensor:
+        """Predict valid points without letting missing targets update head normalization."""
         if t.dim() == 1:
             t = t.unsqueeze(1)
+        point_count = x.shape[0]
+        valid_indices: torch.Tensor | None = None
+        if mask is not None:
+            if (
+                mask.dtype != torch.bool
+                or mask.ndim not in (1, 2)
+                or (mask.ndim == 2 and mask.shape[1] != 1)
+                or mask.numel() != point_count
+            ):
+                raise ValueError("Kernel-regression mask must be boolean with shape (N,) or (N, 1).")
+            valid_indices = mask.reshape(-1).nonzero().flatten().to(x.device)
+            if valid_indices.numel() == 0:
+                return x.new_zeros((point_count, 1))
+            if valid_indices.numel() == point_count and point_count > 1:
+                valid_indices = None  # Fully labeled batches retain the original computation.
+            else:
+                x = x.index_select(0, valid_indices)
+                t = t.index_select(0, valid_indices)
 
-        beta = self.beta_net(x)
-        mu1 = self.mu1_net(x)
-        mu2 = self.mu2_net(t)
-
-        k_t = self.kernel(t.squeeze(1))
-        kernel_term = (k_t * beta).sum(dim=1, keepdim=True)
-
-        if self.mu3_net is not None:
-            xt = torch.cat([x, t], dim=1)
-            mu3 = self.mu3_net(xt)
-        else:
-            mu3 = 0.0
-
-        return kernel_term + mu1 + mu2 + mu3
+        # Repeated points from one composition are not independent composition samples.
+        # Constant branch inputs cannot estimate a BatchNorm variance; use stored statistics
+        # for those branches only, retaining gradients through their affine parameters.
+        constant_branches: list[nn.Module] = []
+        if valid_indices is not None:
+            constant_x = torch.equal(x, x[:1].expand_as(x))
+            constant_t = torch.equal(t, t[:1].expand_as(t))
+            if constant_x:
+                constant_branches.extend((self.beta_net, self.mu1_net))
+            if constant_t:
+                constant_branches.append(self.mu2_net)
+            if constant_x and constant_t and self.mu3_net is not None:
+                constant_branches.append(self.mu3_net)
+        constant_norms = [
+            module
+            for branch in constant_branches
+            for module in branch.modules()
+            if isinstance(module, nn.BatchNorm1d) and module.training
+        ]
+        for module in constant_norms:
+            module.eval()
+        try:
+            beta = self.beta_net(x)
+            mu1 = self.mu1_net(x)
+            mu2 = self.mu2_net(t)
+            k_t = self.kernel(t.squeeze(1))
+            kernel_term = (k_t * beta).sum(dim=1, keepdim=True)
+            if self.mu3_net is not None:
+                xt = torch.cat([x, t], dim=1)
+                mu3 = self.mu3_net(xt)
+            else:
+                mu3 = 0.0
+            result = kernel_term + mu1 + mu2 + mu3
+        finally:
+            for module in constant_norms:
+                module.train()
+        if valid_indices is not None:
+            result = result.new_zeros((point_count, 1)).index_copy(0, valid_indices, result)
+        return result
 
     def compute_loss(
         self,
