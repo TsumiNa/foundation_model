@@ -92,6 +92,32 @@ def test_one_valid_point_uses_stored_batchnorm_statistics_without_updating_them(
     assert all(m.training for m in batchnorm_head.modules() if isinstance(m, torch.nn.BatchNorm1d))
 
 
+@pytest.mark.parametrize("constant_branch", ["composition", "temperature"])
+def test_repeated_single_branch_input_uses_stored_statistics(batchnorm_head, constant_branch):
+    reference = deepcopy(batchnorm_head)
+    x = torch.randn(16, 3)
+    t = torch.linspace(6, 290, 16)
+    branches: tuple[torch.nn.Module, ...]
+    if constant_branch == "composition":
+        x = x[:1].expand_as(x).clone()
+        branches = (reference.beta_net, reference.mu1_net)
+    else:
+        t = torch.zeros(16)
+        branches = (reference.mu2_net,)
+    for branch in branches:
+        for module in branch.modules():
+            if isinstance(module, torch.nn.BatchNorm1d):
+                module.eval()
+    for _ in range(60):
+        result = batchnorm_head(x, t, mask=torch.ones(16, dtype=torch.bool))
+        expected = reference(x, t)
+        torch.testing.assert_close(result, expected, rtol=0, atol=0)
+    for name, value in batchnorm_head.named_buffers():
+        torch.testing.assert_close(value, dict(reference.named_buffers())[name], rtol=0, atol=0)
+    result.sum().backward()
+    assert any(p.grad is not None for p in batchnorm_head.parameters())
+
+
 @pytest.mark.parametrize("training", [True, False])
 def test_all_valid_mask_preserves_unmasked_behavior(batchnorm_head, training):
     batchnorm_head.train(training)

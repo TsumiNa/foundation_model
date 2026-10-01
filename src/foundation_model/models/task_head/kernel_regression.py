@@ -223,14 +223,26 @@ class KernelRegressionHead(BaseTaskHead):
             x = x.index_select(0, valid_indices)
             t = t.index_select(0, valid_indices)
 
-        # A lone valid point cannot estimate a BatchNorm variance. Use stored statistics
-        # for that forward only; affine parameters and the input still receive gradients.
-        singleton_norms = (
-            [module for module in self.modules() if isinstance(module, nn.BatchNorm1d) and module.training]
-            if valid_indices is not None and x.shape[0] == 1
-            else []
-        )
-        for module in singleton_norms:
+        # Repeated points from one composition are not independent composition samples.
+        # Constant branch inputs cannot estimate a BatchNorm variance; use stored statistics
+        # for those branches only, retaining gradients through their affine parameters.
+        constant_branches: list[nn.Module] = []
+        if valid_indices is not None:
+            constant_x = torch.equal(x, x[:1].expand_as(x))
+            constant_t = torch.equal(t, t[:1].expand_as(t))
+            if constant_x:
+                constant_branches.extend((self.beta_net, self.mu1_net))
+            if constant_t:
+                constant_branches.append(self.mu2_net)
+            if constant_x and constant_t and self.mu3_net is not None:
+                constant_branches.append(self.mu3_net)
+        constant_norms = [
+            module
+            for branch in constant_branches
+            for module in branch.modules()
+            if isinstance(module, nn.BatchNorm1d) and module.training
+        ]
+        for module in constant_norms:
             module.eval()
         try:
             beta = self.beta_net(x)
@@ -245,7 +257,7 @@ class KernelRegressionHead(BaseTaskHead):
                 mu3 = 0.0
             result = kernel_term + mu1 + mu2 + mu3
         finally:
-            for module in singleton_norms:
+            for module in constant_norms:
                 module.train()
         if valid_indices is not None:
             result = result.new_zeros((point_count, 1)).index_copy(0, valid_indices, result)

@@ -183,6 +183,45 @@ def test_kernel_point_masks_validate_each_sequence_even_when_total_lengths_match
         model(torch.randn(3, INPUT_DIM), {"curve": ts}, task_masks={"curve": masks})
 
 
+def test_legacy_tensor_kernel_masks_match_list_training_layout(monkeypatch):
+    model = FlexibleMultiTaskModel(
+        task_configs=[KernelRegressionTaskConfig(name="rho", x_dim=[4, 6], t_dim=[6, 4], norm=True, residual=False)],
+        encoder_config=MLPEncoderConfig(hidden_dims=[3, 4], norm=False),
+    ).train()
+    reference = deepcopy(model)
+    for instance in (model, reference):
+        monkeypatch.setattr(instance, "log", lambda *args, **kwargs: None)
+        monkeypatch.setattr(instance, "log_dict", lambda *args, **kwargs: None)
+    x = torch.randn(2, 3)
+    t = torch.tensor([[0.0, 6.0, 290.0], [0.0, 0.0, 0.0]])
+    y = torch.tensor([[0.2, 0.5, 0.8], [0.0, 0.0, 0.0]])
+    mask = torch.tensor([[True, True, True], [False, False, False]])
+    loss = model.training_step((x, {"rho": y}, {"rho": mask}, {"rho": t}), 0)
+    expected = reference.training_step((x, {"rho": list(y)}, {"rho": list(mask)}, {"rho": list(t)}), 0)
+    assert loss is not None and expected is not None
+    torch.testing.assert_close(loss, expected, rtol=0, atol=0)
+    loss.backward()
+    expected.backward()
+    for name, value in model.state_dict().items():
+        torch.testing.assert_close(value, reference.state_dict()[name], rtol=0, atol=0)
+    for name, parameter in reference.named_parameters():
+        actual_grad = dict(model.named_parameters())[name].grad
+        if parameter.grad is None:
+            assert actual_grad is None
+        else:
+            torch.testing.assert_close(actual_grad, parameter.grad, rtol=0, atol=0)
+
+
+def test_legacy_tensor_kernel_masks_reject_a_different_total_point_count():
+    model = _make_full_model()
+    with pytest.raises(ValueError, match="match the expanded grid"):
+        model(
+            torch.randn(2, INPUT_DIM),
+            {"curve": torch.zeros(2, 3)},
+            task_masks={"curve": torch.ones(2, 2, dtype=torch.bool)},
+        )
+
+
 def test_model_initialization(model_config_mixed_tasks):
     """Test model initialization with mixed regression and classification tasks."""
     config = model_config_mixed_tasks

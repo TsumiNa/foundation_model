@@ -243,7 +243,8 @@ An `nn.ModuleDict`. All heads consume `h_task` of shape `(B, latent_dim)`.
 During supervised training, kernel-regression point masks are applied before the head's forward
 pass, so missing or replay-masked curve points do not update its BatchNorm statistics. Masked
 positions return zero placeholders to preserve the sequence layout used by the loss. An entirely
-masked head is skipped; one valid point uses stored BatchNorm statistics without updating them.
+masked head is skipped. A branch with constant valid inputs uses stored BatchNorm statistics
+without updating them, including a lone point or repeated points from one composition.
 Prediction omits these masks so requested points without labels can still be predicted.
 
 ### 5. Model outputs

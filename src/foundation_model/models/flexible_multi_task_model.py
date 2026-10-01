@@ -727,6 +727,10 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
                         point_mask = (
                             torch.cat(point_mask) if point_mask else torch.empty(0, dtype=torch.bool, device=x.device)
                         )
+                    elif point_mask is not None:
+                        if point_mask.numel() != expanded_t.numel():
+                            raise ValueError(f"Kernel-regression point mask for '{name}' must match the expanded grid.")
+                        point_mask = point_mask.reshape(-1)
                     outputs[name] = head(expanded_h_task, t=expanded_t, mask=point_mask)
                 else:
                     # For KernelRegressionHead, t parameter is required
@@ -762,6 +766,8 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
             target = torch.cat(target, dim=0)
         if not isinstance(target, torch.Tensor):
             raise TypeError(f"Task '{name}': expected a tensor target, got {type(target).__name__}.")
+        if is_sequence:
+            target = target.reshape(-1)
 
         if isinstance(mask, list):
             mask = torch.cat(mask, dim=0)
@@ -769,6 +775,8 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
             kind = "KernelRegression task" if is_sequence else "task"
             self._log_warning(f"Mask not found for {kind} {name} in {stage}_step. Assuming all valid.")
             mask = torch.ones_like(target, dtype=torch.bool, device=target.device)
+        if is_sequence:
+            mask = mask.reshape(-1)
         return target, mask
 
     def _collect_batch_losses(
