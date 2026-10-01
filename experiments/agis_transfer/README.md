@@ -57,6 +57,11 @@ are empty. The ordinary strict collector requires all 480 fits for this manifest
 same checkpoints, seeds and epoch budget as the unsmoothed experiment. Compare physical
 predictions against the same unsmoothed heldout curves, and use the original unsmoothed
 fold scalers for paired normalized-error comparisons because the two fitted scalers differ.
+Pass `--metric-preprocessing-manifest data/agis_preprocessing_20261001/manifest_20261001.json`
+to `report.py` for the smoothed campaign. The collector validates identical grids, holdouts,
+training composition lists and pressure keys, requires finite positive scale parameters, and
+records the comparison manifest's SHA-256. Its native target-validation checks continue to use
+the training scaler; exported normalized errors use the explicitly selected comparison scaler.
 
 ## Standardization and inverse transform
 
