@@ -37,6 +37,26 @@ def test_missing_sequence_is_empty(cell: object) -> None:
     assert as_float_array(cell).size == 0
 
 
+def test_retained_classifier_restores_weights_without_original_dataset(tmp_path: Path) -> None:
+    catalog = TaskCatalog(
+        build_task_catalog_config(
+            {
+                "descriptor": {"kind": "kmd", "n_grids": 4},
+                "datasets": {"old": {"path": str(tmp_path / "missing.parquet")}},
+                "tasks": [{"name": "old", "kind": "classification", "dataset": "old", "column": "y", "num_classes": 3}],
+            }
+        )
+    )
+    config = ModelSectionConfig(latent_dim=8, encoder_hidden_dims=[16])
+    training = TrainingSectionConfig(max_epochs=1, accelerator="cpu")
+    model = build_empty_model(catalog, config, training)
+    model.add_task(build_head_config(catalog, config, training, "old", init_class_weights_from_data=False))
+    saved = model.state_dict()
+    saved["task_heads.old.class_weights"] = torch.tensor([0.5, 2.0, 3.0])
+    model.load_state_dict(saved)
+    torch.testing.assert_close(model.task_heads["old"].class_weights, torch.tensor([0.5, 2.0, 3.0]))
+
+
 @pytest.mark.parametrize("cell", [[0, 1], np.array([0, 1]), "[0, 1]"])
 def test_sequence_cells_convert_without_scalar_truth_test(cell: object) -> None:
     np.testing.assert_array_equal(as_float_array(cell), [0, 1])

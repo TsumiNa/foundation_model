@@ -584,6 +584,7 @@ class TaskCatalog:
         weight_decay: float = 0.0,
         masking_ratio: float = 1.0,
         init_from_data: bool = True,
+        init_class_weights_from_data: bool = True,
         optimizer_template: Any = None,
     ) -> TaskConfig:
         """Build the model-side task config for ``name``.
@@ -621,7 +622,11 @@ class TaskCatalog:
                 # ClassificationHead appends the num_classes projection after these hidden layers.
                 dims=[latent_dim, *head_hidden],
                 num_classes=spec.num_classes,
-                class_weights=self._class_weights(name) if spec.class_weights == "balanced" else None,
+                class_weights=(
+                    self._class_weights(name)
+                    if spec.class_weights == "balanced" and init_class_weights_from_data
+                    else None
+                ),
                 optimizer=optimizer,
                 task_masking_ratio=masking_ratio,
             )

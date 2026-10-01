@@ -368,11 +368,18 @@ def _warm_start(
         raise ValueError(f"pretrain.checkpoint tasks {missing} are not in the catalog (have {sorted(catalog_tasks)}).")
     built: dict[str, Any] = {}
     for name in preloaded:
-        built[name] = build_head_config(catalog, cfg.model, cfg.training, name, init_from_data=False)
+        built[name] = build_head_config(
+            catalog,
+            cfg.model,
+            cfg.training,
+            name,
+            init_from_data=False,
+            init_class_weights_from_data=cfg.active_tasks is None or name in cfg.active_tasks,
+        )
         model.add_task(built[name])
     incompatible = model.load_state_dict(state["model"], strict=False)
     # the checkpoint's class_weights buffers would otherwise override this run's configured policy
-    reapply_class_weights(model, list(preloaded))
+    reapply_class_weights(model, [name for name in preloaded if cfg.active_tasks is None or name in cfg.active_tasks])
     if incompatible.missing_keys:
         logger.info(f"warm-start: {len(incompatible.missing_keys)} missing key(s) e.g. {incompatible.missing_keys[:6]}")
     logger.info(f"warm-started from {source} with heads {preloaded}")
