@@ -490,6 +490,25 @@ def test_build_task_config_per_task_lr_override(catalog_dir) -> None:
     assert kr.optimizer is not None and kr.optimizer.lr == 0.02
 
 
+def test_retained_classifier_builds_without_original_labels(catalog_dir) -> None:
+    cat = _catalog(catalog_dir)
+    cat.config.datasets["qc"].path = catalog_dir / "unavailable.parquet"
+    cfg = cat.build_task_config(
+        "mat",
+        latent_dim=8,
+        head_hidden_dims=[4],
+        kr_x_hidden_dims=[16, 8],
+        kr_t_hidden_dims=[8, 4],
+        n_kernel=5,
+        lr=1e-3,
+        init_class_weights_from_data=False,
+    )
+    assert isinstance(cfg, ClassificationTaskConfig) and cfg.num_classes == 3
+    assert cfg.class_weights is None
+    with pytest.raises(FileNotFoundError):
+        _build_task(cat, "mat")
+
+
 def test_build_task_config_per_task_arch_override(catalog_dir) -> None:
     # dos (KR) overrides its branches + kernel count; density (reg) overrides its hidden stack.
     cat = _catalog(

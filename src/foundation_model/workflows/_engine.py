@@ -172,6 +172,7 @@ def build_head_config(
     *,
     masking_ratio: float = 1.0,
     init_from_data: bool = True,
+    init_class_weights_from_data: bool = True,
 ) -> TaskConfig:
     """Build a task's head config with the right LR/weight-decay for its kind."""
     spec = catalog.task_spec(name)
@@ -190,6 +191,7 @@ def build_head_config(
         weight_decay=weight_decay,
         masking_ratio=masking_ratio,
         init_from_data=init_from_data,
+        init_class_weights_from_data=init_class_weights_from_data,
         optimizer_template=training,
     )
 

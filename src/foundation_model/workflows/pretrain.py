@@ -115,6 +115,8 @@ class PretrainConfig:
     replay: ReplayConfig
     output_dir: Path
     task_sequence: list[str] = field(default_factory=list)  # order tasks are introduced; [] = [[tasks]] order
+    # Limit replay and post-step evaluation while retaining every checkpoint head. None = all.
+    active_tasks: list[str] | None = None
     n_runs: int = 1  # independent repeats (different seeds) written to runs/runNN/
     task_order: TaskOrder = TaskOrder.FIXED  # "fixed" (task_sequence order) or "random" (per-run shuffle)
     # Random-order controls (both require task_order = "random"). task_order_seed decouples the
@@ -148,6 +150,17 @@ class PretrainConfig:
         unknown = [t for t in self.task_sequence if t not in catalog_tasks]
         if unknown:
             raise ValueError(f"pretrain.task_sequence references unknown task(s): {unknown}.")
+        if self.active_tasks is not None:
+            if not isinstance(self.active_tasks, list) or any(not isinstance(t, str) for t in self.active_tasks):
+                raise ValueError("pretrain.active_tasks must be a list of task names.")
+            if len(set(self.active_tasks)) != len(self.active_tasks):
+                raise ValueError("pretrain.active_tasks contains duplicate task names.")
+            unknown_active = sorted(set(self.active_tasks) - catalog_tasks)
+            if unknown_active:
+                raise ValueError(f"pretrain.active_tasks references unknown task(s): {unknown_active}.")
+            excluded_new = sorted(set(self.task_sequence) - set(self.active_tasks))
+            if excluded_new:
+                raise ValueError(f"pretrain.active_tasks must include every task_sequence task: {excluded_new}.")
         bad_replay = [t for t in self.replay.per_task if t not in catalog_tasks]
         if bad_replay:
             raise ValueError(f"replay.per_task references unknown task(s): {bad_replay}.")
@@ -199,6 +212,7 @@ def build_pretrain_config(
         pretrain_raw,
         {
             "task_sequence",
+            "active_tasks",
             "n_runs",
             "task_order",
             "task_order_seed",
@@ -229,6 +243,7 @@ def build_pretrain_config(
         replay=replay,
         output_dir=Path(resolved_output),
         task_sequence=list(pretrain_raw.get("task_sequence", [])),
+        active_tasks=pretrain_raw.get("active_tasks"),
         n_runs=int(pretrain_raw.get("n_runs", 1)),
         task_order=TaskOrder(str(pretrain_raw.get("task_order", "fixed"))),
         task_order_seed=(None if pretrain_raw.get("task_order_seed") is None else int(pretrain_raw["task_order_seed"])),
@@ -353,11 +368,18 @@ def _warm_start(
         raise ValueError(f"pretrain.checkpoint tasks {missing} are not in the catalog (have {sorted(catalog_tasks)}).")
     built: dict[str, Any] = {}
     for name in preloaded:
-        built[name] = build_head_config(catalog, cfg.model, cfg.training, name, init_from_data=False)
+        built[name] = build_head_config(
+            catalog,
+            cfg.model,
+            cfg.training,
+            name,
+            init_from_data=False,
+            init_class_weights_from_data=cfg.active_tasks is None or name in cfg.active_tasks,
+        )
         model.add_task(built[name])
     incompatible = model.load_state_dict(state["model"], strict=False)
     # the checkpoint's class_weights buffers would otherwise override this run's configured policy
-    reapply_class_weights(model, list(preloaded))
+    reapply_class_weights(model, [name for name in preloaded if cfg.active_tasks is None or name in cfg.active_tasks])
     if incompatible.missing_keys:
         logger.info(f"warm-start: {len(incompatible.missing_keys)} missing key(s) e.g. {incompatible.missing_keys[:6]}")
     logger.info(f"warm-started from {source} with heads {preloaded}")
@@ -387,10 +409,11 @@ def _run_single(
             return []
         raise ValueError("nothing to train: every task in task_sequence is already in pretrain.checkpoint.")
     full_order = [*preloaded, *new_tasks]
+    scoped_order = [name for name in full_order if cfg.active_tasks is None or name in cfg.active_tasks]
 
-    task_colors = {name: _TASK_PALETTE[i % len(_TASK_PALETTE)] for i, name in enumerate(full_order)}
-    clf_tasks = frozenset(n for n in full_order if catalog.task_spec(n).kind is TaskKind.CLASSIFICATION)
-    metric_history: dict[str, list[tuple[int, float]]] = {name: [] for name in full_order}
+    task_colors = {name: _TASK_PALETTE[i % len(_TASK_PALETTE)] for i, name in enumerate(scoped_order)}
+    clf_tasks = frozenset(n for n in scoped_order if catalog.task_spec(n).kind is TaskKind.CLASSIFICATION)
+    metric_history: dict[str, list[tuple[int, float]]] = {name: [] for name in scoped_order}
     records: list[dict[str, Any]] = []
 
     # Global step numbering continues past the preloaded tasks so the replay-interval schedule
@@ -403,7 +426,8 @@ def _run_single(
         model.add_task(built[task_name])
 
         learned = [*preloaded, *new_tasks[:i]]
-        participating = active_old_tasks(step, learned, cfg.replay.interval)
+        eligible = [name for name in learned if cfg.active_tasks is None or name in cfg.active_tasks]
+        participating = active_old_tasks(step, eligible, cfg.replay.interval)
         active = [task_name, *participating]
         for name in participating:
             built[name].task_masking_ratio = _replay_ratio_for(cfg, catalog, name)
@@ -440,7 +464,8 @@ def _run_single(
         # Learned-but-not-participating heads (replay off this step) must sit out the fit: forward
         # runs every registered head, and a kernel-regression head raises without its t-sequence,
         # which the datamodule only carries for active tasks. Always restore them so exceptions do
-        # not leave the in-memory model mutated; successful runs then evaluate and save every head.
+        # not leave the in-memory model mutated. Every head is retained in saved checkpoints;
+        # post-step evaluation follows the configured scope, independently of replay intervals.
         inactive = [name for name in learned if name not in participating]
         if inactive:
             model.disable_task(*inactive)
@@ -457,7 +482,7 @@ def _run_single(
 
         step_dir = recorder.paths.step_dir(step, task_name)
         step_metrics: dict[str, dict[str, float]] = {}
-        for name in [*preloaded, *new_tasks[: i + 1]]:  # ALL learned heads (preloaded + new-so-far)
+        for name in [*eligible, task_name]:
             try:
                 with np.errstate(over="raise"):
                     metric = evaluate_task(
@@ -470,7 +495,10 @@ def _run_single(
             step_metrics[name] = metric
             metric_history[name].append((step, metric["primary"]))
 
-        recorder.save_step_checkpoint(step, task_name, model, list(active))
+        # Scoped checkpoints also serve as standalone transfer initializers; their task order
+        # must describe every retained head, not just the replay subset of this fit.
+        saved_order = [*learned, task_name] if cfg.active_tasks is not None else list(active)
+        recorder.save_step_checkpoint(step, task_name, model, saved_order)
         record = {"step": step, "new_task": task_name, "epochs_run": trainer.current_epoch, "metrics": step_metrics}
         records.append(record)
         recorder.append_record(record)

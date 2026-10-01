@@ -100,7 +100,8 @@ Each fold contains:
 | Root `manifest_20261001.json` | Grid, units, versions, fit compositions/counts, fitted parameters and inverse round-trip errors. |
 
 Merge the datasets/tasks from `tasks_20261001.toml` into the experiment's existing configuration, retaining
-the checkpoint's descriptor/model settings and all original tasks needed for warm-start/replay.
+the checkpoint's descriptor/model settings and original task definitions needed to restore its heads.
+The warm-stage active scope controls which of those tasks enter replay and evaluation.
 Generated relative paths are resolved from the command's working directory, like existing
 `fm` configs. Regenerate the fragments at the destination if its dataset paths differ.
 
@@ -129,8 +130,8 @@ enabled = false
 ```
 
 The default early-stopping monitor is `val_final_loss`, which does not exist for these
-train/test-only folds. Keep the scheduler's training-loss monitor. Warm-start replay may
-use validation from the original non-AGIS tasks, while excluding the held-out compound.
+train/test-only folds. Keep the scheduler's training-loss monitor. The AGIS warm stages
+also use fixed budgets without validation from original tasks or held-out compounds.
 The preprocessing script rejects any missing or unexpected compound, including a completely
 missing directory, before writing outputs.
 
@@ -202,11 +203,15 @@ and autoencoder, then uses the same final fitting path, with no original task he
 The autoencoder follows the package's existing fine-tuning policy and remains trainable.
 Frozen final encoders, including BatchNorm buffers, are checked against their initial states.
 
-Warm stages retain the original replay recipe: maximum 150 epochs per appended task,
-epoch-wise replay, 30% of original task labels with the existing per-task 1500-label floors.
-The previously appended AGIS pressure replays all seven training curves. Early stopping
-monitors only validation from original non-AGIS tasks (patience 24); no held-out AGIS label
-enters validation. All AGIS pressure datasets share the same heldout composition split.
+Warm stages use **150 fixed epochs per appended task** and a full batch of seven compounds.
+`pretrain.active_tasks` contains only the two non-target AGIS pressure heads: the first
+pressure trains without replay; the second replays all seven training curves of the first.
+Original pretrained heads remain in checkpoints but do not enter replay, validation or
+post-step evaluation. With no independent AGIS validation compound, early stopping and
+validation checkpoint selection are disabled; the scheduler monitors training loss.
+All AGIS pressure datasets share the same heldout composition split. The earlier scheme
+that replayed original tasks is a different protocol; preserve its outputs separately
+and restart revised warm routes from the original pretrained checkpoints.
 La₃Ni₂O₇ has a Tc label in the original pretraining corpus: this experiment holds out AGIS
 resistivity labels, and does not claim every test composition was unseen during pretraining.
 

@@ -110,9 +110,15 @@ def test_warm_start_excludes_target_and_replays_all_seven_other_pressure_samples
     unit = RunUnit(route=Route.WARM, fold=1, checkpoint_index=0, pressure=pressure)
     raw = warm_config(manifest, unit)
     assert raw["pretrain"]["task_sequence"] == [f"agis_rho_{p}gpa" for p in (0, 10, 20) if p != pressure]
-    assert raw["pretrain"]["replay"]["per_task"] == {f"agis_rho_{p}gpa": 7 for p in (0, 10, 20)}
-    assert raw["data"]["batch_size"] == 256
-    assert raw["training"]["early_stopping"]["monitor"] == "val_final_loss"
+    sequence = [f"agis_rho_{p}gpa" for p in (0, 10, 20) if p != pressure]
+    assert raw["pretrain"]["active_tasks"] == sequence
+    assert raw["pretrain"]["replay"]["per_task"] == dict.fromkeys(sequence, 7)
+    assert raw["data"]["batch_size"] == 7
+    assert raw["data"]["val_split"] == raw["data"]["test_split"] == 0.0
+    assert raw["training"]["early_stopping"]["enabled"] is False
+    assert raw["training"]["checkpoint"]["enabled"] is False
+    assert raw["training"]["max_epochs"] == 150
+    assert raw["training"]["scheduler"]["monitor"] == "train_final_loss_epoch"
     final = final_config(manifest, unit)
     assert final["data"]["batch_size"] == 7
     assert final["finetune"]["epochs"] == 1000

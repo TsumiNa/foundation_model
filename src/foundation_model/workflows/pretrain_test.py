@@ -35,6 +35,7 @@ from foundation_model.workflows.pretrain import (
 )
 from foundation_model.workflows.pretrain import run as pretrain_run
 from foundation_model.workflows.recording import RunRecorder
+from foundation_model.workflows.task_catalog import TaskKind, TaskSpec
 
 # 24 distinct real-element binary/ternary formulas so KMD descriptors are computable.
 _ELEMENTS = ["Fe", "Al", "Cu", "Ni", "Ti", "Zn", "Mg", "Ca", "Na", "Cl", "O", "Si"]
@@ -79,6 +80,28 @@ def test_build_happy_path_defaults_task_sequence() -> None:
     cfg = _build(_config_toml())
     assert cfg.task_sequence == ["a", "b"]  # defaults to [[tasks]] order
     assert cfg.n_runs == 1 and cfg.replay.interval == 1
+    assert cfg.active_tasks is None
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ('"a"', "list of task names"),
+        ("[1]", "list of task names"),
+        ('["a", "a", "b"]', "duplicate"),
+        ('["a", "b", "unknown"]', "unknown task"),
+        ('["a"]', "task_sequence"),
+        ("[]", "task_sequence"),
+    ],
+)
+def test_invalid_active_tasks_fail_before_training(value: str, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        _build(_config_toml(pretrain_extra=f"active_tasks = {value}"))
+
+
+def test_active_tasks_accepts_catalog_subset() -> None:
+    cfg = _build(_config_toml(pretrain_extra='task_sequence = ["b"]\nactive_tasks = ["b"]'))
+    assert cfg.active_tasks == ["b"]
 
 
 def test_interval_below_one_raises() -> None:
@@ -531,6 +554,79 @@ def test_no_replay_interval_disables_learned_kr_head(smoke_dir, tmp_path) -> Non
     assert not any(k.startswith("disabled_task_heads.") for k in final["model"])
     # the sat-out head is still evaluated at the no-replay step
     assert (out / "training" / "step02_a" / "dos_metrics.json").exists()
+
+
+@pytest.mark.parametrize("resume", [False, True])
+def test_active_tasks_replay_only_new_domain_and_retain_original_heads(
+    smoke_dir, tmp_path, monkeypatch, resume
+) -> None:
+    original = tmp_path / "original"
+    original_cfg = _no_replay_kr_config(smoke_dir, original)
+    frame = pd.read_parquet(smoke_dir / "x.parquet")
+    frame["c"] = [0] * (len(frame) - 4) + [1, 1, 2, 2]
+    frame.to_parquet(smoke_dir / "x.parquet")
+    original_cfg.catalog.tasks.append(
+        TaskSpec(name="c", kind=TaskKind.CLASSIFICATION, dataset="d1", column="c", num_classes=3)
+    )
+    original_cfg.task_sequence = ["dos", "c"]
+    pretrain_run(original_cfg)
+    source = original / "training/final_model.pt"
+    before = torch.load(source, weights_only=True)["model"]
+
+    raw = tomllib.loads(_ws_toml(smoke_dir, ["a", "b"]))
+    raw["model"]["n_kernel"] = 4
+    raw["datasets"]["kr"] = {"path": str(smoke_dir / "unavailable_original.parquet")}
+    raw["tasks"].append(
+        {"name": "dos", "kind": "kernel_regression", "dataset": "kr", "column": "dos", "t_column": "energy"}
+    )
+    raw["tasks"].append({"name": "c", "kind": "classification", "dataset": "kr", "column": "c", "num_classes": 3})
+    raw["pretrain"]["active_tasks"] = ["a", "b"]
+    raw["pretrain"]["replay"]["per_task"] = {"a": len(_FORMULAS), "b": len(_FORMULAS)}
+    raw["data"].update(val_split=0.0, test_split=0.0)
+    raw["training"].update(early_stopping={"enabled": False})
+    output = tmp_path / "new_domain"
+    cfg = build_pretrain_config(raw, output_dir=output, checkpoint=source, resume=resume)
+    fits = []
+    evaluated = []
+    fit = pretrain_module.Trainer.fit
+    evaluate = pretrain_module.evaluate_task
+
+    def recording_fit(self, model, *, datamodule):
+        names = [task.name for task in datamodule.task_configs]
+        fits.append(names)
+        assert {"dos", "c"} <= set(model.disabled_task_heads)
+        assert set(datamodule._input_task_frames) == set(names)
+        if resume and len(fits) == 2:
+            raise RuntimeError("interrupted second new task")
+        return fit(self, model, datamodule=datamodule)
+
+    def recording_evaluation(model, catalog, name, recorder, step_dir, **kwargs):
+        evaluated.append((step_dir.name, name))
+        assert name not in {"dos", "c"}
+        return evaluate(model, catalog, name, recorder, step_dir, **kwargs)
+
+    monkeypatch.setattr(pretrain_module.Trainer, "fit", recording_fit)
+    monkeypatch.setattr(pretrain_module, "evaluate_task", recording_evaluation)
+    if resume:
+        with pytest.raises(RuntimeError, match="interrupted second new task"):
+            pretrain_run(cfg)
+        assert (output / "training/step03_a/checkpoint.pt").is_file()
+    pretrain_run(cfg)
+    first_step = torch.load(output / "training/step03_a/checkpoint.pt", weights_only=True)
+    assert first_step["task_sequence"] == ["dos", "c", "a"]
+    second_step = torch.load(output / "training/step04_b/checkpoint.pt", weights_only=True)
+    assert second_step["task_sequence"] == ["dos", "c", "a", "b"]
+    expected_fits = [["a"], ["b", "a"]] if not resume else [["a"], ["b", "a"], ["b", "a"]]
+    assert fits == expected_fits
+    assert evaluated == [("step03_a", "a"), ("step04_b", "a"), ("step04_b", "b")]
+    final = torch.load(output / "training/final_model.pt", weights_only=True)
+    assert set(final["task_sequence"]) == {"dos", "c", "a", "b"}
+    assert all(
+        torch.equal(value, final["model"][key])
+        for key, value in before.items()
+        if key.startswith(("task_heads.dos.", "task_heads.c."))
+    )
+    assert not any(key.startswith("disabled_task_heads.") for key in final["model"])
 
 
 def test_no_replay_interval_reenables_kr_head_when_fit_raises(smoke_dir, tmp_path, monkeypatch) -> None:
