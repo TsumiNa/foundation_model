@@ -612,6 +612,10 @@ def test_active_tasks_replay_only_new_domain_and_retain_original_heads(
             pretrain_run(cfg)
         assert (output / "training/step03_a/checkpoint.pt").is_file()
     pretrain_run(cfg)
+    first_step = torch.load(output / "training/step03_a/checkpoint.pt", weights_only=True)
+    assert first_step["task_sequence"] == ["dos", "c", "a"]
+    second_step = torch.load(output / "training/step04_b/checkpoint.pt", weights_only=True)
+    assert second_step["task_sequence"] == ["dos", "c", "a", "b"]
     expected_fits = [["a"], ["b", "a"]] if not resume else [["a"], ["b", "a"], ["b", "a"]]
     assert fits == expected_fits
     assert evaluated == [("step03_a", "a"), ("step04_b", "a"), ("step04_b", "b")]
