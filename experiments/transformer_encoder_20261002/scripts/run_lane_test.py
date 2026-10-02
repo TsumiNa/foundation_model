@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import torch
 
 from benchmark import DATE, SOURCE_TASKS, file_hash
 import run_lane
@@ -116,3 +117,32 @@ def test_source_refuses_zero_training_epochs(tmp_path, monkeypatch):
     monkeypatch.setattr(run_lane, "run_command", command)
     with pytest.raises(RuntimeError, match="without training"):
         run_lane.train_source(raw, tmp_path / "run", PROTOCOL, 1)
+
+
+@pytest.mark.parametrize("records", [None, [], [{"step": 3, "epochs_run": 2}]])
+def test_resumed_source_uses_cumulative_checkpoints_not_invocation_record_count(tmp_path, monkeypatch, records):
+    source_path = tmp_path / "source.parquet"
+    frame = pd.DataFrame({"split": ["train"] * 3})
+    for name in SOURCE_TASKS:
+        frame[name] = 1.0
+    frame.to_parquet(source_path)
+    output = tmp_path / "run"
+    for k, task in enumerate(SOURCE_TASKS[:3], start=1):
+        directory = output / f"training/step{k:02d}_{task}"
+        directory.mkdir(parents=True)
+        torch.save(
+            {"model": {}, "task_sequence": list(SOURCE_TASKS[:k]), "step": k, "new_task": task},
+            directory / "checkpoint.pt",
+        )
+        log = output / f"logs/step{k:02d}_{task}/version_0"
+        log.mkdir(parents=True)
+        pd.DataFrame({"epoch": [0, 1], "train_final_loss_epoch": [1.0, 0.5]}).to_csv(log / "metrics.csv", index=False)
+    torch.save({"model": {}, "task_sequence": list(SOURCE_TASKS[:3])}, output / "training/final_model.pt")
+    if records is not None:
+        (output / "training/experiment_records.json").write_text(json.dumps(records))
+    monkeypatch.setattr(run_lane, "build_pretrain_config", lambda raw: None)
+    monkeypatch.setattr(run_lane, "run_command", lambda *args: None)  # CLI resumes/skips completed stages.
+    run_lane.train_source(
+        {"datasets": {"source": {"path": str(source_path)}}, "data": {"batch_size": 2}}, output, PROTOCOL, 3
+    )
+    assert json.loads((output / "done.json").read_text())["source_count"] == 3

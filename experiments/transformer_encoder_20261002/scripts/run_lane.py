@@ -20,6 +20,7 @@ import torch
 import foundation_model
 from foundation_model.workflows.finetune import build_finetune_config
 from foundation_model.workflows.pretrain import build_pretrain_config
+from foundation_model.workflows.recording import load_checkpoint_state
 
 from benchmark import (
     DATE,
@@ -72,9 +73,33 @@ def train_source(raw: dict, output: Path, protocol: Path, source_count: int) -> 
     run_command(["fm", "pretrain", "--config", str(config_path)], output / "workflow.log")
     if not (output / "training/final_model.pt").is_file():
         raise RuntimeError("Source workflow exited without its final checkpoint")
-    stages = json.loads((output / "training/experiment_records.json").read_text())
-    if len(stages) != source_count or any(stage.get("epochs_run", 0) < 1 for stage in stages):
+    record_path = output / "training/experiment_records.json"
+    stages = json.loads(record_path.read_text()) if record_path.exists() else []
+    if any(stage.get("epochs_run", 0) < 1 for stage in stages):
         raise RuntimeError("Source workflow completed a stage without training")
+    # Records contain only the latest invocation after resume. Check cumulative artifacts instead.
+    final_order = load_checkpoint_state(output / "training/final_model.pt")["task_sequence"]
+    if final_order is None or len(final_order) != source_count or set(final_order) != set(SOURCE_TASKS[:source_count]):
+        raise RuntimeError("Source final checkpoint is missing trained source tasks")
+    for k, task in enumerate(SOURCE_TASKS[:source_count], start=1):
+        state = load_checkpoint_state(output / f"training/step{k:02d}_{task}/checkpoint.pt")
+        order = state["task_sequence"]
+        if (
+            state.get("step") != k
+            or state.get("new_task") != task
+            or order is None
+            or len(order) != k
+            or set(order) != set(SOURCE_TASKS[:k])
+        ):
+            raise RuntimeError(f"Incomplete source checkpoint at step {k}")
+        logs = list((output / f"logs/step{k:02d}_{task}").glob("version_*/metrics.csv"))
+        trained = False
+        for log in logs:
+            metrics_frame = pd.read_csv(log)
+            if "train_final_loss_epoch" in metrics_frame and metrics_frame["train_final_loss_epoch"].notna().any():
+                trained = True
+        if not trained:
+            raise RuntimeError(f"Source step {k} lacks training-epoch evidence")
     atomic_json(
         output / "done.json",
         {
