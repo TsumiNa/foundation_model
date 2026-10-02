@@ -1,0 +1,8 @@
+# Validation-only optimization diagnostic. Never merge into the main transfer results.
+source_count = 3
+max_epochs = 12
+seeds = [0, 1, 2]
+arms = ["legacy_cls", "grouped_concat"]
+encoder_learning_rates = [0.0003, 0.0001, 0.00003, 0.00001]
+control_arm = "grouped_cls"
+diagnostic_per_class = 16
