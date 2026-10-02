@@ -152,3 +152,14 @@ def test_nested_inverse_array_tables_roundtrip(tmp_path):
     path = tmp_path / "inverse.toml"
     write_toml(raw, path)
     assert tomllib.loads(path.read_text()) == raw
+
+
+def test_functional_batch_cap_does_not_modify_scientific_protocol(data_dir):
+    path = data_dir / f"manifest_{DATE}.json"
+    manifest = json.loads(path.read_text())
+    manifest["smoke_batch_size"] = 16
+    path.write_text(json.dumps(manifest))
+    assert workflow_config(PROTOCOL, data_dir, "mlp_tuned", 0)["data"]["batch_size"] == 128
+    manifest["functional_smoke"] = True
+    path.write_text(json.dumps(manifest))
+    assert workflow_config(PROTOCOL, data_dir, "mlp_tuned", 0)["data"]["batch_size"] == 16

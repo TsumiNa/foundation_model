@@ -52,6 +52,7 @@ def make_smoke(source_dir: Path, output: Path) -> None:
                 entry["sha256"] = file_hash(output / entry["file"])
                 entry["training_compositions"] = subset.loc[subset["split"].eq("train"), "composition"].tolist()
     manifest["functional_smoke"] = True
+    manifest["smoke_batch_size"] = 16  # Low-budget fixture has 32 training rows; drop_last must leave batches.
     manifest["note"] = "Small subsets reuse actual training-fitted scalers; this is a functional fixture only."
     (output / f"manifest_{DATE}.json").write_text(json.dumps(manifest, indent=2))
 

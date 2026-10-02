@@ -60,6 +60,8 @@ def train_source(raw: dict, output: Path, protocol: Path, source_count: int) -> 
         "replay": {"interval": 1, "amount": 0.3, "resample": "epoch", "per_task": {}},
     }
     frame = pd.read_parquet(source["datasets"]["source"]["path"])
+    if int(frame["split"].eq("train").sum()) < source["data"]["batch_size"]:
+        raise ValueError("Source training rows must fill at least one batch (workflow uses drop_last)")
     for name in SOURCE_TASKS[:source_count]:
         count = int((frame["split"].eq("train") & frame[name].notna()).sum())
         source["pretrain"]["replay"]["per_task"][name] = max(1500, int(0.3 * count))
@@ -70,6 +72,9 @@ def train_source(raw: dict, output: Path, protocol: Path, source_count: int) -> 
     run_command(["fm", "pretrain", "--config", str(config_path)], output / "workflow.log")
     if not (output / "training/final_model.pt").is_file():
         raise RuntimeError("Source workflow exited without its final checkpoint")
+    stages = json.loads((output / "training/experiment_records.json").read_text())
+    if len(stages) != source_count or any(stage.get("epochs_run", 0) < 1 for stage in stages):
+        raise RuntimeError("Source workflow completed a stage without training")
     atomic_json(
         output / "done.json",
         {
@@ -97,6 +102,9 @@ def train_target(
     if (output / "done.json").exists():
         return
     output.mkdir(parents=True, exist_ok=True)
+    target_frame = pd.read_parquet(raw["datasets"]["target"]["path"], columns=["split"])
+    if int(target_frame["split"].eq("train").sum()) < raw["data"]["batch_size"]:
+        raise ValueError("Target training rows must fill at least one batch (workflow uses drop_last)")
     initialized = output / "initializer.pt"
     init_info = initialize_target(raw, target, initialized, source=source)
     if init_info["source_task_count"] != k:
@@ -136,6 +144,8 @@ def train_target(
         pd.read_parquet(output / f"validation/predict/{target}_pred.parquet"), float(scaler.scale_[0])
     )
     summary = json.loads((output / "training/finetune_summary.json").read_text())
+    if summary["epochs_run"] < 1:
+        raise RuntimeError("Target workflow returned without any training epochs")
     atomic_json(
         output / "done.json",
         {
@@ -180,6 +190,11 @@ def main() -> None:
     data_manifest = json.loads((args.data_dir / f"manifest_{DATE}.json").read_text())
     if data_manifest.get("functional_smoke") and args.max_epochs is None:
         raise ValueError("Functional fixture requires an explicit smoke epoch cap")
+    if (
+        not data_manifest.get("functional_smoke")
+        and file_hash(args.data_dir / f"manifest_{DATE}.json") != protocol.data_manifest_sha256
+    ):
+        raise ValueError("Scientific data manifest differs from the registered campaign")
     for entry in [data_manifest["source"], *data_manifest["targets"]]:
         if file_hash(args.data_dir / entry["file"]) != entry["sha256"]:
             raise ValueError(f"Dataset checksum mismatch: {entry['file']}")

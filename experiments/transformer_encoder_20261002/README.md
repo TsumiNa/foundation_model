@@ -69,6 +69,8 @@ uv run python data/scripts/process_transformer_transfer_data_20261002.py
 uv run pytest data/scripts/process_transformer_transfer_data_20261002_test.py \
   experiments/transformer_encoder_20261002/scripts/benchmark_test.py \
   experiments/transformer_encoder_20261002/scripts/make_worklist_test.py \
+  experiments/transformer_encoder_20261002/scripts/make_smoke_data_test.py \
+  experiments/transformer_encoder_20261002/scripts/run_lane_test.py \
   experiments/transformer_encoder_20261002/analysis/collect_test.py
 uv run python experiments/transformer_encoder_20261002/scripts/make_smoke_data.py \
   --data-dir data/transformer_transfer_20261002 --output data/transformer_transfer_smoke_20261002
@@ -84,6 +86,8 @@ values `FM_WORKSPACE`, `FM_IMAGE`, `FM_WORKLIST`, `FM_DATA_DIR`, `FM_OUTPUT_ROOT
 The image URI/revision and verified SIF hash are registered in the protocol. `array.sbatch`
 verifies that exact SIF; workers enforce ARM, the installed package version/path, one allocated
 CUDA GPU, dataset/scaler checksums and an unchanged lane identity on resume.
+The protocol also pins the scientific data-manifest checksum. Collection checks this hash,
+the complete protocol checksum and one common benchmark revision across all lanes.
 
 Submit `scripts/array.sbatch` from a campaign log directory using `sbatch --account=...`.
 Pass `PACK` explicitly and size the array to `ceil(number_of_lanes / PACK)`; adjacent lanes
@@ -96,7 +100,10 @@ protocols, epoch caps or dataset manifests.
 Before the scientific fleet, run one allocated-GPU 400-record functional fixture with
 `MAX_EPOCHS=2`, `SOURCE_COUNT=7`, `INVERSE_SMOKE=1`, `PACK=1`, one grouped-concat/seed-0 lane
 and a separate smoke output root. This exercises all seven source additions, replay, frozen/full
-transfer, prediction, and latent/composition inverse. Then calibrate representative MLP,
+transfer, prediction, and latent/composition inverse.
+The fixture uses batch size 16 so its 32-row low-budget training sets produce real optimizer
+updates despite `drop_last`; zero-epoch source stages and target fits are rejected.
+Then calibrate representative MLP,
 legacy scalar-token, feature-token and grouped workloads: source-only (`SOURCE_ONLY=1`,
 `SOURCE_COUNT=1`) on full data for paired seeds 0/1, unpacked first, packed reruns into separate
 roots. Use `sacct --format=JobID,Elapsed,AllocTRES,TRESUsageInAve,TRESUsageInMax,ExitCode -P`
@@ -127,6 +134,8 @@ Execution log: 2026-10-02/03 — PR #69 reviewed and merged; ARM 0.5.0 image pul
 against its OCI revision/version labels and SIF SHA256. Local concat functional checks passed
 pretraining, scalar/function scratch/frozen/full fits, prediction, and both inverse paths.
 Allocated-GPU smoke, packing calibration and scientific results remain pending the benchmark PR.
+Smoke log audit caught a zero-training low-budget fixture at batch 128; reduce only functional
+fixtures to batch 16 and rerun. Scientific low-budget subsets exceed batch 128.
 
 The original sections below describe the reviewed base commit and broader research proposal;
 they are not a claim that the new implementation or campaign has already completed. Current

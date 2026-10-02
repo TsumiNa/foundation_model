@@ -1,4 +1,5 @@
 import json
+import hashlib
 from pathlib import Path
 import tomllib
 
@@ -60,11 +61,33 @@ def test_collector_refuses_smoke_and_accepts_partial_registered_results(tmp_path
         max_epochs_override=None,
         image_revision=settings["image_revision"],
         sif_sha256=settings["sif_sha256"],
+        benchmark_revision="a" * 40,
     )
     (lane / "runtime.json").write_text(json.dumps(runtime))
     with pytest.raises(ValueError, match="refuses"):
         collect(tmp_path, PROTOCOL)
     runtime["functional_smoke"] = False
     (lane / "runtime.json").write_text(json.dumps(runtime))
+    identity = dict(
+        protocol_sha256=hashlib.sha256(PROTOCOL.read_bytes()).hexdigest(),
+        manifest_sha256=settings["data_manifest_sha256"],
+        benchmark_revision="a" * 40,
+        source_count=7,
+        cpu_smoke=False,
+        max_epochs_override=None,
+    )
+    (lane / "identity.json").write_text(json.dumps(identity))
     frame, expected = collect(tmp_path, PROTOCOL)
     assert frame.empty and expected == 672
+    other = tmp_path / "mlp_tuned_s1"
+    other.mkdir()
+    runtime["benchmark_revision"] = "b" * 40
+    identity["benchmark_revision"] = "b" * 40
+    (other / "runtime.json").write_text(json.dumps(runtime))
+    (other / "identity.json").write_text(json.dumps(identity))
+    with pytest.raises(ValueError, match="different campaign"):
+        collect(tmp_path, PROTOCOL)
+    identity["manifest_sha256"] = "c" * 64
+    (other / "identity.json").write_text(json.dumps(identity))
+    with pytest.raises(ValueError, match="hashes differ"):
+        collect(tmp_path, PROTOCOL)

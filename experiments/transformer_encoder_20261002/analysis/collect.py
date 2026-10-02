@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import tomllib
+import re
 
 import matplotlib
 
@@ -20,12 +22,34 @@ def collect(root: Path, protocol: Path) -> tuple[pd.DataFrame, int]:
     settings, arms = registered["benchmark"], registered["encoders"]
     keys = ["arm", "seed", "target", "fraction", "source_count", "mode"]
     rows = []
+    campaign = None
+    protocol_sha256 = hashlib.sha256(protocol.read_bytes()).hexdigest()
     for lane in sorted(root.glob("*_s*")):
         if not (lane / "runtime.json").exists():
             continue
         runtime = json.loads((lane / "runtime.json").read_text())
         if runtime["cpu_smoke"] or runtime["functional_smoke"] or runtime["max_epochs_override"] is not None:
             raise ValueError("Scientific collection refuses CPU/smoke/epoch-capped lanes")
+        identity = json.loads((lane / "identity.json").read_text())
+        if (
+            identity["protocol_sha256"] != protocol_sha256
+            or identity["manifest_sha256"] != settings["data_manifest_sha256"]
+        ):
+            raise ValueError("Lane configuration/data hashes differ from the registered campaign")
+        if not isinstance(identity["benchmark_revision"], str) or not re.fullmatch(
+            r"[0-9a-f]{40}", identity["benchmark_revision"]
+        ):
+            raise ValueError("Missing benchmark source revision")
+        if (
+            runtime["benchmark_revision"] != identity["benchmark_revision"]
+            or identity["source_count"] != 7
+            or identity["cpu_smoke"]
+            or identity["max_epochs_override"] is not None
+        ):
+            raise ValueError("Runtime and scientific lane identity disagree")
+        if campaign is not None and identity != campaign:
+            raise ValueError("Cannot aggregate different campaign identities")
+        campaign = identity
         if runtime["image_revision"] != settings["image_revision"] or runtime["sif_sha256"] != settings["sif_sha256"]:
             raise ValueError("Runtime does not match the registered image")
         for path in sorted((lane / "targets").glob("*/done.json")):

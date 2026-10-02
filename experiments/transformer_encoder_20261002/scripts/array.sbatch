@@ -3,7 +3,7 @@
 #SBATCH --partition=gpu
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=400G
+#SBATCH --mem=64G
 #SBATCH --time=48:00:00
 #SBATCH --output=slurm-%A_%a.out
 

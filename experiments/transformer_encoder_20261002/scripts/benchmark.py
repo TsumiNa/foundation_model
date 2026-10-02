@@ -38,6 +38,7 @@ class BenchmarkConfig:
     image_revision: str
     image_uri: str
     sif_sha256: str
+    data_manifest_sha256: str
 
     def __post_init__(self) -> None:
         if not self.seeds or len(set(self.seeds)) != len(self.seeds):
@@ -66,6 +67,8 @@ class BenchmarkConfig:
             raise ValueError("An immutable image reference matching its source revision is required")
         if not re.fullmatch(r"[0-9a-f]{64}", self.sif_sha256):
             raise ValueError("The verified deployed SIF checksum is required")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.data_manifest_sha256):
+            raise ValueError("The registered scientific data manifest checksum is required")
 
 
 def file_hash(path: Path) -> str:
@@ -109,7 +112,13 @@ def workflow_config(
     encoder_lr = entry.pop("encoder_lr")
     manifest = json.loads((data_dir / f"manifest_{DATE}.json").read_text())
     raw: dict[str, Any] = {
-        "data": {"batch_size": config.batch_size, "num_workers": 0, "split_random_seed": 20261002},
+        "data": {
+            "batch_size": min(config.batch_size, manifest.get("smoke_batch_size", config.batch_size))
+            if manifest.get("functional_smoke")
+            else config.batch_size,
+            "num_workers": 0,
+            "split_random_seed": 20261002,
+        },
         "descriptor": {"kind": "kmd", "n_grids": 8},
         "datasets": {"source": {"path": str(data_dir / manifest["source"]["file"])}},
         "tasks": [],
