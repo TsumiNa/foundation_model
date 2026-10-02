@@ -128,6 +128,17 @@ def test_transformer_rejects_string_booleans(field):
         TransformerEncoderConfig(input_dim=12, **{field: "false"})  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("dropout", [True, False, "0.1", None, [], float("nan"), float("inf"), -0.1, 1.1])
+def test_transformer_rejects_invalid_dropout_consistently(dropout):
+    with pytest.raises(ValueError, match="dropout must be finite and in"):
+        TransformerEncoderConfig(input_dim=12, dropout=dropout)
+
+
+@pytest.mark.parametrize("dropout", [0, 0.1, 1])
+def test_transformer_accepts_numeric_dropout_boundaries(dropout):
+    assert TransformerEncoderConfig(input_dim=12, dropout=dropout).dropout == dropout
+
+
 # --- OptimizerConfig -------------------------------------------------------------------------
 
 

@@ -145,7 +145,12 @@ class TransformerOptions:
             or self.dim_feedforward <= 0
         ):
             raise ValueError("TransformerEncoderConfig.dim_feedforward must be a positive int when provided")
-        if not math.isfinite(self.dropout) or not 0 <= self.dropout <= 1:
+        if (
+            isinstance(self.dropout, bool)
+            or not isinstance(self.dropout, (int, float))
+            or not math.isfinite(self.dropout)
+            or not 0 <= self.dropout <= 1
+        ):
             raise ValueError("TransformerEncoderConfig.dropout must be finite and in [0, 1]")
         if self.tokenization is not FeatureTokenization.GROUPED and self.group_size != 1:
             raise ValueError("group_size must be 1 unless tokenization is grouped")
