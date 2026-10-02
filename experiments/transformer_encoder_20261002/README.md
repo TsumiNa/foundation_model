@@ -29,6 +29,18 @@ about ten or fewer source tasks: the main round remains at seven, with checkpoin
 every task. Package 0.5.0 and its pinned ARM image suffice for this experiment-only change.
 Review and merge this diagnostic PR before GPU execution.
 
+The image-only runner is `scripts/stability_probe.py`; `scripts/stability.sbatch` verifies
+the SIF and launches it on one allocated GPU. Supply `FM_WORKSPACE`, `FM_IMAGE`, `FM_DATA_DIR`,
+`FM_OUTPUT_ROOT` and `FM_BENCHMARK_REVISION` externally, with a scripts/data-only workspace
+from the merged commit and a separate output root. Submit cases 0–11 with `FIRST_CASE=0`,
+`PACK=1`, `--array=0-11%3`; submit cases 12–26 with `FIRST_CASE=12`, `PACK=3`,
+`--cpus-per-task=12`, `--array=0-4%1`. These limits add at most four GPUs. Grouped packing
+uses the already measured three-process calibration; scalar-token legacy remains unpacked.
+Each `probe_done.json` stores diagnostics and hashes for every best, last and end checkpoint.
+Per-stage CSV logs retain training/validation losses; the Lightning files retain optimizer
+learning rates and callback scores. Continuation still uses the end-of-stage weights to match
+the baseline: saving a best checkpoint does not itself change the continuation algorithm.
+
 Status: core encoder PR [#69](https://github.com/TsumiNa/foundation_model/pull/69) squash-merged
 as `950012a581d838601530eb200edb9572862457aa`; package 0.5.0 ARM image published and verified
 on RIKYU. The benchmark is the second implementation PR. No scientific GPU job has started.
