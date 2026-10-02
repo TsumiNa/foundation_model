@@ -1,9 +1,12 @@
 # Research-slide quality assurance
 
 Use the selected base presentation skill's file and rendering checks alongside the
-checks below. Keep build notes and numerical reconciliation outside audience-facing
-slides. Validation proves what was actually checked, not that every application will
-render a file identically.
+checks below. For review-only requests, apply the relevant content and visual checks
+within the requested scope using the supplied deck or renders. The full rendering and
+export checks below apply when creating or revising deliverables; new exports are not
+required just to provide review comments. Keep build notes and numerical reconciliation
+outside audience-facing slides. Validation proves what was actually checked, not that
+every application will render a file identically.
 
 ## Before final export
 

@@ -84,8 +84,9 @@ titles such as "Transfer gains" when the evidence contains both gains and losses
 
 ## Lay out slides for reading
 
-Read [layout and mathematical typography](references/layout-and-math.md) before creating
-or revising slide layouts. Apply its guidance across the deck, not just to annotated pages.
+Read [layout and mathematical typography](references/layout-and-math.md) before creating,
+revising, or reviewing slide layouts, including review-only requests. Apply its guidance
+throughout the requested review scope, not just to annotated pages.
 
 - Give each slide one purpose. Use short, informative titles and a consistent visual
   hierarchy. Text slides are acceptable when they explain a protocol or conclusion.
@@ -120,9 +121,11 @@ claims about preprocessing.
 ## Verify revisions and deliver
 
 Read [quality assurance](references/quality-assurance.md) before finalizing a new or
-revised deck. Render and inspect the final outputs, reconcile the central claims with
-the underlying tables, and check every review comment against the new slide numbering.
-Keep build checks and temporary files outside the presentation itself.
+revised deck or performing a deck review. For review-only work, apply the relevant checks
+to the supplied deck or renders within the requested scope; new exports are not required.
+For created or revised deliverables, render and inspect the final outputs, reconcile the
+central claims with the underlying tables, and check every review comment against the
+new slide numbering. Keep build checks and temporary files outside the presentation itself.
 
 Deliver the requested editable deck and its PDF companion when useful or requested,
 with the same slide order, content, and revision. Keep scientific figure sources and
