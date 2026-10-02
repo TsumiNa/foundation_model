@@ -25,6 +25,10 @@ training. The ordered PR scopes are:
 Remote PR creation, review handling and merge are authorized by that instruction. Scientific
 results are recorded separately from implementation checks; no GPU training has started.
 
+Execution status: PR 01 merged as `950012a581d838601530eb200edb9572862457aa` (PR #69),
+version 0.5.0. Its immutable ARM image is published and verified on RIKYU. PR 02 owns the
+executable benchmark; its review/merge gate still precedes GPU smoke and scientific submission.
+
 Alternatives considered: directly enlarging the old Transformer leaves the tokenizer question
 unanswered; replacing KMD with element tokens changes the descriptor/inverse contract at the
 same time. Fixed 94-element tokens remain a subsequent research direction. The first round runs
