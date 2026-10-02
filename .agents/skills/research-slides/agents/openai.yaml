@@ -1,0 +1,4 @@
+interface:
+  display_name: "Research Slides"
+  short_description: "Audience-focused slides with readable figures and clear evidence"
+  default_prompt: "Use $research-slides with the available presentation skill to create, revise, or review a presentation for the intended audience."
