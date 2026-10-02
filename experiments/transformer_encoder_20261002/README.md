@@ -1,5 +1,46 @@
 # Transformer encoder investigation — 2026-10-02
 
+## Optimization-stability diagnostic (2026-10-03)
+
+The first screen exposed severe grouped-concat instability across all three seeds, including
+validation losses above 1e9; legacy CLS also has large validation spikes. A read-only inspection
+of the concat seed-1 checkpoint after its first task found all post-tanh latent coordinates
+saturated on 128 validation compositions, negligible between-composition variance, and nearly
+zero BatchNorm running variances in the classification head. These observations are evidence
+of optimization failure, not evidence that concatenation or Transformers intrinsically harm
+transfer. Most MLP and modern CLS/mean runs have descending, then stabilizing, stage losses.
+
+The registered diagnostic in `configs/stability.toml` varies only the encoder learning rate
+(3e-4, 1e-4, 3e-5, 1e-5) for legacy CLS and grouped concat, with three paired seeds. Three
+grouped-CLS runs at the original learning rate provide a control: 27 trajectories total.
+Each introduces only the first three source tasks, with a maximum of 12 epochs per task.
+Data, heads, head/decoder learning rates, replay and initialization remain matched. Both
+best-validation and last-epoch Lightning checkpoints supplement the ordinary end-of-task
+checkpoints. Diagnose per-task losses, stored optimizer learning rates, pre-tanh amplitudes,
+saturation, between-composition latent variance and head BatchNorm statistics. Use a fixed
+validation subset stratified by material-type label for representation diagnostics; it is
+not a generalization-performance estimate. Target test labels are not used to choose settings.
+
+This is an optimization pilot, not a replacement for the 1/3/7-task transfer screen. Its
+shorter training budget and separate output identity prohibit pooling its results with that
+screen. Retain the existing bounded campaign as a diagnostic baseline; stabilize affected
+settings before drawing architectural or transfer-scaling conclusions. The user requested
+about ten or fewer source tasks: the main round remains at seven, with checkpoints after
+every task. Package 0.5.0 and its pinned ARM image suffice for this experiment-only change.
+Review and merge this diagnostic PR before GPU execution.
+
+The image-only runner is `scripts/stability_probe.py`; `scripts/stability.sbatch` verifies
+the SIF and launches it on one allocated GPU. Supply `FM_WORKSPACE`, `FM_IMAGE`, `FM_DATA_DIR`,
+`FM_OUTPUT_ROOT` and `FM_BENCHMARK_REVISION` externally, with a scripts/data-only workspace
+from the merged commit and a separate output root. Submit cases 0–11 with `FIRST_CASE=0`,
+`PACK=1`, `--array=0-11%3`; submit cases 12–26 with `FIRST_CASE=12`, `PACK=3`,
+`--cpus-per-task=12`, `--array=0-4%1`. These limits add at most four GPUs. Grouped packing
+uses the already measured three-process calibration; scalar-token legacy remains unpacked.
+Each `probe_done.json` stores diagnostics and hashes for every best, last and end checkpoint.
+Per-stage CSV logs retain training/validation losses; the Lightning files retain optimizer
+learning rates and callback scores. Continuation still uses the end-of-stage weights to match
+the baseline: saving a best checkpoint does not itself change the continuation algorithm.
+
 Status: core encoder PR [#69](https://github.com/TsumiNa/foundation_model/pull/69) squash-merged
 as `950012a581d838601530eb200edb9572862457aa`; package 0.5.0 ARM image published and verified
 on RIKYU. The benchmark is the second implementation PR. No scientific GPU job has started.
