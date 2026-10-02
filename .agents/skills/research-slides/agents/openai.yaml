@@ -1,0 +1,4 @@
+interface:
+  display_name: "Research Slides"
+  short_description: "Clear scientific slides with readable, qualified evidence"
+  default_prompt: "Use $research-slides with the available presentation skill to create or revise a scientific results deck."
