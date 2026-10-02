@@ -13,6 +13,7 @@ import torch
 from foundation_model.workflows._engine import build_empty_model, build_head_config
 from foundation_model.workflows._sections import build_model_section, build_training_section
 from foundation_model.workflows.pretrain import build_pretrain_config
+from foundation_model.workflows.predict import build_predict_config
 from foundation_model.workflows.recording import load_checkpoint_state
 from foundation_model.workflows.task_catalog import TaskCatalog, build_task_catalog_config
 
@@ -21,6 +22,7 @@ from benchmark import (
     SOURCE_TASKS,
     composition_metrics,
     initialize_target,
+    inference_raw,
     load_protocol,
     workflow_config,
     write_toml,
@@ -163,3 +165,11 @@ def test_functional_batch_cap_does_not_modify_scientific_protocol(data_dir):
     manifest["functional_smoke"] = True
     path.write_text(json.dumps(manifest))
     assert workflow_config(PROTOCOL, data_dir, "mlp_tuned", 0)["data"]["batch_size"] == 16
+
+
+@pytest.mark.parametrize("training_accelerator,expected", [("gpu", "auto"), ("cpu", "cpu")])
+def test_inference_uses_supported_accelerator_vocabulary(data_dir, tmp_path, training_accelerator, expected):
+    raw = workflow_config(PROTOCOL, data_dir, "grouped_concat", 0, target="dielectric_total")
+    raw["training"]["accelerator"] = training_accelerator
+    predicted = inference_raw(raw, "dielectric_total", tmp_path / "model.pt", tmp_path / "pred", "val")
+    assert build_predict_config(predicted).accelerator == expected

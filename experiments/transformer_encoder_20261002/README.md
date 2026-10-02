@@ -5,6 +5,18 @@ as `950012a581d838601530eb200edb9572862457aa`; package 0.5.0 ARM image published
 on RIKYU. The benchmark is the second implementation PR. No scientific GPU job has started.
 This document does not report a Transformer improvement.
 
+Execution update (2026-10-03 JST): benchmark PR [#70](https://github.com/TsumiNa/foundation_model/pull/70)
+squash-merged as `c15ca0ed5a956d75d7b81cc9665fe4e8afd1867b` after all review findings were
+addressed. The final 34 focused tests passed, along with Ruff, package-wide mypy and the complete
+local smoke (seven source stages and 28 target fits, two actual epochs each, both inverse paths).
+A completed-source CLI resume probe also passed without retraining. RIKYU GPU smoke array
+`161531` was submitted from an isolated scripts/data workspace on group storage, using only the
+verified 0.5.0 image. Packing calibration and scientific results remain pending GPU smoke.
+GPU smoke `161531` completed all seven source additions and the first target fit, then failed
+configuration validation because `fm predict` accepts `auto`/`cpu`, unlike training's `gpu`.
+Fix the experiment's prediction/inverse templates to use `auto` on allocated GPUs and validate
+both inference modes before retrying. The runtime package/image is unchanged.
+
 Reviewed repository commit: `d0234e451f0ab747f2ebe474a62f7b499f83bae3` (package 0.4.1). Research branch: `codex/transformer-research-20261002`.
 
 ## Approved execution amendments

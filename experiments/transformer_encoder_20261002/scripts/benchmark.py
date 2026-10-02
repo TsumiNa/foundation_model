@@ -263,7 +263,7 @@ def inference_raw(raw: dict[str, Any], target: str, checkpoint: Path, output: Pa
         "checkpoint": str(checkpoint),
         "tasks": [target],
         "split": split,
-        "accelerator": raw["training"]["accelerator"],
+        "accelerator": "cpu" if raw["training"]["accelerator"] == "cpu" else "auto",
         "seed": raw["training"]["seed"],
     }
     pred["output"] = {"dir": str(output)}
