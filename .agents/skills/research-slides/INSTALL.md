@@ -35,8 +35,8 @@ maintained source and verify the copy when updating it.
 
 ## Use
 
-- Codex: `Use $research-slides to prepare the experiment results presentation.`
-- Claude Code: `/research-slides Prepare the experiment results presentation.`
+- Codex: `Use $research-slides to prepare a presentation for the intended audience.`
+- Claude Code: `/research-slides Prepare a presentation for the intended audience.`
 
 Automatic selection remains enabled through the skill description. If the current
 session does not list a newly installed skill, start a fresh session or explicitly ask

@@ -1,85 +1,84 @@
-# Research-slide quality assurance
+# Presentation quality assurance
 
-Use the selected base presentation skill's file and rendering checks alongside the
-checks below. For review-only requests, apply the relevant content and visual checks
-within the requested scope using the supplied deck or renders. The full rendering and
-export checks below apply when creating or revising deliverables; new exports are not
-required just to provide review comments. Keep build notes and numerical reconciliation
-outside audience-facing slides. Validation proves what was actually checked, not that
-every application will render a file identically.
+Use the selected base presentation skill's file and rendering checks alongside these
+checks. For review-only requests, apply relevant content and visual checks within scope
+using the supplied deck or renders. Full rendering and export checks apply to created
+or revised deliverables; new exports are unnecessary just to provide review comments.
+Keep build notes and numerical reconciliation outside audience-facing slides. Validation
+proves what was checked, not that every application will render a file identically.
 
-## Before final export
+## Content and claims
 
-1. **Content coverage.** Compare the outline with the requested datasets, methods,
-   subjects, conditions, and review comments. Check definitions of target and units.
-   Preserve important paired-error plots. Keep raw and smoothed results identifiable.
-2. **Numerical reconciliation.** Recompute the displayed central summaries from the
-   saved metric tables using the documented aggregation order. Verify representative
-   heatmap cells and win counts, primary means, cited medians, subgroup results, and
-   all relative improvements that appear as claims. Use unrounded values for calculation.
-3. **Claim consistency.** Read each result title, its figure, caption, and conclusion
-   together. Check that they share the reference, metric, population, and sign convention.
-   Qualify "best" and "improves". Explain local-versus-global or mean-versus-median
-   differences when they could otherwise appear contradictory.
-4. **Scientific limitations.** Check independent sample counts, additional candidate
-   data or compute, the interpretation of spread, and whether a claimed causal effect
-   was actually tested. Do not label absence of a visible benefit as statistical equivalence.
+1. **Coverage and audience fit.** Compare the outline with the purpose, requested topics,
+   examples, and review comments. Check necessary definitions and units. Remove imposed
+   task-specific chapters that do not serve the subject or audience.
+2. **Source reconciliation.** Verify central facts against supplied sources. For numerical
+   material, recompute central summaries from source tables using the stated aggregation;
+   check representative cells, subgroup summaries, and claimed relative values. Calculate
+   from unrounded inputs.
+3. **Claim consistency.** Read each title, figure, caption, and conclusion together. Check
+   that reference, measure, population, and sign agree. Qualify "best" and "improves".
+   Explain local-versus-global or mean-versus-median differences that appear contradictory.
+4. **Limits of evidence.** Check independent sample counts, unequal conditions, the meaning
+   of spread, and whether a causal claim was tested. Do not mistake absence of a visible
+   benefit for statistical equivalence.
+
+Apply numerical checks only where relevant; a conceptual or qualitative presentation
+does not require invented metrics, error bars, or a data-analysis section.
 
 ## Visual inspection
 
-Render every final slide. A thumbnail contact sheet helps find inconsistent patterns,
-but inspect every slide at its intended reading size; inspect dense figures and equations
-at full resolution too. A geometry check alone cannot detect unreadable labels or bad
-font substitution.
+Render every final slide. Use a contact sheet to find inconsistent patterns, then inspect
+each slide at presentation scale without zooming. Inspect dense figures and equations
+at full resolution too, but do not use zoomed legibility as proof of projection readability.
+A geometry check alone cannot detect small labels or font substitution.
 
-Check:
+- Verify final embedded figure-text sizes, not just source plotting settings. Aim for
+  24–28 pt figure titles and 20–24 pt essential labels on a wide slide. Enlarge, simplify,
+  or split when needed; avoid shrinking labels or the main figure to accommodate prose.
+- Keep titles and explanations visibly separated from figures and their own headings.
+- Check text overflow, overlaps, bullet spacing, and hanging indents.
+- Verify mathematical glyphs, subscripts, micro prefixes, and units after export.
+- Preserve consistent colors, scales, and references when panels are split.
+- Explain coverage symbols, missing values, and error bars in readable legends.
+- Remove placeholders, clipped axes, stale captions, and unintended blank pages.
 
-- Titles and figure explanations have visible separation from the plots.
-- Essential labels, cell values, legends, and equations are readable without zooming.
-- Text does not overflow or overlap, and bullets have consistent spacing and hanging indents.
-- Mathematical glyphs, subscripts, micro symbols, and units render correctly.
-- Split panels keep consistent colors, scales, and reference definitions.
-- Coverage symbols and all error bars are understandable from their legends.
-- No template placeholders, clipped axes, stale captions, or unintended blank pages remain.
-
-Fix defects in the source and render the affected slides again. Complete the final
-file checks after the last edit. If all slides were inspected and only a small set
-changed, inspect that changed set again and check ordering, numbering, and file integrity
-across the full deck; do not repeat unrelated numerical work without a new concern.
+Fix defects in the source and render affected slides again. Complete final file checks
+after the last edit. If every slide was inspected and only a few changed, inspect those
+again and check order, numbering, and file integrity across the deck. Repeat numerical
+work only when a new change or concern affects it.
 
 ## PDF/PPTX parity and review comments
 
-If both formats are delivered, compare their slide count, order, titles, metrics, and
-revision. Prefer exporting the PDF from the final PPTX. If the build requires separate
-exports, explicitly check corresponding content and representative renders. Do not
-deliver a fresh PDF paired with an older PPTX.
+When both formats are delivered, compare slide count, order, titles, content, and revision.
+Prefer exporting the PDF from the final PPTX. For separate exports, check corresponding
+content and representative renders explicitly. A new PDF cannot be paired with a stale PPTX.
 
-For annotated reviews, keep a compact mapping from original slide/page and comment to
-the implemented change and new slide/page. Distinguish a figure's data from its layout
-when deciding whether a numerical recheck is needed. When a comment says "all slides,"
-apply the correction throughout the deck. Preserve an identifiable pre-review version.
+Map each original page and review comment to its implemented change and new page.
+Distinguish data changes from layout changes when deciding whether to recheck numbers.
+Apply "all slides" comments throughout the deck and preserve a pre-review version.
 
 ## Behavioral checks for this skill
 
-Use these small scenarios when evaluating changes to the instructions. Do not retrain
-models or produce a whole demonstration deck merely to run them.
+Use these scenarios to assess instruction changes. A full demonstration deck or new
+domain analysis is unnecessary merely to evaluate the skill.
 
 | Scenario | Expected decision |
 | --- | --- |
-| Three of four task effects are positive, but one large degradation makes their mean negative | Show local benefits and the worse aggregate error; do not declare the candidate globally superior |
-| A coverage matrix contains one file per measured condition | Use availability encoding or explicitly label file counts; explain selected conditions |
-| Four heatmaps have illegible labels | Split panels across slides with shared scales instead of shrinking labels |
-| A box plot includes mean, median, IQR, and whiskers | Define each encoding in a readable caption separated from the plot title |
-| A conclusion cites a percent improvement with no denominator | Define the reference and aggregation before presenting that percentage |
-| Prediction bands come from ten pretrained checkpoints | Describe checkpoint dispersion, not a calibrated confidence or prediction interval |
-| A scaling-law section contains only seven training sizes and no fitted law | Use the preferred section title but explain that the evidence is empirical learning curves |
-| The audience has not heard of an internal dataset acronym | Use an understandable dataset name and introduce only necessary abbreviations |
-| The user asks why two slides differ | Inspect and answer; do not change the deck without an editing request |
-| A new machine has no native presentation skill | Use available tools, preserve the same content rules, and state any unverified export or render |
+| A proposal or tutorial contains no experimental results | Build sections around its purpose; do not impose an experiment-report outline |
+| Three of four effects are positive, but the mean is negative | Explain frequent local benefits and the worse aggregate result |
+| A coverage matrix repeats unexplained `1` values | Encode availability or explicitly define counts and highlights |
+| Large source-chart labels become small when embedded | Enlarge or re-export at final slide size; simplify or split before shrinking essential text |
+| Four heatmaps have illegible labels | Split panels across slides while retaining comparable scales |
+| A box plot mixes mean, median, IQR, and whiskers | Define encodings in a readable caption with space around the title |
+| A conclusion cites a percentage with no denominator | Define reference, aggregation, and sign before the percentage |
+| A band shows variation across repeated runs | Identify descriptive dispersion unless calibrated uncertainty was actually evaluated |
+| The audience does not know an internal acronym | Use an understandable name and define only necessary abbreviations |
+| The user asks why two slides differ | Inspect and answer; do not edit without an editing request |
+| No suitable base presentation skill is installed | Use available tools and accurately identify unverified exports or renders |
 
 ## Delivery status
 
-Report only material unresolved issues. Do not claim PowerPoint was inspected unless
-it was opened there. Do not claim all-page visual checks, numerical validation, or
-cross-format parity if they were not completed. Return the requested final artifacts;
-temporary renders, private checks, and installation metadata are not presentation content.
+Report material unresolved issues. Do not claim PowerPoint inspection unless it was
+opened there, or all-slide checks, source reconciliation, or format parity unless done.
+Return requested artifacts; temporary renders and installation metadata are not deck content.
