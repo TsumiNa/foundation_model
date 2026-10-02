@@ -54,7 +54,7 @@ for ((offset=0; offset<PACK; offset++)); do
             "$FM_IMAGE" python "$EXP/scripts/run_lane.py" "${ARGS[@]}" --arm "$arm" --seed "$seed"
         if [[ ${INVERSE_SMOKE:-0} = 1 ]]; then
             "$APPTAINER" exec --nv --cleanenv --bind "$FM_WORKSPACE:$FM_WORKSPACE" \
-                --env "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0},OMP_NUM_THREADS=$THREADS,OPENBLAS_NUM_THREADS=$THREADS,MPLCONFIGDIR=/tmp/fm-mpl-$SLURM_JOB_ID-$index" \
+                --env "SLURM_JOB_ID=$SLURM_JOB_ID,CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0},OMP_NUM_THREADS=$THREADS,OPENBLAS_NUM_THREADS=$THREADS,MPLCONFIGDIR=/tmp/fm-mpl-$SLURM_JOB_ID-$index" \
                 "$FM_IMAGE" python "$EXP/scripts/inverse_smoke.py" --protocol "$PROTOCOL" --data-dir "$FM_DATA_DIR" \
                 --arm "$arm" --checkpoint "$FM_OUTPUT_ROOT/${arm}_s${seed}/targets/dielectric_total_f100_k${SOURCE_COUNT}_full/training/final_model.pt" \
                 --output "$FM_OUTPUT_ROOT/${arm}_s${seed}/inverse"
