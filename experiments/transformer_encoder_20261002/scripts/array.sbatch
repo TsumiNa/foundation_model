@@ -10,7 +10,8 @@
 # Submit from a directory for this campaign's Slurm logs. Account comes from sbatch --account.
 # Required exported values: FM_WORKSPACE, FM_IMAGE, FM_WORKLIST, FM_DATA_DIR, FM_OUTPUT_ROOT,
 # FM_BENCHMARK_REVISION. Optional: PACK (default 1), SOURCE_COUNT (7), MAX_EPOCHS,
-# SOURCE_ONLY (0), INVERSE_SMOKE (0). No source package is bound into the image.
+# SOURCE_ONLY (0), INVERSE_SMOKE (0), FM_PROTOCOL (initial screen by default).
+# No source package is bound into the image.
 set -euo pipefail
 module purge
 module load nvhpc
@@ -25,7 +26,8 @@ SOURCE_COUNT=${SOURCE_COUNT:-7}
 [[ $FM_WORKSPACE = /* && $FM_DATA_DIR = "$FM_WORKSPACE"/* && $FM_OUTPUT_ROOT = "$FM_WORKSPACE"/* ]] || exit 2
 [[ ! -d "$FM_WORKSPACE/src/foundation_model" ]] || { echo "FAIL stage a scripts/data workspace only"; exit 2; }
 EXP="$FM_WORKSPACE/experiments/transformer_encoder_20261002"
-PROTOCOL="$EXP/configs/protocol.toml"
+PROTOCOL=${FM_PROTOCOL:-"$EXP/configs/protocol.toml"}
+[[ $PROTOCOL = "$FM_WORKSPACE"/* && -f $PROTOCOL ]] || exit 2
 EXPECTED=$($APPTAINER exec --cleanenv --bind "$FM_WORKSPACE:$FM_WORKSPACE" "$FM_IMAGE" python -c \
     'import sys,tomllib; print(tomllib.load(open(sys.argv[1],"rb"))["benchmark"]["sif_sha256"])' "$PROTOCOL")
 FM_SIF_SHA256=$(sha256sum "$FM_IMAGE" | cut -d ' ' -f 1)
