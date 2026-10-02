@@ -5,9 +5,11 @@ The repository's `.claude/skills/research-slides` is a relative directory symlin
 so a clone contains one set of instructions for both agents. Commit both the canonical
 folder and that symlink when publishing this change.
 
-For this local machine, personal installations in `~/.codex/skills/research-slides`
-and `~/.claude/skills/research-slides` link to that same canonical directory. Editing
-the repository skill therefore updates both installations without a copy step.
+The personal Codex installation belongs in
+`${CODEX_HOME:-$HOME/.codex}/skills/research-slides` (normally
+`~/.codex/skills/research-slides`); Claude Code uses `~/.claude/skills/research-slides`.
+On the machine where this skill was created, both link to the canonical repository
+directory. Editing it therefore updates both installations without a copy step.
 The directory and supporting references must remain together.
 
 ## Install on another machine
@@ -16,8 +18,9 @@ From the repository root, when no personal skill of this name is already install
 
 ```sh
 skill_dir="$(pwd)/.agents/skills/research-slides"
-mkdir -p "$HOME/.codex/skills" "$HOME/.claude/skills"
-ln -s "$skill_dir" "$HOME/.codex/skills/"
+codex_skills_dir="${CODEX_HOME:-$HOME/.codex}/skills"
+mkdir -p "$codex_skills_dir" "$HOME/.claude/skills"
+ln -s "$skill_dir" "$codex_skills_dir/"
 ln -s "$skill_dir" "$HOME/.claude/skills/"
 ```
 
