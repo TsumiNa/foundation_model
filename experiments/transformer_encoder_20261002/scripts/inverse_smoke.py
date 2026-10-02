@@ -34,7 +34,7 @@ if __name__ == "__main__":
         "lr": 0.01,
         "animation_formats": [],
         "record_trajectory": True,
-        "accelerator": "cpu" if args.cpu_smoke else "gpu",
+        "accelerator": "cpu" if args.cpu_smoke else "auto",
         "seeds": {"strategy": "random", "n": 2, "split": "train"},
         "scenarios": [{"name": "dielectric_high", "targets": [{"task": "dielectric_total", "direction": "high"}]}],
         "paths": [
