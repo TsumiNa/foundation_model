@@ -74,8 +74,11 @@ Conventions:
 - Variables are italic where mathematically appropriate. Units, descriptive subscripts,
   method names, and operators are upright.
 - Use real subscripts and superscripts in formulas, axis labels, and chemical compositions.
-- Use the correct micro symbol and a space between compound units, for example
-  \(\mu\Omega\,\mathrm{cm}\), \(T\,[\mathrm{K}]\), and \(p\,[\mathrm{GPa}]\).
+- Use an upright micro prefix and upright unit symbols. For LaTeX with the
+  [upgreek](https://ctan.org/pkg/upgreek) package, write
+  \(\upmu\Omega\,\mathrm{cm}\). In native equations or another renderer, choose an
+  equivalent supported upright glyph and verify it after export. Keep a space between
+  compound units and other units upright, as in \(T\,[\mathrm{K}]\) and \(p\,[\mathrm{GPa}]\).
 - Keep mathematical symbols on a compatible baseline within surrounding text. Avoid
   broken fallback glyphs, cramped fractions, and equation images with excessive margins.
 - Definitions belong near the first use of a symbol or a relative metric. A distant
