@@ -7,7 +7,7 @@ count for the approved encoder variants. Source training accuracy is a diagnosti
 
 ## Scope
 
-- Experiment-owned preprocessing with composition-level train/validation/test separation,
+- Preprocessing in `data/scripts` following the user's shared-data convention, with composition-level train/validation/test separation,
   training-only fitted scalers, date-suffixed Parquet data and provenance manifests.
 - Eight encoder variants, three paired seeds, source checkpoints at 1/3/7 tasks, two held-out
   target tasks, two target-label budgets, and scratch/frozen/full fine-tuning comparisons.

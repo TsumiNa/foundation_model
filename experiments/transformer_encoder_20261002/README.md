@@ -1,8 +1,9 @@
 # Transformer encoder investigation — 2026-10-02
 
-Status: core encoder implementation and local checks complete; PR/release gate in progress.
-The benchmark runner is a subsequent PR. No new model has been trained on RIKYU. This document
-does not report a Transformer improvement.
+Status: core encoder PR [#69](https://github.com/TsumiNa/foundation_model/pull/69) squash-merged
+as `950012a581d838601530eb200edb9572862457aa`; package 0.5.0 ARM image published and verified
+on RIKYU. The benchmark is the second implementation PR. No scientific GPU job has started.
+This document does not report a Transformer improvement.
 
 Reviewed repository commit: `d0234e451f0ab747f2ebe474a62f7b499f83bae3` (package 0.4.1). Research branch: `codex/transformer-research-20261002`.
 
@@ -33,6 +34,108 @@ in accumulated continual-training compute; report that cost rather than attribut
 solely to task diversity. Source/target physical relationships are intentional transfer signals;
 power factor is related to source thermoelectric properties, whereas dielectric total probes a
 different property family.
+
+## First-round execution
+
+The canonical protocol is `configs/protocol.toml`. Its 24 source trajectories yield 576 transfer
+fits (8 encoders × 3 seeds × 3 source counts × 2 targets × 2 budgets × 2 fine-tuning modes)
+and 96 independent target-training fits: **672 target fits**. Each source trajectory introduces
+seven tasks; it is not a single-task training run. The larger MLP approximately matches concat's
+encoder parameter count. Feature and grouped tokenizers use the same modern attention backbone;
+the grouped token-wise feed-forward control removes attention. Latent width, target heads and
+the reconstruction decoder are identical across arms.
+
+This is a fixed-hyperparameter first screen, not the larger validation search proposed below.
+MLP encoder LR is 0.002; Transformer encoder LR is 0.0003; full fine-tuning uses one tenth of
+the corresponding source encoder LR. Target-head initialization is paired by target and seed
+across source counts and training modes. Architecture-specific optimizer settings and the
+three-seed budget limit the conclusions. Source accuracy cannot decide the winner.
+
+By the user's shared-data convention, preprocessing lives in
+`data/scripts/process_transformer_transfer_data_20261002.py`; its date-suffixed Parquets,
+scalers and manifest live under `data/transformer_transfer_20261002/`. Other experiment-owned
+code stays in this folder. Atomic-fraction aliases inherit the strictest split (test > val >
+train); first records are retained without merging phases. Invalid compositions outside the
+94-element vocabulary are excluded. Source data excludes global test compositions and both
+held-out target columns. Affine target transforms are fitted on each selected training subset
+only and inverted for physical-unit scoring. Existing interpolated temperature grids are
+retained; no additional smoothing is applied. The manifest records source/data/scaler hashes,
+descriptor order, subset membership and the split audit.
+
+Local preparation and validation:
+
+```bash
+uv run python data/scripts/process_transformer_transfer_data_20261002.py
+uv run pytest data/scripts/process_transformer_transfer_data_20261002_test.py \
+  experiments/transformer_encoder_20261002/scripts/benchmark_test.py \
+  experiments/transformer_encoder_20261002/scripts/make_worklist_test.py \
+  experiments/transformer_encoder_20261002/scripts/make_smoke_data_test.py \
+  experiments/transformer_encoder_20261002/scripts/run_lane_test.py \
+  experiments/transformer_encoder_20261002/analysis/collect_test.py
+uv run python experiments/transformer_encoder_20261002/scripts/make_smoke_data.py \
+  --data-dir data/transformer_transfer_20261002 --output data/transformer_transfer_smoke_20261002
+uv run python experiments/transformer_encoder_20261002/scripts/make_worklist.py \
+  --protocol experiments/transformer_encoder_20261002/configs/protocol.toml \
+  --output experiments/transformer_encoder_20261002/artifacts/worklists/main.tsv
+```
+
+After this PR is reviewed and merged, stage only this experiment's scripts/configs and prepared
+data into an isolated RIKYU workspace. Do not bind `src/` or set `PYTHONPATH`. Export runtime
+values `FM_WORKSPACE`, `FM_IMAGE`, `FM_WORKLIST`, `FM_DATA_DIR`, `FM_OUTPUT_ROOT`,
+`FM_BENCHMARK_REVISION` (merged benchmark commit), and supply the account outside Git.
+The image URI/revision and verified SIF hash are registered in the protocol. `array.sbatch`
+verifies that exact SIF; workers enforce ARM, the installed package version/path, one allocated
+CUDA GPU, dataset/scaler checksums and an unchanged lane identity on resume.
+The protocol also pins the scientific data-manifest checksum. Collection checks this hash,
+the complete protocol checksum and one common benchmark revision across all lanes.
+
+Submit `scripts/array.sbatch` from a campaign log directory using `sbatch --account=...`.
+Pass `PACK` explicitly and size the array to `ceil(number_of_lanes / PACK)`; adjacent lanes
+run concurrently on one GPU. The script defaults to 8 CPUs/GPU, below the enforced 32-CPU cap.
+Completed target fits are skipped; unfinished source pretraining resumes from its workflow
+checkpoints. Source checkpoints and representative target checkpoints are retained; all
+validation/test predictions survive. Do not use the same output root for different modes,
+protocols, epoch caps or dataset manifests.
+
+Before the scientific fleet, run one allocated-GPU 400-record functional fixture with
+`MAX_EPOCHS=2`, `SOURCE_COUNT=7`, `INVERSE_SMOKE=1`, `PACK=1`, one grouped-concat/seed-0 lane
+and a separate smoke output root. This exercises all seven source additions, replay, frozen/full
+transfer, prediction, and latent/composition inverse.
+The fixture uses batch size 16 so its 32-row low-budget training sets produce real optimizer
+updates despite `drop_last`; zero-epoch source stages and target fits are rejected.
+Then calibrate representative MLP,
+legacy scalar-token, feature-token and grouped workloads: source-only (`SOURCE_ONLY=1`,
+`SOURCE_COUNT=1`) on full data for paired seeds 0/1, unpacked first, packed reruns into separate
+roots. Use `sacct --format=JobID,Elapsed,AllocTRES,TRESUsageInAve,TRESUsageInMax,ExitCode -P`
+to measure utilization, memory and billed allocation time. Choose packing from measured
+throughput and contention; previous MLP packing factors are not transferable evidence.
+
+Mirror finished outputs continuously with rsync (routine mirrors exclude `*.pt`, lightning
+logs and smoke roots), then collect partial or complete results locally:
+
+```bash
+uv run python experiments/transformer_encoder_20261002/analysis/collect.py \
+  --root experiments/transformer_encoder_20261002/artifacts/scientific \
+  --protocol experiments/transformer_encoder_20261002/configs/protocol.toml \
+  --output experiments/transformer_encoder_20261002/results
+```
+
+The collector refuses functional/CPU/epoch-capped runs. RMSE averages squared error within each
+composition, averages across compositions, then takes the square root. Relative change is
+`100 × (transfer RMSE / paired same-encoder scratch RMSE − 1)`; negative values favor transfer.
+Also compare against the tuned MLP scratch baseline. Source-count plots show mean ± sample SD
+across paired seeds, with counts identifying partial groups. These bars are not predictive
+uncertainty. The source-count comparison also changes accumulated compute; it does not establish
+a universal scaling law. Test results are confirmation of the fixed protocol; later tuning must
+use validation only, followed by a fresh-seed confirmation. Generated artifacts/results remain
+untracked and travel through rsync, not Git.
+
+Execution log: 2026-10-02/03 — PR #69 reviewed and merged; ARM 0.5.0 image pulled and checked
+against its OCI revision/version labels and SIF SHA256. Local concat functional checks passed
+pretraining, scalar/function scratch/frozen/full fits, prediction, and both inverse paths.
+Allocated-GPU smoke, packing calibration and scientific results remain pending the benchmark PR.
+Smoke log audit caught a zero-training low-budget fixture at batch 128; reduce only functional
+fixtures to batch 16 and rerun. Scientific low-budget subsets exceed batch 128.
 
 The original sections below describe the reviewed base commit and broader research proposal;
 they are not a claim that the new implementation or campaign has already completed. Current
