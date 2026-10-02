@@ -109,7 +109,7 @@ def workflow_config(
     if mode not in {"source", "scratch", "frozen", "full"}:
         raise ValueError("Unknown training mode")
     entry = dict(arms[arm])
-    encoder_lr = entry.pop("encoder_lr")
+    encoder_lr = entry.pop("encoder_lr") * (0.1 if mode in {"frozen", "full"} else 1)
     manifest = json.loads((data_dir / f"manifest_{DATE}.json").read_text())
     raw: dict[str, Any] = {
         "data": {
@@ -128,12 +128,13 @@ def workflow_config(
             "accelerator": "gpu",
             "devices": 1,
             "max_epochs": config.max_epochs,
-            "encoder_lr": encoder_lr * (0.1 if mode in {"frozen", "full"} else 1),
+            "encoder_lr": encoder_lr,
             "head_lr": 0.002,
             "kr_lr": 0.0005,
             "ae_lr": 0.001,
             "early_stopping": {"patience": config.patience, "min_delta": 1e-4},
-            "scheduler": {"min_lr": 1e-6},
+            # Preserve the initial screen's floor; permit decay for smaller tuned LRs.
+            "scheduler": {"min_lr": min(1e-6, encoder_lr / 10)},
             "logging": {"csv": True},
         },
     }

@@ -1,5 +1,37 @@
 # Transformer encoder investigation — 2026-10-02
 
+## Full-budget concat confirmation (2026-10-03)
+
+All 27 short stability trajectories completed successfully. Lowering concat's encoder learning
+rate from 3e-4 to 1e-5 removed catastrophic loss growth in all three seeds over the three-task,
+12-epoch-per-task diagnostic. At task 3, the mean fraction of latent dimensions with variance
+below 1e-6 on the fixed stratified validation probe was 1.04%, versus 20.23% at 3e-5 and 100%
+at 3e-4. Mean final validation loss was 2.35 at 1e-5; the matched grouped-CLS short-run control
+was 2.42. These source losses do not establish a downstream transfer improvement. Legacy CLS
+remained poorly optimized across the tested rates, with very small between-composition variance.
+
+`configs/concat_confirmation.toml` registers a separate full-budget confirmation of concat at
+1e-5, selected using source validation loss and representation diagnostics only. It preserves
+the main screen's data, three seeds, architecture, heads, seven source tasks, stopping rules,
+1/3/7 checkpoints, target budgets and scratch/frozen/full comparisons: three trajectories and
+84 target fits. All task-end checkpoints remain available. Continuation and transfer still use
+task-end weights, matching the main protocol; the short diagnostic alone saves best/last files.
+
+Full fine-tuning retains the existing 0.1 encoder-LR multiplier, giving 1e-6. Its scheduler floor
+must therefore fall below the original 1e-6 floor. The experiment template uses
+`min(1e-6, effective_encoder_lr / 10)`: 1e-6 for source/scratch and 1e-7 for frozen/full in this
+confirmation. This is a global floor for all optimizer groups because the CLI exposes a common
+floor; disclose it alongside the learning rate. Every original screen configuration keeps its
+previous floor and learning rates. No production-package or image change is required.
+
+After review and merge, launch `scripts/array.sbatch` with `FM_PROTOCOL` pointing to the merged
+confirmation TOML and a separate scripts/data workspace and output root. Generate a worklist
+from that protocol; the existing calibrated PACK=3 uses one GPU for its three seeds. First run
+an image-only two-epoch functional check through all seven source stages, all target modes,
+prediction and both inverse paths. Never mix that smoke or the 12-epoch diagnostic into formal
+results. Collect the 84 fits with the confirmation protocol, then compare explicitly against
+the matched main-screen controls; preserve campaign identities rather than pooling them.
+
 ## Optimization-stability diagnostic (2026-10-03)
 
 The first screen exposed severe grouped-concat instability across all three seeds, including

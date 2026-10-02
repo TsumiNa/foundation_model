@@ -1,0 +1,32 @@
+# Validation-selected concat learning rate; full-budget confirmation, separate campaign.
+[benchmark]
+seeds = [0, 1, 2]
+source_counts = [1, 3, 7]
+fractions = [0.1, 1.0]
+max_epochs = 250
+patience = 20
+batch_size = 128
+package_version = "0.5.0"
+image_revision = "950012a581d838601530eb200edb9572862457aa"
+image_uri = "docker://ghcr.io/tsumina/foundation_model:rikyu-sha-950012a581d838601530eb200edb9572862457aa"
+sif_sha256 = "32b1a938c226e116a8b7c374e27f5ca8211b8d87c9641baf7c5d23fe4d547ce0"
+data_manifest_sha256 = "504b124d1c3438f783390598d7b0b8a666fb65628aa85813024f604e4f9c1394"
+
+[model]
+latent_dim = 384
+autoencoder_hidden_dims = [256]
+head_hidden_dims = [128, 64]
+kr_x_hidden_dims = [256, 128]
+kr_t_hidden_dims = [16, 8]
+n_kernel = 15
+
+[encoders.grouped_concat]
+encoder_lr = 0.00001
+encoder_type = "transformer"
+[encoders.grouped_concat.transformer]
+d_model = 192
+num_layers = 4
+nhead = 6
+tokenization = "grouped"
+group_size = 8
+pooling = "concat"

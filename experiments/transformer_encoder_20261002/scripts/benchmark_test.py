@@ -71,6 +71,27 @@ def test_registered_encoders_build_and_workflow_toml_roundtrips(data_dir, tmp_pa
         assert cfg.model.latent_dim == 384
 
 
+@pytest.mark.parametrize("mode", ["source", "scratch", "frozen", "full"])
+def test_concat_confirmation_retains_optimizer_decay_and_original_screen(data_dir, mode):
+    confirmation = PROTOCOL.with_name("concat_confirmation.toml")
+    settings, model, arms = load_protocol(confirmation)
+    base_settings, base_model, base_arms = load_protocol(PROTOCOL)
+    assert settings == base_settings and model == base_model
+    assert list(arms) == ["grouped_concat"]
+    assert arms["grouped_concat"] == {**base_arms["grouped_concat"], "encoder_lr": 1e-5}
+    kwargs = {} if mode == "source" else {"target": "dielectric_total"}
+    raw = workflow_config(confirmation, data_dir, "grouped_concat", 0, mode=mode, **kwargs)
+    training = build_training_section(raw["training"])
+    expected_lr = 1e-6 if mode in {"frozen", "full"} else 1e-5
+    assert training.encoder_lr == pytest.approx(expected_lr)
+    assert training.scheduler.min_lr == pytest.approx(expected_lr / 10)
+    # Validate the actual optimizer config, whose floor must be strictly below its LR.
+    training.optimizer_config(lr=training.encoder_lr, weight_decay=training.encoder_weight_decay)
+    for arm in base_arms:
+        original = workflow_config(PROTOCOL, data_dir, arm, 0, mode=mode, **kwargs)
+        assert original["training"]["scheduler"]["min_lr"] == 1e-6
+
+
 def test_target_head_initialization_is_identical_for_scratch_and_different_source_counts(data_dir, tmp_path):
     raw = workflow_config(PROTOCOL, data_dir, "mlp_tuned", 0, target="dielectric_total")
     raw["model"] = {
