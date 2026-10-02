@@ -3,6 +3,8 @@
 
 """Feature tokenization, pooling and differentiable encoder contracts."""
 
+import pickle
+
 import pytest
 import torch
 
@@ -157,6 +159,14 @@ def test_full_model_preserves_modern_encoder_xavier_initialization():
 def test_shared_sinusoidal_encoder_supports_odd_valid_width():
     encoder = FoundationEncoder(TransformerEncoderConfig(input_dim=4, d_model=9, nhead=3))
     assert encoder(torch.ones(2, 4)).shape == (2, 9)
+
+
+def test_old_pickled_mean_pooling_config_keeps_original_output_shape():
+    config = TransformerEncoderConfig(input_dim=4, d_model=8, nhead=2, use_cls_token=False)
+    # Version 0.4.x pickles contain use_cls_token, but not the new pooling field.
+    del config.pooling
+    restored = pickle.loads(pickle.dumps(config))
+    assert FoundationEncoder(restored)(torch.ones(2, 4)).shape == (2, 8)
 
 
 @pytest.mark.parametrize("shape", [(2, 11), (2, 3, 4)])

@@ -297,7 +297,10 @@ class FoundationEncoder(nn.Module):
                     dropout=encoder_config.dropout,
                     use_cls_token=encoder_config.use_cls_token,
                     apply_layer_norm=encoder_config.apply_layer_norm,
-                    pooling=EncoderPooling(encoder_config.pooling or EncoderPooling.CLS),
+                    pooling=EncoderPooling(
+                        encoder_config.pooling
+                        or (EncoderPooling.CLS if encoder_config.use_cls_token else EncoderPooling.MEAN)
+                    ),
                     output_dim=encoder_config.output_dim,
                     norm_first=bool(encoder_config.norm_first),
                     activation=EncoderActivation(encoder_config.activation or EncoderActivation.RELU).value,
