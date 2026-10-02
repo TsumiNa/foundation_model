@@ -33,6 +33,7 @@ from .components.foundation_encoder import FoundationEncoder
 from .model_config import (
     BaseEncoderConfig,
     ClassificationTaskConfig,
+    FeatureTokenization,
     KernelRegressionTaskConfig,
     MLPEncoderConfig,
     OptimizerConfig,
@@ -139,6 +140,7 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
         # AutoEncoder head
         enable_autoencoder: bool = False,
         autoencoder_nonnegative: bool = False,
+        autoencoder_hidden_dims: Sequence[int] | None = None,
     ):
         super().__init__()
         # logger=False: saves all hparams to checkpoint (pickle, not OmegaConf) but skips
@@ -175,8 +177,17 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
                     f"Task name '{_AE_NAME}' is reserved for the built-in autoencoder head; "
                     "rename the conflicting task."
                 )
+            if autoencoder_hidden_dims is not None and any(
+                isinstance(dim, bool) or not isinstance(dim, int) or dim <= 0 for dim in autoencoder_hidden_dims
+            ):
+                raise ValueError("autoencoder_hidden_dims must contain positive integers")
+            ae_dims = (
+                self._derive_ae_dims(self.encoder_config)
+                if autoencoder_hidden_dims is None
+                else ([self.latent_dim, *autoencoder_hidden_dims, self.encoder_config.input_dim])
+            )
             ae_cfg = _AEConfig(
-                dims=self._derive_ae_dims(self.encoder_config),
+                dims=ae_dims,
                 nonnegative=autoencoder_nonnegative,
             )
             self.task_configs.append(ae_cfg)
@@ -661,9 +672,18 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
                 p.requires_grad_(False)
 
         # Initialize weights
+        config = self.encoder.encoder_config
+        modern_encoder_modules = (
+            set(self.encoder.modules())
+            if isinstance(config, TransformerEncoderConfig) and config.tokenization is not FeatureTokenization.SHARED
+            else set()
+        )
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, nonlinearity="leaky_relu")
+                if m in modern_encoder_modules:
+                    nn.init.xavier_uniform_(m.weight)
+                else:
+                    nn.init.kaiming_normal_(m.weight, nonlinearity="leaky_relu")
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 

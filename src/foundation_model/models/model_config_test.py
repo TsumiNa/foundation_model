@@ -12,7 +12,34 @@ from foundation_model.models.model_config import (
     OptimizerConfig,
     RegressionTaskConfig,
     TaskType,
+    TransformerEncoderConfig,
 )
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"input_dim": 0}, "input_dim"),
+        ({"d_model": 9, "nhead": 2}, "divisible"),
+        ({"dropout": float("nan")}, "dropout"),
+        ({"dropout": 1.1}, "dropout"),
+        ({"output_dim": 0}, "output_dim"),
+        ({"tokenization": "grouped", "group_size": 5}, "divisible"),
+        ({"tokenization": "feature", "group_size": 2}, "group_size"),
+        ({"use_attention": False, "pooling": "cls", "tokenization": "feature"}, "CLS"),
+    ],
+)
+def test_transformer_options_reject_invalid_combinations(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        TransformerEncoderConfig(**({"input_dim": 12, "d_model": 8, "nhead": 2} | kwargs))
+
+
+def test_transformer_default_and_explicit_pooling_dimensions():
+    legacy = TransformerEncoderConfig(input_dim=12, d_model=8, nhead=2, use_cls_token=False)
+    assert legacy.pooling == "mean" and legacy.latent_dim == 8
+    modern = TransformerEncoderConfig(input_dim=12, d_model=8, nhead=2, pooling="concat", output_dim=6)
+    assert modern.pooling == "concat" and modern.latent_dim == 6
+
 
 # Subclasses whose extra positional fields all have defaults, so they can be built with
 # just ``name`` and exercise the inherited BaseTaskConfig.__post_init__.
@@ -93,6 +120,12 @@ def test_existing_construction_pattern_still_works():
     # New fields are inert for old-style configs.
     assert cfg.data_files == ()
     assert cfg.predict_idx is None
+
+
+@pytest.mark.parametrize("field", ["use_cls_token", "apply_layer_norm", "use_attention", "norm_first"])
+def test_transformer_rejects_string_booleans(field):
+    with pytest.raises(ValueError, match="must be a bool"):
+        TransformerEncoderConfig(input_dim=12, **{field: "false"})  # type: ignore[arg-type]
 
 
 # --- OptimizerConfig -------------------------------------------------------------------------

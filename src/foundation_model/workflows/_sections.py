@@ -11,6 +11,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from foundation_model.models.model_config import EncoderType, TransformerOptions
+
 if TYPE_CHECKING:
     from foundation_model.models.model_config import OptimizerConfig
 
@@ -132,13 +134,17 @@ class ModelSectionConfig:
     """
 
     latent_dim: int = 128
+    encoder_type: EncoderType | str = EncoderType.MLP
     encoder_hidden_dims: list[int] = field(default_factory=lambda: [256])
+    transformer: TransformerOptions = field(default_factory=TransformerOptions)
+    autoencoder_hidden_dims: list[int] | None = None
     head_hidden_dims: list[int] = field(default_factory=lambda: [64])
     kr_x_hidden_dims: list[int] = field(default_factory=lambda: [128, 64])
     kr_t_hidden_dims: list[int] = field(default_factory=lambda: [16, 8])
     n_kernel: int = 15
 
     def __post_init__(self) -> None:
+        self.encoder_type = EncoderType(self.encoder_type)
         validate_positive_int("model.latent_dim", self.latent_dim)
         validate_positive_int("model.n_kernel", self.n_kernel)
         # encoder_hidden_dims may be empty (a shallow descriptor_dim → latent_dim encoder); the head
@@ -147,6 +153,8 @@ class ModelSectionConfig:
         validate_hidden_dims("model.head_hidden_dims", self.head_hidden_dims)
         validate_hidden_dims("model.kr_x_hidden_dims", self.kr_x_hidden_dims)
         validate_hidden_dims("model.kr_t_hidden_dims", self.kr_t_hidden_dims)
+        if self.autoencoder_hidden_dims is not None:
+            validate_hidden_dims("model.autoencoder_hidden_dims", self.autoencoder_hidden_dims, allow_empty=True)
 
 
 @dataclass(kw_only=True)
@@ -335,7 +343,11 @@ class TrainingSectionConfig:
 def build_model_section(raw: Mapping[str, Any]) -> ModelSectionConfig:
     data = dict(raw)
     reject_unknown("model", data, set(ModelSectionConfig.__dataclass_fields__))
-    return ModelSectionConfig(**data)
+    transformer = dict(data.pop("transformer", {}))
+    reject_unknown("model.transformer", transformer, set(TransformerOptions.__dataclass_fields__))
+    if "transformer" in raw and data.get("encoder_type", "mlp") == "mlp":
+        raise ValueError("[model.transformer] requires model.encoder_type = 'transformer'")
+    return ModelSectionConfig(**data, transformer=TransformerOptions(**transformer))
 
 
 def build_training_section(raw: Mapping[str, Any]) -> TrainingSectionConfig:

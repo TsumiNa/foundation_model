@@ -13,7 +13,31 @@ from foundation_model.workflows._sections import (
     SchedulerSectionConfig,
     TrainingSectionConfig,
     build_training_section,
+    build_model_section,
 )
+
+
+def test_model_section_parses_nested_feature_encoder_and_common_decoder():
+    cfg = build_model_section(
+        {
+            "encoder_type": "transformer",
+            "latent_dim": 6,
+            "autoencoder_hidden_dims": [8],
+            "transformer": {"d_model": 8, "nhead": 2, "tokenization": "grouped", "group_size": 4, "pooling": "concat"},
+        }
+    )
+    assert cfg.transformer.pooling == "concat"
+    assert cfg.transformer.norm_first and cfg.transformer.activation == "gelu"
+    assert cfg.autoencoder_hidden_dims == [8]
+
+
+def test_model_section_rejects_unknown_or_ignored_transformer_settings():
+    with pytest.raises(ValueError, match="model.transformer.*typo"):
+        build_model_section({"encoder_type": "transformer", "transformer": {"typo": True}})
+    with pytest.raises(ValueError, match="requires"):
+        build_model_section({"transformer": {"d_model": 8}})
+    with pytest.raises(ValueError, match="requires"):
+        build_model_section({"transformer": {}})
 
 
 def test_defaults_preserve_the_previously_hardcoded_weight_decays():

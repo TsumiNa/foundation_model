@@ -137,11 +137,39 @@ above).
 | Key | Type | Default | Constraint | Description |
 |---|---|---|---|---|
 | `latent_dim` | int | `128` | positive int | Encoder output width = every head's input width. |
+| `encoder_type` | str | `"mlp"` | `mlp` / `transformer` | Select the shared encoder in every workflow. |
 | `encoder_hidden_dims` | list[int] | `[256]` | positive ints (may be empty) | Encoder hidden layers. Empty = a single `descriptor_dim → latent_dim` layer. |
+| `transformer` | table | defaults below | Transformer encoder only | Settings in `[model.transformer]`. |
+| `autoencoder_hidden_dims` | list[int] | `None` | positive ints (may be empty) | Explicit decoder hidden widths. Omitted: mirror MLP or direct Transformer decoder. Use the same widths for controlled comparisons. |
 | `head_hidden_dims` | list[int] | `[64]` | positive ints, non-empty | Default hidden layers for regression/classification heads. |
 | `kr_x_hidden_dims` | list[int] | `[128, 64]` | positive ints, non-empty | Default KR value-branch hidden layers. |
 | `kr_t_hidden_dims` | list[int] | `[16, 8]` | positive ints, non-empty | Default KR coordinate-branch hidden layers. |
 | `n_kernel` | int | `15` | positive int | Default number of KR Gaussian kernel centers. |
+
+### `[model.transformer]` — feature tokens and pooling
+
+This table requires `model.encoder_type = "transformer"`. The descriptor width is resolved from
+the data; the encoder output is projected to `model.latent_dim` when needed. Shared tokens retain
+the existing Python Transformer defaults. Feature/group tokens default to Pre-LayerNorm and GELU.
+Grouping operates on consecutive descriptor columns: for the default KMD, use `group_size = n_grids`
+and preserve the element-property/grid column ordering. Arbitrary precomputed descriptors need an
+explicit, documented grouping.
+
+| Key | Type | Default | Constraint | Description |
+|---|---|---|---|---|
+| `d_model` | int | `128` | positive, divisible by nhead | Token width. |
+| `num_layers` | int | `3` | positive int | Attention or token-wise feed-forward blocks. |
+| `nhead` | int | `4` | positive int | Attention heads. |
+| `dim_feedforward` | int | `None` | positive int | Hidden width; omitted means `4 * d_model`. |
+| `dropout` | float | `0.1` | finite, [0, 1] | Attention/feed-forward dropout. |
+| `use_cls_token` | bool | `true` | bool | Existing Python option; used if pooling is omitted. |
+| `apply_layer_norm` | bool | `true` | bool | Final normalization. |
+| `tokenization` | str | `"shared"` | shared / feature / grouped | Shared scalar projection with sinusoidal positions, independent scalar projections, or independent group projections. |
+| `group_size` | int | `1` | divides descriptor width; 1 outside grouped mode | Consecutive scalar values per group token. |
+| `pooling` | str | `None` | cls / mean / concat | Overrides use_cls_token. Concat concatenates all feature tokens and projects to latent_dim; there is no CLS token. |
+| `norm_first` | bool | `None` | bool | Omitted: false for shared tokens, true for feature/group tokens. |
+| `activation` | str | `None` | relu / gelu | Omitted: ReLU for shared tokens, GELU for feature/group tokens. |
+| `use_attention` | bool | `true` | feature/group mode if false | False selects a residual token-wise MLP control; CLS is invalid without attention. |
 
 ## `[training]` — optimization (pretrain + finetune only)
 

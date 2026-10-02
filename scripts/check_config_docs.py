@@ -9,8 +9,12 @@ a field as documented when its name merely appears in prose somewhere else, whic
     uv run python scripts/check_config_docs.py
 """
 
-import dataclasses, re, sys
+import dataclasses
+import re
+import sys
 from pathlib import Path
+
+from foundation_model.models.model_config import TransformerOptions
 from foundation_model.workflows import _sections as S
 from foundation_model.workflows import task_catalog as TC
 from foundation_model.workflows.pretrain import ReplayConfig
@@ -31,6 +35,7 @@ CHECKS = [
     (r"^## `\[data\]`", TC.DataConfig, set()),
     (r"^## `\[descriptor\]`", TC.DescriptorConfig, set()),
     (r"^## `\[model\]`", S.ModelSectionConfig, set()),
+    (r"^### `\[model\.transformer\]`", TransformerOptions, set()),
     (
         r"^## `\[training\]`",
         S.TrainingSectionConfig,

@@ -286,10 +286,28 @@ fm finetune --config samples/finetune_smoke.toml \
 `finetune.tasks`, keeping the built-in autoencoder head trainable; the loss-balancer scalars
 (`task_log_sigmas`) are frozen so the objective weighting can't drift.
 
-### Example 3 — Transformer encoder (model layer only, not selectable from TOML)
+### Example 3 — Transformer encoder
 
-`TransformerEncoderConfig` exists in the model layer and `FlexibleMultiTaskModel` accepts it, so
-it is reachable when constructing the model in Python:
+Select a feature-group Transformer through the same TOML configuration used by pretrain,
+finetune, predict and inverse:
+
+```toml
+[model]
+encoder_type = "transformer"
+latent_dim = 384
+autoencoder_hidden_dims = [256]
+
+[model.transformer]
+tokenization = "grouped"
+group_size = 8  # one eight-grid token per KMD element property
+d_model = 192
+nhead = 6
+num_layers = 4
+pooling = "concat"  # also "cls" or "mean"
+```
+
+Use this group size with a KMD descriptor configured with `n_grids = 8`. For independent scalar
+tokens, select `tokenization = "feature"` and omit `group_size`. The Python API remains available:
 
 ```python
 from foundation_model.models.model_config import TransformerEncoderConfig
@@ -303,9 +321,9 @@ encoder_config = TransformerEncoderConfig(
 Both `[CLS]` and mean-pooling aggregations keep every feature token in play for the supervised
 loss (gradients reach all tokens through self-attention).
 
-**The `fm` CLI cannot select it.** `[model]` describes an MLP encoder only — the workflow layer's
-`build_encoder_config` always returns an `MLPEncoderConfig` built from `encoder_hidden_dims` and
-`latent_dim`. Wiring the transformer through to TOML is unimplemented, not merely undocumented.
+Concat pooling preserves each token's position in the concatenated vector before a learned
+projection to the shared latent width. Use identical `autoencoder_hidden_dims` across encoder
+comparisons to keep reconstruction capacity fixed. The default encoder remains MLP.
 
 ### Example 4 — Scaling-law experiments
 

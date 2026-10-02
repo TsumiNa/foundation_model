@@ -7,6 +7,7 @@ Configuration classes for the foundation model.
 
 from dataclasses import dataclass, field
 from enum import Enum
+import math
 from typing import Any, List, Literal, Mapping, Optional, Sequence, Tuple
 
 
@@ -24,6 +25,25 @@ class EncoderType(str, Enum):
 
     MLP = "mlp"
     TRANSFORMER = "transformer"
+
+
+class FeatureTokenization(str, Enum):
+    """How descriptor values become tokens."""
+
+    SHARED = "shared"
+    FEATURE = "feature"
+    GROUPED = "grouped"
+
+
+class EncoderPooling(str, Enum):
+    CLS = "cls"
+    MEAN = "mean"
+    CONCAT = "concat"
+
+
+class EncoderActivation(str, Enum):
+    RELU = "relu"
+    GELU = "gelu"
 
 
 @dataclass(kw_only=True)
@@ -72,17 +92,14 @@ class MLPEncoderConfig(BaseEncoderConfig):
 
 
 @dataclass(kw_only=True)
-class TransformerEncoderConfig(BaseEncoderConfig):
-    """Configuration for the transformer foundation encoder.
+class TransformerOptions:
+    """Transformer settings that do not require the descriptor width.
 
-    ``use_cls_token`` determines how the encoder aggregates feature tokens
-    before the model-level ``tanh`` and the task heads: enabling it selects the
-    contextualised ``[CLS]`` embedding, while disabling it applies mean pooling
-    over all tokens. In both cases gradients still reach every feature token via
-    the self-attention blocks.
+    Shared scalar tokens preserve the original defaults. Feature/group tokens use
+    Pre-LN and GELU unless explicitly overridden. ``pooling`` takes precedence over
+    ``use_cls_token``; omitting it preserves the existing Python construction API.
     """
 
-    input_dim: int
     d_model: int = 128
     num_layers: int = 3
     nhead: int = 4
@@ -90,22 +107,77 @@ class TransformerEncoderConfig(BaseEncoderConfig):
     dropout: float = 0.1
     use_cls_token: bool = True
     apply_layer_norm: bool = True
+    tokenization: FeatureTokenization | str = FeatureTokenization.SHARED
+    group_size: int = 1
+    pooling: EncoderPooling | str | None = None
+    norm_first: bool | None = None
+    activation: EncoderActivation | str | None = None
+    use_attention: bool = True
+
+    def __post_init__(self) -> None:
+        for name in ("use_cls_token", "apply_layer_norm", "use_attention", "norm_first"):
+            value = getattr(self, name)
+            if not isinstance(value, bool) and not (name == "norm_first" and value is None):
+                raise ValueError(f"TransformerEncoderConfig.{name} must be a bool")
+        self.tokenization = FeatureTokenization(self.tokenization)
+        self.pooling = (
+            EncoderPooling(self.pooling)
+            if self.pooling is not None
+            else (EncoderPooling.CLS if self.use_cls_token else EncoderPooling.MEAN)
+        )
+        self.use_cls_token = self.pooling is EncoderPooling.CLS
+        modern = self.tokenization is not FeatureTokenization.SHARED
+        self.norm_first = modern if self.norm_first is None else self.norm_first
+        self.activation = (
+            EncoderActivation(self.activation)
+            if self.activation is not None
+            else (EncoderActivation.GELU if modern else EncoderActivation.RELU)
+        )
+        for name in ("d_model", "num_layers", "nhead", "group_size"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"TransformerEncoderConfig.{name} must be a positive int")
+        if self.d_model % self.nhead:
+            raise ValueError("Transformer d_model must be divisible by nhead")
+        if self.dim_feedforward is not None and (
+            isinstance(self.dim_feedforward, bool)
+            or not isinstance(self.dim_feedforward, int)
+            or self.dim_feedforward <= 0
+        ):
+            raise ValueError("TransformerEncoderConfig.dim_feedforward must be a positive int when provided")
+        if not math.isfinite(self.dropout) or not 0 <= self.dropout <= 1:
+            raise ValueError("TransformerEncoderConfig.dropout must be finite and in [0, 1]")
+        if self.tokenization is not FeatureTokenization.GROUPED and self.group_size != 1:
+            raise ValueError("group_size must be 1 unless tokenization is grouped")
+        if not self.use_attention and self.pooling is EncoderPooling.CLS:
+            raise ValueError("CLS pooling requires attention to consume feature tokens")
+        if not self.use_attention and not modern:
+            raise ValueError("The no-attention control requires feature or grouped tokenization")
+
+
+@dataclass(kw_only=True)
+class TransformerEncoderConfig(BaseEncoderConfig, TransformerOptions):
+    """Resolved Transformer configuration including descriptor and output dimensions."""
+
+    input_dim: int
+    output_dim: int | None = None
     type: EncoderType = EncoderType.TRANSFORMER
 
     def __post_init__(self) -> None:
-        super().__post_init__()
-        if self.d_model <= 0:
-            raise ValueError("TransformerEncoderConfig.d_model must be positive")
-        if self.num_layers <= 0:
-            raise ValueError("TransformerEncoderConfig.num_layers must be positive")
-        if self.nhead <= 0:
-            raise ValueError("TransformerEncoderConfig.nhead must be positive")
-        if self.dim_feedforward is not None and self.dim_feedforward <= 0:
-            raise ValueError("TransformerEncoderConfig.dim_feedforward must be positive when provided")
+        BaseEncoderConfig.__post_init__(self)
+        TransformerOptions.__post_init__(self)
+        for name in ("input_dim", "output_dim"):
+            value = getattr(self, name)
+            if name == "output_dim" and value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"TransformerEncoderConfig.{name} must be a positive int")
+        if self.input_dim % self.group_size:
+            raise ValueError("Transformer input_dim must be divisible by group_size")
 
     @property
     def latent_dim(self) -> int:
-        return int(self.d_model)
+        return self.output_dim if self.output_dim is not None else self.d_model
 
 
 EncoderConfig = MLPEncoderConfig | TransformerEncoderConfig

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,13 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
 from foundation_model.models.task_head.kernel_regression import expand_for_kernel_regression
-from foundation_model.models.model_config import MLPEncoderConfig, OptimizerConfig
+from foundation_model.models.model_config import (
+    EncoderConfig,
+    EncoderType,
+    MLPEncoderConfig,
+    OptimizerConfig,
+    TransformerEncoderConfig,
+)
 
 from . import plots
 from ._sections import MULTI_DEVICE_HELP, ModelSectionConfig, TrainingSectionConfig
@@ -63,8 +70,12 @@ def checkpoint_task_order(state: Mapping[str, Any]) -> list[str]:
     return ordered + [h for h in in_state if h not in ordered]
 
 
-def build_encoder_config(model: ModelSectionConfig, descriptor_dim: int) -> MLPEncoderConfig:
-    """MLP encoder ``descriptor_dim → *encoder_hidden_dims → latent_dim`` from ``[model]``."""
+def build_encoder_config(model: ModelSectionConfig, descriptor_dim: int) -> EncoderConfig:
+    """Resolve the selected encoder from the descriptor width and shared latent width."""
+    if model.encoder_type is EncoderType.TRANSFORMER:
+        return TransformerEncoderConfig(
+            input_dim=descriptor_dim, output_dim=model.latent_dim, **asdict(model.transformer)
+        )
     return MLPEncoderConfig(hidden_dims=[descriptor_dim, *model.encoder_hidden_dims, model.latent_dim])
 
 
@@ -76,6 +87,7 @@ def build_empty_model(
         task_configs=[],
         encoder_config=build_encoder_config(model, catalog.descriptor_dim),
         enable_autoencoder=True,
+        autoencoder_hidden_dims=model.autoencoder_hidden_dims,
         enable_learnable_loss_balancer=training.learnable_loss_balancer,
         shared_block_optimizer=training.optimizer_config(
             lr=training.encoder_lr, weight_decay=training.encoder_weight_decay
@@ -100,6 +112,7 @@ def build_model_for_checkpoint(
         task_configs=[],
         encoder_config=build_encoder_config(model, catalog.descriptor_dim),
         enable_autoencoder=True,
+        autoencoder_hidden_dims=model.autoencoder_hidden_dims,
         # Placeholder optimizer: predict/inverse never optimize, they only need the
         # architecture to match the checkpoint. scheduler_enabled=False keeps the min_lr < lr
         # rule from rejecting a small caller-supplied lr on an inference-only path.
