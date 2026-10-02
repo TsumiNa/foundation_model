@@ -146,7 +146,7 @@ graph TD
     subgraph FoundationEncoderModule["FoundationEncoder (self.encoder)"]
         direction TB
         SharedEncoder["Configurable Shared Encoder<br/>(MLPEncoderConfig or TransformerEncoderConfig)<br/>self.encoder.shared"]
-        Aggregation["Token aggregation<br/>([CLS] or mean pool — Transformer only)"]
+        Aggregation["Token aggregation<br/>(CLS, mean or concat + projection — Transformer only)"]
         X_formula --> SharedEncoder
         SharedEncoder -- "Token embeddings  (B, L, D_model)<br/>or h_latent  (B, latent_dim)" --> Aggregation
         Aggregation -- "h_latent  (B, latent_dim)" --> H_Latent["h_latent"]
@@ -214,9 +214,24 @@ A `FoundationEncoder` wrapping either an MLP or a Transformer backbone (mode cho
 - **MLP mode** — `MLPEncoderConfig(hidden_dims=[input_dim, …, latent_dim])` runs a
   `LinearBlock` (Linear + optional BatchNorm1d + LeakyReLU, optional residuals). `hidden_dims[0]`
   is the input dim; `hidden_dims[-1]` is the latent dim.
-- **Transformer mode** — `TransformerEncoderConfig(d_model=…, num_layers=…, nhead=…)` treats
-  each scalar feature as a token, learns per-token embeddings, runs Transformer encoder blocks,
-  and aggregates via either a learnable `[CLS]` token or mean pooling. `latent_dim = d_model`.
+- **Transformer mode** — `TransformerEncoderConfig(d_model=…, num_layers=…, nhead=…)` selects
+  shared scalar tokens with sinusoidal positions (the original defaults), feature-specific
+  scalar tokens, or learned groups of adjacent descriptor features. Feature/group tokenizers
+  encode identity in their learned weights and biases; they need no sinusoidal positions.
+  These modern variants default to Pre-LN and GELU, with independent QKV initialization per
+  attention layer and Xavier initialization for encoder linear layers. The legacy shared
+  variant preserves its initialization, Post-LN and ReLU defaults.
+  CLS, mean and concatenation pooling all produce a fixed-width latent vector. Concatenation
+  preserves column order and projects all final feature tokens jointly; its larger projection
+  must be included in parameter-count comparisons. `output_dim` controls latent width independently
+  of `d_model` (defaulting to `d_model` in the Python API). `[model].latent_dim` supplies it in TOML.
+  With feature/group tokens, `use_attention=false` provides a residual token-wise MLP control;
+  CLS pooling is invalid because those blocks cannot mix feature tokens into CLS.
+
+The CLI selects these through `[model].encoder_type` and `[model.transformer]`; see
+[`docs/configuration.md`](docs/configuration.md). `autoencoder_hidden_dims` optionally fixes
+the reconstruction decoder to `[latent_dim, …, input_dim]` across encoder variants. Omitting
+it preserves the original architecture-dependent decoder construction.
 
 The encoder's output is a raw `h_latent` of shape `(B, latent_dim)` — there is **no** deposit
 layer. The Tanh activation is applied *at the model level*, see below.

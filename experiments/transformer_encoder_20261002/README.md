@@ -1,0 +1,370 @@
+# Transformer encoder investigation — 2026-10-02
+
+Status: core encoder implementation and local checks complete; PR/release gate in progress.
+The benchmark runner is a subsequent PR. No new model has been trained on RIKYU. This document
+does not report a Transformer improvement.
+
+Reviewed repository commit: `d0234e451f0ab747f2ebe474a62f7b499f83bae3` (package 0.4.1). Research branch: `codex/transformer-research-20261002`.
+
+## Approved execution amendments
+
+The user authorized implementation and one completed experimental round, then specified:
+
+- Transfer performance and its scaling with source task count are the central outcomes; source
+  training accuracy is diagnostic only.
+- Add concat pooling: concatenate the final feature tokens and project to a fixed latent width.
+  Compare CLS, mean and concat at the same output width and report their parameter counts.
+- The fixed element-table alternative has 94 positions (not 92); its input contract remains a
+  subsequent architectural experiment.
+- Review and merge implementation PRs, update the version, and publish the new RIKYU ARM image
+  before training. Run the image-installed package pinned to its immutable SHA; do not substitute
+  checkout source through `PYTHONPATH`. The sequential gates are recorded in
+  `docs/refactor/transformer-encoders/`.
+
+First round: eight encoder settings × three paired seeds = 24 continual source trajectories.
+Retain source checkpoints after 1, 3 and 7 tasks. Compare independent target training, frozen
+transfer and full fine-tuning to held-out dielectric-total regression and power-factor functions,
+using nested 10% / 100% target-training label budgets. No held-out target labels are source tasks.
+The same global composition split and the same target subsets/transforms are shared by every arm.
+Material-type classification is the initial source task because its labels cover the entire QC
+composition universe, anchoring descriptor exposure across source counts. Subsequent source tasks
+are volume, formation energy, Efermi, band gap, Seebeck and ZT. Source task count is also a change
+in accumulated continual-training compute; report that cost rather than attributing its effect
+solely to task diversity. Source/target physical relationships are intentional transfer signals;
+power factor is related to source thermoelectric properties, whereas dielectric total probes a
+different property family.
+
+The original sections below describe the reviewed base commit and broader research proposal;
+they are not a claim that the new implementation or campaign has already completed. Current
+execution status is recorded as work proceeds.
+
+## Recommendation
+
+Prioritize a **Transformer over KMD feature groups**, evaluated against a feature-token Transformer and strong MLP controls. Preserve the composition descriptor, shared latent interface, task heads, and differentiable inverse-design path. First determine whether attention improves supervised multi-task representations. Evaluate masked pretraining or JEPA only after this comparison.
+
+This is a proposed adaptation of established tabular Transformer ideas, not a claim of a new validated architecture. The main hypothesis is that a token should represent a meaningful descriptor group instead of one arbitrary scalar column.
+
+## 1. What the current model actually does
+
+The relevant flow is:
+
+```text
+composition → KMD descriptor X → shared encoder → tanh(h)
+                                            ├→ regression head
+                                            ├→ classification head
+                                            ├→ kernel-regression head, also receiving t
+                                            └→ descriptor reconstruction head
+```
+
+The encoder sees neither the temperature grid nor other samples in a batch. It is a feature encoder, not an in-context learner and not a temporal model. Replacing it can improve the composition dependence of a curve; it does not directly add attention along temperature. Kernel regression remains responsible for the dependence on the continuous coordinate.
+
+Current Python API usage (the existing scalar-token implementation, not the proposed grouped model):
+
+```python
+from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
+from foundation_model.models.model_config import RegressionTaskConfig, TransformerEncoderConfig
+
+model = FlexibleMultiTaskModel(
+    task_configs=[RegressionTaskConfig(name="property", dims=[256, 64, 1])],
+    encoder_config=TransformerEncoderConfig(
+        input_dim=464, d_model=256, num_layers=4, nhead=8, dropout=0.1,
+    ),
+    enable_autoencoder=False,
+)
+```
+
+For this API, head input width must match `d_model`. A kernel-regression task additionally needs its `t_sequences` in the forward call. A frozen Python model also needs explicit encoder evaluation mode during training; the CLI callback described below is not automatically installed by constructing this object.
+
+| Component | Observed behavior | Research implication |
+|---|---|---|
+| Tokenization | Every scalar uses the same `Linear(1, d_model)` | Different columns have no independently learned value projection |
+| Feature identity | Fixed sinusoidal encoding of column indices | Columns are distinguishable, but their numerical order introduces a prior without a general tabular interpretation |
+| Attention | Full self-attention between descriptor columns | Valid, but potentially expensive for redundant scalar features |
+| Transformer block | PyTorch defaults: Post-LayerNorm, ReLU, feed-forward width `4d` | This is a basic Transformer, not a tuned tabular encoder |
+| Pooling | Learned CLS or mean pooling | Both propagate gradients to feature tokens; CLS is not inherently a defect |
+| Shared output | `tanh(encoder(X))` for all heads | Preserve initially; inverse latent optimization depends on this interface |
+| Training | Supervised multi-task losses, optional ordinary reconstruction | This is neither masked pretraining nor JEPA |
+| Frozen transfer | CLI callback puts frozen encoder into evaluation mode | Current workflow already disables its dropout; do not attribute old results to a current frozen-dropout bug |
+| CLI | TOML workflows construct `MLPEncoderConfig` unconditionally | Transformer is currently usable through the Python model API, not through an encoder switch in `fm pretrain` |
+| Checkpoint inference | CLI rebuilds the encoder through the same MLP-only factory | Training support alone would be insufficient; prediction and inverse loading also need coverage |
+
+Code map (paths relative to repository root):
+
+- `src/foundation_model/models/components/foundation_encoder.py`: tokenizer, attention, positions, pooling.
+- `src/foundation_model/models/model_config.py`: encoder configurations and optimization schema.
+- `src/foundation_model/models/flexible_multi_task_model.py`: shared latent activation, task heads, initialization, reconstruction dimensions.
+- `src/foundation_model/models/task_head/kernel_regression.py`: composition/coordinate-dependent function head.
+- `src/foundation_model/workflows/_sections.py`, `_engine.py`, `recording.py`: CLI config, model construction, checkpoint restoration.
+- `src/foundation_model/workflows/finetune.py`: frozen encoder evaluation callback.
+- `src/foundation_model/workflows/task_catalog.py`, `data/composition_sources.py`: descriptors, composition identities, missing targets and splits.
+- `src/foundation_model/utils/kmd_plus.py`: differentiable KMD mapping and feature ordering.
+- `src/foundation_model/models/inverse_design/`: composition and latent optimization constraints.
+
+### Implementation details that matter for a new comparison
+
+Local instantiation confirmed that adjacent Transformer layers start with identical packed QKV weights, because PyTorch clones the initial layer. The model subsequently reinitializes `nn.Linear` modules, so their feed-forward and output-projection weights differ; packed `in_proj_weight` is not an `nn.Linear`. This is a partial initialization inconsistency, not proof of identical layers throughout training or proof of poor accuracy. Give new architectures explicit, independent initialization and record it. Preserve the existing behavior in a legacy reference arm.
+
+The automatic reconstruction decoder also changes with the encoder: MLP `[464, 256, 384]` creates decoder dimensions `[384, 256, 464]`, whereas a Transformer with latent width 384 creates `[384, 464]`. Therefore, swapping the encoder currently also changes the reconstruction task's capacity. Use the same decoder, weight and target scaling in the controlled comparison. Do not infer a purely linear decoder from its dimensions: the shared `LinearLayer` currently replaces `activation=None` with LeakyReLU.
+
+A valid-looking odd width (`d_model=9`, `nhead=3`) fails in sinusoidal position construction. This is a reproducible boundary defect, but it does not explain historical runs at width 256. No production fix is included in this investigation.
+
+At equal latent width 384, local parameter counts are **219,008** for encoder `[464,256,384]` and **7,099,776** for the current four-layer Transformer (`d=384`, eight heads). Heads and decoder are excluded. Thus a comparison at equal output dimension is not a comparison at equal capacity.
+
+## 2. What the historical experiment establishes
+
+Explicit external inputs to this investigation:
+
+- `artifacts/polymers_dynamic_tasks/`
+- `artifacts/polymers_dynamic_tasks_transformer/`
+- `experiments/rikyu_hparam_tuning_v2/` for the later MLP recipe, replay experience and corrected Materials Project dataset.
+
+The early Transformer experiment used **190 polymer descriptors**, not today's 464-dimensional materials KMD. Both fine-tuning runs froze the encoder. The saved prediction tables contain 436 rows: four properties × 109 test samples. Joining on `(task, sample_index)` gives identical actual targets in all 436 pairs. These tables lack chemical identifiers, so this verifies the stored row/target alignment, not complete split provenance.
+
+Define the relative RMSE change as
+
+\[
+\Delta_q = 100\left(\frac{\operatorname{RMSE}_{q,\mathrm{Transformer}}}
+{\operatorname{RMSE}_{q,\mathrm{MLP}}}-1\right).
+\]
+
+Negative values favor Transformer. Errors below were recomputed from the saved CSV predictions; units follow the original property tables and have not been independently audited here.
+
+| Polymer property | MLP RMSE | Transformer RMSE | Relative change |
+|---|---:|---:|---:|
+| Cp | 111.1563 | 124.9418 | +12.40% |
+| Rg | 7.8577 | 7.6994 | −2.01% |
+| Density | 0.0252845 | 0.0262221 | +3.71% |
+| Linear expansion | 3.13605e−5 | 2.97196e−5 | −5.23% |
+
+The result is mixed, not uniformly negative. It supports “no consistent advantage in this experiment,” not “Transformer cannot help.”
+
+Important confounders in the saved hyperparameters:
+
+- MLP latent width 128 versus Transformer width 256, hence different downstream head sizes.
+- Encoder learning rates 0.05 versus 0.0005, a factor of 100.
+- Transformer: four layers, eight heads, dropout 0.1. No comparable architecture-specific search is established by these artifacts.
+- Different training durations/stopping points; MLP also has multiple pretraining log versions. Exact final-checkpoint ancestry needs reconstruction before making convergence comparisons.
+- This is one saved comparison, not a paired multi-seed study. TensorBoard contains no learning-rate tags. Later repository scheduler fixes do not by themselves prove which scheduler behavior generated these old runs.
+
+## 3. Why the previous approach may have shown little gain
+
+These are hypotheses to test, ordered by practical relevance; they are not retrospectively proven causes.
+
+1. **Tokenization was weakly adapted to tabular data.** Current tokens are `z_j = x_j w + b + p_j`, with shared `w,b` and a fixed index code `p_j`. A feature tokenizer instead learns `z_j = x_j w_j + b_j`. Both retain feature identity, but only the latter learns a feature-specific direction and offset directly. Adjacent columns are not generally adjacent objects in a physical sequence.
+2. **Extra capacity may have been unnecessary.** These are composition/descriptor-to-property tasks, and MLPs already model feature interactions. Attention offers a different inductive bias, not information unavailable to an MLP. More GPU time does not add independent compositions or crystal structure, processing history, defects, or other unobserved variables.
+3. **The comparison mixed architecture and optimization.** Width, learning rate, stopping and head dimensions differed. A larger network may underfit through optimization or overfit through variance; training and validation curves are needed to distinguish them.
+4. **The task head or data may dominate the error.** Encoder improvement cannot be assumed to cure temperature-grid artifacts, limited kernel capacity, inconsistent target definitions, or composition-only ambiguity. Keep heads fixed first, then inspect head-limited cases separately.
+5. **The shared representation can have competing objectives.** Multi-task/replay gradients and reconstruction may favor different features. Monitor per-task validation, forgetting and gradient/activation diagnostics before interpreting an aggregate score.
+
+The prior v2 campaign's scheduler and data-quality findings show why a tuned current MLP must be rerun as the baseline. They do not establish the cause of the earlier polymer result.
+
+## 4. What recent methods suggest
+
+| Evidence | Relevant lesson | Limit of transfer to this project |
+|---|---|---|
+| [Laya, official repository](https://github.com/NandhaKishorM/laya) | ModernBERT/mmBERT representations feed specialized decision heads | Text pretraining supplies knowledge; its weights are not directly meaningful for KMD columns |
+| [ModernBERT, 2024](https://arxiv.org/abs/2412.13663) | Modern encoder implementations, Pre-LN and optimized attention are useful engineering references | Text order, RoPE and long-context/local attention are not automatically appropriate for a short set of material features |
+| [FT-Transformer, NeurIPS 2021](https://arxiv.org/abs/2106.11959) | Learn feature-specific numerical tokens and compare under a common tuning protocol | It is an established baseline, not evidence that every tabular problem benefits from attention |
+| [Numerical embeddings, NeurIPS 2022](https://github.com/yandex-research/rtdl-num-embeddings) | Numerical representation itself can improve both MLPs and Transformers | KMD already performs a radial-basis expansion; additional embeddings need a control |
+| [TabM, ICLR 2025](https://arxiv.org/abs/2410.24210) | Strong MLP-based models remain competitive with attention on tabular benchmarks | Published benchmark rankings are not rankings on our materials tasks |
+| [TabPFN-2.5, 2025/2026](https://arxiv.org/abs/2511.08667) | In-context prediction over a labeled support set is another promising use of Transformers | It changes the learning problem and architecture more substantially than replacing our feature encoder |
+| [CrabNet, 2021](https://www.nature.com/articles/s41524-021-00545-1) | Element identities and fractions provide physically meaningful tokens | Direct element tokens require a separate input/inverse design contract and do not automatically cover the polymer descriptor domain |
+| [T-JEPA, ICLR 2025](https://arxiv.org/abs/2410.05016) | Predicting representations of masked features is a viable research direction | Collapse control, suitable masks and genuinely informative data are necessary; it is a training objective, not a replacement for attention |
+
+The user's Jev link motivates the investigation. Public Jev marketing is not an architecture specification. Our model already emits numerical properties through specialized heads, so avoiding autoregressive text generation is not a new advantage available here.
+
+A very recent [tabular JEPA preprint (2026-09-22)](https://arxiv.org/abs/2609.25541) reports worse aggregate performance and higher cost than its value-only control, with only one run per arm. This is preliminary evidence, not a decisive negative result; it reinforces the need for an objective ablation instead of assuming JEPA is beneficial.
+
+### A KMD-specific caution about self-supervision
+
+For the current element table, KMD can be written
+
+\[
+X=WK,\qquad K\in\mathbb R^{94\times464},\quad
+W\mathbf 1=\mathbf 1,\quad W\geq0.
+\]
+
+Local NumPy diagnostics with the actual default basis (`method="1d"`, `n_grids=8`, `sigma="auto"`, `scale=True`) found:
+
+- `rank(K)=94`; the affine rank of its element rows is 93.
+- Largest/smallest singular values: 60.80375 / 0.42116; condition number about 144.37.
+- Therefore this full basis is injective over the 94 element weights in exact arithmetic. It does not justify saying that KMD necessarily discards composition identity.
+- For three specific random group subsets (NumPy RNG seed 42, sequential draws of 14, 29 and 44 out of 58 groups), each context basis still has row rank 94.
+- Relative reconstruction residual `||K_context pinv(K_context) K − K||_F / ||K||_F`: 1.62e−13, 3.41e−15 and 5.26e−15 respectively.
+
+Thus, in these masks, even a linear map can reconstruct the complete descriptor from the context in exact arithmetic. This is a property of the fixed basis, not a fit to experimental targets and not a measured downstream result. Learning that map from finite data is still an optimization problem, but low masked-reconstruction loss alone would provide little evidence of learned materials physics. Latent prediction may still regularize usefully; evaluate it through downstream transfer and against a simple masked-reconstruction baseline.
+
+## 5. Proposed first candidate
+
+Reshape the default KMD descriptor as `(batch, 58 properties, 8 grid values)`. Each property contributes one token:
+
+\[
+z_g = A_g x_{g,1:8}+e_g,\quad g=1,\ldots,58.
+\]
+
+`A_g` is a learned 8-to-d projection; `e_g` is a learned feature-identity embedding. The eight grid locations retain their identity as projection coordinates. No sinusoidal order is assigned between different properties.
+
+```text
+464 KMD values → 58 feature-group tokens + CLS
+              → bidirectional Transformer
+              → pooled vector → projection to shared latent width → tanh
+              → existing task heads and common reconstruction decoder
+```
+
+Initial configuration, to be tuned rather than treated as optimal:
+
+| Setting | Starting point |
+|---|---|
+| Transformer width / depth | 192 / 4 blocks |
+| Attention heads | 6, full attention |
+| Block | Pre-LayerNorm, residual attention and GELU feed-forward |
+| Feed-forward hidden width | 768 |
+| Dropout | 0.1; search includes 0 and 0.05 |
+| Pooling | CLS, with mean pooling as a later ablation |
+| Output | Linear projection to latent width 384, then existing tanh |
+| Identity | Learned property embedding; no arbitrary sequence-position encoding |
+| Initialization | Independent QKV/FFN initialization per block, explicitly specified |
+| Heads / reconstruction | Identical to matched MLP controls |
+| Objective | Existing supervised multi-task/replay recipe plus a common reconstruction objective |
+
+At the same width/depth, attention pair counts decrease from `465²` to `59²`, about **62-fold**; token-wise work decreases about eightfold. These are operation-count ratios, not measured wall-clock speedups. This makes feature grouping useful for experimentation even if it does not improve accuracy. With `d≥8`, the per-group linear projection need not compress away the original eight values.
+
+The grouped encoder is permutation invariant to reordering complete `(group values, group identity)` pairs. It must not be invariant to swapping feature values without their identities. A numerical check should enforce the former and distinguish the latter.
+
+Scope is deliberate: this grouping applies to the default KMD layout, not arbitrary sets of 464 columns. Store group metadata/order and descriptor version. For the polymer descriptor data, use feature-specific scalar tokens unless a separately justified grouping is available.
+
+An element-token encoder in the style of CrabNet is the next architectural branch worth considering. It should be compared on identical compositions, with explicit handling of trace fractions and padding. Composition inverse design must retain gradients when element support changes; naively dropping all zero-fraction elements would make that path problematic. A KMD-group encoder avoids this first-round interface change.
+
+Task-specific cross-attention queries are another possible second-stage ablation if shared-CLS competition is demonstrated. They change the shared representation contract and should not be bundled with tokenization in the first experiment.
+
+## 6. Evaluation protocol
+
+### Data and leakage checks before training
+
+Use the corrected `data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet`, plus explicitly versioned magnetic and other task datasets. Do not silently fall back to the older mixed-functional energy targets.
+
+Local metadata/column inspection found 49,034 rows and 49,014 distinct raw composition strings in this QC table. Split labels are 34,322 train / 7,355 validation / 7,357 test. Non-null entries are 33,166 for volume and formation energy, 11,722 for Seebeck and 4,971 for ZT. These are raw rows, not verified usable unique compositions: curve finiteness, canonicalization, duplicate handling and cross-dataset split precedence still need a saved inventory.
+
+The rebuild script explicitly fits scalar normalization on **all non-null values**, not training rows only (`data/scripts/rebuild_mp_gga_20260912.py`, normalization section). Both architectures using those columns would share this preprocessing, but that is not a clean prospective evaluation. For the new benchmark, fit transforms from raw targets on training compositions only; for low-data transfer, fit on the selected target-training subset. Save the transform and inverse-transform predictions for physical-unit metrics. Audit curve preprocessing separately rather than assuming scalar behavior covers every dataset.
+
+Create a global canonical composition split across all tasks. For strict unseen-composition evaluation, test compositions must be absent from source supervised training, replay and self-supervised pretraining. If a same-composition/new-property setting is also useful, report it separately as a transductive setting. Do not mix the two.
+
+### Stage A — validity and pilot
+
+First verify serialization, restoration, finite losses/gradients, missing-label masks, frozen-mode determinism, task addition/replay, predict and both inverse paths. All compared models must have identical heads, latent dimension and reconstruction decoder in the primary experiment.
+
+Use seven pilot tasks: volume, formation energy, Seebeck, ZT, magnetization, magnetic moment, and material type classification. The first six reuse the v2 campaign's task selection, with a classification task added. Freeze the exact data release, split, task order, replay policy, stopping rule and metric definitions before tuning.
+
+| Arm | Purpose |
+|---|---|
+| Tuned current MLP | Current deployment-quality reference, rerun on the new controlled data |
+| Larger MLP | Approximately match the candidate's encoder parameter budget; tests whether capacity explains gains |
+| Current scalar Transformer | Reevaluate the existing representation with fair optimization and matched heads |
+| Feature-token Transformer | FT-Transformer-style per-scalar learned projections; tests better token identity |
+| KMD-group Transformer | Proposed representation: one token per eight-bin property group |
+| KMD-group MLP control | Same group tokenizer, per-token feed-forward layers and mean pooling, without attention; tests whether tokenization alone helps |
+
+Use the same Pre-LN/GELU attention backbone for the feature-token and grouped variants so their direct comparison isolates tokenization. This is **FT-Transformer-style**, not an exact reproduction of every activation/normalization choice in the original implementation. Keep an exact published FT-Transformer configuration as an optional reference if results depend on this distinction.
+
+For the legacy arm, matching the output dimension may require a documented final projection; report that adapter separately from an exact historical replay. Do not call a run with changed heads/decoder an exact historical reproduction.
+
+Suggested initial search budget: eight validation-selected configurations × two paired tuning seeds × six arms = **96 pilot training trajectories**. Each trajectory introduces seven tasks: 672 task-introduction stages, plus any common consolidation pass. These are not 96 single-task fits. This is a proposed count, not a submitted campaign or a time estimate.
+
+If grouping wins, add a random-grouping control with the same 58 groups of eight values and the same parameter count, using several preregistered permutations. This separates the benefit of meaningful property groups from the benefit of fewer tokens or a different projection size. Also distinguish backbone normalization from tokenization if the feature-token arm wins: Pre-LN and feature-specific projection should not be credited to each other without an ablation. Inspect sensitivity to feature magnitudes and the initial attention normalization placement; copying a tabular tokenizer while changing the original FT-Transformer's normalization conventions is not an exact baseline reproduction.
+
+Search architecture-appropriate learning rates and regularization with the same trial budget. Suggested Transformer ranges: width `{128,192,256}`, depth `{2,4,6}`, encoder LR `{1e−4,3e−4,1e−3}`, weight decay `{1e−5,1e−3,1e−2}`; use a sampled design, not the full Cartesian product. Include the tuned v2 MLP recipe in the MLP search. Keep batch size and the existing corrected scheduler shared initially; examine warmup/cosine as a separate optimizer ablation if optimization diagnostics warrant it. Do not present warmup/cosine as already supported by the current CLI.
+
+Two complementary comparisons are needed: a matched-latent/head/decoder study to identify mechanisms, and a best-tuned-per-family study to decide deployment. Report parameter counts and actual compute for both. Equal trial counts do not imply equal GPU-hours.
+
+### Stage B — broad multi-task and transfer confirmation
+
+Take the strongest MLP and up to two Transformer variants into five **new paired seeds** on the audited task catalogue, covering scalar regression, classification and functions. Five seeds × three architectures = at most 15 complete pretraining trajectories per chosen protocol. Separate this from per-target transfer fits in budget reporting. Use identical seed-specific task orders across architectures and inspect forgetting after each addition.
+
+Evaluate transfer to genuinely held-out target tasks/domains, including low-data learning curves. For each target, remove its labels from source pretraining; also identify algebraic/near-duplicate target proxies such as closely related energy definitions or unit-rescaled versions. Preserve strict composition exclusion where that is the evaluated question.
+
+For each architecture and target data budget, compare:
+
+1. Independent training on the target data.
+2. Source pretraining followed by frozen-encoder head training.
+3. Source pretraining followed by full fine-tuning, with encoder/head learning rates tuned separately.
+
+Use nested target-training subsets (e.g. 1%, 5%, 10%, 25%, 50%, 100%, subject to valid minimum counts) and the same held-out test set. Pair subset draws and seeds across architectures. For the eight-compound resistivity data, use its existing 1-to-7 training-compound protocol instead of percentages. Each source-model index also defines the corresponding scratch initialization seed; scratch does not reuse a pretrained checkpoint. Report that scratch replication is a new statistical design choice, not a reinterpretation of the earlier AGIS campaign's run counts.
+
+Rerun the historical polymer benchmark as a separate domain with scalar feature tokens. Do not mix its errors into a materials-KMD aggregate or force KMD grouping onto polymer columns.
+
+### Metrics and decision rule
+
+- Regression: physical-unit RMSE/MAE and R²; inspect both training and held-out errors.
+- Functions: average within each composition's curve before averaging compositions, so dense temperature sampling does not dominate. Report scientifically relevant subranges separately.
+- Classification: macro-F1 and balanced accuracy; do not average these numerically with R².
+- For positive error metrics define `relative change = 100 × (candidate error / baseline error − 1)`. Give per-task values, the distribution and the task-macro summary. Handle zero/near-zero baseline errors explicitly rather than allowing unstable ratios.
+- Report paired seed/subset differences and uncertainty intervals. Resample independent compositions, not individual temperature points; preserve task/fold dependence. Repeated evaluations of the same eight compounds do not become hundreds of independent materials.
+- Preserve heterogeneous paired effects; an average win must not hide a large systematic loss on an important task.
+- Record total GPU-hours, examples/second, peak memory and utilization. Seed variation is not a calibrated predictive interval.
+
+Select using validation only, then open the test results once for confirmation. A default replacement needs a reproducible practical gain under the registered protocol; low-data-only gains can justify a specialized transfer option. Predeclare a practical error reduction threshold with the scientific use case before launching confirmation. If intervals include both useful improvement and meaningful harm, report the result as unresolved and expand seeds only for that comparison.
+
+### Stage C — objective and representation extensions
+
+Only after Stage B, compare the winning backbone with: existing reconstruction, masked group reconstruction, and a T-JEPA-style objective. Match available compositions and the downstream protocol. Mask entire property groups, track representation variance/effective rank and downstream probes, and test collapse. If claiming benefit from additional unlabeled data, use genuinely additional, deduplicated training compositions; synthetic mixtures have deterministic descriptors but no newly measured physics.
+
+Other conditional experiments: element tokens, task-specific queries, and independent head-capacity ablations. These should answer distinct hypotheses rather than turn the first run into a bundle of unrelated changes.
+
+## 7. RIKYU execution preparation
+
+A read-only Slurm query on 2026-10-02 succeeded. The `gpu` partition was up with a four-day limit. This verifies connectivity and partition availability, not our project allocation, queue start time or a reserved GPU budget. The repository's Phase 2 end-of-September note is not sufficient to infer that access stopped.
+
+The package currently runs one GPU per process. Use multiple GPUs for independent configurations and seeds. Before sizing a fleet, benchmark representative MLP, scalar-token and grouped-token runs on allocated compute nodes. Query `sacct` utilization, and calibrate packing factors against an unpacked run. The previous MLP result of eight processes per GPU must not be transferred to attention workloads without measurement. Keep within the enforced 32 CPU cores per allocated GPU.
+
+Estimate campaign time only after this measurement:
+
+\[
+T_{\rm compute}\approx
+\frac{1}{G}\sum_a\frac{N_a\,t_{a,p_a}}{p_a}
+\]
+
+This is an ideal load-balanced estimate for a shared fleet: `N_a` is the trajectory count, `t_{a,p_a}` its measured wall time under packing `p_a`, and `G` the GPU count. For separate concurrent pools, estimate each pool with its assigned GPU count and take the longest finishing time. Add queue, scheduling imbalance and workflow overhead; do not extrapolate old Mac timings or nominal GB200 FLOPS. Record software/container version, dataset hashes, launch commit and resolved config for every run.
+
+Implementation sequence to make the proposal executable: (1) explicit encoder configuration and consistent construction/checkpoint loading, (2) tokenizers/backbones and common decoder controls with focused tests, (3) data/split manifests and pilot runner, then calibration. These are planned changes, not implemented features. Follow the repository's review sequence if this becomes a multi-PR implementation.
+
+## 8. Investigation log and limitations
+
+2026-10-02: inspected encoder, heads, config/workflow construction, data/catalog/split code, replay/inverse interfaces and historical experiment records; checked primary literature and official implementations; recomputed old prediction errors; instantiated current encoders; measured the KMD basis rank and context reconstruction; inspected current parquet metadata and scalar normalization code; ran a read-only RIKYU partition query.
+
+Numerical diagnostics used the existing uv environment without dependency changes. Local environment warnings about the recorded Python patch version and restricted font/CPU-cache probing did not prevent these diagnostics from completing. No GPU benchmark, new training, accuracy claim, production implementation, PR or remote submission is part of this record.
+
+Validation: both Python examples in this document were executed successfully; the historical RMSE changes and basis-rank results reproduced. The new document passed a whitespace/diff check. Production tests were not run because no production code was changed.
+
+The most important unresolved empirical question is whether feature grouping plus attention improves cross-property transfer beyond the same tokenizer with an MLP and beyond a carefully tuned conventional MLP. The proposed controls make that question testable.
+
+### Reproducing the key local numerical diagnostics
+
+Run the following with the repository's `uv run python` environment; it uses existing local inputs and does not train a model:
+
+```python
+import numpy as np
+import pandas as pd
+from foundation_model.utils.kmd_plus import KMD, element_features
+
+K = KMD(element_features.values, method="1d", n_grids=8,
+        sigma="auto", scale=True).transform(np.eye(94))
+print(K.shape, np.linalg.matrix_rank(K), np.linalg.cond(K))
+rng = np.random.default_rng(42)
+for n_groups in [14, 29, 44]:
+    groups = rng.choice(58, n_groups, replace=False)
+    columns = (groups[:, None] * 8 + np.arange(8)).ravel()
+    context = K[:, columns]
+    residual = np.linalg.norm(context @ np.linalg.pinv(context) @ K - K) / np.linalg.norm(K)
+    print(n_groups, np.linalg.matrix_rank(context), residual)
+
+a = pd.read_csv("artifacts/polymers_dynamic_tasks/fine_tune_test/predictions.csv")
+b = pd.read_csv("artifacts/polymers_dynamic_tasks_transformer/fine_tune_test/predictions.csv")
+pairs = a.merge(b, on=["task", "sample_index"], suffixes=("_mlp", "_tf"),
+                validate="one_to_one")
+assert len(pairs) == len(a) == len(b) == 436
+assert np.array_equal(pairs.actual_mlp, pairs.actual_tf)
+for task, frame in pairs.groupby("task"):
+    mlp_rmse = np.sqrt(np.mean((frame.predicted_mlp - frame.actual_mlp) ** 2))
+    tf_rmse = np.sqrt(np.mean((frame.predicted_tf - frame.actual_tf) ** 2))
+    print(task, mlp_rmse, tf_rmse, 100 * (tf_rmse / mlp_rmse - 1))
+```

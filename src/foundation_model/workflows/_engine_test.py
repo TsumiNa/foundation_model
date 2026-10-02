@@ -24,12 +24,42 @@ from ._engine import (
     DropLastTrainCompoundDataModule,
     as_float_array,
     build_empty_model,
+    build_model_for_checkpoint,
     build_head_config,
     evaluate_task,
 )
-from ._sections import ModelSectionConfig, TrainingSectionConfig
+from ._sections import ModelSectionConfig, TrainingSectionConfig, build_model_section
 from .recording import RunRecorder
 from .task_catalog import TaskCatalog, build_task_catalog_config
+
+
+@pytest.mark.parametrize("pooling", ["cls", "mean", "concat"])
+def test_selected_encoder_restores_for_prediction_with_identical_decoder(tmp_path, pooling):
+    catalog = TaskCatalog(
+        build_task_catalog_config(
+            {
+                "descriptor": {"kind": "kmd", "n_grids": 4},
+                "datasets": {"unused": {"path": str(tmp_path / "unused.parquet")}},
+                "tasks": [{"name": "unused", "kind": "regression", "dataset": "unused", "column": "y"}],
+            }
+        )
+    )
+    config = build_model_section(
+        {
+            "encoder_type": "transformer",
+            "latent_dim": 6,
+            "autoencoder_hidden_dims": [8],
+            "transformer": {"d_model": 8, "nhead": 2, "tokenization": "grouped", "group_size": 4, "pooling": pooling},
+        }
+    )
+    original = build_empty_model(catalog, config, TrainingSectionConfig()).eval()
+    restored = build_model_for_checkpoint(catalog, config, []).eval()
+    restored.load_state_dict(original.state_dict())
+    x = torch.rand(2, 232, requires_grad=True)
+    torch.testing.assert_close(original(x)["__reconstruction__"], restored(x)["__reconstruction__"])
+    restored(x)["__reconstruction__"].square().sum().backward()
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+    assert original.task_configs_map["__reconstruction__"].dims == [6, 8, 232]
 
 
 @pytest.mark.parametrize("cell", [None, np.nan, pd.NA, np.array(np.nan), np.array([np.nan])])

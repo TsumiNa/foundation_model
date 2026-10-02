@@ -1,5 +1,17 @@
 # Recent Updates
 
+## 2026-10-02 (0.5.0 — selectable feature-token encoders)
+
+- Expose Transformer encoders through TOML for pretraining, fine-tuning, prediction and inverse
+  design, while retaining the MLP default and the original shared-token Python defaults.
+- Add feature-specific scalar and grouped descriptor tokenization, CLS/mean/concatenation pooling,
+  an independent latent output width, and a residual token-wise MLP control without attention.
+  Feature/group encoders default to Pre-LN/GELU and initialize attention layers independently.
+- Add optional explicit reconstruction decoder dimensions for controlled encoder comparisons.
+- Validate configuration combinations and cover gradients, pooling, checkpoint restoration and
+  workflow construction. Fix sinusoidal position encoding for odd Transformer widths.
+- Publish new versioned container images before the transfer-learning benchmark runs on RIKYU.
+
 ## 2026-08-27 (0.4.0 — one optimizer, and a much smaller model class)
 
 Breaking, in the order the changes read:
