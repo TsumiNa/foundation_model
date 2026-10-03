@@ -92,6 +92,44 @@ def collect(root: Path, config: Path, protocol: Path) -> tuple[pd.DataFrame, dic
     }
 
 
+def prediction_disagreement(root: Path, frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Pair the same compositions and seeds; disagreement is not an improvement score."""
+    rows, compositions = [], []
+    for (seed, k, fraction, readout), group in frame.groupby(["seed", "k", "fraction", "readout"]):
+        if set(group.arm) != {"mlp_tuned", "grouped_mean"}:
+            continue
+        frames = [
+            pd.read_parquet(root / f"{arm}_s{seed}_k{k}" / f"f{round(fraction * 100):03d}" / f"{readout}_pred.parquet")
+            for arm in ("mlp_tuned", "grouped_mean")
+        ]
+        pair = frames[0].merge(
+            frames[1],
+            on="composition",
+            suffixes=("_mlp", "_transformer"),
+            how="outer",
+            validate="one_to_one",
+            indicator=True,
+        )
+        if not pair["_merge"].eq("both").all() or not np.allclose(pair.true_mlp, pair.true_transformer):
+            raise ValueError("Prediction pairs have different compositions or references")
+        error = pair.pred_transformer - pair.pred_mlp
+        denominator = float(np.sqrt(np.mean((pair.pred_mlp - pair.true_mlp) ** 2)))
+        magnitude = float(np.sqrt(np.mean(error**2)))
+        keys = {"seed": seed, "k": k, "fraction": fraction, "readout": readout}
+        rows.append(
+            {
+                **keys,
+                "prediction_difference_rmse": magnitude,
+                "mlp_rmse": denominator,
+                "difference_over_mlp_rmse": magnitude / denominator if denominator else None,
+                "prediction_correlation": float(pair.pred_mlp.corr(pair.pred_transformer)),
+            }
+        )
+        pair = pair.drop(columns="_merge").assign(**keys, prediction_difference=error)
+        compositions.append(pair)
+    return pd.DataFrame(rows), pd.concat(compositions, ignore_index=True) if compositions else pd.DataFrame()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("root", "config", "protocol", "output"):
@@ -109,6 +147,13 @@ def main() -> None:
         .reset_index()
     )
     summary.to_csv(args.output / "summary.csv", index=False)
+    disagreements, compositions = prediction_disagreement(args.root, frame)
+    disagreements.to_csv(args.output / "prediction_disagreement.csv", index=False)
+    compositions.to_csv(args.output / "paired_composition_predictions.csv", index=False)
+    if len(disagreements):
+        disagreements.groupby(["k", "fraction", "readout"])[
+            ["prediction_difference_rmse", "difference_over_mlp_rmse"]
+        ].agg(["mean", "std", "count"]).to_csv(args.output / "prediction_disagreement_summary.csv")
     paired = frame.pivot(index=["seed", "k", "fraction", "readout"], columns="arm", values="rmse").dropna()
     if set(["mlp_tuned", "grouped_mean"]) <= set(paired):
         paired["transformer_minus_mlp"] = paired.grouped_mean - paired.mlp_tuned
@@ -146,7 +191,7 @@ def main() -> None:
     for seed in sorted(frame.seed.unique()):
         for k in sorted(frame.k.unique()):
             paths = [args.root / f"{a}_s{seed}_k{k}" / "f100/features.npz" for a in ("mlp_tuned", "grouped_mean")]
-            if not all(p.exists() for p in paths):
+            if not all(p.parent.parent.name in audit["completed_lanes"] for p in paths):
                 continue
             left, right = (np.load(p) for p in paths)
             if not np.array_equal(left["composition"], right["composition"]) or not np.array_equal(

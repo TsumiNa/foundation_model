@@ -1,6 +1,8 @@
 """Scientific controls: paired heads, validation-only fitting, and frozen-feature boundaries."""
 
+import os
 from pathlib import Path
+import subprocess
 
 import numpy as np
 import pandas as pd
@@ -107,3 +109,46 @@ def test_matrix_counts_and_invalid_inputs():
     frame.loc[2, "composition"] = "a"
     with pytest.raises(ValueError):
         validate_frame(frame)
+
+
+def test_launcher_stops_partial_pack(tmp_path):
+
+    exp = tmp_path / "experiments/transformer_encoder_20261002"
+    (exp / "configs").mkdir(parents=True)
+    fake = tmp_path / "apptainer"
+    fake.write_text("""#!/bin/bash
+if [[ " $* " == *" --nv "* ]]; then
+  while [[ $# -gt 0 ]]; do
+    if [[ $1 = --case ]]; then echo "case=$2"; exit 0; fi
+    shift
+  done
+elif [[ " $* " == *"math.prod"* ]]; then echo 18
+else echo abc
+fi
+""")
+    fake.chmod(0o755)
+    sha = tmp_path / "sha256sum"
+    sha.write_text('#!/bin/bash\necho "abc image"\n')
+    sha.chmod(0o755)
+    script = Path(__file__).with_name("head_probe.sbatch").resolve()
+    output = tmp_path / "output"
+    env = {
+        **os.environ,
+        "PATH": str(tmp_path) + ":" + os.environ["PATH"],
+        "APPTAINER": str(fake),
+        "FM_WORKSPACE": str(tmp_path),
+        "FM_SOURCE_WORKSPACE": str(tmp_path / "source"),
+        "FM_SOURCE_ROOT": str(tmp_path / "source/artifacts"),
+        "FM_DATA_DIR": str(tmp_path / "data"),
+        "FM_OUTPUT_ROOT": str(output),
+        "FM_IMAGE": "unused",
+        "FM_BENCHMARK_REVISION": "a" * 40,
+        "SLURM_JOB_ID": "test",
+        "SLURM_ARRAY_TASK_ID": "4",
+        "SLURM_CPUS_PER_TASK": "8",
+        "PACK": "4",
+    }
+    subprocess.run(
+        ["bash", "-c", 'module() { :; }; export -f module; exec bash "$1"', "test", str(script)], env=env, check=True
+    )
+    assert {p.name for p in output.glob("*.log")} == {"case-16-test.log", "case-17-test.log"}

@@ -28,20 +28,24 @@ EXPECTED=$($APPTAINER exec --cleanenv --bind "$FM_WORKSPACE:$FM_WORKSPACE" "$FM_
     'import sys,tomllib; print(tomllib.load(open(sys.argv[1],"rb"))["benchmark"]["sif_sha256"])' "$PROTOCOL")
 FM_SIF_SHA256=$(sha256sum "$FM_IMAGE" | cut -d ' ' -f 1)
 [[ $FM_SIF_SHA256 = "$EXPECTED" ]] || { echo "FAIL SIF checksum"; exit 2; }
+CASE_COUNT=$($APPTAINER exec --cleanenv --bind "$FM_WORKSPACE:$FM_WORKSPACE" "$FM_IMAGE" python -c \
+    'import sys,tomllib,math; c=tomllib.load(open(sys.argv[1],"rb")); print(math.prod(len(c[k]) for k in ("arms","seeds","source_counts")))' "$EXP/configs/head_probe.toml")
 THREADS=$((SLURM_CPUS_PER_TASK / PACK))
 [[ $THREADS -le 4 ]] || THREADS=4
 mkdir -p "$FM_OUTPUT_ROOT"
 EXTRA=()
 [[ ${SMOKE:-0} = 0 ]] || EXTRA+=(--smoke)
+[[ $((FIRST_CASE + ${SLURM_ARRAY_TASK_ID:-0} * PACK)) -lt $CASE_COUNT ]] || exit 2
 PIDS=()
 STATUS=0
 for ((offset=0; offset<PACK; offset++)); do
     index=$((FIRST_CASE + ${SLURM_ARRAY_TASK_ID:-0} * PACK + offset))
+    [[ $index -lt $CASE_COUNT ]] || break
     "$APPTAINER" exec --nv --cleanenv --bind "$FM_WORKSPACE:$FM_WORKSPACE" --bind "$FM_SOURCE_WORKSPACE:$FM_SOURCE_WORKSPACE:ro" \
         --env "SLURM_JOB_ID=$SLURM_JOB_ID,CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0},OMP_NUM_THREADS=$THREADS,OPENBLAS_NUM_THREADS=$THREADS,MPLCONFIGDIR=/tmp/fm-head-probe-$SLURM_JOB_ID-$index,FM_BENCHMARK_REVISION=$FM_BENCHMARK_REVISION,FM_SIF_SHA256=$FM_SIF_SHA256" \
         "$FM_IMAGE" python "$EXP/scripts/head_probe.py" --protocol "$PROTOCOL" \
         --config "$EXP/configs/head_probe.toml" --data-dir "$FM_DATA_DIR" \
-        --source-root "$FM_SOURCE_ROOT" --output-root "$FM_OUTPUT_ROOT" --case "$index" "${EXTRA[@]}" \
+        --source-root "$FM_SOURCE_ROOT" --output-root "$FM_OUTPUT_ROOT" --case "$index" ${EXTRA[@]+"${EXTRA[@]}"} \
         > "$FM_OUTPUT_ROOT/case-${index}-${SLURM_JOB_ID}.log" 2>&1 &
     PIDS+=("$!")
 done
