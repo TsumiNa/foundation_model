@@ -122,3 +122,14 @@ GPU compatibility and performance remain gated on review/merge and real Slurm sm
   belong to `artifacts/formal` and will count toward the registered 200-lane matrix. Each has
   a one-hour walltime cap. Remaining formal lanes await this complete downstream cost measure;
   any packed repetition for calibration must use a separate root.
+- Formal calibration **162372** completed all 12 lanes: 288 finite selected endpoints, common
+  registered provenance, and all 36 expected source checkpoint files verified. Slurm elapsed
+  times were 136–537 seconds per lane (16–33% average GPU utilization). None of the 576 neural
+  LR candidates reached the 250-epoch cap; median stopping epochs were 47–79 by encoder/mode.
+  Source diagnostics were finite without detected low-variance collapse. These are seed-10
+  results only, with no scratch/random or shuffled-label conditions yet; they cannot establish
+  a reproducible transfer advantage.
+- Submitted full-budget PACK=3 calibration jobs **162407/162408/162409/162410**, respectively
+  repeating cases 1–3/51–53/101–103/151–153 in `artifacts/formal_pack_calibration`. Each reserves
+  one GPU for at most 30 minutes. These repetitions are excluded from the formal result root.
+  The remaining 188 lanes await measured full-budget packing throughput and its cost estimate.
