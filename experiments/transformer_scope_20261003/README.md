@@ -122,3 +122,16 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
   Prepared 48,402 composition-isolated records and three hash splits; all target training-only
   scales (including 1%) are finite and nonzero. Capacity matching was checked by instantiating
   all six installed-package encoder configurations. RIKYU training has not started.
+- PR **#82** reviewed and squash-merged as `482babebdb198d3f401e026f16d2766ca734086c`;
+  all five findings were addressed. Eighteen focused tests, Ruff, package-wide mypy and shell
+  syntax checks passed. The 94-element Transformer CPU functional smoke completed all 24
+  endpoints using two source updates and two epochs per downstream candidate; it is not a
+  scientific result. The four staged data files were verified against the manifest.
+- Submitted six-arm GPU smoke **162517** (pilot cases 0/8/16/24/32/40, PACK=1, six concurrent
+  GPUs, 20-minute cap). Submitted initial unpacked pilot **162523**, cases
+  0–2/8–10/16–18/24–26/32–34/40–42, at most twelve GPUs and one hour per case, with a strict
+  `afterok:162517` dependency. No remaining pilot or formal fleet has been submitted yet.
+  All runtime scripts retain the PR82 merged revision; documentation updates do not change it.
+- GPU smoke **162517** completed all six arms in 28–34 seconds per allocation. All 144 endpoints
+  and best/last exported predictions were finite; CUDA, installed-package image and merged-script
+  provenance matched. The dependency released **162523**. Pilot results remain validation-only.
