@@ -95,7 +95,7 @@ def composition_cards(selected: pd.DataFrame, fraction: float) -> plt.Figure:
                 linewidth=1.2,
                 zorder=3,
             )
-        formula = Composition(row.composition).reduced_formula
+        formula = Composition(row.composition).formula.replace(" ", "")
         formula = re.sub(r"(\d+(?:\.\d+)?)", r"$_{\1}$", formula)
         ax.set_title(formula, fontsize=18, pad=13)
         ax.set_xticks([0, 1, 2], ["Reference", "MLP", "Transformer"], fontsize=12)

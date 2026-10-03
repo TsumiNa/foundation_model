@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
 import pytest
+import matplotlib.pyplot as plt
 
-from plot_composition_comparison import paired_summary, representatives
+from plot_composition_comparison import composition_cards, paired_summary, representatives
 
 
 def fixture_frame():
@@ -57,3 +58,12 @@ def test_selection_boundary():
     assert len(representatives(summary, 100)) == 20
     with pytest.raises(ValueError):
         representatives(summary, 0)
+
+
+def test_card_titles_preserve_unreduced_composition_identity():
+    selected = representatives(paired_summary(fixture_frame(), 1.0))
+    selected["composition"] = ["Fe4 O6", *["Si2 O4"] * 11]
+    fig = composition_cards(selected, 1.0)
+    assert fig.axes[0].get_title() == "Fe$_{4}$O$_{6}$"
+    assert fig.axes[1].get_title() == "Si$_{2}$O$_{4}$"
+    plt.close(fig)
