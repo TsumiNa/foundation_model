@@ -316,3 +316,60 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
   All 14,088 prediction tables in the scientific snapshot are finite and nonconstant. A separate
   later remote retention audit checked 5,859 required source/final/selected-best weight files
   across 885 completed lanes; none was missing or empty.
+
+### Completed study
+
+All **1,026 lanes / 16,848 selected endpoints** passed the final collector audit after an
+unrestricted scientific synchronization; all six arms have 171 lanes. The 972 source fits and
+27,216 neural candidates are finite, with no 400-epoch cap hits (maximum 372). All prediction
+tables are finite and nonconstant. The official image, manifest, four data files and pilot
+selection hashes were revalidated; all 7,020 required source and selected-best weights were
+present and nonempty. All 342 formal allocations succeeded. Including smoke, pilot and
+calibration, the study used **57.2181 GPU-hours**, approximately **JPY 17,165 before tax**.
+
+The completed composition-input controls qualify the earlier KMD findings:
+
+- Transformer transfers useful source information, but this ability is not unique to it.
+  At composition/full fine-tuning/10% training size/24k updates, real12-minus-shuffled12 is
+  -0.03279 [-0.04128, -0.02666] for Transformer and -0.04294 [-0.06059, -0.02250] for MLP.
+- Composition Transformer–no-attention primary interactions have five negative pointwise
+  intervals (all frozen ridge), one positive interval (full fine-tuning/10%/6k), and six including
+  zero. Composition Transformer–MLP interactions have one negative interval (ridge/1%/6k),
+  four positive intervals (all four 10% settings), and seven including zero. These are descriptive
+  counts of exploratory intervals, not multiplicity-adjusted discoveries or a test of differences
+  between input representations or adaptation methods.
+- At composition/full fine-tuning/10%/6k, the final Transformer-minus-MLP error is
+  +0.02955 [+0.01095, +0.06093]; at 24k it is +0.00285 [-0.00878, +0.01325]. A generally
+  lower final Transformer error remains unestablished. Greater gain from a weaker random-feature
+  baseline can coexist with a higher final error, as at composition/ridge/1%/6k.
+- For Transformer real12-minus-real7, eleven of twelve KMD intervals include zero. Composition
+  has four negative intervals and eight including zero. Task identity, redundancy and fixed-update
+  exposure remain relevant; a monotonic Transformer-specific task-count scaling law is not established.
+- All eighteen composition no-attention shuffled12 histories end with 58.3–99.5% of probe
+  dimensions below the variance threshold. This qualifies interpretation of shuffled-baseline gains;
+  low variance alone is not proof of lost information or constant downstream predictions.
+
+The complete English analysis is generated locally in
+`results/TRANSFORMER_TRANSFER_SCOPE_RESULTS_EN_20261003.md`, alongside the collector's complete
+paired tables and original-scale RMSE/MAE summaries. Eight fixed-example parity figures compare
+identical compositions and true values across the three architectures, from-scratch versus
+real12/24k pretraining, at 10% training size (split 20261011, seed 20). Their symmetric-log axes
+retain negative predictions; a single-run illustration is not statistical evidence. The bounded
+KMD/ridge/10%/6k attention-related signal remains a candidate for independent validation, not a
+universal advantage. No additional training was launched during the final audit.
+
+Rebuild all twelve final figures and the exact plotted prediction table after placing the
+scientific run outputs in `artifacts/formal` (run from the repository root):
+
+```bash
+uv run python experiments/transformer_scope_20261003/analysis/figures.py \
+  --root experiments/transformer_scope_20261003/artifacts/formal \
+  --config experiments/transformer_scope_20261003/configs/study.toml \
+  --selection experiments/transformer_scope_20261003/artifacts/pilot_selection.json \
+  --output experiments/transformer_scope_20261003/results
+```
+
+The generator reruns the provenance-aware collector and requires the full registered campaign.
+Parity panels select the first registered split/seed by metadata, verify identical compositions
+and true values across models, and cross-check original-scale RMSE against the audited endpoint.
+Generated figures and reports remain untracked under `results/`.
