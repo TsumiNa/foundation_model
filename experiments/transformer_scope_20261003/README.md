@@ -205,3 +205,11 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
   calibration lanes and adding 1,002 new lanes. Source/target caches and persistent weights remain
   under the same scientific identity. Shared storage was 876.1 GiB of 1 TiB before launch; preserve
   at least 20 GiB of headroom. Packing repetitions remain excluded from the scientific collector.
+- First fleet accounting check: 68 packed allocations completed and sixteen were running, with
+  no failed allocation observed. Total elapsed allocation use, including completed calibration
+  and in-progress fleet time, was 13.32 GPU-hours. Replacing completed allocation estimates with
+  measured elapsed time projects 74.69 GPU-hours total, or 90.03 with a 25% margin on estimated
+  remaining work. Later arms still use their matched calibration timings; short-lane completion
+  fractions are not used to extrapolate total cost. Shared storage was 886.4 GiB of 1 TiB.
+  Remote completion markers showed all 171 KMD MLP lanes finished; Transformer and other-arm
+  coverage remains partial, so this progress does not support a new architecture ranking.
