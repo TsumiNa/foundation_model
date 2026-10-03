@@ -609,4 +609,56 @@ set has already been inspected; this is explanatory follow-up, not an untouched 
 benchmark. Token-level readout and new full-fine-tuning/pretraining jobs remain conditional on
 this diagnosis. No source training is repeated here.
 
-Execution log: registered local protocol and tests; GPU execution waits for the PR gate.
+Execution log (2026-10-03): PR [#74](https://github.com/TsumiNa/foundation_model/pull/74)
+was reviewed, fixed and squash-merged as `e9223f0bf98f3693d1c0b300178f494606151f36`
+before official-image deployment. Smoke array 162107 passed both encoders. Array 162113 completed
+six unpacked full-budget cases; isolated repeat array 162125 calibrated PACK=3 and reproduced
+their selected metrics exactly. Array 162133 completed the remaining twelve cases with PACK=3.
+All 18 formal lanes / 162 selected fits passed the finite-prediction and frozen-encoder audits;
+all 252 neural histories are finite (21–99 actual epochs). The 14 allocated array tasks all
+completed with exit 0. Total accounting, including smoke/calibration: 0.140 GPU-hours. PACK=3
+throughput was approximately 2.6×; recorded packed utilization was 82–91%, GPU memory ≤3,444 MiB.
+No source training was repeated; source and probe checkpoints remain on RIKYU.
+
+Outcome: this frozen dielectric screen does not support insufficient FC-head width as the main
+explanation for similar encoder RMSE. At k=7/full training, identity-output 128→64 heads give
+RMSE 36.723 (MLP) and 36.712 (Transformer), despite paired prediction disagreement D=0.462
+(D is prediction-difference RMSE divided by paired MLP reference-error RMSE). Wider heads do not
+reveal a consistent Transformer advantage. Post-tanh ridge gives Transformer RMSE 36.048 versus
+MLP 36.775, but MAE/validation and low-data rankings do not agree; this is not a validated winner.
+The fixed-LR output-activation effect changes sign across settings. Pre-tanh ridge does not
+improve full-training test error. Representation geometry differs and effective rank grows with
+source-task count, which remains confounded with task content and compute.
+
+Best-versus-last head checkpoints show a stronger low-data sensitivity: mean test RMSE increases
+by 3.19 (MLP) / 1.79 (Transformer) when using last instead of best target-validation weights,
+averaged over the 21 selected neural configurations per family at 10% training size. The next
+supported confirmation is matched end-to-end checkpoint-selection control, not automatic head
+expansion. No token-level or end-to-end confirmation fleet was launched: no readout change won
+consistently on validation. This completes the bounded A/B investigation, with three seeds and
+one previously inspected target/test set; it does not establish general architectural equivalence.
+
+Full local/remote report and figures: `results/head_probe/REPORT_20261003.md` and
+`results/head_probe/readout_scaling_f{010,100}.png`. Audit: `final_validation_audit.json` in that
+result directory; Slurm evidence and cost: `artifacts/head_probe_control/`. Generated results,
+predictions and caches are synchronized outside Git, separately from smoke and calibration.
+
+Reproduce the final report after synchronizing `artifacts/head_probe` (including feature NPZs,
+trial histories and selected-last predictions; model-weight files are not needed for analysis)
+and `artifacts/head_probe_control/sacct.txt`:
+
+```bash
+EXP=experiments/transformer_encoder_20261002
+uv run python "$EXP/analysis/collect_head_probe.py" \
+  --root "$EXP/artifacts/head_probe" --config "$EXP/configs/head_probe.toml" \
+  --protocol "$EXP/configs/protocol.toml" --output "$EXP/results/head_probe"
+uv run python "$EXP/analysis/summarize_head_probe.py" \
+  --root "$EXP/artifacts/head_probe" --config "$EXP/configs/head_probe.toml" \
+  --protocol "$EXP/configs/protocol.toml" --output "$EXP/results/head_probe" \
+  --accounting "$EXP/artifacts/head_probe_control/sacct.txt"
+```
+
+The second command requires a complete audited matrix, verifies all optimization histories and
+best/last prediction alignment, and regenerates `REPORT_20261003.md`, `final_validation_audit.json`,
+`gpu_cost.json`, checkpoint-sensitivity/tail tables, and the final presentation-size figures.
+It does not modify or retrain the deployed experiment.
