@@ -98,13 +98,13 @@ def composition_cards(selected: pd.DataFrame, fraction: float) -> plt.Figure:
         formula = Composition(row.composition).formula.replace(" ", "")
         formula = re.sub(r"(\d+(?:\.\d+)?)", r"$_{\1}$", formula)
         ax.set_title(formula, fontsize=18, pad=13)
-        ax.set_xticks([0, 1, 2], ["Reference", "MLP", "Transformer"], fontsize=12)
+        ax.set_xticks([0, 1, 2], ["Ground truth", "MLP", "Transformer"], fontsize=12)
         ax.set_ylim(bottom - 0.12 * span, top + 0.25 * span)
         ax.grid(axis="y", alpha=0.15, zorder=0)
         ax.tick_params(axis="y", labelsize=11)
         ax.spines[["top", "right"]].set_visible(False)
     fig.suptitle(
-        f"Same composition: reference vs. two encoder predictions\nTarget training size {fraction:.0%}  •  7 source tasks  •  Frozen encoder + 128 → 64 head",
+        f"Same composition: ground truth vs. two encoder predictions\nTarget training size {fraction:.0%}  •  7 source tasks  •  Frozen encoder + 128 → 64 head",
         fontsize=22,
         y=0.98,
     )
@@ -112,7 +112,7 @@ def composition_cards(selected: pd.DataFrame, fraction: float) -> plt.Figure:
     fig.text(
         0.5,
         0.025,
-        "Bars and numbers: mean of 3 seeds; small circles: individual seeds (not prediction intervals).\n12 compositions selected at evenly spaced reference ranks; each panel has its own vertical scale.",
+        "Bars and numbers: mean of 3 seeds; small circles: individual seeds (not prediction intervals).\n12 compositions selected at evenly spaced ground-truth ranks; each panel has its own vertical scale.",
         ha="center",
         fontsize=13,
     )
@@ -138,7 +138,7 @@ def parity_panels(summary: pd.DataFrame, fraction: float, zoom: bool) -> plt.Fig
         ax.plot([low, high], [low, high], "--", color="#666666", lw=1.2)
         ax.set(xlim=(low, high), ylim=(low, high))
         ax.set_aspect("equal")
-        ax.set_xlabel("Reference" if x == "reference" else "MLP prediction", fontsize=16)
+        ax.set_xlabel("Ground truth" if x == "reference" else "MLP prediction", fontsize=16)
         ax.set_ylabel("MLP prediction" if y == "mlp" else "Transformer prediction", fontsize=16)
         visible = summary[x].between(low, high) & summary[y].between(low, high)
         ax.set_title(f"{title}\n{visible.sum()} / {len(summary)} compositions in view", fontsize=17, pad=15)
@@ -202,7 +202,7 @@ def main() -> None:
             dict(
                 input_sha256=hashlib.sha256(args.input.read_bytes()).hexdigest(),
                 script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-                selection="12 evenly spaced reference ranks, including endpoints; same compositions at both training sizes",
+                selection="12 evenly spaced ground-truth ranks, including endpoints; same compositions at both training sizes",
                 source_count=7,
                 readout="linear_output",
                 head_hidden_dims=[128, 64],
@@ -219,8 +219,8 @@ def main() -> None:
 All figures compare the same test compositions for tuned MLP versus grouped-mean Transformer, with frozen encoders after seven source tasks and a 128→64 head with identity output. These are the completed head-probe results, not new training.
 
 - PDF pages 1–3 use 100% target training size (3,051 training compositions); pages 4–6 use 10% (306). Both use the same 697 test compositions.
-- Composition panels show reference values and the mean of three predictions; small circles show individual seed predictions, not prediction intervals. Each panel has a separate original-value axis. Examples are twelve evenly spaced ranks of reference value, including the smallest/largest. No selection uses prediction error or model disagreement.
-- The parity pages use identical axes across models. Zoom pages state the count in view; full-range companion pages include all values. On reference-versus-prediction panels the equality line indicates perfect predictions. On the model-versus-model panel it indicates identical predictions, without identifying which is more accurate.
+- Composition panels show ground-truth values and the mean of three predictions; small circles show individual seed predictions, not prediction intervals. Each panel has a separate original-value axis. Examples are twelve evenly spaced ranks of ground-truth value, including the smallest/largest. No selection uses prediction error or model disagreement.
+- The parity pages use identical axes across models. Zoom pages state the count in view; full-range companion pages include all values. On ground-truth-versus-prediction panels the equality line indicates perfect predictions. On the model-versus-model panel it indicates identical predictions, without identifying which is more accurate.
 - The figure means are for visual comparison. Reported mean-per-seed RMSE from the study is not the RMSE of these seed-mean predictions. Complete per-composition means/SDs and individual seed values are in the exported CSVs; provenance.json records the input/script hashes and selection rule.
 """)
     print(pdf_path)
