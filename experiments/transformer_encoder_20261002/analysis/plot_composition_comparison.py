@@ -166,9 +166,10 @@ def main() -> None:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=True)
     frame = pd.read_csv(args.input)
     summaries = {fraction: paired_summary(frame, fraction) for fraction in (1.0, 0.1)}
+    if any(len(summary) != 697 for summary in summaries.values()):
+        raise ValueError("The completed study requires all 697 test compositions at each training size")
     if set(summaries[1.0].composition) != set(summaries[0.1].composition):
         raise ValueError("Training sizes have different test memberships")
     a = summaries[1.0].set_index("composition").reference
@@ -178,6 +179,7 @@ def main() -> None:
     chosen = representatives(summaries[1.0])
     if len(chosen) != 12:
         raise ValueError("The fixed presentation layout requires at least 12 compositions")
+    args.output.mkdir(parents=True, exist_ok=True)
     pdf_path = args.output / "Direct_prediction_comparison_20261003.pdf"
     with PdfPages(pdf_path) as pdf:
         for fraction, summary in summaries.items():

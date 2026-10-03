@@ -1,9 +1,14 @@
+import hashlib
+import json
+import re
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
 import matplotlib.pyplot as plt
 
-from plot_composition_comparison import composition_cards, paired_summary, representatives
+from plot_composition_comparison import composition_cards, main, paired_summary, representatives
 
 
 def fixture_frame():
@@ -67,3 +72,38 @@ def test_card_titles_preserve_unreduced_composition_identity():
     assert fig.axes[0].get_title() == "Fe$_{4}$O$_{6}$"
     assert fig.axes[1].get_title() == "Si$_{2}$O$_{4}$"
     plt.close(fig)
+
+
+def test_main_rejects_incomplete_study(tmp_path, monkeypatch):
+    frame = fixture_frame()
+    source = tmp_path / "input.csv"
+    pd.concat([frame, frame.assign(fraction=0.1)]).to_csv(source, index=False)
+    output = tmp_path / "output"
+    monkeypatch.setattr(sys, "argv", ["plot", "--input", str(source), "--output", str(output)])
+    with pytest.raises(ValueError, match="697"):
+        main()
+    assert not output.exists()
+
+
+def test_main_generates_complete_artifacts(tmp_path, monkeypatch):
+    frame = fixture_frame().iloc[:3].copy()
+    rows = [frame.assign(composition=f"Fe{i + 1} O1", true_mlp=float(i), true_transformer=float(i)) for i in range(697)]
+    full = pd.concat(rows, ignore_index=True)
+    source = tmp_path / "input.csv"
+    pd.concat([full, full.assign(fraction=0.1)], ignore_index=True).to_csv(source, index=False)
+    output = tmp_path / "output"
+    monkeypatch.setattr(sys, "argv", ["plot", "--input", str(source), "--output", str(output)])
+    main()
+    assert len(list(output.glob("*.png"))) == 6
+    pdf = (output / "Direct_prediction_comparison_20261003.pdf").read_bytes()
+    assert len(re.findall(rb"/Type /Page\b", pdf)) == 6
+    a = pd.read_csv(output / "selected_compositions_f100.csv")
+    b = pd.read_csv(output / "selected_compositions_f010.csv")
+    assert len(a) == 12 and a.composition.tolist() == b.composition.tolist()
+    for fraction in ["010", "100"]:
+        assert len(pd.read_csv(output / f"all_compositions_f{fraction}.csv")) == 697
+    provenance = json.loads((output / "provenance.json").read_text())
+    assert provenance["input_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert provenance["fractions"] == [1.0, 0.1]
+    assert provenance["test_compositions"] == 697
+    assert "pages 1–3 use 100%" in (output / "README.md").read_text()
