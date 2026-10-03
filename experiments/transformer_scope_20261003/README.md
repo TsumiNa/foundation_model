@@ -232,3 +232,26 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
   respectively; their maximum recorded average GPU memory was below 6 GB. Shared storage
   usage was 892.6 GiB of 1 TiB. Accounting and the synchronized scientific snapshot have
   different collection times; neither is a claim that the full fleet has finished.
+- The following synchronized snapshot passed the collector for **543 lanes and 8,856 endpoints**.
+  KMD MLP and Transformer are complete at 171 lanes each; KMD no-attention has 161, composition
+  MLP 32, and the other composition arms four each. The twelve family-weighted Transformer–MLP
+  pretraining interactions now have all nine split/seed pairs. Two pointwise 95% hierarchical
+  intervals exclude zero: at 10% training size, frozen ridge with 6k source updates gives
+  -0.00677 [-0.01155, -0.00186], and full fine-tuning with 24k gives
+  -0.01216 [-0.02356, -0.00096]. These are standardized-RMSE differences, not percentages;
+  negative values indicate larger real12-minus-random gains for Transformer. The remaining ten
+  intervals include zero. The intervals are exploratory and not adjusted for multiple comparisons;
+  three overlapping holdouts do not establish external generalization. The primary no-attention
+  interactions still have only eight pairs at 6k and seven at 24k, so attention attribution remains open.
+  For the highlighted full-fine-tuning setting, the absolute family-weighted standardized RMSE
+  means are 0.63499 for Transformer and 0.64279 for MLP, but their paired difference interval
+  includes zero: -0.00780 [-0.01868, 0.00343]. A larger pretraining gain is therefore not evidence
+  of a reliably smaller final error. The full twelve-condition interaction figure and target-level
+  absolute-error tables are retained in ignored local results alongside the partial audit.
+- All 526 available source histories were finite: 513 from complete source lanes and thirteen
+  from lanes with downstream work incomplete; the 543 completed lanes include thirty random
+  baselines without source histories. All 14,557 completed neural candidates stopped below the
+  400-epoch cap (maximum 330). The accompanying accounting check recorded 223 completed
+  allocations, sixteen running, no failed allocation, and 33.37 elapsed GPU-hours including
+  calibration. The updated total estimate is 67.06 GPU-hours, or 75.49 with a 25% remaining-work
+  margin; storage usage was 909.2 GiB of 1 TiB. Composition-input results remain incomplete.
