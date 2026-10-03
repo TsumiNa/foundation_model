@@ -102,3 +102,23 @@ GPU compatibility and performance remain gated on review/merge and real Slurm sm
   concurrently, each with a one-hour walltime limit. Pilot outputs live in `artifacts/pilot`.
   Remaining pilot cases and the 200-lane formal campaign are not submitted yet; they remain
   gated on functional validation, measured utilization/packing throughput and a cost estimate.
+- Smoke 162343 completed all four cases; all 96 selected smoke endpoints were finite and the
+  installed-package/image/revision provenance matched. Initial pilot 162347 completed all 12
+  cases. Transformer validation loss decreased without detected latent collapse; this is an
+  optimization check, not a transfer result.
+- PACK=3 calibration **162359** repeated those same 12 pilot cases in a separate
+  `artifacts/pack_calibration` root. All completed with exactly matching validation metrics.
+  Measured worker throughput improved 2.19–2.43 times; individual workers took 23–37% longer.
+  Slurm averaged GPU utilization was 74–95%, with GPU memory 3.8–5.9 GB. The shorter unpacked
+  MLP jobs were below the accounting sampling interval; their zero utilization values are not
+  evidence of zero GPU use. Submitted the remaining pilot cases in PACK=3 array **162365**.
+- All 24 pilot cases completed, with finite diagnostics and no detected low-variance collapse.
+  Validation-only selection chose source LRs 0.0005 (MLP), 0.002 (large MLP), 0.00001
+  (Transformer), and 0.0003 (no attention). Pilot scores are tuning evidence, not held-out
+  evidence of architecture superiority. The selection record lives in
+  `artifacts/pilot_selection.json` and is part of formal run identity.
+- Submitted unpacked formal calibration **162372**, cases 1–3/51–53/101–103/151–153:
+  seed 10, all four encoder arms, and real 1/3/7-source conditions. These 12 full-budget lanes
+  belong to `artifacts/formal` and will count toward the registered 200-lane matrix. Each has
+  a one-hour walltime cap. Remaining formal lanes await this complete downstream cost measure;
+  any packed repetition for calibration must use a separate root.
