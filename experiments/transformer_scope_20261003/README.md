@@ -213,3 +213,22 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
   fractions are not used to extrapolate total cost. Shared storage was 886.4 GiB of 1 TiB.
   Remote completion markers showed all 171 KMD MLP lanes finished; Transformer and other-arm
   coverage remains partial, so this progress does not support a new architecture ranking.
+- The next synchronized scientific snapshot passed collector checks for **355 lanes and 5,748
+  endpoints**: KMD MLP 171, KMD Transformer 153, KMD no-attention 19, and four calibration lanes
+  for each composition-input arm. KMD Transformer-versus-MLP real12-minus-random interactions
+  still contain only seven paired runs at 6k updates and five at 24k, rather than the required
+  nine. Their confidence intervals remain withheld; the primary attention control is less
+  complete. These partial results do not establish an architecture-specific transfer effect.
+  Separately, 355 available non-random source histories were finite: 334 belonged to completed
+  lanes and 21 to lanes with downstream work still incomplete. The completed-lane count also
+  includes 21 random baselines, which have no source history. Small low-variance fractions occurred only
+  in four shuffled-label KMD Transformer runs (at most eight of 384 dimensions transiently,
+  two at the latest recorded step); this is not wholesale representation collapse. All 9,748
+  available completed neural candidates stopped below the 400-epoch cap (maximum 322).
+- The accompanying fleet accounting snapshot recorded 106 completed allocations and sixteen
+  running, with no failed allocation. Elapsed use including calibration was 21.30 GPU-hours;
+  the updated total estimate was 72.18, or 84.90 with a 25% remaining-work margin. Completed
+  KMD MLP and Transformer allocations had median Slurm GPU utilization of 94% and 96%,
+  respectively; their maximum recorded average GPU memory was below 6 GB. Shared storage
+  usage was 892.6 GiB of 1 TiB. Accounting and the synchronized scientific snapshot have
+  different collection times; neither is a claim that the full fleet has finished.
