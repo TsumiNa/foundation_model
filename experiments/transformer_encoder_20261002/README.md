@@ -556,3 +556,57 @@ for task, frame in pairs.groupby("task"):
     tf_rmse = np.sqrt(np.mean((frame.predicted_tf - frame.actual_tf) ** 2))
     print(task, mlp_rmse, tf_rmse, 100 * (tf_rmse / mlp_rmse - 1))
 ```
+
+
+## Frozen readout diagnosis (2026-10-03)
+
+Question: do similar aggregate errors hide encoder differences, or does the common downstream
+readout limit their use? This follow-up reuses the **completed main campaign** source checkpoints
+at k=1/3/7 for tuned MLP and grouped mean (three seeds). Inputs are explicitly supplied through
+`--source-root`; that directory must contain the original `scientific/<arm>_s<seed>` lanes.
+Checkpoint, manifest, source campaign revision, protocol and image identities are checked.
+
+`configs/head_probe.toml` registers a separate cached-feature protocol on dielectric only:
+
+- 2 encoders × 3 stages × 3 seeds × 2 target training sizes × 3 readouts = 108 selected fits:
+  ridge, MLP 128→64 with identity output, MLP 512→256 with identity output.
+- 12 additional k=7 fits reproduce the current LeakyReLU output (the activation comparison has
+  24 fits total, of which 12 identity-output fits are shared above).
+- 36 pre-tanh ridge probes and 6 raw-descriptor ridge references. Total: **162 selected fits**.
+- The 84 neural configurations each search three LRs (252 optimization trials); 78 ridge
+  configurations each search seven alphas (546 closed-form fits). Selection uses validation only.
+  Also report the predetermined LR 0.002 activation comparison, without choosing LR on test.
+
+The image-installed encoder and its parameters/BatchNorm buffers remain frozen. Both neural
+activation arms use identical initial weights and minibatch permutations, AdamW (weight decay
+0.001, epsilon 1e-6), batch 128 with drop-last, up to 250 epochs and patience 20. There is no
+reconstruction term. Scheduler and best-checkpoint selection monitor target validation MSE;
+this intentionally differs from the old workflow and is not pooled with its 756 fits. Preserve
+best and last head weights, all validation histories, selected test predictions, last-epoch
+predictions, and validation representation statistics. Neural probes use the original post-tanh
+features; ridge feature standardization is fitted on training compositions only. Scalers and
+train/validation/test memberships come unchanged from the registered data manifest.
+
+This does **not** patch the shared `None` activation semantics: the control uses the installed
+`LinearBlock(output_active=None)` and the alternative explicitly uses `nn.Identity()`. Package
+0.5.0 and its verified official ARM image are therefore unchanged. A package-level repair is a
+separate compatibility/version/image decision. Current work tests sensitivity, not that the
+observed activation necessarily caused architectural similarity.
+
+Execution: after review and squash merge, stage scripts/configs only. Launch
+`scripts/head_probe.sbatch` with runtime-only `FM_WORKSPACE`, `FM_IMAGE`, `FM_DATA_DIR`,
+`FM_SOURCE_WORKSPACE`, `FM_SOURCE_ROOT`, `FM_OUTPUT_ROOT`, and `FM_BENCHMARK_REVISION`.
+Case indices 0–8 are MLP (seed-major, then k=1/3/7), 9–17 grouped mean. `SMOKE=1`
+uses 256 rows per split and two epochs, in a distinct output root. Calibrate PACK on completed
+unpacked cases and compare Slurm accounting before launching the remaining cases. Only
+same-identity completed trials may be skipped on resume; an interrupted head trial restarts.
+Results and job provenance stay in ignored `artifacts/head_probe` and `results/head_probe`.
+
+Interpretation: report paired encoder-by-readout interactions, physical RMSE/MAE, prediction
+disagreement and validation CKA/effective rank/saturation. Three-seed SD is not predictive
+uncertainty. Source count still changes task content and cumulative compute. The existing test
+set has already been inspected; this is explanatory follow-up, not an untouched confirmatory
+benchmark. Token-level readout and new full-fine-tuning/pretraining jobs remain conditional on
+this diagnosis. No source training is repeated here.
+
+Execution log: registered local protocol and tests; GPU execution waits for the PR gate.

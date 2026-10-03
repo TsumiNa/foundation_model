@@ -1,0 +1,11 @@
+# Controlled cached-feature study, separate from the original transfer workflow.
+arms = ["mlp_tuned", "grouped_mean"]
+seeds = [0, 1, 2]
+source_counts = [1, 3, 7]
+fractions = [0.1, 1.0]
+learning_rates = [0.0005, 0.002, 0.008]
+ridge_alphas = [0.0001, 0.01, 1.0, 10.0, 100.0, 1000.0, 10000.0]
+max_epochs = 250
+patience = 20
+batch_size = 128
+source_revision = "ae13d4509d2036b3ad4370897c3db9dedcb06e15"
