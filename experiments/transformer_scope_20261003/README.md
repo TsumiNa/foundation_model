@@ -87,6 +87,14 @@ pool. Intervals are pointwise exploratory summaries, not external generalization
 multiplicity-adjusted discoveries. Seed SD is never called predictive uncertainty. Same-composition
 predictions, best/last predictions and candidate histories are saved for later diagnostic figures.
 
+The same collector exports `family_absolute_errors.csv` (one complete four-target weighted error
+per run), `family_control_pairs.csv` (paired differences), and `family_control_comparisons.csv`
+(their summaries). `source` means real12 minus the named source baseline; `final_error` means
+Transformer real12 minus the named control architecture's real12 error; `shuffled_interaction`
+means (Transformer real12 minus shuffled12) minus the same difference for the control architecture.
+All use standardized RMSE differences, not percentages; lower is better. Missing target families
+are excluded before pairing, and incomplete split/seed matrices receive no interval.
+
 ## Deployment and resource gates
 
 Prepare with `scripts/prepare.py --input data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet
@@ -267,7 +275,8 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
   attention-related signal, with the same exploratory, overlapping-split and multiple-comparison
   limitations as above; a reliable final-error advantage over MLP remains unestablished.
   Against MLP, all six full-fine-tuning interactions using shuffled pretraining as the baseline
-  include zero. Thus the small advantage relative to random initialization is baseline-dependent.
+  include zero. The random-baseline finding is therefore not replicated with shuffled labels;
+  differing CI inclusion of zero does not establish a difference between the two interactions.
   Transformer real12-versus-real7 intervals include zero in eleven of twelve aggregate settings;
   these data do not establish monotonic improvement with more source tasks. Complete interaction,
   source-control and original-unit error tables remain in the local results directory.

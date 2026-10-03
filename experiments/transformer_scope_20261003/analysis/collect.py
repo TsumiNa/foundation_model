@@ -60,7 +60,71 @@ def paired_summary(values: pd.Series, splits: list[int], seeds: list[int]) -> di
     )
 
 
+def family_comparisons(frame: pd.DataFrame, raw: dict, output: Path) -> None:
+    """Pair complete equal-family errors before computing secondary control contrasts.
+
+    Errors and differences are in standardized RMSE, not percent. Random features
+    (ridge) or scratch (full) have zero source updates and are shared across budgets.
+    Shuffled-label interactions are separate estimands: different CI inclusion of
+    zero does not establish a difference between baseline-specific interactions.
+    """
+    cfg = raw["study"]
+    keys = ["input", "arm", "condition", "steps", "fraction", "mode", "split_seed", "seed"]
+    if frame.duplicated(keys + ["target"]).any() or not np.isfinite(frame.standardized_rmse).all():
+        raise ValueError("Finite unique family endpoint values required")
+    rows = []
+    for key, g in frame.groupby(keys):
+        if set(g.target) == set(TARGETS) and len(g) == len(TARGETS):
+            rows.append(
+                dict(zip(keys, key, strict=True))
+                | dict(value=sum(WEIGHTS[r.target] * r.standardized_rmse for r in g.itertuples()))
+            )
+    family = pd.DataFrame(rows, columns=keys + ["value"])
+    family.to_csv(output / "family_absolute_errors.csv", index=False)
+    summaries = []
+    paired = []
+    for budget in cfg["source_budgets"]:
+        f = family[(family.steps == budget) | ((family.condition == "random") & (family.steps == 0))]
+        for key, g in f.groupby(["input", "fraction", "mode"]):
+            w = g.pivot(index=["split_seed", "seed"], columns=["arm", "condition"], values="value")
+            specs = []
+            for arm in g.arm.unique():
+                for base in ["random", *cfg["source_sets"]]:
+                    if base != "real12":
+                        specs.append(("source", arm, base, [(arm, "real12"), (arm, base)], [1, -1]))
+            tf = f"{key[0]}_transformer"
+            for control in ["mlp", "no_attention"]:
+                other = f"{key[0]}_{control}"
+                specs.extend(
+                    [
+                        ("final_error", tf, other, [(tf, "real12"), (other, "real12")], [1, -1]),
+                        (
+                            "shuffled_interaction",
+                            tf,
+                            other,
+                            [(tf, "real12"), (tf, "shuffled12"), (other, "real12"), (other, "shuffled12")],
+                            [1, -1, -1, 1],
+                        ),
+                    ]
+                )
+            for kind, arm, baseline, columns, signs in specs:
+                if not all(c in w for c in columns):
+                    continue
+                q = w[columns].dropna()
+                if q.empty:
+                    continue
+                values = q.mul(signs, axis=1).sum(axis=1)
+                identity = dict(zip(["input", "fraction", "mode"], key, strict=True)) | dict(
+                    steps=budget, contrast=kind, arm=arm, baseline=baseline, condition="real12"
+                )
+                summaries.append(identity | paired_summary(values, cfg["split_seeds"], cfg["seeds"]))
+                paired.extend(identity | dict(split_seed=sp, seed=seed, value=v) for (sp, seed), v in values.items())
+    pd.DataFrame(summaries).to_csv(output / "family_control_comparisons.csv", index=False)
+    pd.DataFrame(paired).to_csv(output / "family_control_pairs.csv", index=False)
+
+
 def contrasts(frame: pd.DataFrame, raw: dict, output: Path) -> None:
+    family_comparisons(frame, raw, output)
     cfg = raw["study"]
     comparisons = [("real12", base) for base in ["random", *cfg["source_sets"]] if base != "real12"]
     for count in [1, 3]:
