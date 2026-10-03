@@ -290,3 +290,29 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
   Storage usage is 914.6 GiB of 1 TiB. This incremental sync skipped 543 previously fully synced,
   audited, immutable completed lanes; final verification will include an unrestricted scientific
   sync. Runtime code and scientific identities remain unchanged.
+- The subsequent snapshot contains **870 complete lanes / 14,088 finite endpoints** with the
+  registered common runtime identity. Composition Transformer has 154 lanes, composition
+  no-attention 32, and the other four arms 171 each. Composition Transformer–MLP aggregate
+  interactions have six paired runs; the no-attention interactions have only one. Neither has
+  the registered nine pairs, so no intervals or reproducible composition-input ranking are reported.
+- All 855 source histories and 22,724 completed neural candidates are finite; no candidate hits
+  400 epochs (maximum 372). Source histories comprise 825 completed source lanes and thirty
+  downstream-incomplete lanes; the 870 complete lanes include 45 random baselines.
+  Four available composition no-attention shuffled-label histories end with 87.2–98.4% of
+  latent dimensions below the variance threshold, compared with at most 4.2% among available
+  real-label task-end histories for that arm. This diagnostic uses post-tanh variance below 1e-6 on up to
+  512 validation compositions from the first active source task; it is not a full-pool information
+  measure. Low variance alone does not imply exactly constant predictions, especially after ridge
+  feature scaling. Keep this control degeneration visible when interpreting real-versus-shuffled
+  gains, rather than attributing those gains entirely to stronger cross-task learning. The fixed
+  protocol continues; this finite shuffled-label behavior is not a failed job requiring resubmission.
+- The accounting snapshot records 285 completed allocations and sixteen running, no failures,
+  48.21 elapsed GPU-hours including calibration, and a revised forecast of 61.48 GPU-hours
+  (64.80 with 25% margin on remaining work). Completed-allocation GPU utilization medians by arm
+  are 94–97%, maximum reported GPU memory is 7,920 MB, and storage usage is 918.6 GiB / 1 TiB.
+  Accounting and the scientific snapshot were collected at different times. The incremental
+  sync skipped 750 previously fully synchronized and audited lanes; the final unrestricted
+  scientific sync remains required. No training scripts, protocol or package were changed.
+  All 14,088 prediction tables in the scientific snapshot are finite and nonconstant. A separate
+  later remote retention audit checked 5,859 required source/final/selected-best weight files
+  across 885 completed lanes; none was missing or empty.
