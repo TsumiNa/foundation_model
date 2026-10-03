@@ -357,3 +357,19 @@ real12/24k pretraining, at 10% training size (split 20261011, seed 20). Their sy
 retain negative predictions; a single-run illustration is not statistical evidence. The bounded
 KMD/ridge/10%/6k attention-related signal remains a candidate for independent validation, not a
 universal advantage. No additional training was launched during the final audit.
+
+Rebuild all twelve final figures and the exact plotted prediction table after placing the
+scientific run outputs in `artifacts/formal` (run from the repository root):
+
+```bash
+uv run python experiments/transformer_scope_20261003/analysis/figures.py \
+  --root experiments/transformer_scope_20261003/artifacts/formal \
+  --config experiments/transformer_scope_20261003/configs/study.toml \
+  --selection experiments/transformer_scope_20261003/artifacts/pilot_selection.json \
+  --output experiments/transformer_scope_20261003/results
+```
+
+The generator reruns the provenance-aware collector and requires the full registered campaign.
+Parity panels select the first registered split/seed by metadata, verify identical compositions
+and true values across models, and cross-check original-scale RMSE against the audited endpoint.
+Generated figures and reports remain untracked under `results/`.
