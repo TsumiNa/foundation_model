@@ -135,3 +135,27 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
 - GPU smoke **162517** completed all six arms in 28–34 seconds per allocation. All 144 endpoints
   and best/last exported predictions were finite; CUDA, installed-package image and merged-script
   provenance matched. The dependency released **162523**. Pilot results remain validation-only.
+- All eighteen unpacked pilots **162523** completed: 6,000 source updates each, finite diagnostics,
+  no low-variance latent dimensions, and declining source validation loss. Slurm average GPU
+  utilization was 14–55%. Matched PACK=3 calibration jobs **162544–162549** completed in a separate
+  output root; all 72 target-validation metrics matched exactly. Worker throughput improved
+  1.51–2.46 times, with arm-wise maximum per-worker duration ratios of 1.22–2.02 and
+  92–97% GPU utilization.
+- Submitted remaining pilot array **162552** (PACK=3, at most twelve GPUs, 30-minute cap), covering
+  all 48 registered indices with the eighteen completed cases skipped. Formal runs await the
+  complete validation-only selection. Full-budget calibration will first cover each arm's
+  scratch, real7/24k, real12/6k and real12/24k lanes; the three contiguous pretrained cases allow
+  matched PACK=3 repetitions before sizing the formal fleet.
+- All 48 pilot cases completed and passed the selector's provenance and budget audit.
+  Selected source learning rates: KMD MLP/Transformer/no-attention = 0.001/0.0001/0.00001;
+  composition MLP/Transformer/no-attention = 0.001/0.0001/0.001. Both selected Transformer
+  seeds had zero low-variance dimensions throughout. The KMD no-attention and composition
+  no-attention choices lie on opposite grid boundaries; selection uses only two pilot seeds
+  and is not proof of a global optimum. Some rejected high-LR Transformer runs had transient
+  low-variance dimensions, which remain in the diagnostic record.
+- Staged and checksum-verified the selection artifact; submitted full-budget unpacked array
+  **162569**, 24 formal cases with at most twelve GPUs and a one-hour cap per allocation.
+  It covers scratch and the three pretrained calibration cases above for every arm, first
+  split and seed 20. Completed cases count toward the 1,026-lane formal matrix. No expanded
+  formal fleet has been submitted; its size and cost remain gated on full-budget calibration.
+  Shared storage at submission was 912.1 GiB of 1 TiB.
