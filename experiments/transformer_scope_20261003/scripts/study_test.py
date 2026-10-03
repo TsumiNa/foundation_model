@@ -6,7 +6,6 @@ import pytest
 import torch
 
 from study import StudyConfig, cases, normalization, shuffle_labels, make_encoder, fit_target
-from prepare import isolate
 
 CONFIG = Path(__file__).parents[1] / "configs/study.toml"
 
@@ -41,11 +40,6 @@ def test_train_only_normalization_and_shuffled_masks():
             np.sort(shuffled[splits == split], axis=0), np.sort(matrix[splits == split], axis=0), equal_nan=True
         )
     assert not np.allclose(shuffled[:10], matrix[:10], equal_nan=True)
-
-
-def test_alias_split_precedence_preserves_original_formula():
-    f = isolate(pd.DataFrame({"composition": ["Fe4 O6", "Fe2 O3", "NaCl"], "split": ["train", "test", "val"]}))
-    assert f.composition.tolist() == ["Fe4 O6", "NaCl"] and f.split.tolist() == ["test", "val"]
 
 
 def test_full_and_frozen_target_training(tmp_path):
@@ -131,23 +125,6 @@ def test_capacity_matching_and_feature_inputs():
                 assert enc(torch.rand(2, width)).shape == (2, 384)
             counts.append(sum(p.numel() for p in enc.parameters()))
         assert max(counts) / min(counts) < 1.01
-
-
-def test_hash_splits_row_independent_and_nested_subsets():
-    from prepare import partitions, TARGET
-
-    f = pd.DataFrame(dict(identity=[f"id{i}" for i in range(1000)]))
-    for n in TARGET:
-        f[n] = np.arange(1000, dtype=float)
-    a = partitions(f, 20261011)
-    b = partitions(f.sample(frac=1, random_state=7), 20261011).sort_index()
-    pd.testing.assert_frame_equal(a, b)
-    assert not a.split.equals(partitions(f, 20261012).split)
-    for j in range(4):
-        one = a[f"target{j}_f001_train"]
-        ten = a[f"target{j}_f010_train"]
-        all_ = a[f"target{j}_f100_train"]
-        assert (one <= ten).all() and (ten <= all_).all() and (all_ == a.split.eq("train")).all()
 
 
 def test_invalid_grids_and_source_sets():

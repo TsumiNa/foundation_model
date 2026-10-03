@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+from itertools import combinations
 import json
 from pathlib import Path
 import re
@@ -61,6 +62,9 @@ def paired_summary(values: pd.Series, splits: list[int], seeds: list[int]) -> di
 
 def contrasts(frame: pd.DataFrame, raw: dict, output: Path) -> None:
     cfg = raw["study"]
+    comparisons = [("real12", base) for base in ["random", *cfg["source_sets"]] if base != "real12"]
+    for count in [1, 3]:
+        comparisons.extend(combinations([c for c, tasks in cfg["source_sets"].items() if len(tasks) == count], 2))
     effects = []
     interactions = []
     # Random/scratch is shared across budgets. A given scratch result is never counted twice
@@ -69,17 +73,18 @@ def contrasts(frame: pd.DataFrame, raw: dict, output: Path) -> None:
         f = frame[(frame.steps == budget) | (frame.condition == "random")]
         for key, g in f.groupby(["arm", "target", "fraction", "mode"]):
             w = g.pivot(index=["split_seed", "seed"], columns="condition", values="standardized_rmse")
-            for base in ["random", *[c for c in cfg["source_sets"] if c != "real12"]]:
-                if not {"real12", base} <= set(w.columns):
+            for condition, base in comparisons:
+                if not {condition, base} <= set(w.columns):
                     continue
-                q = w[["real12", base]].dropna()
+                q = w[[condition, base]].dropna()
                 if len(q):
                     effects.append(
                         dict(zip(["arm", "target", "fraction", "mode"], key, strict=True))
                         | dict(
                             steps=budget,
                             baseline=base,
-                            **paired_summary(q.real12 - q[base], cfg["split_seeds"], cfg["seeds"]),
+                            condition=condition,
+                            **paired_summary(q[condition] - q[base], cfg["split_seeds"], cfg["seeds"]),
                         )
                     )
         for key, g in f.groupby(["input", "target", "fraction", "mode"]):

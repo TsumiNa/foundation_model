@@ -3,6 +3,7 @@
 from __future__ import annotations
 import argparse
 import json
+import re
 from pathlib import Path
 import tomllib
 import numpy as np
@@ -20,12 +21,27 @@ def select(root: Path, config: Path) -> dict:
         lane = root / f"case{i:03d}"
         identity = json.loads((lane / "identity.json").read_text())
         result = json.loads((lane / "done.json").read_text())
+        provenance = json.loads((lane / "run_provenance.json").read_text())
+        runtime = provenance["runtime"]
+        cfg = raw["study"]
+        script_dir = Path(__file__).parent
         if (
             identity["phase"] != "pilot"
             or identity["case"] != case
             or identity["config"] != digest(config)
             or identity["manifest"] != raw["study"]["data_manifest_sha256"]
             or result["case"] != case
+            or identity["script"] != digest(script_dir / "study.py")
+            or identity["preparation_script"] != digest(script_dir / "prepare.py")
+            or identity["package"] != cfg["package_version"]
+            or identity["selection"] is not None
+            or not re.fullmatch(r"[0-9a-f]{40}", identity["revision"] or "")
+            or provenance["identity"] != identity
+            or result["source"]["steps"] != cfg["pilot_steps"]
+            or runtime["device"] != "cuda"
+            or runtime["sif_sha256"] != cfg["sif_sha256"]
+            or runtime["image_revision"] != cfg["image_revision"]
+            or "/site-packages/" not in runtime["package_path"]
             or identity["smoke"]
             or identity["cpu_test"]
         ):
@@ -55,6 +71,7 @@ def select(root: Path, config: Path) -> dict:
         config_sha256=digest(config),
         manifest_sha256=manifest,
         pilot_revision=revision,
+        selector_script_sha256=digest(Path(__file__)),
     )
 
 

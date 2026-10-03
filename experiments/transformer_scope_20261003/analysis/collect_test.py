@@ -89,6 +89,39 @@ def test_hierarchical_pairing_and_incomplete_intervals():
         paired_summary(values * float("nan"), [1, 2, 3], [20, 21, 22])
 
 
+def test_equal_count_source_sets_are_paired_directly(tmp_path):
+    raw = tomllib.loads(CONFIG.read_text())
+    raw["study"]["split_seeds"] = [1, 2, 3]
+    names = [c for c, v in raw["study"]["source_sets"].items() if len(v) in [1, 3]]
+    rows = [
+        dict(
+            input="kmd",
+            arm="kmd_transformer",
+            target="Bulk modulus",
+            fraction=0.1,
+            mode="ridge",
+            split_seed=sp,
+            seed=seed,
+            steps=steps,
+            condition=c,
+            standardized_rmse=float(i + 1),
+        )
+        for i, c in enumerate(names)
+        for sp in [1, 2, 3]
+        for seed in [20, 21, 22]
+        for steps in [6000, 24000]
+    ]
+    contrasts(pd.DataFrame(rows), raw, tmp_path)
+    pairs = pd.read_csv(tmp_path / "paired_contrasts.csv")
+    assert len(pairs) == 12 and not pairs.partial.any()
+    q = pairs[(pairs.condition == "real1_energy") & (pairs.baseline == "real1_electronic")]
+    assert len(q) == 2 and np.allclose(q["mean"], -1)
+    assert (
+        (pairs.condition.str.startswith("real1") & pairs.baseline.str.startswith("real1"))
+        | (pairs.condition.str.startswith("real3") & pairs.baseline.str.startswith("real3"))
+    ).all()
+
+
 def test_family_interaction_requires_all_targets_and_pairs(tmp_path):
     raw = tomllib.loads(CONFIG.read_text())
     raw["study"]["split_seeds"] = [1, 2, 3]

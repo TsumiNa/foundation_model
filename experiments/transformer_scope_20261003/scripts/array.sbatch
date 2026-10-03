@@ -18,7 +18,7 @@ PACK=${PACK:-1}; FIRST_CASE=${FIRST_CASE:-0}
 [[ ! -d "$FM_WORKSPACE/src" && -z ${PYTHONPATH:-} ]] || { echo 'FAIL source overrides'; exit 2; }
 EXP="$FM_WORKSPACE/experiments/transformer_scope_20261003"
 CFG="$EXP/configs/study.toml"
-EXPECTED=$($APPTAINER exec --cleanenv --bind "$FM_WORKSPACE:$FM_WORKSPACE" "$FM_IMAGE" python -c 'import sys,tomllib; print(tomllib.load(open(sys.argv[1],"rb"))["study"]["sif_sha256"])' "$CFG")
+EXPECTED=$(python3 -c 'import sys,tomllib; print(tomllib.load(open(sys.argv[1],"rb"))["study"]["sif_sha256"])' "$CFG")
 FM_SIF_SHA256=$(sha256sum "$FM_IMAGE" | cut -d ' ' -f 1)
 [[ $FM_SIF_SHA256 = "$EXPECTED" ]] || { echo 'FAIL SIF checksum'; exit 2; }
 [[ $PHASE = pilot || $PHASE = formal ]] || exit 2
