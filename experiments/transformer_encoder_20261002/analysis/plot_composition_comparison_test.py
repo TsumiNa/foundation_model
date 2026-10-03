@@ -71,6 +71,7 @@ def test_card_titles_preserve_unreduced_composition_identity():
     fig = composition_cards(selected, 1.0)
     assert fig.axes[0].get_title() == "Fe$_{4}$O$_{6}$"
     assert fig.axes[1].get_title() == "Si$_{2}$O$_{4}$"
+    assert fig.axes[0].get_xticklabels()[0].get_text() == "Ground truth"
     plt.close(fig)
 
 
