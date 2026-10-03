@@ -662,3 +662,19 @@ The second command requires a complete audited matrix, verifies all optimization
 best/last prediction alignment, and regenerates `REPORT_20261003.md`, `final_validation_audit.json`,
 `gpu_cost.json`, checkpoint-sensitivity/tail tables, and the final presentation-size figures.
 It does not modify or retrain the deployed experiment.
+
+Generate direct composition-level comparisons from the audited paired prediction table:
+
+```bash
+uv run python experiments/transformer_encoder_20261002/analysis/plot_composition_comparison.py \
+  --input experiments/transformer_encoder_20261002/results/head_probe/paired_composition_predictions.csv \
+  --output experiments/transformer_encoder_20261002/results/head_probe/direct_comparison
+```
+
+The six-page PDF and PNGs compare frozen tuned MLP and grouped-mean Transformer encoders after
+seven source tasks with the identity-output 128→64 head. Both training sizes use the same twelve
+examples, chosen at evenly spaced reference-value ranks without using prediction errors.
+Bars show seed-mean predictions; individual-seed markers show training variability. Parity plots
+include full-range and zoomed views plus a direct model-versus-model panel. CSV exports retain
+all compositions and seeds, and provenance records the input/script hashes. These visual means
+are distinct from the study's mean-per-seed RMSE; no additional training is performed.
