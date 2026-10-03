@@ -175,3 +175,18 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
   checks, bringing the formal collector to 20 complete lanes and 480 endpoints. Submitted its
   matched PACK=3 job **162630** (first case 869). The composition Transformer is the only arm
   still awaiting complete unpacked downstream results before its packing calibration.
+- Unpacked calibration **162569** finished all 24 lanes: 576 endpoints passed the collector's
+  image/data/config/selection/revision checks. All 1,728 neural candidates stopped before the
+  400-epoch cap (maximum 322); all 576 exported prediction tables were finite and nonconstant.
+  Both source budgets and their persistent checkpoints were verified. These remain one-split,
+  one-seed calibration results, not evidence of a reproducible architecture effect.
+- The first five full-budget packing jobs completed successfully. All 360 endpoint records
+  matched their unpacked counterparts exactly after excluding elapsed-time fields. Measured
+  worker throughput increased 1.51–2.29 times; average GPU utilization was 95–98%, using
+  approximately 3.8–7.9 GB GPU memory. Submitted final composition Transformer PACK=3 job
+  **162664** (first case 698, one GPU, one-hour cap) after its unpacked audit passed.
+- Completed smoke, pilot, unpacked formal and the first five packing allocations total
+  6.4314 GPU-hours. Shared quota usage was 875.7 GiB of 1 TiB at this check. Measured retained
+  weight sizes project approximately 51.5 GiB for the formal matrix, before histories and
+  calibration overhead. The remaining fleet still awaits the sixth packing measurement and
+  a revised combined cost/storage estimate; no additional formal cases have been submitted.
