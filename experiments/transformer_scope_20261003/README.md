@@ -159,3 +159,19 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
   split and seed 20. Completed cases count toward the 1,026-lane formal matrix. No expanded
   formal fleet has been submitted; its size and cost remain gated on full-budget calibration.
   Shared storage at submission was 912.1 GiB of 1 TiB.
+- Partial full-budget audit: 19 of the 24 calibration lanes completed, yielding 456 finite
+  endpoints under the registered common revision, image and selection identity. All eighteen
+  pretrained lanes finished their source budget with zero low-variance dimensions in recorded
+  probes. Among the completed lanes, all 1,368 neural candidates stopped before the 400-epoch
+  cap (maximum 297); exported best/last predictions were finite. This is one split and one seed,
+  so the collector reports partial effects without confidence intervals or architecture ranking.
+- Submitted matched full-budget PACK=3 jobs **162623–162626** for the already completed KMD
+  MLP/Transformer/no-attention and composition MLP triples (first cases 14/185/356/527).
+  Each uses one GPU, a one-hour cap and a separate calibration root. Source checkpoints were
+  verified before submission. The other two arms await their completed unpacked targets;
+  the main fleet remains gated on all packing/cost/storage checks. Shared storage was
+  914.5 GiB of 1 TiB at this check; no failed Slurm allocation was observed.
+- The composition no-attention triples subsequently completed and passed identity/checkpoint
+  checks, bringing the formal collector to 20 complete lanes and 480 endpoints. Submitted its
+  matched PACK=3 job **162630** (first case 869). The composition Transformer is the only arm
+  still awaiting complete unpacked downstream results before its packing calibration.
