@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from report import aligned_predictions, effects
+import report as report_module
 
 
 def test_effects_pairs_seeds_before_averaging():
@@ -52,3 +53,54 @@ def test_predictions_align_compositions_and_reject_truth_mismatch(tmp_path: Path
     frame.to_parquet(second)
     with pytest.raises(ValueError, match="Invalid prediction"):
         aligned_predictions([second])
+
+
+def test_partial_report_stops_before_effects_or_figures(tmp_path, monkeypatch):
+    monkeypatch.setattr(report_module, "collect", lambda *args: {"partial": True})
+
+    def forbidden(*args):
+        pytest.fail("Partial campaign reached final analysis")
+
+    monkeypatch.setattr(report_module, "effects", forbidden)
+    monkeypatch.setattr(report_module, "figures", forbidden)
+    with pytest.raises(ValueError, match="complete registered"):
+        report_module.report(tmp_path, tmp_path / "missing.toml", tmp_path, tmp_path)
+    assert not (tmp_path / "REPORT_EN_20261003.md").exists()
+
+
+def test_complete_report_uses_only_audited_case_range(tmp_path, monkeypatch):
+    config = tmp_path / "config.toml"
+    config.write_text("[study]\nseeds=[10,11]\n")
+    pd.DataFrame({"rmse": [1.0]}).to_csv(tmp_path / "metrics.csv", index=False)
+    (tmp_path / "case999").mkdir()  # Stale matching directory must never enter figures.
+    audit = dict(partial=False, complete_lanes=2, expected_lanes=2, metrics=48)
+    monkeypatch.setattr(report_module, "collect", lambda *args: audit)
+    paired = pd.DataFrame(
+        [
+            dict(
+                arm="mlp",
+                target="Bulk modulus",
+                fraction=1.0,
+                mode="full",
+                baseline="random",
+                relative_mean=-10.0,
+                relative_lo95=-12.0,
+                relative_hi95=-8.0,
+                improved_seeds=2,
+                n_seeds=2,
+            )
+        ]
+    )
+    monkeypatch.setattr(report_module, "effects", lambda frame, seeds: paired)
+    seen = []
+
+    def fake_figures(frame, effects, lanes, output, seeds):
+        seen.extend(lanes)
+        assert seeds == [10, 11]
+
+    monkeypatch.setattr(report_module, "figures", fake_figures)
+    assert report_module.report(tmp_path, config, tmp_path, tmp_path) == audit
+    assert seen == [tmp_path / "case000", tmp_path / "case001"]
+    assert (tmp_path / "paired_relative_effects.csv").is_file()
+    text = (tmp_path / "REPORT_EN_20261003.md").read_text()
+    assert "-10.00%" in text and "Audited 2 lanes and 48 selected endpoints" in text

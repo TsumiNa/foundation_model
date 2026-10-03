@@ -79,7 +79,9 @@ def save(fig: plt.Figure, output: Path, name: str) -> None:
     plt.close(fig)
 
 
-def figures(frame: pd.DataFrame, paired: pd.DataFrame, root: Path, output: Path, seeds: list[int]) -> None:
+def figures(
+    frame: pd.DataFrame, paired: pd.DataFrame, registered_lanes: list[Path], output: Path, seeds: list[int]
+) -> None:
     plt.rcParams.update({"font.size": 13, "axes.titlesize": 16, "axes.labelsize": 14, "legend.fontsize": 11})
     for mode, label in zip(MODES, MODE_LABELS, strict=True):
         fig, axes = plt.subplots(4, 2, figsize=(15, 17), layout="constrained")
@@ -148,9 +150,9 @@ def figures(frame: pd.DataFrame, paired: pd.DataFrame, root: Path, output: Path,
 
     # File selection is driven solely by registered condition/seed, never by test error.
     lanes = {}
-    for p in root.glob("case*/identity.json"):
-        c = json.loads(p.read_text())["case"]
-        lanes[(c["arm"], c["seed"], c["condition"])] = p.parent
+    for lane in registered_lanes:
+        c = json.loads((lane / "identity.json").read_text())["case"]
+        lanes[(c["arm"], c["seed"], c["condition"])] = lane
     for fraction in [0.1, 1.0]:
         fig, axes = plt.subplots(2, 4, figsize=(18, 9), layout="constrained")
         for row, condition in enumerate(["random", "real7"]):
@@ -215,7 +217,8 @@ def report(root: Path, config: Path, selection: Path, output: Path) -> dict:
     frame = pd.read_csv(output / "metrics.csv")
     paired = effects(frame, seeds)
     paired.to_csv(output / "paired_relative_effects.csv", index=False)
-    figures(frame, paired, root, output, seeds)
+    registered_lanes = [root / f"case{i:03d}" for i in range(audit["expected_lanes"])]
+    figures(frame, paired, registered_lanes, output, seeds)
     lines = [
         "# Transformer cross-task transfer: complete controlled study",
         "",
