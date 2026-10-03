@@ -133,3 +133,14 @@ GPU compatibility and performance remain gated on review/merge and real Slurm sm
   repeating cases 1–3/51–53/101–103/151–153 in `artifacts/formal_pack_calibration`. Each reserves
   one GPU for at most 30 minutes. These repetitions are excluded from the formal result root.
   The remaining 188 lanes await measured full-budget packing throughput and its cost estimate.
+- Full-budget packing calibration completed: worker throughput improved 2.07/2.10/2.28/2.28
+  times for MLP/large MLP/Transformer/no attention. All 288 endpoint metrics matched the
+  unpacked runs exactly. Slurm GPU utilization averaged 94–96%, with 3.8–6.0 GB recorded GPU
+  memory. The whole campaign is now estimated at 10–15 GPU-hours (JPY 3,000–4,500 before tax,
+  including calibration and a contingency), rather than the provisional 100-hour envelope.
+  This estimate uses matched measured runtimes; it is not a guarantee for every seed/condition.
+- Submitted formal array **162424**, indices 0–66, PACK=3, at most 16 concurrent GPUs, and a
+  one-hour limit per array task. It covers the registered 200 cases and skips the 12 completed
+  cases under the same identity, leaving 188 new lanes. The last pack is bounded at case 199.
+  The shared quota was 877.8 GB of 1 TB before this submission. Scientific results stay under
+  `artifacts/formal`; packing repetitions stay separate. No old campaign was restarted.
