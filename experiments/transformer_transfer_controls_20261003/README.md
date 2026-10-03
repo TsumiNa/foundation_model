@@ -144,3 +144,18 @@ GPU compatibility and performance remain gated on review/merge and real Slurm sm
   cases under the same identity, leaving 188 new lanes. The last pack is bounded at case 199.
   The shared quota was 877.8 GB of 1 TB before this submission. Scientific results stay under
   `artifacts/formal`; packing repetitions stay separate. No old campaign was restarted.
+- The next synchronized snapshot verifies 110/200 lanes and 2,640/4,800 endpoints: both MLP
+  arms have all 50 lanes, while Transformer and no-attention coverage is still incomplete.
+  No final cross-encoder ranking is inferred from this unequal coverage.
+
+## Reproduce the complete report
+
+After every registered lane is complete, run `analysis/report.py` with `--root artifacts/formal`,
+`--config configs/study.toml`, `--selection artifacts/pilot_selection.json`, and `--output results`
+using paths relative to this experiment (or equivalent repository-root paths). It first reruns
+the provenance-aware collector and refuses an incomplete campaign. It writes paired relative
+effects, source-task-count curves, real-versus-shuffled controls, dielectric parity plots and
+same-composition examples, plus an English report. Parity plots retain all points on explicitly
+labeled symmetric-log axes. Composition examples are selected by ground-truth quantiles, never
+by model error; their error bars show seed SD, not predictive uncertainty. Confidence intervals
+resample paired seeds and remain pointwise exploratory intervals, without multiplicity correction.
