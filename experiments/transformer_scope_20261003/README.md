@@ -122,3 +122,40 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
   Prepared 48,402 composition-isolated records and three hash splits; all target training-only
   scales (including 1%) are finite and nonzero. Capacity matching was checked by instantiating
   all six installed-package encoder configurations. RIKYU training has not started.
+- PR **#82** reviewed and squash-merged as `482babebdb198d3f401e026f16d2766ca734086c`;
+  all five findings were addressed. Eighteen focused tests, Ruff, package-wide mypy and shell
+  syntax checks passed. The 94-element Transformer CPU functional smoke completed all 24
+  endpoints using two source updates and two epochs per downstream candidate; it is not a
+  scientific result. The four staged data files were verified against the manifest.
+- Submitted six-arm GPU smoke **162517** (pilot cases 0/8/16/24/32/40, PACK=1, six concurrent
+  GPUs, 20-minute cap). Submitted initial unpacked pilot **162523**, cases
+  0–2/8–10/16–18/24–26/32–34/40–42, at most twelve GPUs and one hour per case, with a strict
+  `afterok:162517` dependency. No remaining pilot or formal fleet has been submitted yet.
+  All runtime scripts retain the PR82 merged revision; documentation updates do not change it.
+- GPU smoke **162517** completed all six arms in 28–34 seconds per allocation. All 144 endpoints
+  and best/last exported predictions were finite; CUDA, installed-package image and merged-script
+  provenance matched. The dependency released **162523**. Pilot results remain validation-only.
+- All eighteen unpacked pilots **162523** completed: 6,000 source updates each, finite diagnostics,
+  no low-variance latent dimensions, and declining source validation loss. Slurm average GPU
+  utilization was 14–55%. Matched PACK=3 calibration jobs **162544–162549** completed in a separate
+  output root; all 72 target-validation metrics matched exactly. Worker throughput improved
+  1.51–2.46 times, with arm-wise maximum per-worker duration ratios of 1.22–2.02 and
+  92–97% GPU utilization.
+- Submitted remaining pilot array **162552** (PACK=3, at most twelve GPUs, 30-minute cap), covering
+  all 48 registered indices with the eighteen completed cases skipped. Formal runs await the
+  complete validation-only selection. Full-budget calibration will first cover each arm's
+  scratch, real7/24k, real12/6k and real12/24k lanes; the three contiguous pretrained cases allow
+  matched PACK=3 repetitions before sizing the formal fleet.
+- All 48 pilot cases completed and passed the selector's provenance and budget audit.
+  Selected source learning rates: KMD MLP/Transformer/no-attention = 0.001/0.0001/0.00001;
+  composition MLP/Transformer/no-attention = 0.001/0.0001/0.001. Both selected Transformer
+  seeds had zero low-variance dimensions throughout. The KMD no-attention and composition
+  no-attention choices lie on opposite grid boundaries; selection uses only two pilot seeds
+  and is not proof of a global optimum. Some rejected high-LR Transformer runs had transient
+  low-variance dimensions, which remain in the diagnostic record.
+- Staged and checksum-verified the selection artifact; submitted full-budget unpacked array
+  **162569**, 24 formal cases with at most twelve GPUs and a one-hour cap per allocation.
+  It covers scratch and the three pretrained calibration cases above for every arm, first
+  split and seed 20. Completed cases count toward the 1,026-lane formal matrix. No expanded
+  formal fleet has been submitted; its size and cost remain gated on full-budget calibration.
+  Shared storage at submission was 912.1 GiB of 1 TiB.
