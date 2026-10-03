@@ -149,3 +149,64 @@ def test_family_interaction_requires_all_targets_and_pairs(tmp_path):
     contrasts(pd.DataFrame(records).sample(frac=1, random_state=3), raw, tmp_path)
     q = pd.read_csv(tmp_path / "family_interactions.csv")
     assert len(q) == 4 and np.allclose(q["mean"], -0.5) and not q.partial.any()
+
+
+def test_secondary_family_controls_use_weighted_paired_errors(tmp_path):
+    from collect import family_comparisons
+
+    raw = tomllib.loads(CONFIG.read_text())
+    raw["study"]["split_seeds"] = [1, 2, 3]
+    targets = ["Dielectric total", "Bulk modulus", "Shear modulus", "Piezoelectric max"]
+    rows = []
+    for sp in [1, 2, 3]:
+        for seed in [20, 21, 22]:
+            for arm in ["kmd_transformer", "kmd_mlp"]:
+                for condition, steps in [("random", 0), ("real12", 6000), ("real7", 6000), ("shuffled12", 6000)]:
+                    values = dict(random=[6] * 4, real7=[3] * 4, real12=[3] * 4, shuffled12=[5] * 4)[condition]
+                    if arm == "kmd_transformer":
+                        values = {"real12": [1, 2, 4, 3], "shuffled12": [4] * 4}.get(condition, values)
+                    rows.extend(
+                        dict(
+                            input="kmd",
+                            arm=arm,
+                            condition=condition,
+                            steps=steps,
+                            fraction=0.1,
+                            mode="full",
+                            split_seed=sp,
+                            seed=seed,
+                            target=t,
+                            standardized_rmse=v,
+                        )
+                        for t, v in zip(targets, values, strict=True)
+                    )
+    frame = pd.DataFrame(rows).sample(frac=1, random_state=17)
+    family_comparisons(frame, raw, tmp_path)
+    absolute = pd.read_csv(tmp_path / "family_absolute_errors.csv")
+    tf = absolute[(absolute.arm == "kmd_transformer") & (absolute.condition == "real12")]
+    assert np.allclose(tf.value, 7 / 3)  # Mechanical targets together receive one third.
+    q = pd.read_csv(tmp_path / "family_control_comparisons.csv")
+    final = q[q.contrast == "final_error"].iloc[0]
+    shuffled = q[q.contrast == "shuffled_interaction"].iloc[0]
+    source = q[(q.arm == "kmd_transformer") & (q.baseline == "real7")].iloc[0]
+    assert final["mean"] == pytest.approx(-2 / 3)
+    assert source["mean"] == pytest.approx(-2 / 3)
+    assert shuffled["mean"] == pytest.approx(1 / 3)
+    assert shuffled.lo95 == pytest.approx(1 / 3) and shuffled.n_pairs == 9 and not shuffled.partial
+    # A missing target removes that entire family pair, not just its contribution.
+    missing = (
+        (frame.arm == "kmd_transformer")
+        & (frame.condition == "real12")
+        & (frame.split_seed == 3)
+        & (frame.seed == 22)
+        & (frame.target == "Piezoelectric max")
+    )
+    family_comparisons(frame[~missing], raw, tmp_path)
+    q = pd.read_csv(tmp_path / "family_control_comparisons.csv")
+    shuffled = q[q.contrast == "shuffled_interaction"].iloc[0]
+    assert shuffled.n_pairs == 8 and shuffled.partial and pd.isna(shuffled.lo95)
+    with pytest.raises(ValueError, match="Finite unique"):
+        family_comparisons(pd.concat([frame, frame.iloc[:1]]), raw, tmp_path)
+    frame.loc[frame.index[0], "standardized_rmse"] = float("nan")
+    with pytest.raises(ValueError, match="Finite unique"):
+        family_comparisons(frame, raw, tmp_path)

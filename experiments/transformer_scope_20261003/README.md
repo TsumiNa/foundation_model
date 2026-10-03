@@ -87,6 +87,14 @@ pool. Intervals are pointwise exploratory summaries, not external generalization
 multiplicity-adjusted discoveries. Seed SD is never called predictive uncertainty. Same-composition
 predictions, best/last predictions and candidate histories are saved for later diagnostic figures.
 
+The same collector exports `family_absolute_errors.csv` (one complete four-target weighted error
+per run), `family_control_pairs.csv` (paired differences), and `family_control_comparisons.csv`
+(their summaries). `source` means real12 minus the named source baseline; `final_error` means
+Transformer real12 minus the named control architecture's real12 error; `shuffled_interaction`
+means (Transformer real12 minus shuffled12) minus the same difference for the control architecture.
+All use standardized RMSE differences, not percentages; lower is better. Missing target families
+are excluded before pairing, and incomplete split/seed matrices receive no interval.
+
 ## Deployment and resource gates
 
 Prepare with `scripts/prepare.py --input data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet
@@ -255,3 +263,30 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
   allocations, sixteen running, no failed allocation, and 33.37 elapsed GPU-hours including
   calibration. The updated total estimate is 67.06 GPU-hours, or 75.49 with a 25% remaining-work
   margin; storage usage was 909.2 GiB of 1 TiB. Composition-input results remain incomplete.
+- The next audit covers **750 lanes and 12,132 endpoints**. All three KMD arms and composition
+  MLP have 171 complete lanes each; composition Transformer has 62 and composition no-attention
+  four. All twelve KMD Transformer–no-attention interactions now have nine paired runs. Three
+  pointwise 95% intervals exclude zero: full fine-tuning at 1% training size/24k updates, and
+  frozen ridge at 10% training size with either source budget. The other nine intervals include zero.
+  For frozen ridge/10%/6k, the real12-minus-random interaction is
+  -0.01511 [-0.02084, -0.00859]. A secondary real12-minus-shuffled12 interaction also favors
+  Transformer over no-attention: -0.02362 [-0.03375, -0.01402]. Its paired final-error difference
+  is -0.01048 [-0.01729, -0.00110]. These standardized-RMSE differences support a conditional
+  attention-related signal, with the same exploratory, overlapping-split and multiple-comparison
+  limitations as above; a reliable final-error advantage over MLP remains unestablished.
+  Against MLP, all six full-fine-tuning interactions using shuffled pretraining as the baseline
+  include zero. The random-baseline finding is therefore not replicated with shuffled labels;
+  differing CI inclusion of zero does not establish a difference between the two interactions.
+  Transformer real12-versus-real7 intervals include zero in eleven of twelve aggregate settings;
+  these data do not establish monotonic improvement with more source tasks. Complete interaction,
+  source-control and original-unit error tables remain in the local results directory.
+- All 739 available source histories are finite: 712 belong to complete source lanes and 27 to
+  incomplete downstream lanes; the 750 complete lanes include 38 random baselines. Small
+  low-variance fractions occur only in seven shuffled-label Transformer histories, at most
+  nine of 384 dimensions transiently and two at the latest step. All 19,594 completed neural
+  candidates stopped below 400 epochs (maximum 330). The accompanying accounting check has
+  254 completed allocations and sixteen running, no failures, 41.35 elapsed GPU-hours including
+  calibration, and a revised total forecast of 64.77 (70.63 with a 25% remaining-work margin).
+  Storage usage is 914.6 GiB of 1 TiB. This incremental sync skipped 543 previously fully synced,
+  audited, immutable completed lanes; final verification will include an unrestricted scientific
+  sync. Runtime code and scientific identities remain unchanged.
