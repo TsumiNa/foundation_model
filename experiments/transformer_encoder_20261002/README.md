@@ -642,3 +642,23 @@ Full local/remote report and figures: `results/head_probe/REPORT_20261003.md` an
 `results/head_probe/readout_scaling_f{010,100}.png`. Audit: `final_validation_audit.json` in that
 result directory; Slurm evidence and cost: `artifacts/head_probe_control/`. Generated results,
 predictions and caches are synchronized outside Git, separately from smoke and calibration.
+
+Reproduce the final report after synchronizing `artifacts/head_probe` (including feature NPZs,
+trial histories and selected-last predictions; model-weight files are not needed for analysis)
+and `artifacts/head_probe_control/sacct.txt`:
+
+```bash
+EXP=experiments/transformer_encoder_20261002
+uv run python "$EXP/analysis/collect_head_probe.py" \
+  --root "$EXP/artifacts/head_probe" --config "$EXP/configs/head_probe.toml" \
+  --protocol "$EXP/configs/protocol.toml" --output "$EXP/results/head_probe"
+uv run python "$EXP/analysis/summarize_head_probe.py" \
+  --root "$EXP/artifacts/head_probe" --config "$EXP/configs/head_probe.toml" \
+  --protocol "$EXP/configs/protocol.toml" --output "$EXP/results/head_probe" \
+  --accounting "$EXP/artifacts/head_probe_control/sacct.txt"
+```
+
+The second command requires a complete audited matrix, verifies all optimization histories and
+best/last prediction alignment, and regenerates `REPORT_20261003.md`, `final_validation_audit.json`,
+`gpu_cost.json`, checkpoint-sensitivity/tail tables, and the final presentation-size figures.
+It does not modify or retrain the deployed experiment.
