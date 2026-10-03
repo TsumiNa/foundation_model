@@ -84,3 +84,21 @@ frozen-buffer preservation, pilot selection completeness and partial collector v
 focused tests. A CPU two-update/two-epoch functional run exercised the Transformer source and all
 four targets, both training sizes, frozen/full heads and ridge; it is not scientific evidence.
 GPU compatibility and performance remain gated on review/merge and real Slurm smoke.
+
+## Execution log
+
+- 2026-10-03: PR #78 reviewed, findings resolved and squash-merged as
+  `f46db926f622be5642c0ccad1c27ef1346f06662`. Twelve focused tests, Ruff, package-wide mypy
+  and shell syntax validation passed. No package change; use the registered 0.5.0 ARM image.
+- Prepared 48,402 composition-isolated rows with 464 descriptor dimensions. Data-file checksums
+  are recorded in the registered manifest. Target train/validation/test counts are dielectric
+  3,051/656/697, bulk modulus 4,430/943/997, shear modulus 4,370/925/991 and piezoelectric
+  946/202/192. The shared storage quota was checked before staging.
+- Submitted GPU functional smoke array **162343**, cases 0/6/12/18, one per encoder arm,
+  each using two source updates and two target epochs. Its output root is `artifacts/gpu_smoke`;
+  these outputs are excluded from scientific analysis.
+- Submitted initial unpacked pilot array **162347**, cases 0–2/6–8/12–14/18–20, with
+  `afterok:162343`. It cannot start unless every smoke case succeeds. At most 12 GPUs run
+  concurrently, each with a one-hour walltime limit. Pilot outputs live in `artifacts/pilot`.
+  Remaining pilot cases and the 200-lane formal campaign are not submitted yet; they remain
+  gated on functional validation, measured utilization/packing throughput and a cost estimate.
