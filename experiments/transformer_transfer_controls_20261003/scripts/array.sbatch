@@ -22,6 +22,9 @@ EXPECTED=$($APPTAINER exec --cleanenv --bind "$FM_WORKSPACE:$FM_WORKSPACE" "$FM_
 FM_SIF_SHA256=$(sha256sum "$FM_IMAGE" | cut -d ' ' -f 1)
 [[ $FM_SIF_SHA256 = "$EXPECTED" ]] || { echo 'FAIL SIF checksum'; exit 2; }
 [[ $PHASE = pilot || $PHASE = formal ]] || exit 2
+CASE_COUNT=$($APPTAINER exec --cleanenv --bind "$FM_WORKSPACE:$FM_WORKSPACE" "$FM_IMAGE" python -c \
+    'import sys,tomllib; r=tomllib.load(open(sys.argv[1],"rb")); print(sum(len(v["learning_rates"]) for v in r["arms"].values())*len(r["study"]["pilot_seeds"]) if sys.argv[2]=="pilot" else len(r["arms"])*len(r["study"]["seeds"])*5)' "$CFG" "$PHASE")
+[[ $((FIRST_CASE + ${SLURM_ARRAY_TASK_ID:-0} * PACK)) -lt $CASE_COUNT ]] || exit 2
 SELECTION=()
 if [[ $PHASE = formal ]]; then
     : "${FM_SELECTION:?}"
@@ -34,6 +37,7 @@ mkdir -p "$FM_OUTPUT_ROOT"
 PIDS=(); STATUS=0
 for ((offset=0; offset<PACK; offset++)); do
     index=$((FIRST_CASE + ${SLURM_ARRAY_TASK_ID:-0} * PACK + offset))
+    [[ $index -lt $CASE_COUNT ]] || break
     "$APPTAINER" exec --nv --cleanenv --bind "$FM_WORKSPACE:$FM_WORKSPACE" \
         --env "SLURM_JOB_ID=$SLURM_JOB_ID,CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0},OMP_NUM_THREADS=$THREADS,OPENBLAS_NUM_THREADS=$THREADS,FM_BENCHMARK_REVISION=$FM_BENCHMARK_REVISION,FM_SIF_SHA256=$FM_SIF_SHA256" \
         "$FM_IMAGE" python "$EXP/scripts/study.py" --config "$CFG" --data "$FM_DATA_DIR" \

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from importlib import metadata
 import json
 import math
@@ -551,6 +551,24 @@ def main() -> None:
         cfg.pilot_steps = 2
         cfg.batch_size = 16
         cfg.checkpoint_steps = [1, 2]
+    atomic(
+        out / "run_provenance.json",
+        {
+            "resolved_study": asdict(cfg),
+            "encoder": raw["arms"][case["arm"]],
+            "case": case,
+            "identity": identity,
+            "git_revision": os.environ.get("FM_BENCHMARK_REVISION"),
+            "runtime": {
+                "device": device,
+                "torch": torch.__version__,
+                "package_path": str(foundation_model.__file__),
+                "image_revision": cfg.image_revision,
+                "sif_sha256": os.environ.get("FM_SIF_SHA256"),
+                "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+            },
+        },
+    )
     x = torch.tensor(features, dtype=torch.float32, device=device)
     encoder = make_encoder(raw["arms"][case["arm"]], x.shape[1], cfg.latent_dim, case["seed"]).to(device)
     started = time.monotonic()

@@ -65,3 +65,32 @@ def test_full_and_frozen_target_training(tmp_path):
         assert r["epochs"] == 2 and np.isfinite(r["val_mse"])
         assert (tmp_path / mode / "best.pt").is_file() and (tmp_path / mode / "last.pt").is_file()
     assert all(torch.equal(v, enc.state_dict()[k]) for k, v in original.items())
+
+
+@pytest.mark.parametrize("condition", ["real1", "shuffled7"])
+def test_source_fit_budget_checkpoints_and_completed_reload(tmp_path, condition):
+    from study import source_fit
+    from prepare import SOURCE
+
+    cfg = StudyConfig(**tomllib.loads(CONFIG.read_text())["study"])
+    cfg.latent_dim = 8
+    cfg.batch_size = 4
+    cfg.validation_interval = 1
+    cfg.checkpoint_steps = [1, 2]
+    rng = np.random.default_rng(3)
+    frame = pd.DataFrame(rng.normal(size=(30, 7)), columns=SOURCE)
+    frame["split"] = ["train"] * 20 + ["val"] * 10
+    enc = make_encoder({"kind": "mlp", "hidden": [12]}, 16, 8, 1)
+    x = torch.randn(30, 16)
+    case = dict(condition=condition, seed=1, lr=0.001)
+    result = source_fit(enc, x, frame, case, cfg, tmp_path, 2)
+    assert result["steps"] == 2 and sum(result["exposures"]) == 8
+    assert (tmp_path / "source_step1.pt").is_file() and (tmp_path / "source_step2.pt").is_file()
+    history = pd.read_csv(tmp_path / "source_history.csv")
+    assert history.step.tolist() == [1, 2] and np.isfinite(history.to_numpy()).all()
+    saved = {k: v.clone() for k, v in enc.state_dict().items()}
+    with torch.no_grad():
+        for p in enc.parameters():
+            p.zero_()
+    assert source_fit(enc, x, frame, case, cfg, tmp_path, 2) == result
+    assert all(torch.equal(v, enc.state_dict()[k]) for k, v in saved.items())
