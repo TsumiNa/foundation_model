@@ -74,6 +74,31 @@ def test_read_sort_duplicates_units_and_pressure_selection(raw_dir: Path) -> Non
     assert "MKR-TEST" in row.header_json
 
 
+def test_one_training_compound_excludes_all_seven_tests_from_scalers(raw_dir: Path) -> None:
+    curves = load_agis_curves(raw_dir, _CONFIG)
+    heldout = curves.composition.drop_duplicates().to_list()[1:]
+    fold, scalers = standardize_fold(curves, heldout)
+    assert fold[fold.split == "train"].composition.nunique() == 1
+    changed = curves.copy(deep=True)
+    for idx in changed.index[changed.composition.isin(heldout)]:
+        changed.at[idx, "rho_uohm_cm"] = (np.asarray(changed.at[idx, "rho_uohm_cm"]) * 1e6).tolist()
+    _, other = standardize_fold(changed, heldout)
+    for pressure in (0, 10, 20):
+        key = f"agis_rho_{pressure}gpa_scaler"
+        assert scalers[key]["prescale"].n_samples_seen_ == _CONFIG.n_points
+        for step in ("prescale", "standardscaler"):
+            np.testing.assert_array_equal(scalers[key][step].scale_, other[key][step].scale_)
+        data = fold[fold.pressure_GPa == pressure]
+        restored = scalers[key].inverse_transform(np.concatenate(data.rho_normalized.to_list()).reshape(-1, 1))
+        np.testing.assert_allclose(restored.ravel(), np.concatenate(data.rho_uohm_cm.to_list()), rtol=1e-11)
+
+
+@pytest.mark.parametrize("heldout", [[], ["unknown"], ["La3 Ni2 O7"] * 2])
+def test_invalid_multiple_holdouts(raw_dir: Path, heldout: list[str]) -> None:
+    with pytest.raises(ValueError, match="held-out"):
+        standardize_fold(load_agis_curves(raw_dir, _CONFIG), heldout)
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
