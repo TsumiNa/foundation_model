@@ -144,3 +144,43 @@ GPU compatibility and performance remain gated on review/merge and real Slurm sm
   cases under the same identity, leaving 188 new lanes. The last pack is bounded at case 199.
   The shared quota was 877.8 GB of 1 TB before this submission. Scientific results stay under
   `artifacts/formal`; packing repetitions stay separate. No old campaign was restarted.
+- The next synchronized snapshot verifies 110/200 lanes and 2,640/4,800 endpoints: both MLP
+  arms have all 50 lanes, while Transformer and no-attention coverage is still incomplete.
+  No final cross-encoder ranking is inferred from this unequal coverage.
+- Final array **162424** completed all 67 allocations without failures. The collector now verifies
+  **200/200 lanes and 4,800/4,800 endpoints**, with ten seeds in every registered condition.
+  All prediction columns are finite and aligned by held-out composition; recomputed RMSE agrees
+  within 1.5e-14. All 520 source and 6,400 selected best/last target checkpoints remain remotely.
+  The training script identity remains `f46db926f622be5642c0ccad1c27ef1346f06662`.
+- All 160 source fits completed 6,000 updates with finite diagnostics and no detected low-variance
+  dimensions. Seven of 9,600 neural candidates reached the epoch cap, all frozen-readout fits;
+  three were selected, all large-MLP shuffled controls. No full-fine-tuning candidate reached the
+  cap. This does not establish optimal learning rates or convergence under a broader search.
+- Final Slurm allocation cost is **8.844 GPU-hours including smoke, pilots and calibration**,
+  of which 8.176 GPU-hours belong to the formal study (about JPY 2,653 before tax at the recorded
+  rate). Formal batch GPU utilization had a median of 95% among allocations of at least 60 seconds;
+  maximum recorded GPU memory was 6.19 GB. Shared storage was 910.4 GB of 1 TB after completion.
+- The completed study supports useful Transformer cross-task representations on elastic-property
+  targets, including frozen-ridge gains against both random features and shuffled-source controls.
+  No-attention encoders also benefit, and Transformer transfer does not generally beat MLP in
+  absolute error. Source-task-count effects are task dependent, with negative piezoelectric
+  transfer. These are exploratory findings on one split, not a general attention advantage or
+  a universal scaling law. Full fine-tuning still uses the registered narrow LR search.
+
+## Reproduce the complete report
+
+After every registered lane is complete, run `analysis/report.py` with `--root artifacts/formal`,
+`--config configs/study.toml`, `--selection artifacts/pilot_selection.json`, and `--output results`
+using paths relative to this experiment (or equivalent repository-root paths). It first reruns
+the provenance-aware collector and refuses an incomplete campaign. It writes paired relative
+effects, source-task-count curves, real-versus-shuffled controls, dielectric parity plots and
+same-composition examples, plus an English report. Parity plots retain all points on explicitly
+labeled symmetric-log axes. Composition examples are selected by ground-truth quantiles, never
+by model error; their error bars show seed SD, not predictive uncertainty. Confidence intervals
+resample paired seeds and remain pointwise exploratory intervals, without multiplicity correction.
+
+The complete local interpretation is in `results/CONCLUSIONS_EN_20261003.md`; generated figures,
+CSV tables and `results/REPORT_EN_20261003.md` provide the numerical evidence. The conclusion
+distinguishes useful transfer from absolute architecture ranking and attention-specific benefit.
+Execution, checkpoint and cost audits are retained under `artifacts/`; generated results and
+runtime-specific paths are intentionally not committed.
