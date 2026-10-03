@@ -219,7 +219,9 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
   still contain only seven paired runs at 6k updates and five at 24k, rather than the required
   nine. Their confidence intervals remain withheld; the primary attention control is less
   complete. These partial results do not establish an architecture-specific transfer effect.
-  All 355 available source histories were finite. Small low-variance fractions occurred only
+  Separately, 355 available non-random source histories were finite: 334 belonged to completed
+  lanes and 21 to lanes with downstream work still incomplete. The completed-lane count also
+  includes 21 random baselines, which have no source history. Small low-variance fractions occurred only
   in four shuffled-label KMD Transformer runs (at most eight of 384 dimensions transiently,
   two at the latest recorded step); this is not wholesale representation collapse. All 9,748
   available completed neural candidates stopped below the 400-epoch cap (maximum 322).
