@@ -190,3 +190,18 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
   weight sizes project approximately 51.5 GiB for the formal matrix, before histories and
   calibration overhead. The remaining fleet still awaits the sixth packing measurement and
   a revised combined cost/storage estimate; no additional formal cases have been submitted.
+- Final packing job **162664** completed successfully in 1,947 seconds. All six arms now pass
+  matched provenance and exact endpoint comparison: 18 repeated lanes, 432 endpoint records
+  (elapsed-time fields excluded). Composition Transformer worker throughput improved 1.79 times;
+  Slurm average GPU utilization was 97%, with approximately 7.0 GB GPU memory.
+- Completed calibration allocations total 6.9722 GPU-hours. A per-allocation estimate, accounting
+  for mixed ridge-only/full-fine-tuning worker durations and measured arm-specific packing
+  slowdowns, projects 69.0 additional GPU-hours: 76.0 total, or 93.2 with a 25% margin on remaining
+  work. The user was informed of the approximately JPY 23,000–28,000 before-tax estimate before
+  launch. These are estimates from one split/seed, not a guaranteed cost ceiling; continue tracking
+  billed allocations and revise the projection before exceeding the 100-GPU-hour envelope.
+- Submitted formal fleet **162690**, array 0–341 with PACK=3 and at most sixteen concurrent GPUs,
+  two-hour limit per allocation. It covers all 1,026 registered cases, skipping the 24 completed
+  calibration lanes and adding 1,002 new lanes. Source/target caches and persistent weights remain
+  under the same scientific identity. Shared storage was 876.1 GiB of 1 TiB before launch; preserve
+  at least 20 GiB of headroom. Packing repetitions remain excluded from the scientific collector.
