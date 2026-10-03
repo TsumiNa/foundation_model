@@ -171,3 +171,7 @@ packing repetitions. Update partial analysis while the fleet runs; pause the mon
   verified before submission. The other two arms await their completed unpacked targets;
   the main fleet remains gated on all packing/cost/storage checks. Shared storage was
   914.5 GiB of 1 TiB at this check; no failed Slurm allocation was observed.
+- The composition no-attention triples subsequently completed and passed identity/checkpoint
+  checks, bringing the formal collector to 20 complete lanes and 480 endpoints. Submitted its
+  matched PACK=3 job **162630** (first case 869). The composition Transformer is the only arm
+  still awaiting complete unpacked downstream results before its packing calibration.
