@@ -1,0 +1,38 @@
+# Mechanistic follow-up: joint supervised tasks, fixed optimizer-update budget.
+[study]
+pilot_seeds = [0, 1]
+seeds = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+fractions = [0.1, 1.0]
+source_steps = 6000
+pilot_steps = 2000
+checkpoint_steps = [2000, 6000]
+batch_size = 128
+validation_interval = 100
+head_epochs = 250
+head_patience = 30
+head_lrs = [0.0005, 0.002, 0.008]
+full_lr_multipliers = [0.1, 0.3, 1.0]
+ridge_alphas = [0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]
+latent_dim = 384
+package_version = "0.5.0"
+image_revision = "950012a581d838601530eb200edb9572862457aa"
+sif_sha256 = "32b1a938c226e116a8b7c374e27f5ca8211b8d87c9641baf7c5d23fe4d547ce0"
+
+data_manifest_sha256 = "6ffe9baffd9bedf826f0ca7f0aecf6d8b8764f75d49298f4515b606172986845"
+
+[arms.mlp]
+kind = "mlp"
+hidden = [256]
+learning_rates = [0.0005, 0.002, 0.008]
+[arms.mlp_large]
+kind = "mlp"
+hidden = [2048, 2048]
+learning_rates = [0.0005, 0.002, 0.008]
+[arms.transformer]
+kind = "transformer"
+attention = true
+learning_rates = [0.00001, 0.0001, 0.0003]
+[arms.no_attention]
+kind = "transformer"
+attention = false
+learning_rates = [0.00001, 0.0001, 0.0003]
