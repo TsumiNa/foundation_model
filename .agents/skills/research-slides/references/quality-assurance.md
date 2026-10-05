@@ -34,8 +34,9 @@ at full resolution too, but do not use zoomed legibility as proof of projection 
 A geometry check alone cannot detect small labels or font substitution.
 
 - Verify final embedded figure-text sizes, not just source plotting settings. Aim for
-  24–28 pt figure titles and 20–24 pt essential labels on a wide slide. Enlarge, simplify,
+  21–23 pt figure titles and 17–19 pt essential labels on a wide slide. Enlarge, simplify,
   or split when needed; avoid shrinking labels or the main figure to accommodate prose.
+  If the user approved a different preview scale, verify against that scale instead.
 - Keep titles and explanations visibly separated from figures and their own headings.
 - Check text overflow, overlaps, bullet spacing, and hanging indents.
 - Verify mathematical glyphs, subscripts, micro prefixes, and units after export.
@@ -69,6 +70,13 @@ domain analysis is unnecessary merely to evaluate the skill.
 | Three of four effects are positive, but the mean is negative | Explain frequent local benefits and the worse aggregate result |
 | A coverage matrix repeats unexplained `1` values | Encode availability or explicitly define counts and highlights |
 | Large source-chart labels become small when embedded | Enlarge or re-export at final slide size; simplify or split before shrinking essential text |
+| The user requests all text one notch smaller | Reduce native text and regenerate embedded chart and equation text by about 10–15%; retain figure areas and check every slide, including the Appendix |
+| The user requests one point smaller after a percentage reduction | Subtract 1 pt from current final-slide text sizes, accounting for embedded-asset placement scale |
+| The user asks to see about ten pages before a full rebuild | Render a representative preview within that scope; reuse verified data and identify the included pages |
+| The user approves a preview and requests the full deck | Preserve its type hierarchy and figure areas throughout the body and Appendix |
+| Every category repeats the same qualifier | Move the shared meaning into one axis heading or short explanation; preserve units and context |
+| Several plots answer different comparison questions | Separate them into focused sections, from observed outcomes toward controls and explanations |
+| Two variants share a name with a size adjective | Explain the concrete difference and relevant dimensions or counts near first use |
 | Four heatmaps have illegible labels | Split panels across slides while retaining comparable scales |
 | A box plot mixes mean, median, IQR, and whiskers | Define encodings in a readable caption with space around the title |
 | A conclusion cites a percentage with no denominator | Define reference, aggregation, and sign before the percentage |

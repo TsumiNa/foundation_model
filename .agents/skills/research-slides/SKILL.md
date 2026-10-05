@@ -37,8 +37,10 @@ changes to source data, or external messaging.
 - Determine the audience's prior knowledge, the presentation's main question, and what
   the audience should understand or decide afterward. Inspect supplied slides, comments,
   documents, figures, and source tables as needed.
-- Use recognizable names and define necessary abbreviations. Verify the meaning of
-  quantities, units, categories, and source coverage before describing them.
+- Use recognizable names and define necessary abbreviations at first use. For similarly
+  named variants, explain the concrete difference (for example size, inputs, or procedure)
+  and give relevant dimensions or counts. Expanding an acronym alone is insufficient.
+  Verify quantities, units, categories, and source coverage before describing them.
 - For quantitative comparisons, identify the reference, aggregation, and meaning of
   displayed spread. Read [result interpretation](references/result-interpretation.md)
   when using relative values, grouped summaries, heatmaps, error bars, or uncertainty.
@@ -60,6 +62,14 @@ task, method, or domain. A useful full-deck progression is:
 - **Supporting material:** use an Appendix for detail that is useful for questions but
   interrupts the main narrative. Include it only when needed.
 
+For comparison-heavy decks, organize each section around one question and a coherent
+set of fair comparisons. State what changes and what stays matched. Separate different
+comparisons into sections instead of combining all conditions in one plot. Within a
+section, multiple panels may support the same question. Progress from simple observed
+outcomes to additional effects, controls, and possible explanations; introduce each
+comparison before its results. Keep main findings and conclusions in the body, with
+secondary checks and detailed tables in the Appendix.
+
 Adapt this progression for a short update, tutorial, proposal, or narrow review. Avoid
 standalone implementation slides unless they help answer the audience's question. Give
 definitions near first use without turning them into unnecessary tutorials.
@@ -79,8 +89,8 @@ throughout the requested review scope, not just to annotated pages.
 - Allocate enough space to the main figure. Keep slide titles, figure titles,
   explanations, legends, and axes visibly separated. Remove duplicate titles or shorten
   prose before reducing the figure's size.
-- Use large figure text as a default: figure titles about 24–28 pt and essential axis
-  titles, ticks, legends, and annotations about 20–24 pt on the final slide. Check size
+- Use a moderate, readable type scale: figure titles about 21–23 pt and essential axis
+  titles, ticks, legends, and annotations about 17–19 pt on the final slide. Check size
   after placement; a large source font can become tiny when its figure is scaled down.
 - Split crowded panels across slides before shrinking figures or essential labels.
   Preserve comparable scales, colors, panel identities, and all requested content.
