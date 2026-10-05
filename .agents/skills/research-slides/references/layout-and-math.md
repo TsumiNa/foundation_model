@@ -10,11 +10,11 @@ Use these starting sizes for a wide slide, measured after placement on the final
 
 | Element | Starting size |
 | --- | --- |
-| Slide title | 36–44 pt |
-| Body text | 22–28 pt |
-| Figure or panel title | 24–28 pt |
-| Essential axis titles, ticks, legends, and annotations | 20–24 pt |
-| Supporting captions | 18–20 pt |
+| Slide title | 29–35 pt |
+| Body text | 19–23 pt |
+| Figure or panel title | 21–23 pt |
+| Essential axis titles, ticks, legends, and annotations | 17–19 pt |
+| Supporting captions | 15–17 pt |
 
 Adjust to the template, venue, and viewing distance. Essential explanations belong at
 body or figure-label size, not in a tiny caption. Font sizes in a plotting script are
@@ -25,6 +25,28 @@ Check the slide at presentation scale without zooming. When possible, preview pr
 or at the expected viewing distance. If labels are hard to read, enlarge or re-export
 them and simplify or split the slide. Do not shrink essential labels to fit more panels.
 High raster resolution removes pixelation but cannot make physically small text readable.
+
+For an unspecified global reduction of one notch, use roughly 10–15% as a starting
+adjustment to the established type scale, preserving its hierarchy. Follow an explicit
+point size or supplied example instead when provided. Apply it to every slide, including
+Appendix slides, tables, equations, captions, and chart titles, ticks, legends, and
+annotations. Regenerate embedded figures with smaller text while retaining their
+plot area; shrinking the entire figure also shrinks the data and is not equivalent.
+Keep section order, content, and numerical values stable. Re-render and inspect the
+result at presentation scale. An explicit user-requested reduction takes precedence
+over the starting ranges; it is not permission to add more panels or denser content.
+For a subsequent request for one point smaller, subtract 1 pt from the current
+final-slide sizes rather than repeating the percentage reduction. Account for the
+placement scale of embedded figures and equations when regenerating their text.
+
+When the user requests a sample before a full rebuild, render only the requested
+number of representative pages, including text, tables, equations, and dense figures
+where present. Reuse verified data and assets; do not rerun analysis or rebuild the
+whole deck just to assess typography. State which pages the preview covers.
+
+Once the user approves a preview, keep its type hierarchy and relative sizes fixed
+when completing the full deck. Do not restart from the default ranges or vary sizes
+page by page merely to fill whitespace.
 
 ## Titles, lists, and spacing
 
@@ -92,6 +114,11 @@ through the actual export path.
   substitute for information needed to understand a main-slide figure.
 
 ## Self-explanatory charts
+
+Remove words repeated in every tick or category label when a single axis heading,
+legend title, or brief explanation can state their shared meaning. For example, use
+`1% / 10% / 100%` with one “Training size” heading instead of repeating “training”
+three times. Retain the unit and enough context to interpret the values on that slide.
 
 For availability matrices, categorical fills or dots often work better than repeated
 `1` values. Explain available, unavailable, and highlighted categories. Blank does not
