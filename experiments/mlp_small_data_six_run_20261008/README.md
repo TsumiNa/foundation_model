@@ -82,3 +82,40 @@ incomplete fits after preserving failure evidence. Keep all remote scientific we
 - 2026-10-08: User approved a unified six-repeat protocol and separate historical controls.
   The previous 312 fits are complete; 804 new fits are registered, pending PR review/merge
   and GPU calibration. User also requested the mean-R² ≥ 0.2 filter on summary slides.
+- 2026-10-08: PR #95 passed review after seven findings were addressed and squash-merged
+  as `71b22ece3e58e3431e6186969f70442c45f7448b`. The 31 focused tests, Ruff checks,
+  package-wide mypy and batch-script syntax checks passed. The training runtime remains
+  pinned to this merge; subsequent execution-log commits do not change its identity.
+- GPU smoke **396182** completed both paired fits for case 33 (band gap, 10,000 labels,
+  subset seed 3) with two actual epochs. The installed package, runtime/input identity,
+  paired head initialization, common test hash, finite metrics and nonzero training steps
+  were verified. Smoke results are excluded from the scientific collector.
+- Unpacked full-budget calibration **396184**, cases 30–32 and 399–401, completed all
+  six pairs / twelve fits. These band-gap 10,000-label and piezoelectric 300-label cases
+  count toward the formal study. The collector accepted all six; eighteen prediction
+  tables were finite, all twelve fits stopped before 150 epochs (maximum 117), and
+  eighteen required nonempty `.pt` files were retained remotely.
+- Matched PACK=3 jobs **396200** and **396201** completed the same cases in a separate
+  calibration output root. All twelve fit records, excluding elapsed seconds, and all
+  eighteen prediction tables agreed exactly with the unpacked runs. Worker throughput
+  increased **1.9726× / 2.3246×**, with maximum per-case slowdowns **1.2467× / 1.2591×**;
+  allocations lasted 390 / 162 seconds. GPU-utilization and CPU accounting were unavailable,
+  so no utilization percentage is claimed. Gates and calibrations used **0.49 GPU-hours**.
+- Formal batch **396208** started with PACK=3, array 0–59%4, covering cases 0–179 and
+  automatically skipping completed calibration cases. Batches 60–119 and 120–133 remain
+  pending submission. Each allocation requests one GPU, sixteen CPUs and one hour;
+  at most four GPUs run globally. Bounded sequential batches respect the public partition's
+  cumulative requested-node-hour limit. No running or completed case is submitted twice.
+- The remaining 132 nonempty allocations have a **9.06 GPU-hour** point estimate and
+  **13.60 GPU-hours** with 50% margin, using the mean measured pair time, the slower
+  measured packing slowdown and twenty seconds of allocation overhead. A scenario in
+  which every fit reaches 150 epochs is **23.85 remaining GPU-hours**, using the slower
+  measured seconds per epoch. These are extrapolations from two tasks / six cases,
+  not guaranteed completion times; the fixed reconstruction pool and variable stopping
+  epochs mean training-label count alone does not determine cost. The estimates were
+  communicated before the fleet started. Stored evidence is in
+  `artifacts/packing_audit_resource_estimate_20261008.json` and the execution state.
+- At deployment, the local scientific snapshot contains **162 / 558 pairs**: 156 reused
+  pairs and six new calibration pairs. It is partial and is not the live fleet count.
+  Final six-repeat curves and the revised presentation require all 558 pairs to pass
+  identity, numerical, coverage and retention checks; historical curves remain separate.
