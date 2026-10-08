@@ -1,0 +1,92 @@
+# MLP transfer with 10–100 regression training labels
+
+Extend the regression learning curves in the October 8 MLP status presentation to
+10, 20 and 50 training labels. A new 100-label bridge is required because the
+original three source checkpoints are inaccessible during RIKYU maintenance.
+
+## Registered comparison
+
+- Thirteen scalar regression targets from the September fixed-count study; no classification.
+- Exact, nested 10 / 20 / 50 / 100 training labels per task, with three subset seeds 0 / 1 / 2.
+- Scratch versus full encoder fine-tuning, new target head, 150 maximum epochs,
+  validation early stopping patience 24, and the historical learning rates.
+- The same subset, validation labels and test labels within each pair. Training label
+  counts are checked **after** the package's keep-first composition canonicalization.
+- Three locally cached source models: the first three models in the pre-existing
+  uniform random draw `data/agis_pretrained_20261001/selection_20261001.json`.
+  No target scores are used to select these models. Each seed uses one fixed source
+  model at all four sizes. All 13 targets must be absent from its task sequence.
+- 13 targets × 4 sizes × 3 seeds × 2 methods = **312 fits**.
+
+Explicit inputs: September dataset
+`data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet`, the three source checkpoints
+and their selection manifest, and the historical catalog/recipes
+`configs/probe6_mp2026_lowdata.toml` and `configs/ft_lowdata_mp2026.toml`, copied
+unchanged from the historical `rikyu_hparam_tuning_v2` experiment. Resolved recipes are
+copied into this experiment's generated input manifest, together with hashes.
+Source datasets and old results are never rewritten.
+
+This is an independent replication, not a seamless extension of the old source
+checkpoint cohort. Historical points at 100 and above remain identified separately.
+The budget counts **training labels**: historical validation labels remain available
+for early stopping, the archived target transformations are retained, and unlabeled
+training compositions still participate in the production reconstruction objective.
+It is therefore not an experiment with only ten labels available in total, nor a
+composition-disjoint pretraining test. Report these limits alongside the curves.
+Both methods now use the paired training seed 2025 + subset seed; the older fine-tuning
+grid used seed 2025 for every source checkpoint. Fresh target heads additionally use
+an isolated CPU RNG seed (training seed + 10,000), so constructing old checkpoint heads
+does not alter their initial weights. Each fit records the initial head-state hash;
+the worker and collector require matching hashes within each scratch/transfer pair.
+Encoder and source-head construction otherwise use the production workflow unchanged.
+Scores use final workflow weights,
+not a retrospectively selected best test checkpoint.
+
+## Files and execution
+
+- `scripts/prepare.py`: exact-count nested subsets, source exclusion/hash checks,
+  resolved historical recipes, and deterministic case registry.
+- `scripts/run.py`: two production package workflows per case, provenance, finite
+  metrics and nonzero-training checks; completed fits are retained and skipped.
+- `scripts/array.sbatch`: image-only GPU worker; independent cases may be packed.
+- `analysis/collect.py`: complete paired fits only, per-seed errors and R², mean ± SD.
+
+Prepare locally, then stage this folder's scripts and generated data to the chosen
+GPU workspace. Use the official installed package 0.5.0 image; never bind `src` or
+set `PYTHONPATH`. A GPU smoke and matched full-budget packing calibration precede
+the fleet. The batch worker is pinned to the live R-CCS public H200 partition
+`ai-h200-brc-pu` and its `system/ai-h200-brc` module; its `--gpus=1` directive is
+not a portable H100/A100 submission template. Each lane uses four CPU threads;
+packing is capped at four lanes and must fit the actual allocated CPU count.
+Keep source/model weights remotely;
+synchronize scientific outputs.
+Incomplete fits are preserved in a failed-attempt directory on an explicit retry;
+only one such recovery is allowed, and completed fits are never retrained.
+The generated input manifest pins both runtime script hashes. Workers validate
+those hashes and explicitly preserve Slurm GPU visibility across the clean container
+environment; a claimed Git revision alone is not treated as proof of executed code.
+
+### Required separate output roots
+
+Set `FM_OUTPUT` explicitly for every submission; these three roots must be distinct:
+
+| Submission | `SMOKE` | `FM_OUTPUT` under the staged workspace | Scientific collection |
+|---|---:|---|---|
+| Two-epoch GPU smoke | 1 | `artifacts/smoke` | Never include |
+| Unpacked full-budget calibration and subsequent fleet | 0 | `artifacts/formal` | Include completed pairs |
+| Matched packed repeat of already completed calibration cases | 0 | `artifacts/packing` | Performance comparison only |
+
+For example, use `FM_OUTPUT="$FM_WORKSPACE/artifacts/smoke"` for the smoke,
+then `FM_OUTPUT="$FM_WORKSPACE/artifacts/formal"` for unpacked calibration/fleet,
+and `FM_OUTPUT="$FM_WORKSPACE/artifacts/packing"` for the packed comparison.
+Do not run smoke in the formal root: the existing identity guard deliberately
+rejects a later smoke/full mismatch. Do not run packed calibration in the formal
+root: completed-case caching would skip the comparison instead of measuring it.
+Run `analysis/collect.py` only against `artifacts/formal`. Keep all three roots
+when synchronizing; never combine their cases to reach the expected 156 pairs.
+
+## Execution log
+
+- 2026-10-08: RIKYU reports scheduled maintenance through October 13. User approved
+  locally cached source models and a 100-label bridge, then restricted the extension
+  to regression tasks. Dataset/recipe preparation underway; no scientific results yet.
