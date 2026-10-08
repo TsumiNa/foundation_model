@@ -55,6 +55,9 @@ not a portable H100/A100 submission template. Keep source/model weights remotely
 synchronize scientific outputs.
 Incomplete fits are preserved in a failed-attempt directory on an explicit retry;
 only one such recovery is allowed, and completed fits are never retrained.
+The generated input manifest pins both runtime script hashes. Workers validate
+those hashes and explicitly preserve Slurm GPU visibility across the clean container
+environment; a claimed Git revision alone is not treated as proof of executed code.
 
 ## Execution log
 

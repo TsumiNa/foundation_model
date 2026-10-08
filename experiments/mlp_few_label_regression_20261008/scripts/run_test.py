@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from run import audit_fit, recipe, restart_incomplete
+from run import audit_fit, recipe, restart_incomplete, verify_scripts, digest
 
 
 def test_recipe_preserves_protocol_and_resolves_size():
@@ -59,3 +59,13 @@ def test_incomplete_fit_quarantined_and_retry_bounded(tmp_path):
     dest.mkdir()
     with pytest.raises(RuntimeError, match="exhausted"):
         restart_incomplete(tmp_path, "scratch")
+
+
+def test_staged_script_hashes_reject_code_drift(tmp_path):
+    for name in ("run.py", "array.sbatch"):
+        (tmp_path / name).write_text("registered code")
+    manifest = {"script_sha256": {name: digest(tmp_path / name) for name in ("run.py", "array.sbatch")}}
+    verify_scripts(manifest, tmp_path)
+    (tmp_path / "run.py").write_text("unreviewed edit")
+    with pytest.raises(ValueError, match="checksum"):
+        verify_scripts(manifest, tmp_path)

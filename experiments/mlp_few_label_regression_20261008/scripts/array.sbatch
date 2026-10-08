@@ -27,6 +27,7 @@ for ((lane=0; lane<PACK; lane++)); do
     if [[ ${SMOKE:-0} == 1 ]]; then extra+=(--smoke); fi
     singularity exec --nv --cleanenv --bind "$FM_WORKSPACE:$FM_WORKSPACE" \
         --env OMP_NUM_THREADS=4,OPENBLAS_NUM_THREADS=1,MPLCONFIGDIR="$MPLCONFIGDIR" \
+        --env CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:?}" \
         "$FM_IMAGE" python scripts/run.py --data "$FM_DATA" --output "$FM_OUTPUT" \
         --revision "$FM_REVISION" --image-hash "$image_hash" --case "$case_index" "${extra[@]}" \
         > "$FM_OUTPUT/worker-${case_index}.log" 2>&1 &

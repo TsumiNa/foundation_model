@@ -24,6 +24,15 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def verify_scripts(manifest: dict, script_dir: Path) -> None:
+    """Reject a stale or edited worker, independent of a supplied revision string."""
+    if set(manifest["script_sha256"]) != {"run.py", "array.sbatch"}:
+        raise ValueError("Missing registered runtime script hashes")
+    for name, expected in manifest["script_sha256"].items():
+        if digest(script_dir / name) != expected:
+            raise ValueError(f"Staged script checksum mismatch: {name}")
+
+
 def recipe(manifest: dict, case: dict, arm: str, data: Path, smoke: bool) -> dict:
     raw = copy.deepcopy(manifest["recipes"][arm])
     subset = next(s for s in manifest["subsets"] if s["n"] == case["n"] and s["seed"] == case["seed"])
@@ -79,9 +88,12 @@ def restart_incomplete(root: Path, arm: str) -> None:
 def run(data: Path, output: Path, index: int, revision: str, image_hash: str, smoke: bool) -> None:
     manifest_path = data / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
+    verify_scripts(manifest, Path(__file__).resolve().parent)
     case = manifest["cases"][index]
     if metadata.version("foundation-model") != manifest["package"] or not torch.cuda.is_available():
         raise RuntimeError("Requires package 0.5.0 and an allocated CUDA GPU")
+    if torch.cuda.device_count() != 1:
+        raise RuntimeError("Requires exactly one Slurm-visible GPU per packed worker")
     if "site-packages" not in str(foundation_model.__file__) or os.environ.get("PYTHONPATH"):
         raise RuntimeError("Requires installed image package without PYTHONPATH")
     subset = next(s for s in manifest["subsets"] if s["n"] == case["n"] and s["seed"] == case["seed"])
@@ -89,7 +101,13 @@ def run(data: Path, output: Path, index: int, revision: str, image_hash: str, sm
     for item in (subset, checkpoint, *manifest["auxiliary"]):
         if digest(data / item["file"]) != item["sha256"]:
             raise ValueError("Input checksum mismatch")
-    identity = {"manifest": digest(manifest_path), "revision": revision, "image_hash": image_hash, "smoke": smoke}
+    identity = {
+        "manifest": digest(manifest_path),
+        "revision": revision,
+        "image_hash": image_hash,
+        "smoke": smoke,
+        "script_sha256": manifest["script_sha256"],
+    }
     if len(revision) != 40 or len(image_hash) != 64:
         raise ValueError("Requires full script revision and image hash")
     root = output / f"case{index:03d}"

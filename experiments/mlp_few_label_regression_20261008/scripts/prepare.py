@@ -152,6 +152,7 @@ def prepare(source: Path, checkpoint_dir: Path, config_dir: Path, destination: P
         "study": "mlp_few_label_regression_20261008",
         "package": "0.5.0",
         "source_hashes": source_hashes,
+        "script_sha256": {name: sha256(Path(__file__).with_name(name)) for name in ("run.py", "array.sbatch")},
         "subsets": subsets,
         "checkpoints": checkpoints,
         "auxiliary": auxiliary,
