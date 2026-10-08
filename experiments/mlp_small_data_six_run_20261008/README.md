@@ -105,7 +105,10 @@ incomplete fits after preserving failure evidence. Keep all remote scientific we
   automatically skipping completed calibration cases. Batches 60–119 and 120–133 remain
   pending submission. Each allocation requests one GPU, sixteen CPUs and one hour;
   at most four GPUs run globally. Bounded sequential batches respect the public partition's
-  cumulative requested-node-hour limit. No running or completed case is submitted twice.
+  cumulative requested-node-hour limit. The formal array includes completed calibration
+  cases as immediate no-op skips; their fits are not retrained. The separately recorded
+  packing repeats are intentional calibration, and no active formal case runs concurrently
+  with another submission of the same case.
 - The remaining 132 nonempty allocations have a **9.06 GPU-hour** point estimate and
   **13.60 GPU-hours** with 50% margin, using the mean measured pair time, the slower
   measured packing slowdown and twenty seconds of allocation overhead. A scenario in
