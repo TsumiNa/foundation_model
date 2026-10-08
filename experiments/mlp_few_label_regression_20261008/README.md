@@ -66,6 +66,25 @@ The generated input manifest pins both runtime script hashes. Workers validate
 those hashes and explicitly preserve Slurm GPU visibility across the clean container
 environment; a claimed Git revision alone is not treated as proof of executed code.
 
+### Required separate output roots
+
+Set `FM_OUTPUT` explicitly for every submission; these three roots must be distinct:
+
+| Submission | `SMOKE` | `FM_OUTPUT` under the staged workspace | Scientific collection |
+|---|---:|---|---|
+| Two-epoch GPU smoke | 1 | `artifacts/smoke` | Never include |
+| Unpacked full-budget calibration and subsequent fleet | 0 | `artifacts/formal` | Include completed pairs |
+| Matched packed repeat of already completed calibration cases | 0 | `artifacts/packing` | Performance comparison only |
+
+For example, use `FM_OUTPUT="$FM_WORKSPACE/artifacts/smoke"` for the smoke,
+then `FM_OUTPUT="$FM_WORKSPACE/artifacts/formal"` for unpacked calibration/fleet,
+and `FM_OUTPUT="$FM_WORKSPACE/artifacts/packing"` for the packed comparison.
+Do not run smoke in the formal root: the existing identity guard deliberately
+rejects a later smoke/full mismatch. Do not run packed calibration in the formal
+root: completed-case caching would skip the comparison instead of measuring it.
+Run `analysis/collect.py` only against `artifacts/formal`. Keep all three roots
+when synchronizing; never combine their cases to reach the expected 156 pairs.
+
 ## Execution log
 
 - 2026-10-08: RIKYU reports scheduled maintenance through October 13. User approved
