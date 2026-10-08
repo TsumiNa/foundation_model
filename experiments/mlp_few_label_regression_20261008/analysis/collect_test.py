@@ -26,6 +26,8 @@ def test_paired_collection_and_mismatch(tmp_path):
         (lane / arm / "done.json").write_text(json.dumps(p))
     s = collect(tmp_path / "root", tmp_path / "out")
     assert s["partial"] and s["complete_pairs"] == 1 and s["points"][0]["seed_count"] == 1
+    assert s["points"][0]["r2_std"] is None
+    json.loads((tmp_path / "out/summary.json").read_text(), parse_constant=lambda value: pytest.fail(value))
     p["metrics"]["test_hash"] = "other"
     (lane / "transfer" / "done.json").write_text(json.dumps(p))
     with pytest.raises(ValueError, match="Unpaired"):

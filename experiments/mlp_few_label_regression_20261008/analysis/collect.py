@@ -52,10 +52,11 @@ def collect(root: Path, output: Path) -> dict:
                     "arm": arm,
                     "seeds": g.seed.tolist(),
                     "seed_count": len(g),
-                    **{f"{k}_{s}": float(getattr(g[k], s)()) for k in ("r2", "mae", "rmse") for s in ("mean", "std")},
+                    **{f"{k}_mean": float(g[k].mean()) for k in ("r2", "mae", "rmse")},
+                    **{f"{k}_std": float(g[k].std()) if len(g) > 1 else None for k in ("r2", "mae", "rmse")},
                 }
             )
-    (output / "summary.json").write_text(json.dumps(summary, indent=2))
+    (output / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False))
     return summary
 
 
