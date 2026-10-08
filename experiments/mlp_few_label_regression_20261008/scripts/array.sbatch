@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=fm-few-label
+#SBATCH --partition=ai-h200-brc-pu
 #SBATCH --nodes=1
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=16
@@ -7,7 +8,8 @@
 
 source /etc/profile
 set -euo pipefail
-module load "system/${FM_PARTITION}" nvhpc
+if [[ "$SLURM_JOB_PARTITION" != ai-h200-brc-pu ]]; then exit 2; fi
+module load system/ai-h200-brc nvhpc
 cd "$FM_WORKSPACE"
 unset PYTHONPATH
 export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 MPLCONFIGDIR="$FM_WORKSPACE/mpl-${SLURM_JOB_ID}-${SLURM_ARRAY_TASK_ID:-0}"
