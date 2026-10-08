@@ -1,6 +1,8 @@
 """Paired recipe isolation and actual-training validation."""
 
 from pathlib import Path
+import os
+import subprocess
 
 import pandas as pd
 import pytest
@@ -103,3 +105,33 @@ def test_staged_script_hashes_reject_code_drift(tmp_path):
     (tmp_path / "run.py").write_text("unreviewed edit")
     with pytest.raises(ValueError, match="checksum"):
         verify_scripts(manifest, tmp_path)
+
+
+@pytest.mark.parametrize("pack,cpus", [(5, 16), (4, 8)])
+def test_batch_rejects_cpu_oversubscription_before_workers(tmp_path, pack, cpus):
+    # Stub only cluster-specific module/image probing; execute the real Bash guard.
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'module(){ :; }; sha256sum(){ printf "expected  image\\n"; }; source "$1"',
+            "test",
+            str(Path(__file__).with_name("array.sbatch")),
+        ],
+        env={
+            **os.environ,
+            "FM_WORKSPACE": str(tmp_path),
+            "FM_IMAGE": "image",
+            "FM_IMAGE_HASH": "expected",
+            "FM_OUTPUT": str(tmp_path / "output"),
+            "SLURM_JOB_PARTITION": "ai-h200-brc-pu",
+            "SLURM_JOB_ID": "test",
+            "SLURM_CPUS_PER_TASK": str(cpus),
+            "PACK": str(pack),
+            "FIRST_CASE": "0",
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2, result.stderr
+    assert not (tmp_path / "output").exists()

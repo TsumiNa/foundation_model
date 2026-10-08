@@ -56,7 +56,9 @@ GPU workspace. Use the official installed package 0.5.0 image; never bind `src` 
 set `PYTHONPATH`. A GPU smoke and matched full-budget packing calibration precede
 the fleet. The batch worker is pinned to the live R-CCS public H200 partition
 `ai-h200-brc-pu` and its `system/ai-h200-brc` module; its `--gpus=1` directive is
-not a portable H100/A100 submission template. Keep source/model weights remotely;
+not a portable H100/A100 submission template. Each lane uses four CPU threads;
+packing is capped at four lanes and must fit the actual allocated CPU count.
+Keep source/model weights remotely;
 synchronize scientific outputs.
 Incomplete fits are preserved in a failed-attempt directory on an explicit retry;
 only one such recovery is allowed, and completed fits are never retrained.
