@@ -6,6 +6,7 @@ import argparse
 import copy
 import hashlib
 import json
+import random
 import tomllib
 from pathlib import Path
 
@@ -32,10 +33,36 @@ TARGETS = {
     "piezoelectric_max": "Piezoelectric max (normalized)",
 }
 COUNTS = (10, 20, 50, 100)
+POPULATION_SHA256 = "c0254aad322ed4507c146947829fdf56fc8fadc9998d8de4f697b37188332f01"
+LIBRARY = "rikyu_hparam_tuning_v2 / transfer stage final encoders"
 
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def validate_selection(selection: dict, population_path: Path) -> None:
+    """Reproduce the October 1 draw against the immutable 240-model population."""
+    if sha256(population_path) != POPULATION_SHA256:
+        raise ValueError("Frozen checkpoint population checksum differs")
+    population = json.loads(population_path.read_text())
+    if (
+        selection["sampling_seed"] != 20261001
+        or selection["source_library"] != LIBRARY
+        or population["library"] != LIBRARY
+        or selection["population"] != 240
+        or population["n_models"] != 240
+        or selection["selection_method"] != "Uniform random sample without replacement; no AGIS evaluation used"
+    ):
+        raise ValueError("Checkpoint sampling provenance differs")
+    models = sorted(population["models"], key=lambda m: m["run"])
+    if len(models) != 240 or len({m["run"] for m in models}) != 240:
+        raise ValueError("Require 240 distinct population models")
+    expected = random.Random(20261001).sample(models, 10)
+    if [(m["run"], m["sha256"]) for m in selection["models"]] != [(m["run"], m["sha256"]) for m in expected]:
+        raise ValueError("Selected checkpoints do not reproduce the frozen random draw")
+    if len({m["run"] for m in selection["models"][:3]}) != 3:
+        raise ValueError("Require three distinct checkpoints")
 
 
 def mask_nested(frame: pd.DataFrame, seed: int) -> tuple[dict[int, pd.DataFrame], dict[str, list[str]]]:
@@ -89,7 +116,12 @@ def prepare(source: Path, checkpoint_dir: Path, historical: Path, destination: P
         (destination / f"selected_s{seed}.json").write_text(json.dumps(chosen, indent=2))
     selection_path = checkpoint_dir / "selection_20261001.json"
     selection = json.loads(selection_path.read_text())
+    population_path = checkpoint_dir / "population_20261001.json"
+    validate_selection(selection, population_path)
     source_hashes[selection_path.name] = sha256(selection_path)
+    source_hashes[population_path.name] = sha256(population_path)
+    for p in (selection_path, population_path):
+        (destination / p.name).write_bytes(p.read_bytes())
     checkpoints = []
     for m in selection["models"][:3]:
         p = checkpoint_dir / f"{m['run']}.pt"
