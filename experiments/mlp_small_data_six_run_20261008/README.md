@@ -39,6 +39,10 @@ auxiliary inputs, the first three checkpoint hashes, and exact nested subset dat
 10/20/50/100 for seeds 0–2. Those parquet bytes are preserved. The old 156 case markers
 and their runtime identity are pinned. The collector accepts only these explicitly
 registered reusable cases and the new campaign; it never rewrites either identity.
+The launcher requires its sparse workspace checkout's HEAD to match the merged runtime
+revision, and verifies the actual SIF against both the supplied hash and the registered
+reuse-image hash before starting workers. The sparse checkout contains no `src/` tree;
+stage this experiment's merged scripts at the workspace root and preserve their hashes.
 
 September results fail this reuse proof (different checkpoint cohort, masks and seed/head
 protocol), so no old/new averaging at 100 is performed. The unified curve's 100-label

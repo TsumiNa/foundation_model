@@ -112,3 +112,37 @@ def test_invalid_reuse_records(tmp_path, monkeypatch, failure):
         (root / "transfer/done.json").write_text(json.dumps(record))
     with pytest.raises(ValueError):
         module.collect(tmp_path / "new", tmp_path / "old", path, "n" * 40, tmp_path / "out")
+
+
+@pytest.mark.parametrize("mismatch", [False, True])
+def test_combine_new_and_reuse_identities(tmp_path, monkeypatch, mismatch):
+    path, root = case_fixture(tmp_path, monkeypatch)
+    manifest = json.loads(path.read_text())
+    case = manifest["cases"][0]
+    identity = {
+        "manifest": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "revision": "n" * 40,
+        "image_hash": manifest["reuse_identity"]["image_hash"],
+        "smoke": False,
+        "script_sha256": manifest["script_sha256"],
+    }
+    if mismatch:
+        identity["revision"] = "x" * 40
+    new = tmp_path / "new" / "case000"
+    new.mkdir(parents=True)
+    (new / "done.json").write_text(json.dumps({"case": case, "identity": identity}))
+    for arm in ["scratch", "transfer"]:
+        (new / arm).mkdir()
+        record = json.loads((root / arm / "done.json").read_text())
+        record.update(case=case, identity=identity, checkpoint_hash="b")
+        record["metrics"]["r2"] = 0.6
+        (new / arm / "done.json").write_text(json.dumps(record))
+    if mismatch:
+        with pytest.raises(ValueError, match="identity"):
+            module.collect(tmp_path / "new", tmp_path / "old", path, "n" * 40, tmp_path / "out")
+    else:
+        summary = module.collect(tmp_path / "new", tmp_path / "old", path, "n" * 40, tmp_path / "out")
+        assert not summary["partial"] and summary["complete_pairs"] == 2
+        assert summary["points"][0]["seed_count"] == 2 and summary["points"][0]["r2_mean"] == 0.5
+        assert summary["points"][0]["r2_std"] == pytest.approx(2**0.5 * 0.1)
+        assert summary["usable_task_counts"] == []  # two repeats must not masquerade as six

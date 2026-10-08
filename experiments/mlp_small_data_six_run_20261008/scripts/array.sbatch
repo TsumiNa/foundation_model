@@ -11,10 +11,14 @@ set -euo pipefail
 if [[ "$SLURM_JOB_PARTITION" != ai-h200-brc-pu ]]; then exit 2; fi
 module load system/ai-h200-brc nvhpc
 cd "$FM_WORKSPACE"
+if [[ $(git rev-parse HEAD) != "${FM_REVISION:?}" ]]; then exit 2; fi
 unset PYTHONPATH
 export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 MPLCONFIGDIR="$FM_WORKSPACE/mpl-${SLURM_JOB_ID}-${SLURM_ARRAY_TASK_ID:-0}"
 image_hash=$(sha256sum "$FM_IMAGE" | cut -d ' ' -f1)
 if [[ "$image_hash" != "$FM_IMAGE_HASH" ]]; then exit 2; fi
+expected_hash=$(singularity exec --cleanenv --bind "$FM_WORKSPACE:$FM_WORKSPACE" "$FM_IMAGE" \
+    python -c 'import json,sys; print(json.load(open(sys.argv[1]))["reuse_identity"]["image_hash"])' "$FM_DATA/manifest.json")
+if [[ "$image_hash" != "$expected_hash" ]]; then exit 2; fi
 if [[ ! "$PACK" =~ ^[1-9][0-9]*$ || ! "$FIRST_CASE" =~ ^[0-9]+$ ]]; then exit 2; fi
 first=$((FIRST_CASE + ${SLURM_ARRAY_TASK_ID:-0} * PACK))
 if ((first < 0 || first >= 402 || PACK > 4)); then exit 2; fi
