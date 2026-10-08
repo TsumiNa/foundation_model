@@ -13,7 +13,10 @@ unset PYTHONPATH
 export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 MPLCONFIGDIR="$FM_WORKSPACE/mpl-${SLURM_JOB_ID}-${SLURM_ARRAY_TASK_ID:-0}"
 image_hash=$(sha256sum "$FM_IMAGE" | cut -d ' ' -f1)
 if [[ "$image_hash" != "$FM_IMAGE_HASH" ]]; then exit 2; fi
+if [[ ! "$PACK" =~ ^[1-9][0-9]*$ || ! "$FIRST_CASE" =~ ^[0-9]+$ ]]; then exit 2; fi
 first=$((FIRST_CASE + ${SLURM_ARRAY_TASK_ID:-0} * PACK))
+if ((first < 0 || first >= 156 || PACK > 8)); then exit 2; fi
+mkdir -p "$FM_OUTPUT"
 pids=()
 for ((lane=0; lane<PACK; lane++)); do
     case_index=$((first + lane))

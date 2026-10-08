@@ -89,7 +89,7 @@ def mask_nested(frame: pd.DataFrame, seed: int) -> tuple[dict[int, pd.DataFrame]
     return outputs, selected
 
 
-def prepare(source: Path, checkpoint_dir: Path, historical: Path, destination: Path) -> dict:
+def prepare(source: Path, checkpoint_dir: Path, config_dir: Path, destination: Path) -> dict:
     """Freeze inputs and generate the 156 paired cases."""
     destination.mkdir(parents=True, exist_ok=False)
     frame = pd.read_parquet(source)
@@ -135,7 +135,7 @@ def prepare(source: Path, checkpoint_dir: Path, historical: Path, destination: P
         checkpoints.append({"file": p.name, "sha256": digest, "task_sequence": state["task_sequence"]})
     recipes = {}
     for arm, name in [("scratch", "probe6_mp2026_lowdata.toml"), ("transfer", "ft_lowdata_mp2026.toml")]:
-        p = historical / "configs" / name
+        p = config_dir / name
         raw = tomllib.loads(p.read_text())
         source_hashes[name] = sha256(p)
         raw["model"]["latent_dim"] = 384
@@ -174,8 +174,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--source", type=Path, required=True)
     ap.add_argument("--checkpoints", type=Path, required=True)
-    ap.add_argument("--historical", type=Path, required=True)
+    ap.add_argument("--configs", type=Path, default=Path(__file__).resolve().parents[1] / "configs")
     ap.add_argument("--destination", type=Path, required=True)
     args = ap.parse_args()
-    result = prepare(args.source, args.checkpoints, args.historical, args.destination)
+    result = prepare(args.source, args.checkpoints, args.configs, args.destination)
     print(f"Prepared {len(result['subsets'])} subsets; {result['fits']} fits")

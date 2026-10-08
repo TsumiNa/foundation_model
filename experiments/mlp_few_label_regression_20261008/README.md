@@ -21,8 +21,8 @@ original three source checkpoints are inaccessible during RIKYU maintenance.
 Explicit inputs: September dataset
 `data/qc_ac_te_mp_dos_reformat_20260912.pd.parquet`, the three source checkpoints
 and their selection manifest, and the historical catalog/recipes
-`experiments/rikyu_hparam_tuning_v2/configs/probe6_mp2026_lowdata.toml` and
-`experiments/rikyu_hparam_tuning_v2/configs/ft_lowdata_mp2026.toml`. Resolved recipes are
+`configs/probe6_mp2026_lowdata.toml` and `configs/ft_lowdata_mp2026.toml`, copied
+unchanged from the historical `rikyu_hparam_tuning_v2` experiment. Resolved recipes are
 copied into this experiment's generated input manifest, together with hashes.
 Source datasets and old results are never rewritten.
 
@@ -50,6 +50,8 @@ Prepare locally, then stage this folder's scripts and generated data to the chos
 GPU workspace. Use the official installed package 0.5.0 image; never bind `src` or
 set `PYTHONPATH`. A GPU smoke and matched full-budget packing calibration precede
 the fleet. Keep source/model weights remotely; synchronize scientific outputs.
+Incomplete fits are preserved in a failed-attempt directory on an explicit retry;
+only one such recovery is allowed, and completed fits are never retrained.
 
 ## Execution log
 

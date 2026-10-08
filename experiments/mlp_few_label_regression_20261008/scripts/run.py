@@ -67,6 +67,15 @@ def audit_fit(root: Path, task: str, arm: str) -> dict:
     }
 
 
+def restart_incomplete(root: Path, arm: str) -> None:
+    """Preserve one failed attempt; permit at most one explicit same-identity retry."""
+    dest = root / arm
+    if dest.exists():
+        if list(root.glob(f"failed_{arm}_*")):
+            raise RuntimeError("Bounded fit recovery exhausted; inspect saved failure logs")
+        dest.rename(root / f"failed_{arm}_{time.time_ns()}")
+
+
 def run(data: Path, output: Path, index: int, revision: str, image_hash: str, smoke: bool) -> None:
     manifest_path = data / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -101,6 +110,7 @@ def run(data: Path, output: Path, index: int, revision: str, image_hash: str, sm
                 raise ValueError("Completed fit has a different identity")
             records[arm] = result
             continue
+        restart_incomplete(root, arm)
         raw = recipe(manifest, case, arm, data, smoke)
         cfg = (
             pretrain.build_pretrain_config(raw, output_dir=dest)

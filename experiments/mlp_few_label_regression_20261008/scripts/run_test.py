@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from run import audit_fit, recipe
+from run import audit_fit, recipe, restart_incomplete
 
 
 def test_recipe_preserves_protocol_and_resolves_size():
@@ -47,3 +47,15 @@ def test_metrics_and_missing_training(tmp_path):
     pd.DataFrame({"epoch": [0], "step": [0], "train_final_loss_epoch": [1.0]}).to_csv(p, index=False)
     with pytest.raises(ValueError, match="actual"):
         audit_fit(tmp_path, "x", "transfer")
+
+
+def test_incomplete_fit_quarantined_and_retry_bounded(tmp_path):
+    dest = tmp_path / "scratch"
+    dest.mkdir()
+    (dest / "previous.log").write_text("failure evidence")
+    restart_incomplete(tmp_path, "scratch")
+    assert not dest.exists()
+    assert next(tmp_path.glob("failed_scratch_*/previous.log")).read_text() == "failure evidence"
+    dest.mkdir()
+    with pytest.raises(RuntimeError, match="exhausted"):
+        restart_incomplete(tmp_path, "scratch")
