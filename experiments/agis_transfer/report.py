@@ -86,6 +86,8 @@ def collect_results(
         if sha256(project / path) != expected:
             raise ValueError(f"Input artifact drift: {path}")
     metric_preprocessing = manifest["preprocessing"]
+    learning_curve = metric_preprocessing.get("design") == "balanced_nested_learning_curve"
+    n_train = metric_preprocessing.get("n_train", 7)
     metric_provenance = None
     if settings.metric_preprocessing_manifest is not None:
         metric_path = settings.metric_preprocessing_manifest
@@ -97,7 +99,11 @@ def collect_results(
             if metric_preprocessing["config"][key] != original["config"][key]:
                 raise ValueError("Comparison scaler manifest has a different temperature grid")
         for a, b in zip(original["folds"], metric_preprocessing["folds"], strict=True):
-            if a["heldout_composition"] != b["heldout_composition"] or a["fit_compositions"] != b["fit_compositions"]:
+            if (
+                a["heldout_composition"] != b["heldout_composition"]
+                or (not learning_curve and a["fit_compositions"] != b["fit_compositions"])
+                or (learning_curve and not set(a["fit_compositions"]).issubset(b["fit_compositions"]))
+            ):
                 raise ValueError("Comparison scaler manifest has different train/test compositions")
             for pressure, scaler in b["scalers"].items():
                 values = [scaler[key] for key in ("prescale_std", "asinh_mean", "asinh_std")]
@@ -106,6 +112,15 @@ def collect_results(
             if set(a["scalers"]) != set(b["scalers"]):
                 raise ValueError("Comparison scaler manifest has different pressures")
         metric_provenance = {"path": str(metric_path), "sha256": sha256(metric_path)}
+    if learning_curve and metric_provenance is None:
+        raise ValueError("Learning curves require fixed reference scalers for cross-size metrics")
+    if (
+        learning_curve
+        and metric_provenance is not None
+        and metric_provenance["sha256"] != manifest["preprocessing"].get("reference_sha256")
+    ):
+        raise ValueError("Comparison manifest digest differs from the recorded seven-training reference")
+    metric_by_composition = {f["heldout_composition"]: f["scalers"] for f in metric_preprocessing["folds"]}
     rows: list[dict[str, Any]] = []
     curves: list[pd.DataFrame] = []
     missing = []
@@ -136,7 +151,8 @@ def collect_results(
         if any(result[key] != value for key, value in unit.items()):
             raise ValueError(f"Unit metadata mismatch: {name}")
         fold = manifest["preprocessing"]["folds"][unit["fold"] - 1]
-        heldout = fold["heldout_composition"]
+        heldout = fold.get("test_compositions", fold["heldout_composition"])
+        compositions = [heldout] if isinstance(heldout, str) else heldout
         if result["heldout"] != heldout:
             raise ValueError(f"Heldout metadata mismatch: {name}")
         target = f"agis_rho_{unit['pressure']}gpa"
@@ -144,26 +160,16 @@ def collect_results(
         task = next(task for task in tasks["tasks"] if task["name"] == target)
         data = pd.read_parquet(project / tasks["datasets"][task["dataset"]]["path"])
         gold_rows = data[data["split"] == "test"]
-        if len(gold_rows) != 1 or gold_rows.iloc[0]["composition"] != heldout:
+        if len(gold_rows) != len(compositions) or set(gold_rows.composition) != set(compositions):
             raise ValueError(f"Invalid outer holdout dataset: {name}")
-        gold = gold_rows.iloc[0]
-        truth = np.asarray(gold["rho_uohm_cm"], dtype=float)
-        temperature = np.asarray(gold["temperature_K"], dtype=float)
         scaler = fold["scalers"][str(unit["pressure"])]
-        metric_scaler = metric_preprocessing["folds"][unit["fold"] - 1]["scalers"][str(unit["pressure"])]
         for label in ["unfrozen"] if unit["route"] == "scratch" else ["frozen", "unfrozen"]:
             fit = folder / label
             frame = pd.read_parquet(fit / "training/finetune" / f"{target}_pred.parquet")
-            if len(frame) != 300 or set(frame["composition"]) != {heldout}:
+            if len(frame) != 300 * len(compositions) or set(frame["composition"]) != set(compositions):
                 raise ValueError(f"Prediction shape or composition mismatch: {name}/{label}")
             if not np.isfinite(frame[["true", "pred", "t"]].to_numpy()).all():
                 raise ValueError(f"Nonfinite predictions: {name}/{label}")
-            if not np.allclose(frame["t"], temperature, rtol=0, atol=2e-5):
-                raise ValueError(f"Temperature grid mismatch: {name}/{label}")
-            if not np.allclose(
-                normalized(frame["true"].to_numpy(), scaler), normalized(truth, scaler), rtol=1e-5, atol=1e-6
-            ):
-                raise ValueError(f"Prediction truth differs from the heldout dataset: {name}/{label}")
             summary = json.loads((fit / "training/finetune_summary.json").read_text())
             if summary["epochs_run"] != manifest["settings"]["final_epochs"] or summary["freeze_encoder"] != (
                 label == "frozen"
@@ -177,8 +183,9 @@ def collect_results(
                 "campaign_source_sha256": unit_identity["source_sha256"],
                 "recovered": name in recovered_units,
                 "setting": label,
-                "composition": heldout,
-                "formula": gold["formula"],
+                "n_train": n_train,
+                "n_test": len(compositions),
+                "anchor_composition": fold["heldout_composition"],
                 "checkpoint_run": None if checkpoint is None else manifest["selection"]["models"][checkpoint]["run"],
                 "source_checkpoint_sha256": None
                 if checkpoint is None
@@ -190,20 +197,40 @@ def collect_results(
                 "prediction_sha256": sha256(fit / "training/finetune" / f"{target}_pred.parquet"),
                 "unit_elapsed_seconds": result["elapsed_seconds"],
                 "slurm_job": result["slurm_job"],
-                **curve_metrics(truth, frame["pred"].to_numpy(), temperature, metric_scaler),
             }
-            rows.append(metadata)
-            curves.append(
-                pd.DataFrame(
+            for _, gold in gold_rows.iterrows():
+                composition = gold["composition"]
+                curve = frame[frame.composition == composition]
+                truth = np.asarray(gold["rho_uohm_cm"], dtype=float)
+                temperature = np.asarray(gold["temperature_K"], dtype=float)
+                if len(curve) != 300 or not np.allclose(curve["t"], temperature, rtol=0, atol=2e-5):
+                    raise ValueError(f"Temperature grid mismatch: {name}/{label}/{composition}")
+                if not np.allclose(
+                    normalized(curve["true"].to_numpy(), scaler), normalized(truth, scaler), rtol=1e-5, atol=1e-6
+                ):
+                    raise ValueError(f"Prediction truth differs from the heldout dataset: {name}/{label}/{composition}")
+                metric_scaler = metric_by_composition[composition][str(unit["pressure"])]
+                rows.append(
                     {
-                        "unit": name,
-                        "setting": label,
-                        "temperature_K": temperature,
-                        "true_uohm_cm": truth,
-                        "pred_uohm_cm": frame["pred"].to_numpy(),
+                        **metadata,
+                        "composition": composition,
+                        "formula": gold["formula"],
+                        "is_anchor": composition == fold["heldout_composition"],
+                        **curve_metrics(truth, curve["pred"].to_numpy(), temperature, metric_scaler),
                     }
                 )
-            )
+                curves.append(
+                    pd.DataFrame(
+                        {
+                            "unit": name,
+                            "setting": label,
+                            "composition": composition,
+                            "temperature_K": temperature,
+                            "true_uohm_cm": truth,
+                            "pred_uohm_cm": curve["pred"].to_numpy(),
+                        }
+                    )
+                )
     if missing and not settings.allow_partial:
         raise ValueError(f"Incomplete agreed cohort: {len(missing)} units missing; first: {missing[0]}")
     if not rows:
@@ -217,7 +244,7 @@ def collect_results(
     # Checkpoint repeats summarize each material first; materials and pressures then receive equal weight.
     matched = metrics[(metrics["route"] == "scratch") | (metrics["checkpoint_index"] < settings.warm_checkpoints)]
     macro = (
-        matched.groupby(["route", "setting", "fold", "pressure"], dropna=False)[
+        matched.groupby(["route", "setting", "fold", "pressure", "composition"], dropna=False)[
             ["z_rmse", "z_rmse_low_T", "relative_rmse", "r2"]
         ]
         .median()
@@ -229,7 +256,7 @@ def collect_results(
     )
     aggregate.to_csv(destination / f"aggregate_matched_{date}.csv", index=False)
     all_curves = (
-        metrics.groupby(["route", "setting", "fold", "pressure"], dropna=False)[
+        metrics.groupby(["route", "setting", "fold", "pressure", "composition"], dropna=False)[
             ["z_rmse", "z_rmse_low_T", "relative_rmse", "r2"]
         ]
         .median()
@@ -240,7 +267,7 @@ def collect_results(
         ["z_rmse", "z_rmse_low_T", "relative_rmse", "r2"]
     ].mean().reset_index().to_csv(destination / f"aggregate_all_{date}.csv", index=False)
     paired = matched[matched["route"].isin(["direct", "warm"])].pivot(
-        index=["fold", "pressure", "checkpoint_index", "setting"], columns="route", values="z_rmse"
+        index=["fold", "pressure", "composition", "checkpoint_index", "setting"], columns="route", values="z_rmse"
     )
     if {"direct", "warm"}.issubset(paired.columns):
         paired = paired.dropna(subset=["direct", "warm"])
@@ -248,7 +275,16 @@ def collect_results(
         paired = paired.reset_index()
     else:
         paired = pd.DataFrame(
-            columns=["fold", "pressure", "checkpoint_index", "setting", "direct", "warm", "warm_minus_direct"]
+            columns=[
+                "fold",
+                "pressure",
+                "composition",
+                "checkpoint_index",
+                "setting",
+                "direct",
+                "warm",
+                "warm_minus_direct",
+            ]
         )
     paired.to_csv(destination / f"paired_warm_direct_{date}.csv", index=False)
     (destination / f"report_manifest_{date}.json").write_text(
@@ -257,9 +293,11 @@ def collect_results(
                 "complete_cohort": not missing,
                 "warm_checkpoints": settings.warm_checkpoints,
                 "missing_units": missing,
-                "n_final_models": len(metrics),
+                "n_final_models": len(metrics.drop_duplicates(["unit", "setting"])),
+                "n_evaluated_curves": len(metrics),
+                "n_train": n_train,
                 "counts": {
-                    f"{route}/{setting}": len(group)
+                    f"{route}/{setting}": len(group.drop_duplicates(["unit", "setting"]))
                     for (route, setting), group in metrics.groupby(["route", "setting"])
                 },
                 "campaign_identity": identity,
@@ -274,7 +312,7 @@ def collect_results(
                     "rmse_uohm_cm": "microohm cm",
                     "mae_uohm_cm": "microohm cm",
                 },
-                "aggregation": "Median over matched checkpoint cohort within each compound/pressure; equal-weight mean over 24 curves. Checkpoints are not independent compounds.",
+                "aggregation": "Median over matched checkpoints within each split/material/pressure; equal-weight mean across balanced test curves. Checkpoints are not independent materials.",
                 "pretraining_overlap": manifest["pretraining_overlap"],
             },
             indent=2,
@@ -286,6 +324,8 @@ def collect_results(
 
 def plot_results(metrics: pd.DataFrame, predictions: pd.DataFrame, destination: Path, warm_checkpoints: int) -> None:
     matched = metrics[(metrics["route"] == "scratch") | (metrics["checkpoint_index"] < warm_checkpoints)]
+    # Keep the same eight reference test materials in curve panels at every training size.
+    matched = matched[matched.is_anchor]
     fig, axes = plt.subplots(1, 3, figsize=(14, 4.5), layout="constrained")
     groups = [
         ("scratch", "unfrozen"),
@@ -316,14 +356,21 @@ def plot_results(metrics: pd.DataFrame, predictions: pd.DataFrame, destination: 
             subset = matched[(matched["fold"] == fold) & (matched["pressure"] == pressure)]
             if subset.empty:
                 continue
+            composition = subset.iloc[0]["composition"]
             example = predictions[
-                (predictions["unit"] == subset.iloc[0]["unit"]) & (predictions["setting"] == subset.iloc[0]["setting"])
+                (predictions["unit"] == subset.iloc[0]["unit"])
+                & (predictions["setting"] == subset.iloc[0]["setting"])
+                & (predictions["composition"] == composition)
             ]
             ax.set_yscale("symlog", linthresh=max(1.0, float(np.max(np.abs(example["true_uohm_cm"]))) * 0.001))
             ax.plot(example["temperature_K"], example["true_uohm_cm"], color="black", lw=2, label="Observed")
             for (route, setting), color in zip(groups, colors, strict=True):
                 units = subset[(subset["route"] == route) & (subset["setting"] == setting)]["unit"]
-                frame = predictions[predictions["unit"].isin(units) & (predictions["setting"] == setting)]
+                frame = predictions[
+                    predictions["unit"].isin(units)
+                    & (predictions["setting"] == setting)
+                    & (predictions["composition"] == composition)
+                ]
                 if frame.empty:
                     continue
                 pivot = frame.pivot(index="temperature_K", columns="unit", values="pred_uohm_cm")
@@ -367,7 +414,7 @@ def main() -> None:
             recovery_root=args.recovery_root,
         ),
     )
-    print(f"Collected {len(frame)} validated final models")
+    print(f"Collected {len(frame.drop_duplicates(['unit', 'setting']))} validated final models / {len(frame)} curves")
 
 
 if __name__ == "__main__":
