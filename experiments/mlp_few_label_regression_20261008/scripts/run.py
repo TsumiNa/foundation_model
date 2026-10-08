@@ -8,20 +8,53 @@ import hashlib
 import json
 import os
 import time
+from contextlib import contextmanager
 from importlib import metadata
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 import torch
 
 import foundation_model
+from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
 from foundation_model.workflows import finetune, pretrain
 from foundation_model.workflows.recording import RunRecorder
 
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@contextmanager
+def paired_target_initialization(task: str, seed: int):
+    """Seed only fresh target construction, independently of source-head RNG consumption."""
+    original = FlexibleMultiTaskModel.add_task
+    audit = {}
+
+    def add_task(model, *configs):
+        if not any(c.name == task for c in configs):
+            return original(model, *configs)
+        if len(configs) != 1 or task in model.task_heads or audit:
+            raise ValueError("Expected exactly one fresh target-head construction")
+        # Production workflows construct heads on CPU, before Lightning moves the model.
+        # Preserve the surrounding RNG; leave source heads and encoder initialization intact.
+        with torch.random.fork_rng(devices=[]):
+            torch.random.default_generator.manual_seed(seed)
+            result = original(model, *configs)
+        h = hashlib.sha256()
+        for name, tensor in sorted(model.task_heads[task].state_dict().items()):
+            h.update(name.encode())
+            h.update(str((tensor.dtype, tuple(tensor.shape))).encode())
+            h.update(tensor.detach().cpu().numpy().tobytes())
+        audit.update(seed=seed, sha256=h.hexdigest())
+        return result
+
+    with patch.object(FlexibleMultiTaskModel, "add_task", add_task):
+        yield audit
+    if not audit:
+        raise ValueError("Target head was not freshly constructed")
 
 
 def verify_scripts(manifest: dict, script_dir: Path) -> None:
@@ -139,7 +172,8 @@ def run(data: Path, output: Path, index: int, revision: str, image_hash: str, sm
         rec = RunRecorder(dest)
         try:
             rec.write_provenance(config=cfg, argv=["paired regression study"], seeds={"training": cfg.training.seed})
-            (pretrain.run if arm == "scratch" else finetune.run)(cfg, rec)
+            with paired_target_initialization(case["task"], cfg.training.seed + 10_000) as head_initialization:
+                (pretrain.run if arm == "scratch" else finetune.run)(cfg, rec)
         finally:
             rec.close()
         result = {
@@ -151,6 +185,7 @@ def run(data: Path, output: Path, index: int, revision: str, image_hash: str, sm
             "package_path": str(foundation_model.__file__),
             "gpu": torch.cuda.get_device_name(),
             "checkpoint_hash": checkpoint["sha256"],
+            "head_initialization": head_initialization,
         }
         tmp = dest / "done.tmp"
         tmp.write_text(json.dumps(result, indent=2, allow_nan=False))
@@ -158,6 +193,8 @@ def run(data: Path, output: Path, index: int, revision: str, image_hash: str, sm
         records[arm] = result
     if records["scratch"]["metrics"]["test_hash"] != records["transfer"]["metrics"]["test_hash"]:
         raise ValueError("Paired test labels differ")
+    if records["scratch"]["head_initialization"] != records["transfer"]["head_initialization"]:
+        raise ValueError("Paired target-head initialization differs")
     tmp = root / "done.tmp"
     tmp.write_text(json.dumps({"case": case, "identity": identity}, indent=2))
     tmp.replace(root / "done.json")

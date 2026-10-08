@@ -20,6 +20,7 @@ def test_paired_collection_and_mismatch(tmp_path):
             "identity": identity,
             "arm": arm,
             "seconds": 1,
+            "head_initialization": {"seed": 12025, "sha256": "h"},
             "metrics": {"r2": 0.4, "mae": 0.2, "rmse": 0.3, "test_hash": "h"},
         }
         (lane / arm / "done.json").write_text(json.dumps(p))
@@ -28,4 +29,9 @@ def test_paired_collection_and_mismatch(tmp_path):
     p["metrics"]["test_hash"] = "other"
     (lane / "transfer" / "done.json").write_text(json.dumps(p))
     with pytest.raises(ValueError, match="Unpaired"):
+        collect(tmp_path / "root", tmp_path / "out")
+    p["metrics"]["test_hash"] = "h"
+    p["head_initialization"]["sha256"] = "different"
+    (lane / "transfer" / "done.json").write_text(json.dumps(p))
+    with pytest.raises(ValueError, match="head initialization"):
         collect(tmp_path / "root", tmp_path / "out")

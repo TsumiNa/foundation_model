@@ -23,6 +23,8 @@ def collect(root: Path, output: Path) -> dict:
             raise ValueError("Fit identity mismatch")
         if pair[0]["metrics"]["test_hash"] != pair[1]["metrics"]["test_hash"]:
             raise ValueError("Unpaired test labels")
+        if pair[0]["head_initialization"] != pair[1]["head_initialization"]:
+            raise ValueError("Unpaired target-head initialization")
         for p in pair:
             if not np.isfinite([p["metrics"][k] for k in ("r2", "mae", "rmse")]).all():
                 raise ValueError("Nonfinite metrics")

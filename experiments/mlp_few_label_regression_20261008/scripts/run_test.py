@@ -4,8 +4,42 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import torch
 
-from run import audit_fit, recipe, restart_incomplete, verify_scripts, digest
+from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
+from foundation_model.models.model_config import MLPEncoderConfig, RegressionTaskConfig
+
+from run import audit_fit, recipe, restart_incomplete, verify_scripts, digest, paired_target_initialization
+
+
+def test_target_initialization_paired_despite_source_heads():
+    hashes = []
+    states = []
+    original = FlexibleMultiTaskModel.add_task
+    for old_count in (0, 3):
+        torch.manual_seed(2025)
+        model = FlexibleMultiTaskModel(
+            encoder_config=MLPEncoderConfig(hidden_dims=[4, 8]), task_configs=[], enable_autoencoder=True
+        )
+        for i in range(old_count):
+            model.add_task(RegressionTaskConfig(name=f"source{i}", dims=[8, 12, 1], data_column="y"))
+        rng = torch.random.get_rng_state().clone()
+        encoder = {k: v.clone() for k, v in model.encoder.state_dict().items()}
+        with paired_target_initialization("target", 12025) as audit:
+            model.add_task(RegressionTaskConfig(name="target", dims=[8, 12, 1], data_column="y"))
+        hashes.append(audit)
+        states.append(model.task_heads["target"].state_dict())
+        assert torch.equal(rng, torch.random.get_rng_state())
+        assert all(torch.equal(v, model.encoder.state_dict()[k]) for k, v in encoder.items())
+        assert FlexibleMultiTaskModel.add_task is original
+    assert hashes[0] == hashes[1]
+    assert all(torch.equal(v, states[1][k]) for k, v in states[0].items())
+
+
+def test_target_initialization_requires_fresh_head():
+    with pytest.raises(ValueError, match="not freshly"):
+        with paired_target_initialization("target", 12025):
+            pass
 
 
 def test_recipe_preserves_protocol_and_resolves_size():

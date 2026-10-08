@@ -34,7 +34,12 @@ training compositions still participate in the production reconstruction objecti
 It is therefore not an experiment with only ten labels available in total, nor a
 composition-disjoint pretraining test. Report these limits alongside the curves.
 Both methods now use the paired training seed 2025 + subset seed; the older fine-tuning
-grid used seed 2025 for every source checkpoint. Scores use final workflow weights,
+grid used seed 2025 for every source checkpoint. Fresh target heads additionally use
+an isolated CPU RNG seed (training seed + 10,000), so constructing old checkpoint heads
+does not alter their initial weights. Each fit records the initial head-state hash;
+the worker and collector require matching hashes within each scratch/transfer pair.
+Encoder and source-head construction otherwise use the production workflow unchanged.
+Scores use final workflow weights,
 not a retrospectively selected best test checkpoint.
 
 ## Files and execution
