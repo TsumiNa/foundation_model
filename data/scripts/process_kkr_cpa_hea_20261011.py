@@ -27,10 +27,10 @@ Policy (decided 2026-10-11).
               (identical per-atom volume for bcc and fcc in 99.97 % of compositions, a_fcc / a_bcc =
               2^(1/3): an input of the calculation, not a result); the four site moments (ordered by
               element, not a composition-level quantity).
-  outliers    4 compositions with |E_fcc - E_bcc| > 680 meV/atom (every other composition is within
-              ±587 meV/atom) are left out of Structure preference; their other tasks are kept.
-  units       energies are reported in meV/atom (TE is per atom: the four-element average of the
-              all-electron atomic energies; 1 Ry = 13,605.693 meV), not Ry.
+  outliers    4 compositions with |E_fcc - E_bcc| > 0.68 eV/atom (every other composition is within
+              ±0.587 eV/atom) are left out of Structure preference; their other tasks are kept.
+  units       energies are reported in eV/atom (TE is per atom: the four-element average of the
+              all-electron atomic energies; 1 Ry = 13.605693 eV), not Ry.
   scaling     per regression column: StandardScaler -> PowerTransformer(yeo-johnson) on the non-null
               values, `<name> (normalized)`; label column via LabelEncoder, `<name> (label)` — the
               conventions of process_ac_qe_te_data.ipynb / rebuild_mp_gga_20260912.py.
@@ -61,8 +61,8 @@ SRC = DATA / "KKR_CPA_HEA" / "result_gather-2021-10.26.csv"
 OUT_RAW = DATA / "KKR_CPA_HEA_20261011.parquet"
 OUT_NORM = DATA / "KKR_CPA_HEA_20261011_norm.parquet"
 OUT_PRE = DATA / "KKR_CPA_HEA_preprocessing_20261011.pkl.z"
-RY_TO_MEV = 13605.693
-OUTLIER_MEV = 680.0  # = 0.05 Ry
+RY_TO_EV = 13.605693
+OUTLIER_EV = 0.68  # = 0.05 Ry
 
 PROPS = {  # source column -> task name stem (unit in brackets)
     "total moment": ("Total magnetic moment", "μB"),
@@ -101,17 +101,17 @@ def main() -> None:
             values = part[col].abs() if col == "total moment" else part[col]
             raw[f"{name} {poly}[{unit}]"] = values.reindex(raw.index)
     te = src.pivot_table(index="composition", columns="polytyp", values="TE(Ry)")
-    delta = ((te["fcc"] - te["bcc"]) * RY_TO_MEV).reindex(raw.index)  # meV/atom
+    delta = ((te["fcc"] - te["bcc"]) * RY_TO_EV).reindex(raw.index)  # eV/atom
     pref = pd.Series(np.where(delta < 0, "fcc", "bcc"), index=raw.index, dtype=object)
-    pref[delta.isna() | (delta.abs() > OUTLIER_MEV)] = None
+    pref[delta.isna() | (delta.abs() > OUTLIER_EV)] = None
     raw["Structure preference"] = pref
-    raw["Energy fcc - bcc[meV/atom]"] = delta  # kept for provenance; not a task
+    raw["Energy fcc - bcc[eV/atom]"] = delta  # kept for provenance; not a task
     raw.index.name = "composition"
     raw = raw.reset_index()
 
     norm = raw[["composition"]].copy()
     pre: dict = {}
-    task_cols = [c for c in raw.columns if c not in ("composition", "Structure preference", "Energy fcc - bcc[meV/atom]")]
+    task_cols = [c for c in raw.columns if c not in ("composition", "Structure preference", "Energy fcc - bcc[eV/atom]")]
     for col in task_cols:
         name = col.split("[")[0]
         idx = raw[col].notna()
