@@ -24,12 +24,6 @@ dataset = "qmof"
 column = "QMOF band gap PBE (normalized)"
 
 [[tasks]]
-name = "qmof_band_gap_hse06"
-kind = "regression"
-dataset = "qmof"
-column = "QMOF band gap HSE06 (normalized)"
-
-[[tasks]]
 name = "qmof_cbm_pbe"
 kind = "regression"
 dataset = "qmof"

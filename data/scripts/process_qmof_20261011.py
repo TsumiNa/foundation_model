@@ -15,8 +15,9 @@ Policy (decided 2026-10-11).
               MOF with the lowest PBE energy per atom (outputs.pbe.energy_total / info.natoms) and take
               every task value from that one MOF, so a row never mixes structures.
   tasks       QMOF band gap PBE [eV]      every MOF (PBE-D3(BJ) relaxed, PBE single point)
-              QMOF band gap HSE06 [eV]    where the kept MOF has the HSE06 single point (about half)
               QMOF CBM PBE [eV], QMOF VBM PBE [eV]
+              (the HSE06 band gap is left out: only about half the MOFs have it, and a second band-gap
+              column from another functional would sit beside the PBE one under a similar name)
               QMOF energy per atom PBE [eV/atom]
               Task names carry the "QMOF" prefix: same functional family as the Materials Project
               columns, different code settings and chemical space, so they are separate tasks.
@@ -49,7 +50,6 @@ OUT_PRE = DATA / "QMOF_preprocessing_20261011.pkl.z"
 
 TASKS = {  # source column -> (task name, unit)
     "outputs.pbe.bandgap": ("QMOF band gap PBE", "eV"),
-    "outputs.hse06.bandgap": ("QMOF band gap HSE06", "eV"),
     "outputs.pbe.cbm": ("QMOF CBM PBE", "eV"),
     "outputs.pbe.vbm": ("QMOF VBM PBE", "eV"),
     "energy_per_atom": ("QMOF energy per atom PBE", "eV/atom"),
