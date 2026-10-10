@@ -1,0 +1,83 @@
+# Single-task learnability check for the QMOF dataset (data/QMOF_20261011_norm.parquet, 2026-10-11).
+# The campaign-v2 single-task recipe (probe6_mp2026.toml + the adopted values of the
+# stage_single grids: latent_dim 384, encoder_lr 2e-3, scheduler min_lr 1e-5 / patience 5),
+# KMD descriptor, the dataset's own split column. One task per run via pretrain.task_sequence.
+[data]
+composition_column = "composition"
+val_split = 0.1
+test_split = 0.1
+split_random_seed = 42
+batch_size = 256
+num_workers = 0
+
+[descriptor]
+kind = "kmd"
+n_grids = 8
+
+[datasets.qmof]
+path = "data/QMOF_20261011_norm.parquet"
+
+[[tasks]]
+name = "qmof_band_gap_pbe"
+kind = "regression"
+dataset = "qmof"
+column = "QMOF band gap PBE (normalized)"
+
+[[tasks]]
+name = "qmof_band_gap_hse06"
+kind = "regression"
+dataset = "qmof"
+column = "QMOF band gap HSE06 (normalized)"
+
+[[tasks]]
+name = "qmof_cbm_pbe"
+kind = "regression"
+dataset = "qmof"
+column = "QMOF CBM PBE (normalized)"
+
+[[tasks]]
+name = "qmof_vbm_pbe"
+kind = "regression"
+dataset = "qmof"
+column = "QMOF VBM PBE (normalized)"
+
+[[tasks]]
+name = "qmof_energy_per_atom_pbe"
+kind = "regression"
+dataset = "qmof"
+column = "QMOF energy per atom PBE (normalized)"
+
+[model]
+latent_dim = 384
+encoder_hidden_dims = [256]
+head_hidden_dims = [64]
+
+[training]
+max_epochs = 150
+encoder_lr = 2e-3
+head_lr = 5e-3
+accelerator = "cpu"
+devices = 1
+seed = 2025
+
+[training.scheduler]
+min_lr = 1e-5
+patience = 5
+
+[training.early_stopping]
+enabled = true
+monitor = "val_final_loss"
+mode = "min"
+patience = 24
+min_delta = 1e-4
+
+[training.logging]
+csv = true
+
+[pretrain]
+task_sequence = ["qmof_band_gap_pbe"]
+n_runs = 1
+task_order = "fixed"
+
+[output]
+dir = "artifacts/qmof_learnability"
