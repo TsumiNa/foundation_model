@@ -30,6 +30,7 @@ Outputs (new files; nothing existing is overwritten):
 
     uv run python data/scripts/process_qmof_20261011.py
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -86,8 +87,11 @@ def main() -> None:
     norm = raw[["composition"]].copy()
     pre: dict = {}
     for src_col, (name, unit) in TASKS.items():
-        col = f"{name}[{unit}]"; idx = raw[col].notna()
-        pipe = Pipeline([("standardscaler", StandardScaler()), ("powertransformer", PowerTransformer(method="yeo-johnson"))])
+        col = f"{name}[{unit}]"
+        idx = raw[col].notna()
+        pipe = Pipeline(
+            [("standardscaler", StandardScaler()), ("powertransformer", PowerTransformer(method="yeo-johnson"))]
+        )
         norm[f"{name} (normalized)"] = np.nan
         norm.loc[idx, f"{name} (normalized)"] = pipe.fit_transform(raw.loc[idx, [col]].to_numpy(np.float64)).ravel()
         pre[f"{'_'.join(name.lower().split())}_scaler"] = pipe
@@ -102,7 +106,9 @@ def main() -> None:
     raw.to_parquet(OUT_RAW, index=False)
     norm.to_parquet(OUT_NORM, index=False)
     joblib.dump(pre, OUT_PRE)
-    print(f"{n_rows:,} MOFs, {n_shared:,} reduced formulas shared -> {len(raw):,} compositions (lowest PBE energy per atom kept)")
+    print(
+        f"{n_rows:,} MOFs, {n_shared:,} reduced formulas shared -> {len(raw):,} compositions (lowest PBE energy per atom kept)"
+    )
     print(norm["split"].value_counts().to_dict())
     for c in [c for c in norm.columns if c not in ("composition", "split")]:
         print(f"  {c:40s} {int(norm[c].notna().sum()):6,d} rows")

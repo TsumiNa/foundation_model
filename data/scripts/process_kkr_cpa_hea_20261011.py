@@ -43,6 +43,7 @@ Outputs (new files; nothing existing is overwritten):
 
     uv run python data/scripts/process_kkr_cpa_hea_20261011.py
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -111,11 +112,15 @@ def main() -> None:
 
     norm = raw[["composition"]].copy()
     pre: dict = {}
-    task_cols = [c for c in raw.columns if c not in ("composition", "Structure preference", "Energy fcc - bcc[eV/atom]")]
+    task_cols = [
+        c for c in raw.columns if c not in ("composition", "Structure preference", "Energy fcc - bcc[eV/atom]")
+    ]
     for col in task_cols:
         name = col.split("[")[0]
         idx = raw[col].notna()
-        pipe = Pipeline([("standardscaler", StandardScaler()), ("powertransformer", PowerTransformer(method="yeo-johnson"))])
+        pipe = Pipeline(
+            [("standardscaler", StandardScaler()), ("powertransformer", PowerTransformer(method="yeo-johnson"))]
+        )
         norm[f"{name} (normalized)"] = np.nan
         norm.loc[idx, f"{name} (normalized)"] = pipe.fit_transform(raw.loc[idx, [col]].to_numpy(np.float64)).ravel()
         pre[f"{'_'.join(name.lower().split())}_scaler"] = pipe
@@ -140,7 +145,10 @@ def main() -> None:
     print(norm["split"].value_counts().to_dict())
     for c in [c for c in norm.columns if c not in ("composition", "split")]:
         print(f"  {c:48s} {int(norm[c].notna().sum()):6,d} rows")
-    print("  Structure preference classes:", dict(zip(le.classes_, np.bincount(norm['Structure preference (label)'].dropna().astype(int)))))
+    print(
+        "  Structure preference classes:",
+        dict(zip(le.classes_, np.bincount(norm["Structure preference (label)"].dropna().astype(int)))),
+    )
 
 
 if __name__ == "__main__":

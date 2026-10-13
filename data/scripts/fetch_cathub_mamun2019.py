@@ -14,6 +14,7 @@ data/CatalysisHub_MamunHighT2019/pages/ so a rerun resumes from the last saved c
     CATHUB_API_KEY=... uv run python data/scripts/fetch_cathub_mamun2019.py --probe
     CATHUB_API_KEY=... uv run python data/scripts/fetch_cathub_mamun2019.py --page-size 500 --max-requests 150
 """
+
 from __future__ import annotations
 
 import argparse
@@ -49,23 +50,34 @@ def main() -> None:
     if not key:
         raise SystemExit("set CATHUB_API_KEY in the environment")
     if a.probe:
-        d = post('{reactions(pubId:"MamunHighT2019", first:2){totalCount pageInfo{hasNextPage endCursor} edges{node{%s}}}}' % FIELDS, key)
+        d = post(
+            '{reactions(pubId:"MamunHighT2019", first:2){totalCount pageInfo{hasNextPage endCursor} edges{node{%s}}}}'
+            % FIELDS,
+            key,
+        )
         print(json.dumps(d, indent=1)[:4000])
         return
     OUT.mkdir(parents=True, exist_ok=True)
     pages = sorted(OUT.glob("page_*.json"))
     cursor = json.loads(pages[-1].read_text())["pageInfo"]["endCursor"] if pages else None
     if pages and not json.loads(pages[-1].read_text())["pageInfo"]["hasNextPage"]:
-        print("already complete:", len(pages), "pages"); return
+        print("already complete:", len(pages), "pages")
+        return
     for i in range(a.max_requests):
         after = f', after:"{cursor}"' if cursor else ""
-        d = post('{reactions(pubId:"MamunHighT2019", first:%d%s){totalCount pageInfo{hasNextPage endCursor} edges{node{%s}}}}' % (a.page_size, after, FIELDS), key)["reactions"]
+        d = post(
+            '{reactions(pubId:"MamunHighT2019", first:%d%s){totalCount pageInfo{hasNextPage endCursor} edges{node{%s}}}}'
+            % (a.page_size, after, FIELDS),
+            key,
+        )["reactions"]
         n = len(pages) + i
         (OUT / f"page_{n:05d}.json").write_text(json.dumps(d))
-        got = len(d["edges"]); cursor = d["pageInfo"]["endCursor"]
+        got = len(d["edges"])
+        cursor = d["pageInfo"]["endCursor"]
         print(f"page {n}: {got} rows (total {d['totalCount']}), hasNext {d['pageInfo']['hasNextPage']}", flush=True)
         if not d["pageInfo"]["hasNextPage"]:
-            print("complete"); return
+            print("complete")
+            return
         time.sleep(SLEEP_S)
     print("stopped at --max-requests; rerun to continue")
 

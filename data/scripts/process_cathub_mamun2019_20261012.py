@@ -30,6 +30,7 @@ Outputs (new files; nothing existing is overwritten):
 
     uv run python data/scripts/process_cathub_mamun2019_20261012.py
 """
+
 from __future__ import annotations
 
 import json
@@ -68,7 +69,7 @@ def single_adsorbate(products: str) -> str | None:
     p = {k: v for k, v in json.loads(products).items() if k != "star"}
     if len(p) != 1:
         return None
-    (name, count), = p.items()
+    ((name, count),) = p.items()
     return name[: -len("star")] + "*" if name.endswith("star") and count == 1 else None
 
 
@@ -86,7 +87,9 @@ def main() -> None:
     single = d.dropna(subset=["adsorbate", "reactionEnergy"]).copy()
     single["composition"] = single["surfaceComposition"].map(convert_composition)
     single = single.dropna(subset=["composition"])
-    best = single.sort_values(["composition", "adsorbate", "reactionEnergy"]).drop_duplicates(["composition", "adsorbate"])
+    best = single.sort_values(["composition", "adsorbate", "reactionEnergy"]).drop_duplicates(
+        ["composition", "adsorbate"]
+    )
 
     adsorbates = best["adsorbate"].value_counts().index.tolist()  # most covered first
     raw = pd.DataFrame(index=pd.Index(sorted(best["composition"].unique())))
@@ -101,10 +104,15 @@ def main() -> None:
     norm = raw[["composition"]].copy()
     pre: dict = {}
     for a in adsorbates:
-        col = f"{a} adsorption energy[eV]"; idx = raw[col].notna()
-        pipe = Pipeline([("standardscaler", StandardScaler()), ("powertransformer", PowerTransformer(method="yeo-johnson"))])
+        col = f"{a} adsorption energy[eV]"
+        idx = raw[col].notna()
+        pipe = Pipeline(
+            [("standardscaler", StandardScaler()), ("powertransformer", PowerTransformer(method="yeo-johnson"))]
+        )
         norm[f"{a} adsorption energy (normalized)"] = np.nan
-        norm.loc[idx, f"{a} adsorption energy (normalized)"] = pipe.fit_transform(raw.loc[idx, [col]].to_numpy(np.float64)).ravel()
+        norm.loc[idx, f"{a} adsorption energy (normalized)"] = pipe.fit_transform(
+            raw.loc[idx, [col]].to_numpy(np.float64)
+        ).ravel()
         pre[f"{a.replace('*', '_star').lower()}_adsorption_energy_scaler"] = pipe
     ids = norm.index.to_numpy()
     tr, tmp = train_test_split(ids, test_size=0.3, random_state=42)
