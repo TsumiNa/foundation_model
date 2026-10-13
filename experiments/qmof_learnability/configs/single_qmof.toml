@@ -74,4 +74,4 @@ n_runs = 1
 task_order = "fixed"
 
 [output]
-dir = "artifacts/qmof_learnability"
+dir = "experiments/qmof_learnability/artifacts/single"

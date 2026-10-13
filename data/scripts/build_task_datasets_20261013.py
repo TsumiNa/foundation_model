@@ -114,12 +114,49 @@ TRAINED_V2 = (
 )
 
 
+def resolve_raw_column(raw_columns: list[str], stem: str) -> str:
+    """The raw table's column for a task stem: the exact name, or the one unique `<stem>[unit]` column."""
+    if stem in raw_columns:
+        return stem
+    hits = [c for c in raw_columns if c.startswith(f"{stem}[")]
+    if len(hits) != 1:
+        raise ValueError(f"no unique raw column for {stem!r}: {hits}")
+    return hits[0]
+
+
+def validate_index(idx: pd.DataFrame, folder: Path) -> None:
+    """Every column the index names must exist in the file it names."""
+    schema = {}
+    problems = []
+    for r in idx.itertuples():
+        for file, col in ((r.file, r.column), (r.file, r.t_column), (r.raw_file, r.raw_column)):
+            if not isinstance(col, str) or not col:
+                continue
+            if file not in schema:
+                schema[file] = set(pd.read_parquet(folder / file).columns) if (folder / file).exists() else None
+            if schema[file] is None:
+                problems.append(f"{r.task}: missing file {file}")
+            elif col not in schema[file]:
+                problems.append(f"{r.task}: column {col!r} not in {file}")
+    if problems:
+        raise ValueError("task index does not match the files:\n" + "\n".join(problems))
+
+
 def counts(series: pd.Series, split: pd.Series) -> dict:
     nn = series.notna()
     return {"n_total": int(nn.sum()), **{f"n_{s}": int((nn & (split == s)).sum()) for s in ("train", "val", "test")}}
 
 
 def main() -> None:
+    import argparse
+
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--out", type=Path, default=OUT, help="output folder (must not exist)")
+    out = ap.parse_args().out
+    build(out)
+
+
+def build(OUT: Path) -> None:
     if OUT.exists():
         raise SystemExit(f"{OUT} exists — choose a new date instead of overwriting.")
     OUT.mkdir(parents=True)
@@ -303,6 +340,7 @@ def main() -> None:
         shutil.copy2(DATA / norm_f, OUT / f"{name}.parquet")
         shutil.copy2(DATA / raw_f, OUT / f"{name}_raw.parquet")
         d = pd.read_parquet(OUT / f"{name}.parquet")
+        raw_cols = list(pd.read_parquet(OUT / f"{name}_raw.parquet").columns)
         if name == "catalysis_hub_adsorption":
             tasks = {
                 f"ads_{c.split('*')[0].lower()}": (c.replace(" (normalized)", ""), "eV")
@@ -318,7 +356,8 @@ def main() -> None:
                     file=f"{name}.parquet",
                     column=col,
                     t_column="",
-                    raw_column=stem,
+                    raw_file=f"{name}_raw.parquet",
+                    raw_column=resolve_raw_column(raw_cols, stem),
                     kind=kind,
                     n_classes=int(d[col].nunique()) if kind == "classification" else "",
                     unit=unit,
@@ -328,6 +367,9 @@ def main() -> None:
             )
 
     idx = pd.DataFrame(rows)
+    idx["raw_file"] = idx["raw_file"].fillna(
+        idx["file"]
+    )  # the qc-derived files keep raw and normalized columns together
     first_src = (
         idx["source"].str.split(" ").str[0].replace({"Materials": "Materials Project", "KKR-CPA": "KKR-CPA HEA"})
     )
@@ -343,6 +385,7 @@ def main() -> None:
             "file",
             "column",
             "t_column",
+            "raw_file",
             "raw_column",
             "unit",
             "n_classes",
@@ -354,6 +397,7 @@ def main() -> None:
             "reference",
         ]
     ]
+    validate_index(idx, OUT)
     idx.to_csv(OUT / "task_index.csv", index=False)
     print(f"{len(idx)} tasks in {OUT}")
     print(idx.groupby(["file", "kind"]).size().to_string())

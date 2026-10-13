@@ -1,7 +1,9 @@
 # Data audit — 2026-10-13
 
 Seven composition-keyed datasets, 64 tasks (41 trained in campaign v2, 23 new). Polymer datasets are out of scope.
-`label_distribution.csv` holds the per-task distribution statistics behind section 3.
+Per-task distribution statistics behind section 3: `uv run python experiments/data_audit_20261013/analysis/label_distribution.py`
+-> `results/label_distribution.csv` (untracked). `results/dataset_inventory_vs_sheet.csv` maps the curated datasets onto the shared dataset sheet
+(original row numbers kept).
 
 ## 1. Inventory
 
