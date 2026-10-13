@@ -508,8 +508,9 @@ Recorded in `experiments/data_audit_20261013/README.md`; nothing here has been c
 
 - **48 rows with symbols outside the 94-element table** (36 Starrydata rows with placeholders such as M, Ln, Q,
   Ze, or Am; 10 NEMAD Cm compounds; 2 NEMAD Am superconductors). The KMD encoder silently drops those symbols.
-- **Split conflicts across datasets**: 4,688 compositions are train in one dataset and val/test in another; 265
-  inside the qc table. A test composition can be seen in training through another task.
+- **Same descriptor input in train and val/test**: training resolves one global split per composition (test > val > train
+  across datasets, on non-reduced formulas), so cross-dataset split conflicts do not leak; but 2,672 reduced compositions
+  still have one spelling in train and another in val/test (e.g. `C4 O8` vs `C1 O2`), which KMD encodes identically.
 - **Zero-inflated targets**: band gap 49 % zero, HEA magnetic moment and Curie temperature ≈70 % zero.
 - Different levels of theory (GGA/GGA+U, PBE, BEEF-vdW, KKR-CPA) — same-named quantities are separate tasks.
 """)

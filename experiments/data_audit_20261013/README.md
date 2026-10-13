@@ -23,10 +23,16 @@ Per-task distribution statistics behind section 3: `uv run python experiments/da
    table without an error (AmO2 is encoded as pure O, weights summing to 0.667). qc: 36 starry rows with
    placeholder symbols (M, Ln, Q, Ze, Zb, A, E, G, Gi, L) or Am — 29 of them carry a Seebeck curve;
    NEMAD magnetic: 10 Cm compounds; NEMAD superconductor: 2 Am compounds.
-2. **Split conflicts across datasets.** 4,688 compositions are train in one dataset and val/test in another
-   (phonix–qc 2,088, NEMAD magnetic–qc 1,779, NEMAD sc–qc 399, Catalysis-Hub–qc 224, …); within qc, 265
-   compositions sit in more than one split. In multi-task training a test composition's input is seen in
-   training through another task.
+2. **The same descriptor input in train and in val/test (2,672 reduced compositions).** The training path
+   resolves one global split per composition: `resolve_splits` (src/foundation_model/data/composition_sources.py)
+   overlays the per-dataset split columns with precedence test > val > train, on canonical but *non-reduced*
+   formulas. So a composition marked test in one dataset and train in another becomes test for every task
+   (4,688 compositions carry such conflicting labels; the overlay removes them from training rather than leaking
+   them — the cost is fewer training rows and per-dataset split counts that differ from the effective ones).
+   What the overlay does not catch is formulas that differ only by a multiple: `C4 O8` and `C1 O2` are different
+   keys but the same KMD input (atomic fractions). After the overlay, 2,672 reduced compositions still have one
+   spelling in train and another in val/test (e.g. `C4 O8` train, `C1 O2` test), including within the
+   Materials Project rows, which use cell formulas.
 3. **Zero-inflated regression targets.** Band gap 49 % zero (metals); HEA total moment and Curie temperature
    ≈70 % zero (non-magnetic); MP total magnetization ≈7 % zero. Yeo-Johnson leaves a spike plus a tail.
 
