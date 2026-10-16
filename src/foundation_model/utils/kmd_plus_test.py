@@ -57,7 +57,9 @@ def test_formula_to_composition_rejects_unknown_type():
         formula_to_composition(42)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("formula", ["AmO2", "CmO2", "M1Fe1", "Am0.000001O2", {"Am": 1e-10, "O": 2}])
+@pytest.mark.parametrize(
+    "formula", ["AmO2", "CmO2", "M1Fe1", "Am0.000001O2", "Am0.0000000001O2", {"Am": 1e-10, "O": 2}]
+)
 def test_default_element_layout_rejects_unsupported_elements(formula):
     with pytest.raises(ValueError, match="Unsupported"):
         formula_to_composition(formula)

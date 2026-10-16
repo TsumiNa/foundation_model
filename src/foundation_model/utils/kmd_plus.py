@@ -48,6 +48,7 @@ For the complete migration checklist and element-based examples, see
 from __future__ import annotations
 
 import os
+import re
 from statistics import median
 from typing import Literal, Sequence
 
@@ -129,6 +130,11 @@ def formula_to_composition(
         raise ValueError("Element layout must be nonempty and unique.")
 
     if isinstance(formula, str):
+        if default_layout:
+            # Check before pymatgen removes trace amounts below its parsing tolerance.
+            unsupported = sorted(set(re.findall(r"[A-Z][a-z]?", formula)) - set(elements))
+            if unsupported:
+                raise ValueError(f"Unsupported elements for the default layout: {unsupported}.")
         comp = Composition(formula)
     elif isinstance(formula, Composition):
         comp = formula
@@ -145,7 +151,13 @@ def formula_to_composition(
         raise TypeError("formula must be a str, dict, or pymatgen Composition.")
 
     amounts = np.asarray(list(comp.values()), dtype=float)
-    if not len(amounts) or not np.isfinite(amounts).all() or (amounts < 0).any() or amounts.sum() <= 0:
+    if (
+        not len(amounts)
+        or not np.isfinite(amounts).all()
+        or (amounts < 0).any()
+        or not np.isfinite(amounts.sum())
+        or amounts.sum() <= 0
+    ):
         raise ValueError("Composition amounts must be nonempty, finite, non-negative and have positive sum.")
     unsupported = sorted(str(el) for el in comp.elements if str(el) not in elements)
     if default_layout and unsupported:
