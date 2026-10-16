@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 from pymatgen.core.composition import Composition
 
@@ -76,6 +77,11 @@ def test_explicit_layout_preserves_documented_projection():
     np.testing.assert_allclose(formula_to_composition("AmO2", elements=["Am", "O"]), [1 / 3, 2 / 3])
     with pytest.raises(ValueError, match="unique"):
         formula_to_composition("O2", elements=["O", "O"])
+
+
+@pytest.mark.parametrize("layout", [pd.Index(["O", "Si"]), np.array(["O", "Si"])])
+def test_explicit_array_like_element_layout(layout):
+    np.testing.assert_allclose(formula_to_composition("SiO2", elements=layout), [2 / 3, 1 / 3])
 
 
 # --- KMD construction --------------------------------------------------------

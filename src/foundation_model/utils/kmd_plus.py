@@ -126,7 +126,7 @@ def formula_to_composition(
     if default_layout:
         elements = DEFAULT_ELEMENTS
     assert elements is not None
-    if not elements or len(set(elements)) != len(elements):
+    if len(elements) == 0 or len(set(elements)) != len(elements):
         raise ValueError("Element layout must be nonempty and unique.")
 
     if isinstance(formula, str):
