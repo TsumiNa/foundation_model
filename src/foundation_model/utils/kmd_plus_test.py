@@ -89,6 +89,11 @@ def test_oxidation_state_species_use_underlying_elements(formula):
     np.testing.assert_allclose(formula_to_composition(formula), formula_to_composition("Fe2O3"))
 
 
+@pytest.mark.parametrize("formula", ["D2O", "T2O", {"D": 2, "O": 1}])
+def test_hydrogen_isotope_aliases_use_hydrogen(formula):
+    np.testing.assert_allclose(formula_to_composition(formula), formula_to_composition("H2O"))
+
+
 # --- KMD construction --------------------------------------------------------
 
 

@@ -133,7 +133,8 @@ def formula_to_composition(
     if isinstance(formula, str):
         if default_layout:
             # Check before pymatgen removes trace amounts below its parsing tolerance.
-            unsupported = sorted(set(re.findall(r"[A-Z][a-z]?", formula)) - set(elements))
+            symbols = {get_el_sp(token).symbol for token in re.findall(r"[A-Z][a-z]?", formula)}
+            unsupported = sorted(symbols - set(elements))
             if unsupported:
                 raise ValueError(f"Unsupported elements for the default layout: {unsupported}.")
         comp = Composition(formula)
