@@ -585,6 +585,88 @@ def test_kmd_catalog_rejects_partial_compositions(catalog_dir) -> None:
     assert "AmO2" not in cat._desc_cache
 
 
+def test_catalog_freezes_splits_before_task_selection_and_sampling(tmp_path):
+    a = tmp_path / "a.parquet"
+    b = tmp_path / "b.parquet"
+    pd.DataFrame(
+        {"composition": ["Fe2O3", "NaCl"], "density": [1.0, 2.0], "mtype": [0, 1], "split": ["train", "train"]}
+    ).to_parquet(a)
+    pd.DataFrame({"composition": ["Fe4O6"], "density": [9.0], "split": ["test"]}).to_parquet(b)
+    text = (
+        _base_toml(str(a))
+        + f'\n[datasets.b]\npath = "{b}"\n\n[[tasks]]\nname = "other"\nkind = "regression"\ndataset = "b"\ncolumn = "density"\n'
+    )
+    cat = TaskCatalog(_build(text))
+    assert cat.task_frames(["density"])["density"].loc["Fe2 O3", "split"] == "test"
+    dm = cat.build_datamodule(["density"])
+    dm._prepare_sources()
+    assert "Fe2 O3" not in dm.train_idx
+    assert cat.task_frames(["other"])["other"].loc["Fe4 O6", "split"] == "test"
+
+
+def test_catalog_external_split_manifest_is_strict(catalog_dir):
+    from foundation_model.data.composition_sources import composition_group_key
+
+    cat = _catalog(catalog_dir)
+    p = catalog_dir / "splits.csv"
+    pd.DataFrame(
+        {"composition_group": [composition_group_key(k) for k in _COMPS], "split": ["test"] * len(_COMPS)}
+    ).to_csv(p, index=False)
+    cat.config.data.split_manifest = p
+    assert cat.task_frames(["density"])["density"].split.eq("test").all()
+    pd.DataFrame({"composition_group": [composition_group_key("Fe2O3")], "split": ["train"]}).to_csv(p, index=False)
+    cat = _catalog(catalog_dir)
+    cat.config.data.split_manifest = p
+    with pytest.raises(ValueError, match="missing"):
+        cat.task_frames(["density"])
+
+
+@pytest.mark.parametrize("labels,groups", [(["unknown"], ["a"]), ([None], ["a"]), (["train", "test"], ["a", "a"])])
+def test_manifest_rejects_invalid_and_duplicate_entries(catalog_dir, labels, groups):
+    p = catalog_dir / "invalid.csv"
+    pd.DataFrame({"composition_group": groups, "split": labels}).to_csv(p, index=False)
+    cat = _catalog(catalog_dir)
+    cat.config.data.split_manifest = p
+    with pytest.raises(ValueError, match="manifest"):
+        cat.group_splits()
+
+
+def test_filters_cannot_hide_another_task_holdout(tmp_path):
+    a = tmp_path / "a.parquet"
+    b = tmp_path / "b.parquet"
+    pd.DataFrame({"composition": ["Fe2O3"], "density": [1.0], "mtype": [0], "split": ["train"]}).to_parquet(a)
+    pd.DataFrame({"composition": ["Fe4O6"], "density": [9.0], "split": ["test"]}).to_parquet(b)
+    text = (
+        _base_toml(str(a))
+        + f'\n[datasets.b]\npath = "{b}"\nmin_elements = 3\nsample = 1\n\n[[tasks]]\nname = "other"\nkind = "regression"\ndataset = "b"\ncolumn = "density"\n'
+    )
+    cat = TaskCatalog(_build(text))
+    assert cat.task_frames(["other"])["other"].empty
+    assert cat.task_frames(["density"])["density"].split.tolist() == ["test"]
+
+
+def test_catalog_validates_raw_formula_before_canonical_rounding(tmp_path):
+    p = tmp_path / "trace.parquet"
+    pd.DataFrame({"composition": ["Am0.0000000001O2"], "density": [1.0], "mtype": [0]}).to_parquet(p)
+    cat = TaskCatalog(_build(_base_toml(str(p))))
+    with pytest.raises(ValueError, match="Invalid KMD composition.*Unsupported"):
+        cat.task_frames(["density"])
+
+
+def test_missing_compositions_do_not_consume_group_holdout_budget(tmp_path):
+    p = tmp_path / "missing.parquet"
+    pd.DataFrame(
+        {"composition": ["Fe2O3", "NaCl", "SiO2", "Al2O3", None, np.nan], "density": np.ones(6), "mtype": np.zeros(6)}
+    ).to_parquet(p)
+    cfg = _build(_base_toml(str(p)))
+    cfg.data.val_split = 0.25
+    cfg.data.test_split = 0.25
+    cat = TaskCatalog(cfg)
+    assert len(cat.group_splits()) == 4
+    frames = cat.task_frames(["density"])["density"]
+    assert frames.split.value_counts().to_dict() == {"train": 2, "val": 1, "test": 1}
+
+
 def test_precomputed_non_formula_keys_preserved(tmp_path) -> None:
     # Non-formula IDs (e.g. Materials Project IDs) that normalize_composition can't parse must be
     # preserved via canonical_key, not dropped — otherwise a precomputed catalog is emptied.

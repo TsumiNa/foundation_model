@@ -51,6 +51,7 @@ passed to the builder directly and take precedence over `[…].checkpoint` / `[o
 | `val_split` | float | `0.1` | `[0, 1)` | Fraction held out for validation. |
 | `test_split` | float | `0.1` | `[0, 1)`, `val+test < 1` | Fraction held out for test. |
 | `split_random_seed` | int | `42` | | Seed for the random train/val/test split (when no `split` column is present). |
+| `split_manifest` | str (path) | `None` | CSV/parquet with unique `composition_group`, `split` | Frozen global composition-group assignments shared by source and downstream catalogs. Missing groups or invalid labels fail. |
 | `batch_size` | int | `256` | `>= 1` | Training/eval batch size. |
 | `num_workers` | int | `0` | `>= 0` | DataLoader worker processes. |
 | `persistent_workers` | bool | `false` | requires `num_workers >= 1` | Keep DataLoader workers alive across epochs (saves per-epoch worker startup). Incompatible with `pretrain.replay.resample = "epoch"` — persistent workers hold a one-time dataset copy and would never see the per-epoch replay redraws; the config builder rejects the combination. |
@@ -58,8 +59,22 @@ passed to the builder directly and take precedence over `[…].checkpoint` / `[o
 | `prefetch_factor` | int | unset | `>= 1`; requires `num_workers >= 1` | Batches prefetched per worker. Unset = torch default (2). |
 | `multiprocessing_context` | str | unset | `"fork"` \| `"spawn"` \| `"forkserver"`; requires `num_workers >= 1` | Worker start method. Unset = platform default (fork on Linux, spawn on macOS). |
 
-If a dataset file has a `split` column (`train`/`val`/`test`), it is honored directly and the
-random split is not used.
+Formula record keys preserve absolute stoichiometry. Split groups use full atomic
+fractions at 12 decimal places, so `Fe2O3`, `Fe4O6` and `Fe0.4O0.6` remain distinct
+records but share one split. Non-formula IDs remain separate. Canonical amounts
+retain positional floating-point precision instead of the six-decimal display
+rounding in `Composition.formula`. Explicit labels are resolved with
+`test > val > train` before duplicate removal or sampling; groups
+without labels use a grouped random fallback. Train/validation swaps move entire
+groups. These assignments also drive train-derived head initialization/statistics.
+
+Without a manifest, the catalog resolves all registered tasks once, not only the
+tasks active at the current stage. An explicit `pretrain.active_tasks` limits this
+fixed campaign scope and allows retained inactive checkpoint heads to have no data.
+Use the same external `split_manifest` for separate pretraining/fine-tuning catalogs
+to freeze cross-catalog assignments. A new manifest cannot undo a checkpoint's
+previous composition exposure. Version 0.6.0 changes split behavior; do not pool
+the resulting evaluations with older protocols. Archived normalization is unchanged.
 
 ## `[descriptor]` — how composition descriptors are produced
 

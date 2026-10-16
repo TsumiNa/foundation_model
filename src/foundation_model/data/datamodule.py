@@ -23,8 +23,10 @@ from .composition_sources import (
     DescriptorFn,
     build_composition_universe,
     canonical_key,
+    composition_group_key,
     load_task_frame,
     normalize_composition,
+    preserve_duplicate_split_labels,
     resolve_splits,
 )
 from .dataset import CompoundDataset
@@ -196,7 +198,8 @@ class CompoundDataModule(L.LightningDataModule):
     test_all : bool, optional
         If True, every composition is assigned to the test set. Defaults to False.
     swap_train_val_split : float, optional
-        Fraction of samples to exchange between train and validation after splitting. Defaults 0.
+        Fraction of composition groups to exchange after splitting. Defaults 0.
+        Unequal group sizes can change the row counts; groups never cross splits.
     batch_size, num_workers : int, optional
         DataLoader settings.
     persistent_workers : bool, optional
@@ -351,6 +354,8 @@ class CompoundDataModule(L.LightningDataModule):
             frame.index = frame.index.astype(str)  # vectorized fast path when normalization is off
         else:
             frame.index = pd.Index([self._canon(c) for c in frame.index])
+        split_col = next((cfg.split_column for cfg in self.task_configs if cfg.name == task_name), "split")
+        frame = preserve_duplicate_split_labels(frame, split_col)
         duplicated = frame.index.duplicated(keep="first")
         if duplicated.any():
             logger.warning(
@@ -387,7 +392,11 @@ class CompoundDataModule(L.LightningDataModule):
                 logger.info(f"Task '{cfg.name}': using provided in-memory frame ({len(frame)} rows).")
             elif cfg.data_files:
                 frame = load_task_frame(
-                    cfg.data_files, comp_col, task_name=cfg.name, composition_normalizer=self.composition_normalizer
+                    cfg.data_files,
+                    comp_col,
+                    task_name=cfg.name,
+                    composition_normalizer=self.composition_normalizer,
+                    split_column=cfg.split_column,
                 )
                 logger.info(f"Task '{cfg.name}': loaded {len(frame)} rows from {len(cfg.data_files)} file(s).")
             elif self.default_data_files:
@@ -396,6 +405,7 @@ class CompoundDataModule(L.LightningDataModule):
                     comp_col,
                     task_name=cfg.name,
                     composition_normalizer=self.composition_normalizer,
+                    split_column=cfg.split_column,
                 )
                 logger.info(
                     f"Task '{cfg.name}': loaded {len(frame)} rows from shared default_data_files "
@@ -454,6 +464,7 @@ class CompoundDataModule(L.LightningDataModule):
             test_split=self.test_split,
             random_seed=self._seed_for("test_split"),
             test_all=self.test_all,
+            target_columns={cfg.name: cfg.data_column for cfg in self._supervised_tasks()},
         )
         labels = self.split_series
         self.train_idx = [c for c in self.master_index if labels[c] == "train"]
@@ -461,6 +472,13 @@ class CompoundDataModule(L.LightningDataModule):
         self.test_idx = [c for c in self.master_index if labels[c] == "test"]
 
         self._apply_train_val_swap(self.swap_train_val_split, self._seed_for("swap"))
+        assigned: dict[str, str] = {}
+        for label, keys in (("train", self.train_idx), ("val", self.val_idx), ("test", self.test_idx)):
+            for key in keys:
+                group = composition_group_key(key)
+                if group in assigned and assigned[group] != label:
+                    raise ValueError(f"Composition group crosses splits: {key}")
+                assigned[group] = label
 
         logger.info(f"Split sizes: Train={len(self.train_idx)}, Val={len(self.val_idx)}, Test={len(self.test_idx)}")
         self._sources_ready = True
@@ -476,21 +494,32 @@ class CompoundDataModule(L.LightningDataModule):
                 f"swap_train_val_split skipped because one split is empty (train={train_count}, val={val_count})."
             )
             return
-        n_swap = int(min(train_count, val_count) * swap_ratio)
+        train_groups: dict[str, list[str]] = {}
+        val_groups: dict[str, list[str]] = {}
+        for key in self.train_idx:
+            train_groups.setdefault(composition_group_key(key), []).append(key)
+        for key in self.val_idx:
+            val_groups.setdefault(composition_group_key(key), []).append(key)
+        n_swap = int(min(len(train_groups), len(val_groups)) * swap_ratio)
         if n_swap == 0:
             logger.info(f"swap_train_val_split computed zero samples to swap (swap_ratio={swap_ratio}).")
             return
 
         rng = np.random.default_rng(random_seed)
-        train_choice = rng.choice(np.array(self.train_idx), size=n_swap, replace=False).tolist()
-        val_choice = rng.choice(np.array(self.val_idx), size=n_swap, replace=False).tolist()
+        train_choice = [
+            k for g in rng.choice(sorted(train_groups), size=n_swap, replace=False) for k in train_groups[g]
+        ]
+        val_choice = [k for g in rng.choice(sorted(val_groups), size=n_swap, replace=False) for k in val_groups[g]]
         train_swap_set = set(train_choice)
         val_swap_set = set(val_choice)
         train_remaining = [c for c in self.train_idx if c not in train_swap_set]
         val_remaining = [c for c in self.val_idx if c not in val_swap_set]
         self.train_idx = train_remaining + val_choice
         self.val_idx = val_remaining + train_choice
-        logger.info(f"Swapped {n_swap} samples between train and validation (swap_ratio={swap_ratio}).")
+        assert self.split_series is not None
+        self.split_series.loc[self.train_idx] = "train"
+        self.split_series.loc[self.val_idx] = "val"
+        logger.info(f"Swapped {n_swap} composition groups between train and validation (swap_ratio={swap_ratio}).")
 
     def _build_dataset(
         self,

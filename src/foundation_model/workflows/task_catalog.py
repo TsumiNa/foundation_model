@@ -39,8 +39,10 @@ from foundation_model.data.composition_sources import (
     DescriptorFn,
     PrecomputedDescriptorSource,
     canonical_key,
+    composition_group_key,
     normalize_composition,
     read_data_file,
+    resolve_splits,
 )
 from foundation_model.data.datamodule import CompoundDataModule
 from foundation_model.models.model_config import (
@@ -231,6 +233,7 @@ class DataConfig:
     val_split: float = 0.1
     test_split: float = 0.1
     split_random_seed: int = 42
+    split_manifest: Path | None = None
     batch_size: int = 256
     num_workers: int = 0
     persistent_workers: bool = False  # keep dataloader workers alive across epochs (needs num_workers >= 1)
@@ -239,6 +242,8 @@ class DataConfig:
     multiprocessing_context: str | None = None  # "fork" | "spawn" | "forkserver" (None = platform default)
 
     def __post_init__(self) -> None:
+        if self.split_manifest is not None:
+            self.split_manifest = Path(self.split_manifest)
         for name in ("val_split", "test_split"):
             value = getattr(self, name)
             if not 0.0 <= value < 1.0:
@@ -393,9 +398,12 @@ def _as_float_array(cell: Any) -> np.ndarray:
 class TaskCatalog:
     """Loads composition-keyed frames + descriptors once; hands out task configs and datamodules."""
 
-    def __init__(self, config: TaskCatalogConfig) -> None:
+    def __init__(self, config: TaskCatalogConfig, *, split_tasks: Sequence[str] | None = None) -> None:
         self.config = config
         self._task_specs = {t.name: t for t in config.tasks}
+        self._split_tasks = list(split_tasks) if split_tasks is not None else list(self._task_specs)
+        if not set(self._split_tasks).issubset(self._task_specs):
+            raise ValueError("Unknown task in split_tasks.")
 
         self._kmd: KMD | None = None
         self._descriptor_source: PrecomputedDescriptorSource | None = None
@@ -419,6 +427,7 @@ class TaskCatalog:
         self._dataset_frames: dict[str, pd.DataFrame] = {}  # keyed, filtered source frames (cached)
         self._task_frames: dict[str, pd.DataFrame] = {}  # per-task composition-indexed frames (cached)
         self._scalers: dict[str, Any] = {}  # loaded lazily per task
+        self._global_group_splits: dict[str, str] | None = None
 
     # -- introspection
 
@@ -447,6 +456,53 @@ class TaskCatalog:
 
     # -- data loading
 
+    def group_splits(self) -> dict[str, str]:
+        """Frozen split map over every registered task, before filtering/sampling.
+
+        An external manifest also fixes the assignment across separate catalogs
+        (for example source pretraining and downstream fine-tuning).
+        """
+        if self._global_group_splits is not None:
+            return self._global_group_splits
+        data = self.config.data
+        if data.split_manifest is not None:
+            manifest = read_data_file(str(data.split_manifest))
+            required = {"composition_group", "split"}
+            if not required.issubset(manifest.columns):
+                raise ValueError("Split manifest requires composition_group and split columns.")
+            if manifest[list(required)].isna().any().any() or manifest.composition_group.duplicated().any():
+                raise ValueError("Split manifest must have unique non-null composition groups and labels.")
+            if not manifest.split.isin(["train", "val", "test"]).all():
+                raise ValueError("Split manifest contains invalid split labels.")
+            self._global_group_splits = dict(zip(manifest.composition_group, manifest.split))
+        else:
+            frames: dict[str, pd.DataFrame] = {}
+            split_specs = [self.task_spec(name) for name in self._split_tasks]
+            for name in sorted({spec.dataset for spec in split_specs}):
+                df = read_data_file(str(self.config.datasets[name].path))
+                raw = df[data.composition_column] if data.composition_column in df else df.index.to_series()
+                present = raw.notna()
+                df = df.loc[present]
+                raw = raw.loc[present]
+                keys = [canonical_key(v, normalize_composition) for v in raw]
+                for spec in (s for s in split_specs if s.dataset == name):
+                    values = {"target": df[spec.column].to_numpy()}
+                    if "split" in df:
+                        values["split"] = df["split"].to_numpy()
+                    frames[spec.name] = pd.DataFrame(values, index=pd.Index(keys))
+            universe = list(dict.fromkeys(k for f in frames.values() for k in f.index))
+            resolved = resolve_splits(
+                frames,
+                universe,
+                {name: "split" for name in frames},
+                val_split=data.val_split,
+                test_split=data.test_split,
+                random_seed=data.split_random_seed,
+                target_columns={name: "target" for name in frames},
+            )
+            self._global_group_splits = {composition_group_key(k): str(v) for k, v in resolved.items()}
+        return self._global_group_splits
+
     def _load_dataset(self, name: str) -> pd.DataFrame:
         """Load one dataset file, apply preprocessing/min_elements/sample, key by composition."""
 
@@ -466,8 +522,25 @@ class TaskCatalog:
         # dropped. Only genuinely-missing (NaN/None) compositions are dropped.
         comp_col = self.config.data.composition_column
         raw = df[comp_col] if comp_col in df.columns else df.index.to_series()
+        if self.config.descriptor.kind == "kmd":
+            # Validate before canonical spelling can round away unsupported trace amounts.
+            for value in raw.dropna():
+                formula = {k: v for k, v in value.items() if v is not None} if isinstance(value, dict) else value
+                try:
+                    formula_to_composition(formula)
+                except (ValueError, TypeError, KeyError, OverflowError) as exc:
+                    raise ValueError(f"Invalid KMD composition in dataset '{name}': {value}: {exc}") from exc
         keys = [canonical_key(v, normalize_composition) if pd.notna(v) else None for v in raw]
         df["__key__"] = np.asarray(keys, dtype=object)
+        group_splits = self.group_splits()
+        groups = [composition_group_key(k) if k is not None else None for k in keys]
+        missing = {g for g in groups if g is not None and g not in group_splits}
+        if missing:
+            raise ValueError(
+                f"Split manifest is missing {len(missing)} composition groups (e.g. {next(iter(missing))})."
+            )
+        # Effective split drives kernel initialization, class statistics and every stage.
+        df["split"] = [group_splits.get(g) if g is not None else None for g in groups]
         df = df.dropna(subset=["__key__"]).drop_duplicates(subset="__key__", keep="first").set_index("__key__")
 
         if spec.min_elements is not None:

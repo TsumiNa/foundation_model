@@ -390,6 +390,40 @@ def test_resolve_splits_ignores_tasks_without_split_column():
 # --- descriptor_fn key contract ----------------------------------------------------------------
 
 
+def test_ratio_aliases_share_split_without_merging_records():
+    from .composition_sources import composition_group_key
+
+    keys = ["Fe2O3", "Fe4O6", "Fe0.4O0.6", "NaCl"]
+    f = _frame_with_split(keys, ["train", "val", "test", "train"])
+    out = resolve_splits({"t": f}, keys, {"t": "split"})
+    assert out.tolist() == ["test", "test", "test", "train"]
+    assert len(out) == 4
+    assert composition_group_key("Fe0.400001O0.599999") != composition_group_key("Fe2O3")
+    assert composition_group_key("mp-123") != composition_group_key("mp-124")
+    assert composition_group_key("Fe0.400000001O0.599999999") != composition_group_key("Fe0.4O0.6")
+    assert normalize_composition("Fe0.400000001O0.599999999") != normalize_composition("Fe0.4O0.6")
+    assert composition_group_key("Fe0.333333333333O0.666666666667") == composition_group_key("FeO2")
+    f = _frame_with_split(["Fe0.333333333333O0.666666666667", "FeO2"], ["train", "test"])
+    assert resolve_splits({"t": f}, f.index.tolist(), {"t": "split"}).tolist() == ["test", "test"]
+
+
+def test_group_fallback_is_row_order_independent():
+    keys = ["Fe2O3", "Fe4O6", "NaCl", "SiO2", "Al2O3", "CuO"]
+    f = pd.DataFrame({"y": range(6)}, index=keys)
+    a = resolve_splits({"t": f}, keys, {}, val_split=0.3, test_split=0.3)
+    b = resolve_splits({"t": f.iloc[::-1]}, keys[::-1], {}, val_split=0.3, test_split=0.3)
+    assert a.to_dict() == b.to_dict()
+    assert a["Fe2O3"] == a["Fe4O6"]
+
+
+def test_loader_preserves_heldout_split_before_duplicate_drop(tmp_path):
+    p = tmp_path / "rows.parquet"
+    pd.DataFrame({"composition": ["Fe2O3", "Fe2O3"], "y": [1.0, 9.0], "fold": ["train", "test"]}).to_parquet(p)
+    f = load_task_frame([str(p)], "composition", split_column="fold")
+    assert f.y.tolist() == [1.0]
+    assert f.fold.tolist() == ["test"]
+
+
 @pytest.mark.parametrize("build", ["lookup", "precomputed"])
 @pytest.mark.parametrize("source_normalizes", [True, False], ids=["src-normalizes", "src-raw"])
 @pytest.mark.parametrize("request_style", ["raw", "canonical"])

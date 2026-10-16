@@ -282,7 +282,9 @@ def run(cfg: PretrainConfig, recorder: RunRecorder | None = None) -> dict[str, A
     under it. When ``n_runs == 1`` the single run writes directly under ``output_dir``.
     """
 
-    catalog = TaskCatalog(cfg.catalog)
+    # This scope is fixed for the whole campaign, not recomputed at each stage.
+    # Retained, inactive checkpoint heads need not have their old data present.
+    catalog = TaskCatalog(cfg.catalog, split_tasks=cfg.active_tasks)
     owns_recorder = recorder is None  # close only the recorder we create (leave callers' alone)
     root_recorder = recorder or RunRecorder(cfg.output_dir)
     aggregate: list[dict[str, Any]] = []

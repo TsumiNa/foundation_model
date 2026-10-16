@@ -88,6 +88,57 @@ def test_init_requires_descriptor_fn(reg_cls_configs):
         CompoundDataModule(task_configs=reg_cls_configs, descriptor_fn=None)  # type: ignore[arg-type]
 
 
+def test_grouped_swaps_preserve_isolation_and_split_series():
+    from .composition_sources import composition_group_key
+
+    keys = ["Fe2 O3", "Fe4 O6", "Na1 Cl1", "Na2 Cl2", "Si1 O2"]
+    cfg = RegressionTaskConfig(name="y", data_column="y", dims=[1, 1])
+    frame = pd.DataFrame({"y": range(5), "split": ["train", "train", "val", "val", "test"]}, index=keys)
+    dm = CompoundDataModule(
+        [cfg],
+        lambda ks: pd.DataFrame({"x": np.ones(len(ks))}, index=list(ks)),
+        task_frames={"y": frame},
+        swap_train_val_split=1.0,
+    )
+    dm._prepare_sources()
+    assert set(dm.train_idx) == set(keys[2:4])
+    assert set(dm.val_idx) == set(keys[:2])
+    assert dm.split_series is not None
+    for split, members in [("train", dm.train_idx), ("val", dm.val_idx), ("test", dm.test_idx)]:
+        assert dm.split_series.loc[members].eq(split).all()
+    assert not {composition_group_key(k) for k in dm.train_idx} & {composition_group_key(k) for k in dm.val_idx}
+
+
+def test_in_memory_duplicate_cannot_hide_test_split():
+    cfg = RegressionTaskConfig(name="y", data_column="y", dims=[1, 1])
+    f = pd.DataFrame({"y": [1.0, 2.0], "split": ["train", "test"]}, index=["Fe2O3", "Fe2O3"])
+    dm = CompoundDataModule(
+        [cfg], lambda ks: pd.DataFrame({"x": np.ones(len(ks))}, index=list(ks)), task_frames={"y": f}
+    )
+    dm._prepare_sources()
+    assert dm.train_idx == [] and dm.test_idx == ["Fe2 O3"]
+
+
+def test_fallback_uses_configured_targets_not_shared_frame_column_order():
+    keys = [f"s{i}" for i in range(20)]
+    f = pd.DataFrame({"metadata": range(20), "a": np.ones(20), "b": [np.nan] * 16 + [1.0] * 4}, index=keys)
+    configs = [RegressionTaskConfig(name=n, data_column=n, dims=[1, 1]) for n in ["a", "b"]]
+    outputs = []
+    for frame in [f, f[["b", "metadata", "a"]]]:
+        dm = CompoundDataModule(
+            configs,
+            lambda ks: pd.DataFrame({"x": np.ones(len(ks))}, index=list(ks)),
+            task_frames={"a": frame, "b": frame},
+            val_split=0.25,
+            test_split=0.25,
+        )
+        dm._prepare_sources()
+        outputs.append((dm.train_idx, dm.val_idx, dm.test_idx))
+        assert set(keys[16:]) & set(dm.val_idx)
+        assert set(keys[16:]) & set(dm.test_idx)
+    assert outputs[0] == outputs[1]
+
+
 def test_init_requires_task_configs(descriptors_df):
     with pytest.raises(ValueError, match="task_configs cannot be empty"):
         CompoundDataModule(task_configs=[], descriptor_fn=make_descriptor_fn(descriptors_df))
