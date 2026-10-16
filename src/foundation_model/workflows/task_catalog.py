@@ -526,10 +526,8 @@ class TaskCatalog:
                 for key in uncached:
                     try:
                         w = formula_to_composition(key)
-                    except Exception:
-                        w = None
-                    if w is None or float(np.asarray(w).sum()) <= 0:
-                        continue
+                    except (ValueError, TypeError) as exc:
+                        raise ValueError(f"Invalid KMD composition '{key}': {exc}") from exc
                     weights[len(valid)] = w
                     valid.append(key)
                 if valid:

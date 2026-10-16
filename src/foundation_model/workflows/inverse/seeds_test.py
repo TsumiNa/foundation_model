@@ -10,11 +10,18 @@ rather than one column of it.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import torch
 
 from foundation_model.workflows.inverse import SeedConfig, SeedStrategy, select_seeds
 
 from .conftest import _model_with_heads, _spec
+from .seeds import seed_weights
+
+
+def test_inverse_seed_weights_reject_unsupported_elements() -> None:
+    with pytest.raises(ValueError, match="Unsupported"):
+        seed_weights(["AmO2"])
 
 
 def test_weighted_random_selection_deterministic_and_from_pool(data_dir) -> None:

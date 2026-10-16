@@ -57,6 +57,25 @@ def test_formula_to_composition_rejects_unknown_type():
         formula_to_composition(42)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("formula", ["AmO2", "CmO2", "M1Fe1", "Am0.000001O2", {"Am": 1e-10, "O": 2}])
+def test_default_element_layout_rejects_unsupported_elements(formula):
+    with pytest.raises(ValueError, match="Unsupported"):
+        formula_to_composition(formula)
+
+
+@pytest.mark.parametrize("formula", [{}, {"Fe": 0}, {"Fe": -1}, {"Fe": float("nan")}, {"Fe": float("inf")}])
+def test_formula_to_composition_rejects_invalid_amounts(formula):
+    with pytest.raises(ValueError):
+        formula_to_composition(formula)
+
+
+def test_explicit_layout_preserves_documented_projection():
+    np.testing.assert_allclose(formula_to_composition("AmO2", elements=["O"]), [2 / 3])
+    np.testing.assert_allclose(formula_to_composition("AmO2", elements=["Am", "O"]), [1 / 3, 2 / 3])
+    with pytest.raises(ValueError, match="unique"):
+        formula_to_composition("O2", elements=["O", "O"])
+
+
 # --- KMD construction --------------------------------------------------------
 
 

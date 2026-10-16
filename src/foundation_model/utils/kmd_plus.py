@@ -104,13 +104,14 @@ def formula_to_composition(
         If ``formula`` is not a string, dictionary, or pymatgen
         :class:`~pymatgen.core.composition.Composition`.
     ValueError
-        If pymatgen cannot parse the formula or its amounts.
+        If amounts are empty, negative or non-finite, the layout contains duplicate
+        symbols, or the default layout cannot represent every element present.
 
     Notes
     -----
-    Elements omitted from ``elements`` are not represented, and the remaining
-    entries are not renormalized. Therefore, the result sums to one only when
-    ``elements`` covers every element present in ``formula``.
+    The default layout rejects unsupported elements rather than emitting a partial
+    composition. An explicitly supplied ``elements`` layout retains the documented
+    projection behavior: omitted elements are not represented or renormalized.
 
     Examples
     --------
@@ -120,18 +121,35 @@ def formula_to_composition(
     >>> bool(np.isclose(formula_to_composition({"Li": 1, "Fe": 1, "P": 1, "O": 4}).sum(), 1.0))
     True
     """
-    if elements is None:
+    default_layout = elements is None
+    if default_layout:
         elements = DEFAULT_ELEMENTS
+    assert elements is not None
+    if not elements or len(set(elements)) != len(elements):
+        raise ValueError("Element layout must be nonempty and unique.")
 
     if isinstance(formula, str):
         comp = Composition(formula)
     elif isinstance(formula, Composition):
         comp = formula
     elif isinstance(formula, dict):
+        amounts = np.asarray(list(formula.values()), dtype=float)
+        if not np.isfinite(amounts).all() or (amounts < 0).any():
+            raise ValueError("Composition amounts must be finite and non-negative.")
+        # pymatgen drops amounts below its own tolerance; validate membership first.
+        unsupported = sorted(str(el) for el, amount in formula.items() if amount > 0 and el not in elements)
+        if default_layout and unsupported:
+            raise ValueError(f"Unsupported elements for the default layout: {unsupported}.")
         comp = Composition.from_dict(formula)
     else:
         raise TypeError("formula must be a str, dict, or pymatgen Composition.")
 
+    amounts = np.asarray(list(comp.values()), dtype=float)
+    if not len(amounts) or not np.isfinite(amounts).all() or (amounts < 0).any() or amounts.sum() <= 0:
+        raise ValueError("Composition amounts must be nonempty, finite, non-negative and have positive sum.")
+    unsupported = sorted(str(el) for el in comp.elements if str(el) not in elements)
+    if default_layout and unsupported:
+        raise ValueError(f"Unsupported elements for the default layout: {unsupported}.")
     return np.array([comp.get_atomic_fraction(el) if el in comp else 0.0 for el in elements])
 
 
