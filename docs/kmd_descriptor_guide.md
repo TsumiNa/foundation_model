@@ -127,6 +127,13 @@ descriptors = kmd.transform(weights)
 
 模块自带 `element_features.csv`，其行索引是从 H 到 Pu 的 94 个元素，列是 58 个元素级特征。`formula_to_composition` 会把化学式转换为与元素表行顺序一致的原子分数向量。
 
+The default conversion rejects unsupported elements (including placeholders), empty
+compositions, and invalid amounts. The KMD catalog fails with the offending formula
+instead of training on partially encoded inputs. Preserve rejected source rows in
+an audit manifest and exclude them from a new dated training dataset. Do not
+renormalize away missing elements. Explicit custom `elements=[...]` layouts retain
+their projection behavior; generic mixture KMD is unchanged.
+
 ```python
 import numpy as np
 

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 from pymatgen.core.composition import Composition
 
@@ -55,6 +56,42 @@ def test_formula_to_composition_accepts_dict_and_composition():
 def test_formula_to_composition_rejects_unknown_type():
     with pytest.raises(TypeError):
         formula_to_composition(42)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "formula", ["AmO2", "CmO2", "M1Fe1", "Am0.000001O2", "Am0.0000000001O2", {"Am": 1e-10, "O": 2}]
+)
+def test_default_element_layout_rejects_unsupported_elements(formula):
+    with pytest.raises(ValueError, match="Unsupported"):
+        formula_to_composition(formula)
+
+
+@pytest.mark.parametrize("formula", [{}, {"Fe": 0}, {"Fe": -1}, {"Fe": float("nan")}, {"Fe": float("inf")}])
+def test_formula_to_composition_rejects_invalid_amounts(formula):
+    with pytest.raises(ValueError):
+        formula_to_composition(formula)
+
+
+def test_explicit_layout_preserves_documented_projection():
+    np.testing.assert_allclose(formula_to_composition("AmO2", elements=["O"]), [2 / 3])
+    np.testing.assert_allclose(formula_to_composition("AmO2", elements=["Am", "O"]), [1 / 3, 2 / 3])
+    with pytest.raises(ValueError, match="unique"):
+        formula_to_composition("O2", elements=["O", "O"])
+
+
+@pytest.mark.parametrize("layout", [pd.Index(["O", "Si"]), np.array(["O", "Si"])])
+def test_explicit_array_like_element_layout(layout):
+    np.testing.assert_allclose(formula_to_composition("SiO2", elements=layout), [2 / 3, 1 / 3])
+
+
+@pytest.mark.parametrize("formula", [{"Fe2+": 2, "O2-": 3}, Composition({"Fe2+": 2, "O2-": 3})])
+def test_oxidation_state_species_use_underlying_elements(formula):
+    np.testing.assert_allclose(formula_to_composition(formula), formula_to_composition("Fe2O3"))
+
+
+@pytest.mark.parametrize("formula", ["D2O", "T2O", {"D": 2, "O": 1}])
+def test_hydrogen_isotope_aliases_use_hydrogen(formula):
+    np.testing.assert_allclose(formula_to_composition(formula), formula_to_composition("H2O"))
 
 
 # --- KMD construction --------------------------------------------------------

@@ -578,6 +578,13 @@ def test_kmd_descriptor_deterministic_and_cached(catalog_dir) -> None:
     assert cat.descriptor_dim == first.shape[1]
 
 
+def test_kmd_catalog_rejects_partial_compositions(catalog_dir) -> None:
+    cat = _catalog(catalog_dir)
+    with pytest.raises(ValueError, match="Invalid KMD composition.*Am.*Unsupported"):
+        cat.descriptor_fn()(["Fe2O3", "AmO2"])
+    assert "AmO2" not in cat._desc_cache
+
+
 def test_precomputed_non_formula_keys_preserved(tmp_path) -> None:
     # Non-formula IDs (e.g. Materials Project IDs) that normalize_composition can't parse must be
     # preserved via canonical_key, not dropped — otherwise a precomputed catalog is emptied.
