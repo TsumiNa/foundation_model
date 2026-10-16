@@ -481,6 +481,9 @@ class TaskCatalog:
             for name in sorted({spec.dataset for spec in split_specs}):
                 df = read_data_file(str(self.config.datasets[name].path))
                 raw = df[data.composition_column] if data.composition_column in df else df.index.to_series()
+                present = raw.notna()
+                df = df.loc[present]
+                raw = raw.loc[present]
                 keys = [canonical_key(v, normalize_composition) for v in raw]
                 for spec in (s for s in split_specs if s.dataset == name):
                     values = {"target": df[spec.column].to_numpy()}
@@ -495,6 +498,7 @@ class TaskCatalog:
                 val_split=data.val_split,
                 test_split=data.test_split,
                 random_seed=data.split_random_seed,
+                target_columns={name: "target" for name in frames},
             )
             self._global_group_splits = {composition_group_key(k): str(v) for k, v in resolved.items()}
         return self._global_group_splits

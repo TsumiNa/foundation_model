@@ -99,7 +99,19 @@ def repair_dataset_folder(source: Path, destination: Path) -> dict:
     keys = sorted({k for frame in frames.values() for k in frame.index})
     if not keys:
         raise ValueError("No supported composition records in source training tables")
-    resolved = resolve_splits(frames, keys, {name: "split" for name in frames})
+    task_frames = {
+        task.task: pd.DataFrame(
+            {"target": tables[task.file][task.column].to_numpy(), "split": frames[task.file].split.to_numpy()},
+            index=frames[task.file].index,
+        )
+        for task in index.itertuples()
+    }
+    resolved = resolve_splits(
+        task_frames,
+        keys,
+        {name: "split" for name in task_frames},
+        target_columns={name: "target" for name in task_frames},
+    )
     groups = {k: composition_group_key(k) for k in keys}
     group_splits = {groups[k]: str(v) for k, v in resolved.items()}
     destination.mkdir(parents=True, exist_ok=False)

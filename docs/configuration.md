@@ -61,8 +61,10 @@ passed to the builder directly and take precedence over `[…].checkpoint` / `[o
 
 Formula record keys preserve absolute stoichiometry. Split groups use full atomic
 fractions at 12 decimal places, so `Fe2O3`, `Fe4O6` and `Fe0.4O0.6` remain distinct
-records but share one split. Non-formula IDs remain separate. Explicit labels are
-resolved with `test > val > train` before duplicate removal or sampling; groups
+records but share one split. Non-formula IDs remain separate. Canonical amounts
+retain positional floating-point precision instead of the six-decimal display
+rounding in `Composition.formula`. Explicit labels are resolved with
+`test > val > train` before duplicate removal or sampling; groups
 without labels use a grouped random fallback. Train/validation swaps move entire
 groups. These assignments also drive train-derived head initialization/statistics.
 

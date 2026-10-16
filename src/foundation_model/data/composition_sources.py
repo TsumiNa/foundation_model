@@ -45,8 +45,8 @@ def normalize_composition(value: object) -> str | None:
     Different files spell the same composition differently — a pymatgen ``Composition`` /
     element-amount ``dict`` (the qc dataset) versus a formula string (NEMAD / phonix), and
     ``"Fe3O2"`` versus ``"Fe3.0O2.0"``. Routing all of them through pymatgen and returning the
-    (non-reduced) ``Composition.formula`` yields a single readable canonical string — pymatgen
-    already normalizes element order and integer-vs-decimal amounts — so the composition-keyed
+    non-reduced formula with lossless positional amounts yields a readable canonical string
+    with normalized element order and integer-vs-decimal amounts, so the composition-keyed
     DataModule joins heterogeneous sources by exact match. Compositions that pymatgen considers
     equal collapse to the same key, which is exactly the duplicate the DataModule then keeps once.
 
@@ -73,6 +73,8 @@ def normalize_composition(value: object) -> str | None:
             if not cleaned:
                 return None
             comp = Composition(cleaned)
+        elif isinstance(value, Composition):
+            comp = value
         else:
             text = str(value).strip()
             # Fast-path: a real formula starts with an element symbol (uppercase) or an opening
@@ -86,7 +88,18 @@ def normalize_composition(value: object) -> str | None:
         return None
     if len(comp) == 0:
         return None
-    return comp.formula
+    comp = comp.element_composition
+
+    # Composition.formula formats amounts at six decimal places. Do not collapse
+    # distinct measured compositions before the separate split precision policy.
+    def element_order(el):
+        x = el.X
+        return (float(x) if np.isfinite(x) else float("inf"), el.symbol)
+
+    return " ".join(
+        f"{el.symbol}{np.format_float_positional(float(comp[el]), trim='-')}"
+        for el in sorted(comp.elements, key=element_order)
+    )
 
 
 CompositionNormalizer = Callable[[object], str | None]
@@ -100,10 +113,19 @@ def composition_group_key(value: object) -> str:
     """
     from pymatgen.core.composition import Composition
 
-    formula = normalize_composition(value)
-    if formula is None:
+    try:
+        if isinstance(value, Composition):
+            comp = value
+        elif isinstance(value, dict):
+            comp = Composition({k: v for k, v in value.items() if v is not None and float(v) > 0})
+        else:
+            text = str(value).strip()
+            if not text or not (text[0].isupper() or text[0] in "(["):
+                return f"key:{value}"
+            comp = Composition(text)
+        comp = comp.element_composition
+    except (ValueError, TypeError, KeyError):
         return f"key:{value}"
-    comp = Composition(formula).element_composition
     amounts = np.asarray(list(comp.values()), dtype=float)
     if not np.isfinite(amounts).all() or (amounts < 0).any() or comp.num_atoms <= 0:
         return f"key:{value}"
@@ -537,6 +559,7 @@ def resolve_splits(
     test_split: float = 0.1,
     random_seed: int | None = 42,
     test_all: bool = False,
+    target_columns: Mapping[str, str | None] | None = None,
 ) -> pd.Series:
     """Derive a single composition-level train/val/test split.
 
@@ -563,6 +586,10 @@ def resolve_splits(
         Seed for the random fallback.
     test_all : bool
         If True, assign every composition to ``test``.
+    target_columns : Mapping, optional
+        Configured target column for each task, used for grouped fallback
+        availability. When omitted, all frame rows count as available. Callers
+        with complete shared frames must supply their actual target columns.
 
     Returns
     -------
@@ -611,8 +638,11 @@ def resolve_splits(
         # representation across train/val/test (proportional for tasks/compositions with none).
         task_groups = {}
         for task, frame in task_frames.items():
-            target_columns = [c for c in frame.columns if c != split_columns.get(task)]
-            present = frame if not target_columns else frame.loc[frame[target_columns[0]].notna()]
+            target = target_columns.get(task) if target_columns is not None else None
+            if target_columns is None:
+                present = frame
+            else:
+                present = frame.loc[frame[target].notna()] if target in frame.columns else frame.iloc[:0]
             task_groups[task] = {groups[str(comp)] for comp in present.index}
         availability = pd.DataFrame(
             {task: [group in task_groups[task] for group in unlabeled] for task in sorted(task_groups)},

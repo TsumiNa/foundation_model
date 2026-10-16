@@ -400,6 +400,11 @@ def test_ratio_aliases_share_split_without_merging_records():
     assert len(out) == 4
     assert composition_group_key("Fe0.400001O0.599999") != composition_group_key("Fe2O3")
     assert composition_group_key("mp-123") != composition_group_key("mp-124")
+    assert composition_group_key("Fe0.400000001O0.599999999") != composition_group_key("Fe0.4O0.6")
+    assert normalize_composition("Fe0.400000001O0.599999999") != normalize_composition("Fe0.4O0.6")
+    assert composition_group_key("Fe0.333333333333O0.666666666667") == composition_group_key("FeO2")
+    f = _frame_with_split(["Fe0.333333333333O0.666666666667", "FeO2"], ["train", "test"])
+    assert resolve_splits({"t": f}, f.index.tolist(), {"t": "split"}).tolist() == ["test", "test"]
 
 
 def test_group_fallback_is_row_order_independent():

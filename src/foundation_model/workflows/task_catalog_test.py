@@ -653,6 +653,20 @@ def test_catalog_validates_raw_formula_before_canonical_rounding(tmp_path):
         cat.task_frames(["density"])
 
 
+def test_missing_compositions_do_not_consume_group_holdout_budget(tmp_path):
+    p = tmp_path / "missing.parquet"
+    pd.DataFrame(
+        {"composition": ["Fe2O3", "NaCl", "SiO2", "Al2O3", None, np.nan], "density": np.ones(6), "mtype": np.zeros(6)}
+    ).to_parquet(p)
+    cfg = _build(_base_toml(str(p)))
+    cfg.data.val_split = 0.25
+    cfg.data.test_split = 0.25
+    cat = TaskCatalog(cfg)
+    assert len(cat.group_splits()) == 4
+    frames = cat.task_frames(["density"])["density"]
+    assert frames.split.value_counts().to_dict() == {"train": 2, "val": 1, "test": 1}
+
+
 def test_precomputed_non_formula_keys_preserved(tmp_path) -> None:
     # Non-formula IDs (e.g. Materials Project IDs) that normalize_composition can't parse must be
     # preserved via canonical_key, not dropped — otherwise a precomputed catalog is emptied.

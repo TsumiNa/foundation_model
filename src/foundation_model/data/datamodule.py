@@ -464,6 +464,7 @@ class CompoundDataModule(L.LightningDataModule):
             test_split=self.test_split,
             random_seed=self._seed_for("test_split"),
             test_all=self.test_all,
+            target_columns={cfg.name: cfg.data_column for cfg in self._supervised_tasks()},
         )
         labels = self.split_series
         self.train_idx = [c for c in self.master_index if labels[c] == "train"]
