@@ -70,6 +70,13 @@ training/predict flows (output layout, `run_provenance.json`, per-step checkpoin
 parquets, metrics, figures). `_sections.py` (the `[model]`/`[training]` config) and `_engine.py`
 (model construction + per-head evaluation) are shared by the pretrain and finetune engines.
 
+Record keys preserve absolute stoichiometry; split groups use atomic fractions at
+12 decimal places. The catalog freezes assignments across the campaign's task
+scope before filtering/sampling, or reads a shared external manifest. Split
+precedence is resolved before keep-first duplicate handling; fallback and swaps
+operate on whole groups. Effective assignments drive both DataModule partitions
+and train-derived head metadata. Generic non-formula lookup IDs are not merged.
+
 ## Distributed training: removed, and probably not worth re-adding
 
 `0.4.0` removed the DDP surface. Sampling and metrics had been built — a `DistributedSampler`

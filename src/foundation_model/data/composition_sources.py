@@ -24,6 +24,7 @@ from collections.abc import Mapping
 from typing import Callable, Sequence
 
 import joblib  # type: ignore[import-untyped]
+import numpy as np
 import pandas as pd
 from loguru import logger
 
@@ -89,6 +90,43 @@ def normalize_composition(value: object) -> str | None:
 
 
 CompositionNormalizer = Callable[[object], str | None]
+
+
+def composition_group_key(value: object) -> str:
+    """Split identity: atomic fractions at 12 decimal places; never a record/join key.
+
+    Matches the established composition-only study precision. Non-formula IDs
+    remain independent. Absolute stoichiometry and task labels are not changed.
+    """
+    from pymatgen.core.composition import Composition
+
+    formula = normalize_composition(value)
+    if formula is None:
+        return f"key:{value}"
+    comp = Composition(formula).element_composition
+    amounts = np.asarray(list(comp.values()), dtype=float)
+    if not np.isfinite(amounts).all() or (amounts < 0).any() or comp.num_atoms <= 0:
+        return f"key:{value}"
+    fractions = comp.fractional_composition.get_el_amt_dict()
+    return "composition:" + "|".join(f"{el}:{amount:.12f}" for el, amount in sorted(fractions.items()))
+
+
+def preserve_duplicate_split_labels(frame: pd.DataFrame, split_column: str = "split") -> pd.DataFrame:
+    """Resolve split precedence before keep-first can discard a held-out duplicate.
+
+    Target values/record keys are untouched; the caller retains its existing
+    duplicate-target policy. Non-duplicate frames are returned without copying.
+    """
+    if split_column not in frame or not frame.index.has_duplicates:
+        return frame
+    values = frame[split_column].dropna().astype(str)
+    invalid = set(values) - VALID_SPLIT_LABELS
+    if invalid:
+        raise ValueError(f"invalid value in split column '{split_column}': {sorted(invalid)}")
+    ranks = values.map(_SPLIT_PRECEDENCE).groupby(level=0).max()
+    out = frame.copy()
+    out[split_column] = frame.index.map(ranks).map({v: k for k, v in _SPLIT_PRECEDENCE.items()})
+    return out
 
 
 def canonical_key(value: object, normalizer: CompositionNormalizer | None) -> str:
@@ -260,6 +298,7 @@ def load_task_frame(
     *,
     task_name: str = "",
     composition_normalizer: CompositionNormalizer | None = None,
+    split_column: str = "split",
 ) -> pd.DataFrame:
     """Load and concatenate a task's data file(s), indexed by composition.
 
@@ -316,6 +355,7 @@ def load_task_frame(
         combined.index = combined.index.astype(str)
     combined.index.name = composition_column
 
+    combined = preserve_duplicate_split_labels(combined, split_column)
     duplicated = combined.index.duplicated(keep="first")
     if duplicated.any():
         logger.warning(
@@ -500,8 +540,9 @@ def resolve_splits(
 ) -> pd.Series:
     """Derive a single composition-level train/val/test split.
 
-    Per-task ``split`` columns are overlaid (precedence ``test > val > train``; conflicts are
-    warned). Compositions with no label from any task fall back to a representation-aware
+    Per-task ``split`` columns are overlaid by atomic-fraction group (precedence
+    ``test > val > train``; conflicts are warned). Original record keys are retained.
+    Groups with no label from any task fall back to a representation-aware
     random split (:class:`~foundation_model.data.splitter.MultiTaskSplitter`), which
     prioritizes rare tasks and preserves global val/test proportions. With ``test_all=True``
     every composition is assigned to ``test``.
@@ -537,14 +578,17 @@ def resolve_splits(
     if test_all:
         return pd.Series(["test"] * len(master), index=pd.Index(master, name="composition"), dtype=object)
 
+    all_keys = set(master).union(*(set(map(str, f.index)) for f in task_frames.values()))
+    groups = {key: composition_group_key(key) for key in all_keys}
     labels: dict[str, str] = {}
+    conflicts = 0
     for task_name, frame in task_frames.items():
         col = split_columns.get(task_name)
         if not col or col not in frame.columns:
             continue
         series = frame[col].dropna()
         for comp, raw in series.items():
-            comp = str(comp)
+            comp = groups[str(comp)]
             value = str(raw)
             if value not in VALID_SPLIT_LABELS:
                 raise ValueError(
@@ -555,19 +599,23 @@ def resolve_splits(
             if existing is None:
                 labels[comp] = value
             elif existing != value:
-                logger.warning(
-                    f"Composition '{comp}' has conflicting split labels ('{existing}' vs '{value}'); "
-                    f"keeping higher precedence."
-                )
+                conflicts += 1
                 if _SPLIT_PRECEDENCE[value] > _SPLIT_PRECEDENCE[existing]:
                     labels[comp] = value
 
-    unlabeled = [comp for comp in master if comp not in labels]
+    if conflicts:
+        logger.warning(f"{conflicts} conflicting split labels in composition groups; keeping higher precedence.")
+    unlabeled = sorted({groups[comp] for comp in master if groups[comp] not in labels})
     if unlabeled:
         # Build a composition-availability matrix and split it so each task keeps
         # representation across train/val/test (proportional for tasks/compositions with none).
+        task_groups = {}
+        for task, frame in task_frames.items():
+            target_columns = [c for c in frame.columns if c != split_columns.get(task)]
+            present = frame if not target_columns else frame.loc[frame[target_columns[0]].notna()]
+            task_groups[task] = {groups[str(comp)] for comp in present.index}
         availability = pd.DataFrame(
-            {task: [comp in frame.index for comp in unlabeled] for task, frame in task_frames.items()},
+            {task: [group in task_groups[task] for group in unlabeled] for task in sorted(task_groups)},
             index=pd.Index(unlabeled, name="composition"),
         )
         splitter = MultiTaskSplitter(val_ratio=val_split, test_ratio=test_split, random_state=random_seed)
@@ -579,5 +627,5 @@ def resolve_splits(
         for comp in test_c:
             labels[comp] = "test"
 
-    resolved = [labels[comp] for comp in master]
+    resolved = [labels[groups[comp]] for comp in master]
     return pd.Series(resolved, index=pd.Index(master, name="composition"), dtype=object)
