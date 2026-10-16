@@ -43,14 +43,21 @@ for ((k=0; k<PACK; k++)); do
     row=$((START + k))
     if (( row >= COUNT )); then break; fi
     INDEX=$(sed -n "$((row + 1))p" "$GRID")
-    [[ "$INDEX" =~ ^[0-9]+$ ]]
+    UNIT_MANIFEST=$MANIFEST
     RUNROOT=/campaign
-    if [[ ${CALIBRATE:-0} == 1 ]]; then RUNROOT="/campaign/replica_${row}"; fi
+    if [[ "$INDEX" == *" "* ]]; then
+        read -r UNIT_MANIFEST INDEX EXTRA <<< "$INDEX"
+        test -z "${EXTRA:-}"
+        test -r "$PROJ/$UNIT_MANIFEST"
+        RUNROOT="/campaign/$(basename "$(dirname "$UNIT_MANIFEST")")"
+    fi
+    [[ "$INDEX" =~ ^[0-9]+$ ]]
+    if [[ ${CALIBRATE:-0} == 1 ]]; then RUNROOT="$RUNROOT/replica_${row}"; fi
     apptainer exec --nv \
         --bind "$PROJ:/workspace:ro" --bind "$OUTROOT:/campaign" \
         --env PYTHONPATH=/workspace/src,AGIS_IMAGE_SHA256=$IMAGE_SHA256,MPLCONFIGDIR=/tmp/agis-mpl-$SLURM_JOB_ID-$k,OMP_NUM_THREADS=2,MKL_NUM_THREADS=2,OPENBLAS_NUM_THREADS=2 \
         --pwd /workspace "$IMAGE" \
-        python experiments/agis_transfer/campaign.py run --manifest "$MANIFEST" \
+        python experiments/agis_transfer/campaign.py run --manifest "$UNIT_MANIFEST" \
         --index "$INDEX" --output-root "$RUNROOT" \
         > "$OUTROOT/worker_${SLURM_ARRAY_JOB_ID:-$SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID:-0}_${k}.log" 2>&1 &
     pids+=("$!")

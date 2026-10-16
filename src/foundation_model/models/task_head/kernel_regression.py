@@ -230,7 +230,7 @@ class KernelRegressionHead(BaseTaskHead):
         # Constant branch inputs cannot estimate a BatchNorm variance; use stored statistics
         # for those branches only, retaining gradients through their affine parameters.
         constant_branches: list[nn.Module] = []
-        if valid_indices is not None:
+        if x.shape[0] > 0:
             constant_x = torch.equal(x, x[:1].expand_as(x))
             constant_t = torch.equal(t, t[:1].expand_as(t))
             if constant_x:

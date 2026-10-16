@@ -10,6 +10,7 @@ The generated task fragments use the existing catalog scaler/inverse-transform i
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 import hashlib
 import json
 import re
@@ -183,7 +184,7 @@ def load_agis_curves(input_dir: Path, config: AGISPreprocessingConfig | None = N
 
 
 def standardize_fold(
-    curves: pd.DataFrame, heldout_composition: str, config: AGISPreprocessingConfig | None = None
+    curves: pd.DataFrame, heldout_composition: str | Sequence[str], config: AGISPreprocessingConfig | None = None
 ) -> tuple[pd.DataFrame, dict[str, Pipeline]]:
     """Fit one invertible resistivity pipeline per pressure on training compounds only.
 
@@ -193,10 +194,11 @@ def standardize_fold(
     Scaling before asinh makes it independent of the chosen resistivity unit; the final scaler
     centers/standardizes the transformed training values. All arrays remain in float64 on disk.
     """
-    if heldout_composition not in set(curves.composition):
-        raise ValueError(f"Unknown held-out composition: {heldout_composition}")
+    heldout = [heldout_composition] if isinstance(heldout_composition, str) else list(heldout_composition)
+    if not heldout or len(set(heldout)) != len(heldout) or not set(heldout).issubset(set(curves.composition)):
+        raise ValueError(f"Invalid held-out compositions: {heldout}")
     fold = curves.copy(deep=True)
-    fold["split"] = np.where(fold.composition == heldout_composition, "test", "train")
+    fold["split"] = np.where(fold.composition.isin(heldout), "test", "train")
     if config is not None and config.smooth_window_K is not None:
         grid = np.linspace(config.temperature_min_K, config.temperature_max_K, config.n_points)
         fold["unsmoothed_rho_uohm_cm"] = fold.rho_uohm_cm.map(lambda values: np.asarray(values).tolist())

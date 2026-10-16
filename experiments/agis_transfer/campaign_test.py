@@ -77,7 +77,7 @@ def manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     (folder / "tasks_20261001.toml").write_text("\n".join(sections))
     return {
         "settings": vars(CampaignSettings()),
-        "preprocessing": {"folds": [{"directory": str(folder)}]},
+        "preprocessing": {"folds": [{"directory": str(folder), "fit_compositions": compositions[1:]}]},
         "base_config": {
             "data": {"batch_size": 256},
             "descriptor": {"kind": "kmd", "n_grids": 4},
@@ -124,6 +124,64 @@ def test_warm_start_excludes_target_and_replays_all_seven_other_pressure_samples
     assert final["finetune"]["epochs"] == 1000
     assert final["training"]["early_stopping"]["enabled"] is False
     assert final["training"]["scheduler"]["monitor"] == "train_final_loss_epoch"
+
+
+@pytest.mark.parametrize("n_train", range(1, 7))
+def test_learning_curve_replay_and_batch_size_follow_actual_training_compounds(manifest: dict, n_train: int) -> None:
+    manifest["preprocessing"]["folds"][0]["fit_compositions"] = list(range(n_train))
+    unit = RunUnit(route=Route.WARM, fold=1, checkpoint_index=0, pressure=10)
+    raw = warm_config(manifest, unit)
+    assert raw["data"]["batch_size"] == n_train
+    assert set(raw["pretrain"]["replay"]["per_task"].values()) == {n_train}
+    assert raw["pretrain"]["active_tasks"] == ["agis_rho_0gpa", "agis_rho_20gpa"]
+
+
+def test_one_train_seven_test_fit_has_actual_steps_and_unfrozen_encoder_gradients(
+    manifest: dict, tmp_path: Path
+) -> None:
+    from foundation_model.workflows.recording import load_checkpoint_state
+
+    fold = manifest["preprocessing"]["folds"][0]
+    for path in Path(fold["directory"]).glob("p*.parquet"):
+        data = pd.read_parquet(path)
+        data["split"] = ["train"] + ["test"] * 7
+        data.to_parquet(path)
+    fold["fit_compositions"] = ["La3Ni2O7"]
+    heldout = [
+        "Sr0.1 La2.9 Ni2 O7",
+        "La2 Nd1 Ni2 O7",
+        "Sr0.1 La1.9 Nd1 Ni2 O7",
+        "Sr0.2 La1.8 Nd1 Ni2 O7",
+        "La2 Eu1 Ni2 O7",
+        "Sr0.1 La1.9 Eu1 Ni2 O7",
+        "Sr0.2 La1.8 Eu1 Ni2 O7",
+    ]
+    raw = final_config(manifest, RunUnit(route=Route.SCRATCH, fold=1, checkpoint_index=None, pressure=0))
+    raw["training"].update(accelerator="cpu", max_epochs=2)
+    raw["finetune"]["epochs"] = 2
+    output = tmp_path / "single_fit"
+    spec = tmp_path / "single_spec.json"
+    spec.write_text(
+        json.dumps(
+            {
+                "raw": raw,
+                "mode": "finetune",
+                "source": None,
+                "output": str(output),
+                "heldout": heldout,
+                "source_sha256": source_fingerprint(),
+                "runtime": runtime_identity(),
+            }
+        )
+    )
+    fit_spec(spec)
+    initial = load_checkpoint_state(output / "initial_model.pt")["model"]
+    final = load_checkpoint_state(output / "training/final_model.pt")["model"]
+    assert any(
+        not torch.equal(v, final[k]) for k, v in initial.items() if k.startswith("encoder.") and k.endswith("weight")
+    )
+    predictions = pd.read_parquet(output / "training/finetune/agis_rho_0gpa_pred.parquet")
+    assert len(predictions) == 2100 and predictions.composition.nunique() == 7
 
 
 def test_head_initialization_is_identical_across_sources_and_scratch(manifest: dict, tmp_path: Path) -> None:
@@ -278,7 +336,12 @@ def test_plan_records_the_consumed_input_artifacts(
     preprocessing = folder.parent / "manifest_20261001.json"
     preprocessing.write_text(
         json.dumps(
-            {"n_compounds": 8, "n_curves": 24, "curves_path": str(curves), "folds": [{"directory": str(folder)}] * 8}
+            {
+                "n_compounds": 8,
+                "n_curves": 24,
+                "curves_path": str(curves),
+                "folds": [{"directory": str(folder), "fit_compositions": list(range(7))}] * 8,
+            }
         )
     )
     base = tmp_path / "base.toml"

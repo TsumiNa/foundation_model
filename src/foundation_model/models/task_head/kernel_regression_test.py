@@ -93,7 +93,8 @@ def test_one_valid_point_uses_stored_batchnorm_statistics_without_updating_them(
 
 
 @pytest.mark.parametrize("constant_branch", ["composition", "temperature"])
-def test_repeated_single_branch_input_uses_stored_statistics(batchnorm_head, constant_branch):
+@pytest.mark.parametrize("padded", [True, False])
+def test_repeated_single_branch_input_uses_stored_statistics(batchnorm_head, constant_branch, padded):
     reference = deepcopy(batchnorm_head)
     x = torch.randn(16, 3)
     t = torch.linspace(6, 290, 16)
@@ -108,9 +109,9 @@ def test_repeated_single_branch_input_uses_stored_statistics(batchnorm_head, con
         for module in branch.modules():
             if isinstance(module, torch.nn.BatchNorm1d):
                 module.eval()
-    padded_x = torch.cat([x, torch.full((16, 3), float("nan"))])
-    padded_t = torch.cat([t, torch.full((16,), float("nan"))])
-    mask = torch.arange(32) < 16
+    padded_x = torch.cat([x, torch.full((16, 3), float("nan"))]) if padded else x
+    padded_t = torch.cat([t, torch.full((16,), float("nan"))]) if padded else t
+    mask = torch.arange(32) < 16 if padded else torch.ones(16, dtype=torch.bool)
     for _ in range(60):
         result = batchnorm_head(padded_x, padded_t, mask=mask)[:16]
         expected = reference(x, t)
