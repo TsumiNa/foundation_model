@@ -84,6 +84,11 @@ def test_explicit_array_like_element_layout(layout):
     np.testing.assert_allclose(formula_to_composition("SiO2", elements=layout), [2 / 3, 1 / 3])
 
 
+@pytest.mark.parametrize("formula", [{"Fe2+": 2, "O2-": 3}, Composition({"Fe2+": 2, "O2-": 3})])
+def test_oxidation_state_species_use_underlying_elements(formula):
+    np.testing.assert_allclose(formula_to_composition(formula), formula_to_composition("Fe2O3"))
+
+
 # --- KMD construction --------------------------------------------------------
 
 

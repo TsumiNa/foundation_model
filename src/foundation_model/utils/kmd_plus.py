@@ -56,6 +56,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 from pymatgen.core.composition import Composition
+from pymatgen.core.periodic_table import get_el_sp
 from qpsolvers import solve_qp
 from scipy.spatial import distance_matrix
 
@@ -143,7 +144,11 @@ def formula_to_composition(
         if not np.isfinite(amounts).all() or (amounts < 0).any():
             raise ValueError("Composition amounts must be finite and non-negative.")
         # pymatgen drops amounts below its own tolerance; validate membership first.
-        unsupported = sorted(str(el) for el, amount in formula.items() if amount > 0 and el not in elements)
+        unsupported = sorted(
+            get_el_sp(el).symbol
+            for el, amount in formula.items()
+            if amount > 0 and get_el_sp(el).symbol not in elements
+        )
         if default_layout and unsupported:
             raise ValueError(f"Unsupported elements for the default layout: {unsupported}.")
         comp = Composition.from_dict(formula)
@@ -159,7 +164,8 @@ def formula_to_composition(
         or amounts.sum() <= 0
     ):
         raise ValueError("Composition amounts must be nonempty, finite, non-negative and have positive sum.")
-    unsupported = sorted(str(el) for el in comp.elements if str(el) not in elements)
+    comp = comp.element_composition
+    unsupported = sorted(el.symbol for el in comp.elements if el.symbol not in elements)
     if default_layout and unsupported:
         raise ValueError(f"Unsupported elements for the default layout: {unsupported}.")
     return np.array([comp.get_atomic_fraction(el) if el in comp else 0.0 for el in elements])
