@@ -1,5 +1,6 @@
 """Write units.txt: one run_experiment.py argument line per unit (plan 3.4 steps 4-6)."""
 
+import random
 from itertools import product
 from pathlib import Path
 
@@ -14,8 +15,6 @@ for (cls, lab, part), prot, seed in product(COMBOS, "AB", SEEDS):
     if (cls, lab, part) in MAIN:
         lines.append(f"{base} --engine tabicl --device cuda")
     lines.append(f"{base} --engine catboost")
-import random
-
 random.Random(0).shuffle(lines)  # balance heavy and light units across array tasks
 Path(__file__).with_name("units.txt").write_text("\n".join(lines) + "\n")
 print(len(lines), "units")

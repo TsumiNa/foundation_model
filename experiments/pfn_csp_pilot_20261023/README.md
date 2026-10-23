@@ -111,7 +111,7 @@ eight estimators, not by the context size. All fit sets are ≤ 1,139 rows and �
 | C2 − C1 at k = 20 | −17.1 | −12.2 |
 | C4 same-family share at k = 20 | 0.64 | 0.89 (C2 − C4 unreadable) |
 | rule A | A2 (locality) | uncertain |
-| C1_A − C1_B, |F|-weighted | 39.9 pp | 13.1 pp |
+| C1_A − C1_B, weighted by family size | 39.9 pp | 13.1 pp |
 | pooled repair ratio, k = 10 | 0.50 [0.48, 0.53] | −0.42 [−0.60, −0.23] |
 | rule B → decision | B1 → rule-prior PFN route | B2 → no rule prior |
 
