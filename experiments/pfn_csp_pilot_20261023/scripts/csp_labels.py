@@ -31,7 +31,10 @@ class RoleError(ValueError):
 
 def assign_roles(comp: Composition, cls: str) -> dict[str, str]:
     """Return {"A": el, "B": el[, "X": el]} following the plan 2.2 table, or raise RoleError."""
-    amounts = comp.reduced_composition.get_el_amt_dict()
+    # Ratios from the raw amounts: pymatgen keeps peroxide-like formulas (K2O2) unreduced.
+    raw = comp.get_el_amt_dict()
+    lo = min(raw.values())
+    amounts = {el: round(v / lo, 6) for el, v in raw.items()}
     els = [Element(e) for e in amounts]
     if any(math.isnan(_x(e)) for e in els):
         raise RoleError("missing Pauling electronegativity")

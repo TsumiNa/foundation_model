@@ -82,3 +82,15 @@ def test_skeleton_strip_and_topk_growth():
     out, k, other = top_k_labels(labels, k0=2, other_cap=0.30, k_max=6)
     assert k == 6 and other == pytest.approx(sum(range(1, 5)) / 55)
     assert set(out) == {"other", "c9", "c8", "c7", "c6", "c5", "c4"}
+
+
+def test_roles_accept_unreduced_peroxide_formula():
+    from csp_labels import RoleError, assign_roles
+    from pymatgen.core import Composition
+
+    assert assign_roles(Composition("K2O2"), "AB") == {"A": "K", "B": "O"}
+    assert assign_roles(Composition("CaCO3"), "ABX3") == {"A": "Ca", "B": "C", "X": "O"}
+    with pytest.raises(RoleError):
+        assign_roles(Composition("Fe3N"), "AB")
+    with pytest.raises(RoleError):  # coefficient-3 element (Fe) is not the most electronegative
+        assign_roles(Composition("Fe3ZnN"), "ABX3")
