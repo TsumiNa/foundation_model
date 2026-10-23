@@ -100,6 +100,27 @@ eight estimators, not by the context size. All fit sets are ≤ 1,139 rows and �
 10. **Added, not in the plan**: a seed-level bootstrap CI of the pooled repair ratio (C1_A held at its seed
     mean), used only to say how close a ratio is to the 0.5 threshold.
 
+## Follow-ups (requested 2026-10-23 after the pilot; criteria fixed before the runs)
+
+Same data, features, seeds and engines; TabPFN-3.5 is primary, TabICLv2 the engine check. Top-1 is the
+metric; differences are paired per seed with the same bootstrap CI as the pilot.
+
+1. **Retrieval (`--protocol R`, AB and ABX3, L2 × P1).** Protocol-A split, all test queries. C4 = the k
+   nearest training rows (any family), C5 = k random training rows from all families (control),
+   k ∈ {5, 10, 20, 50, 100, 200}; C1 as before.
+   - *Retrieval suffices*: at some k ≤ 200, C4 − C1 ≥ −3 pp and C4 − C5 ≥ 5 pp with CI excluding 0.
+   - *Retrieval helps, global data still adds*: C4 − C5 ≥ 5 pp (CI excludes 0) but C4 − C1 < −3 pp at every k.
+   - *No locality effect*: C4 − C5 < 3 pp at k = 20.
+2. **Intermetallics split (`--part P1x`, AB, L1 and L2, protocols A and B).** P1 with the intermetallic family
+   split by (block of A)-(block of B); families under 15 merged by the plan 2.5 rule (12 families, largest 202).
+   - *Broad repair*: weighted gap ≥ 10 pp and pooled repair ratio at k = 10 ≥ 0.5 (plan rule B1).
+   - *Repair was one family*: gap ≥ 10 pp and ratio < 0.5 (B2). Gap < 5 pp: extrapolation works (B3).
+3. **Mixed context (`--protocol M`, AB L2 × P1, ABX3 L2 × P1, AB L2 × P1x).** Held-out family F; context =
+   all other families + k rows of F (the same k rows as protocol B's C2), k ∈ {5, 10, 20}.
+   - *Few own samples help on top of global data*: |F|-weighted M(k = 10) − C1_B ≥ 5 pp, CI excluding 0.
+   - *No added value*: M(10) − C1_B < 3 pp. Between 3 and 5 pp, or CI including 0: uncertain.
+   - Also reported: mixed repair ratio (M − C1_B) / (C1_A − C1_B) and M − C2 (paired).
+
 ## Outcome (2026-10-23)
 
 **No route is decided ("uncertain", plan 4.2): the two classes trigger different protocol-B rules.**

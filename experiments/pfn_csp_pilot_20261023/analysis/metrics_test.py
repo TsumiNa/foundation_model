@@ -94,3 +94,57 @@ def test_roles_accept_unreduced_peroxide_formula():
         assign_roles(Composition("Fe3N"), "AB")
     with pytest.raises(RoleError):  # coefficient-3 element (Fe) is not the most electronegative
         assign_roles(Composition("Fe3ZnN"), "ABX3")
+
+
+class _FakeEngine:
+    """Uniform probabilities over the context classes; records every context."""
+
+    name = "fake"
+
+    def __init__(self, n_classes):
+        self.n_classes = n_classes
+        self.contexts = []
+
+    def fit_predict(self, xc, yc, xq, seed):
+        self.contexts.append(np.sort(xc[:, 0]).tolist())
+        out = np.zeros((len(xq), self.n_classes))
+        out[:, np.unique(yc)] = 1.0 / len(np.unique(yc))
+        return out
+
+
+def _toy(n=60, n_fam=3, n_cls=4, seed=0):
+    rng = np.random.default_rng(seed)
+    x = np.column_stack([np.arange(n, dtype=float), rng.normal(size=(n, 3))]).astype(np.float32)
+    return x, rng.integers(0, n_cls, n), np.repeat(np.arange(n_fam), n // n_fam)
+
+
+def test_protocol_m_uses_protocol_b_draws_plus_other_families():
+    from run_experiment import protocol_b, protocol_m
+
+    x, y, fam = _toy()
+    eb, em = _FakeEngine(4), _FakeEngine(4)
+    rb = protocol_b(eb, x, y, fam, 0, lambda m: None)
+    rm = protocol_m(em, x, y, fam, 0, lambda m: None)
+    c2 = [c for c in eb.contexts if len(c) in (5, 10, 20)]
+    assert len(c2) == len(em.contexts)
+    rest_sizes = {len(np.flatnonzero(fam != f)) for f in range(3)}
+    for pure, mixed in zip(c2, em.contexts):
+        assert set(pure) <= set(mixed) and len(mixed) - len(pure) in rest_sizes
+    for key, res in rm.items():
+        assert res["n_draws"] == rb[("C2", key[1], key[2])]["n_draws"]
+        assert res["n_valid"].min() >= 3
+
+
+def test_protocol_r_conditions_and_neighbours():
+    from run_experiment import K_R, protocol_r
+
+    x, y, fam = _toy(n=90)
+    eng = _FakeEngine(4)
+    r = protocol_r(eng, x, y, fam, 0, lambda m: None)
+    test = r[("C1", 0)]["query"]
+    n_train = 90 - len(test)
+    for k in K_R:
+        if k > n_train:
+            assert ("C4", k) not in r
+            continue
+        assert len(r[("C4", k)]["query"]) == len(test) and (r[("C5", k)]["n_valid"] == 5).all()

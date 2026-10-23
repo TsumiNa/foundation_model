@@ -100,6 +100,17 @@ def p1_family(roles: dict[str, str], cls: str) -> str:
     return names.get(b.group, f"group {b.group}")
 
 
+def p1x_family(roles: dict[str, str], cls: str) -> str:
+    """Follow-up partition: P1 with the AB intermetallic family split by the blocks of A and B.
+
+    Added after the pilot (README, follow-up 2) because one intermetallic family held half of AB.
+    """
+    fam = p1_family(roles, cls)
+    if fam != "intermetallic":
+        return fam
+    return f"intermetallic {Element(roles['A']).block}-{Element(roles['B']).block}"
+
+
 def p2_communities(role_table: pd.DataFrame, role_cols: list[str]) -> list[int]:
     """Substitution graph (exactly one role element differs) -> Louvain, resolution 1.0, seed 0."""
     g = nx.Graph()

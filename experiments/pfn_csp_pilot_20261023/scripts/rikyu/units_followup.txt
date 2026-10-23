@@ -1,0 +1,95 @@
+--cls AB --label L2 --part P1x --protocol A --seed 0 --engine tabpfn --device cuda
+--cls AB --label L1 --part P1x --protocol B --seed 0 --engine catboost
+--cls ABX3 --label L2 --part P1 --protocol R --seed 0 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol A --seed 2 --engine catboost
+--cls AB --label L2 --part P1 --protocol R --seed 3 --engine tabicl --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 0 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 1 --engine tabpfn --device cuda
+--cls ABX3 --label L2 --part P1 --protocol R --seed 2 --engine tabicl --device cuda
+--cls AB --label L1 --part P1x --protocol A --seed 1 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 0 --engine tabicl --device cuda
+--cls AB --label L2 --part P1 --protocol R --seed 4 --engine tabicl --device cuda
+--cls AB --label L2 --part P1x --protocol M --seed 3 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol A --seed 2 --engine tabicl --device cuda
+--cls AB --label L2 --part P1x --protocol A --seed 1 --engine tabicl --device cuda
+--cls AB --label L2 --part P1 --protocol R --seed 0 --engine tabicl --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 4 --engine tabpfn --device cuda
+--cls AB --label L1 --part P1x --protocol A --seed 1 --engine catboost
+--cls AB --label L2 --part P1 --protocol R --seed 1 --engine tabpfn --device cuda
+--cls AB --label L1 --part P1x --protocol B --seed 0 --engine tabpfn --device cuda
+--cls AB --label L1 --part P1x --protocol B --seed 2 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol A --seed 0 --engine tabicl --device cuda
+--cls AB --label L2 --part P1 --protocol M --seed 2 --engine tabpfn --device cuda
+--cls AB --label L1 --part P1x --protocol B --seed 4 --engine catboost
+--cls ABX3 --label L2 --part P1 --protocol R --seed 1 --engine tabicl --device cuda
+--cls AB --label L2 --part P1 --protocol M --seed 4 --engine tabpfn --device cuda
+--cls ABX3 --label L2 --part P1 --protocol R --seed 4 --engine tabicl --device cuda
+--cls ABX3 --label L2 --part P1 --protocol M --seed 2 --engine tabpfn --device cuda
+--cls ABX3 --label L2 --part P1 --protocol R --seed 3 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol M --seed 1 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 3 --engine tabicl --device cuda
+--cls AB --label L2 --part P1 --protocol R --seed 3 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol M --seed 4 --engine tabpfn --device cuda
+--cls AB --label L1 --part P1x --protocol B --seed 4 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 4 --engine tabicl --device cuda
+--cls AB --label L2 --part P1x --protocol A --seed 1 --engine catboost
+--cls AB --label L2 --part P1 --protocol M --seed 1 --engine tabicl --device cuda
+--cls AB --label L2 --part P1 --protocol M --seed 3 --engine tabicl --device cuda
+--cls AB --label L1 --part P1x --protocol A --seed 2 --engine catboost
+--cls AB --label L2 --part P1 --protocol M --seed 0 --engine tabpfn --device cuda
+--cls AB --label L1 --part P1x --protocol A --seed 4 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 3 --engine catboost
+--cls AB --label L1 --part P1x --protocol A --seed 0 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1 --protocol R --seed 1 --engine tabicl --device cuda
+--cls AB --label L2 --part P1 --protocol M --seed 0 --engine tabicl --device cuda
+--cls ABX3 --label L2 --part P1 --protocol R --seed 1 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 1 --engine catboost
+--cls AB --label L2 --part P1x --protocol A --seed 4 --engine tabpfn --device cuda
+--cls AB --label L1 --part P1x --protocol B --seed 3 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol A --seed 3 --engine catboost
+--cls AB --label L2 --part P1 --protocol M --seed 3 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 2 --engine catboost
+--cls AB --label L2 --part P1 --protocol R --seed 4 --engine tabpfn --device cuda
+--cls AB --label L1 --part P1x --protocol B --seed 1 --engine tabpfn --device cuda
+--cls ABX3 --label L2 --part P1 --protocol M --seed 4 --engine tabicl --device cuda
+--cls AB --label L2 --part P1x --protocol A --seed 2 --engine tabpfn --device cuda
+--cls ABX3 --label L2 --part P1 --protocol M --seed 4 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1 --protocol R --seed 0 --engine tabpfn --device cuda
+--cls ABX3 --label L2 --part P1 --protocol M --seed 1 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 4 --engine catboost
+--cls ABX3 --label L2 --part P1 --protocol R --seed 0 --engine tabicl --device cuda
+--cls ABX3 --label L2 --part P1 --protocol M --seed 0 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1 --protocol M --seed 4 --engine tabicl --device cuda
+--cls AB --label L2 --part P1x --protocol A --seed 3 --engine tabicl --device cuda
+--cls AB --label L2 --part P1x --protocol M --seed 2 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol A --seed 4 --engine tabicl --device cuda
+--cls AB --label L1 --part P1x --protocol B --seed 1 --engine catboost
+--cls ABX3 --label L2 --part P1 --protocol R --seed 2 --engine tabpfn --device cuda
+--cls ABX3 --label L2 --part P1 --protocol M --seed 2 --engine tabicl --device cuda
+--cls AB --label L2 --part P1x --protocol A --seed 4 --engine catboost
+--cls ABX3 --label L2 --part P1 --protocol M --seed 3 --engine tabpfn --device cuda
+--cls ABX3 --label L2 --part P1 --protocol R --seed 3 --engine tabicl --device cuda
+--cls AB --label L1 --part P1x --protocol A --seed 2 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol A --seed 0 --engine catboost
+--cls ABX3 --label L2 --part P1 --protocol R --seed 4 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1 --protocol R --seed 2 --engine tabicl --device cuda
+--cls AB --label L2 --part P1x --protocol M --seed 0 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 3 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 1 --engine tabicl --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 0 --engine catboost
+--cls AB --label L1 --part P1x --protocol A --seed 4 --engine catboost
+--cls ABX3 --label L2 --part P1 --protocol M --seed 1 --engine tabicl --device cuda
+--cls ABX3 --label L2 --part P1 --protocol M --seed 0 --engine tabicl --device cuda
+--cls AB --label L1 --part P1x --protocol B --seed 3 --engine catboost
+--cls AB --label L2 --part P1x --protocol A --seed 1 --engine tabpfn --device cuda
+--cls ABX3 --label L2 --part P1 --protocol M --seed 3 --engine tabicl --device cuda
+--cls AB --label L1 --part P1x --protocol B --seed 2 --engine catboost
+--cls AB --label L1 --part P1x --protocol A --seed 3 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1 --protocol R --seed 2 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 2 --engine tabicl --device cuda
+--cls AB --label L1 --part P1x --protocol A --seed 3 --engine catboost
+--cls AB --label L2 --part P1x --protocol A --seed 3 --engine tabpfn --device cuda
+--cls AB --label L2 --part P1 --protocol M --seed 1 --engine tabpfn --device cuda
+--cls AB --label L1 --part P1x --protocol A --seed 0 --engine catboost
+--cls AB --label L2 --part P1 --protocol M --seed 2 --engine tabicl --device cuda
+--cls AB --label L2 --part P1x --protocol B --seed 2 --engine tabpfn --device cuda

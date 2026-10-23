@@ -14,7 +14,8 @@ PACK=${PACK:-16}
 export OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 CATBOOST_THREADS=2
 nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
 start=$((SLURM_ARRAY_TASK_ID * PACK))
-mapfile -t UNITS < <(sed -n "$((start + 1)),$((start + PACK))p" scripts/rikyu/units.txt)
+UNITS_FILE=${UNITS_FILE:-scripts/rikyu/units.txt}
+mapfile -t UNITS < <(sed -n "$((start + 1)),$((start + PACK))p" "$UNITS_FILE")
 for u in "${UNITS[@]}"; do
   # shellcheck disable=SC2086
   .venv/bin/python scripts/run_experiment.py $u > "artifacts/logs/unit_$(echo $u | tr ' -' '__').log" 2>&1 &

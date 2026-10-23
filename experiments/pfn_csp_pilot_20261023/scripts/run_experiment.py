@@ -29,12 +29,13 @@ from engines import Engine  # noqa: E402
 EXP = Path(__file__).resolve().parents[1]
 K_A = (5, 10, 20, 50)
 K_B = (5, 10, 20)
+K_R = (5, 10, 20, 50, 100, 200)
 N_DRAWS = 5
 MIN_VALID_B = 3
 MAX_DRAWS_B = 2000
 
 # Stage tags for SeedSequence so every random stream derives from the experiment seed.
-TAG_SPLIT, TAG_C2, TAG_C3, TAG_B = 1, 2, 3, 4
+TAG_SPLIT, TAG_C2, TAG_C3, TAG_B, TAG_C5 = 1, 2, 3, 4, 5
 
 
 def rng_for(seed: int, *tags: int) -> np.random.Generator:
@@ -179,13 +180,82 @@ def protocol_b(eng: Engine, x, y, fam, seed: int, log) -> dict:
     return out
 
 
+def protocol_r(eng: Engine, x, y, fam, seed: int, log) -> dict:
+    """Follow-up 1 (retrieval): protocol-A split, all test queries, k up to 200.
+
+    C4 = the k training rows nearest to each query (any family); C5 = k training rows drawn
+    uniformly from all families, five draws shared by every query; C1 as in protocol A.
+    """
+    is_test = split_protocol_a(y, fam, seed)
+    train, test = np.flatnonzero(~is_test), np.flatnonzero(is_test)
+    n_cls = eng.n_classes
+    out: dict = {"is_test": is_test}
+    acc = Accum(test, n_cls)
+    acc.add(test, eng.fit_predict(x[train], y[train], x[test], seed), y[test], set(y[train]))
+    out[("C1", 0)] = acc.result()
+    ztr = zscore_imputed(x[train].astype(float))
+    zq = zscore_imputed(x[test].astype(float), ref=x[train].astype(float))
+    order = np.argsort(np.linalg.norm(ztr[None, :, :] - zq[:, None, :], axis=2), axis=1, kind="stable")
+    for k in K_R:
+        if k > len(train):
+            continue
+        t = time.time()
+        acc = Accum(test, n_cls)
+        rng = rng_for(seed, TAG_C5, k)
+        for _ in range(N_DRAWS):
+            ctx = rng.choice(train, k, replace=False)
+            acc.add(test, eng.fit_predict(x[ctx], y[ctx], x[test], seed), y[test], set(y[ctx]))
+        out[("C5", k)] = acc.result()
+        acc = Accum(test, n_cls)
+        for j, qi in enumerate(test):
+            ctx = train[order[j, :k]]
+            acc.add(np.array([qi]), eng.fit_predict(x[ctx], y[ctx], x[[qi]], seed), y[[qi]], set(y[ctx]))
+            acc.same_fam[j] = float(np.mean(fam[ctx] == fam[qi]))
+        out[("C4", k)] = acc.result()
+        log(f"R k={k}: {len(test)} queries, {time.time() - t:.1f}s")
+    return out
+
+
+def protocol_m(eng: Engine, x, y, fam, seed: int, log) -> dict:
+    """Follow-up 3 (mixed context): held-out family F; context = all other families + k rows of F.
+
+    The k rows are the same draws as protocol B's C2 (same seed stream and stopping rule), so
+    mixed and pure contexts are paired query by query.
+    """
+    n_cls = eng.n_classes
+    out: dict = {}
+    for f in np.unique(fam):
+        held = np.flatnonzero(fam == f)
+        rest = np.flatnonzero(fam != f)
+        t = time.time()
+        for k in K_B:
+            if len(held) < k + 3:
+                continue
+            rng = rng_for(seed, TAG_B, int(f), k)
+            acc = Accum(held, n_cls)
+            draws = 0
+            while draws < N_DRAWS or acc.valid.min() < MIN_VALID_B:
+                if draws >= MAX_DRAWS_B:
+                    raise RuntimeError(f"family {f} k={k}: draw cap reached")
+                ctx = rng.choice(held, k, replace=False)
+                q = np.setdiff1d(held, ctx)
+                full = np.concatenate([rest, ctx])
+                acc.add(q, eng.fit_predict(x[full], y[full], x[q], seed), y[q], set(y[full]))
+                draws += 1
+            res = acc.result()
+            res["n_draws"] = draws
+            out[("M", int(f), k)] = res
+        log(f"M F={f} (|F|={len(held)}) done {time.time() - t:.1f}s")
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cls", required=True, choices=["AB", "ABX3"])
     ap.add_argument("--label", required=True, choices=["L1", "L2"])
-    ap.add_argument("--part", required=True, choices=["P1", "P2"])
+    ap.add_argument("--part", required=True, choices=["P1", "P2", "P1x"])
     ap.add_argument("--engine", required=True, choices=["tabpfn", "tabicl", "catboost"])
-    ap.add_argument("--protocol", required=True, choices=["A", "B"])
+    ap.add_argument("--protocol", required=True, choices=["A", "B", "R", "M"])
     ap.add_argument("--seed", type=int, required=True)
     ap.add_argument("--device", default=None)
     ap.add_argument("--conditions", default="C1,C2,C3,C4")
@@ -209,7 +279,7 @@ def main() -> None:
     if a.protocol == "A":
         res = protocol_a(eng, x, y, fam, a.seed, a.conditions.split(","), log)
     else:
-        res = protocol_b(eng, x, y, fam, a.seed, log)
+        res = {"B": protocol_b, "R": protocol_r, "M": protocol_m}[a.protocol](eng, x, y, fam, a.seed, log)
     commit = (
         os.environ.get("PFN_CSP_COMMIT")
         or subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=EXP).stdout.strip()

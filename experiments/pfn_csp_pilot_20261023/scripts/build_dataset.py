@@ -27,6 +27,7 @@ from csp_features import (  # noqa: E402
     magpie_features,
     merge_small_families,
     p1_family,
+    p1x_family,
     p2_communities,
     site_features,
 )
@@ -195,9 +196,10 @@ def build(cls: str, refs_cfg: dict) -> dict:
     # Families (plan 2.5)
     xf = df[feat_cols].to_numpy(dtype=float)
     df["P1_raw"] = [p1_family({r: row[r] for r in role_cols}, cls) for _, row in df.iterrows()]
+    df["P1x_raw"] = [p1x_family({r: row[r] for r in role_cols}, cls) for _, row in df.iterrows()]
     df["P2_raw"] = [f"community {c}" for c in p2_communities(df[role_cols], role_cols)]
     merges = []
-    for p in ("P1", "P2"):
+    for p in ("P1", "P2", "P1x"):
         lab, log = merge_small_families(list(df[f"{p}_raw"]), xf)
         df[p] = lab
         merges += [{"partition": p, **m} for m in log]
@@ -235,6 +237,7 @@ def build(cls: str, refs_cfg: dict) -> dict:
         "L2": {"K": k2, "other_share": o2, "n_raw_classes": int(df["L2_raw"].nunique())},
         "P1": fam_stats("P1"),
         "P2": fam_stats("P2"),
+        "P1x": fam_stats("P1x"),
         "n_features": len(feat_cols),
         "l2_match_timeouts": len(timeouts),
         "goldschmidt_nan_share": (float(np.isnan(df["site::goldschmidt_t"]).mean()) if cls == "ABX3" else None),
