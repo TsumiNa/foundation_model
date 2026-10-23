@@ -140,17 +140,19 @@ def protocol_b(combo: str, engine: str, c1a_by_family: dict | None) -> dict | No
         return None
     y, fam = runs[0]["meta"]["y"], runs[0]["meta"]["fam"]
     fams = runs[0]["meta"]["families"]
-    rows = []
+    rows, seed_c1, seed_c2 = [], {}, {}
     for f in range(len(fams)):
         held = np.flatnonzero(fam == f)
         row = {"family": fams[f], "n": len(held)}
         c1 = [float(correct_top1(rows_of(r["res"][("C1", f, 0)], held)[0], y[held]).mean()) for r in runs]
         row["C1_B"] = float(np.mean(c1))
+        seed_c1[f] = c1
         for k in K_B:
             key = ("C2", f, k)
             if key in runs[0]["res"]:
                 v = [float(correct_top1(rows_of(r["res"][key], held)[0], y[held]).mean()) for r in runs]
                 row[f"C2_B_k{k}"] = float(np.mean(v))
+                seed_c2[(f, k)] = v
                 row[f"C2_B_k{k}_coverage"] = float(
                     np.mean([(r["res"][key]["n_covered"] / r["res"][key]["n_valid"]).mean() for r in runs])
                 )
@@ -176,6 +178,17 @@ def protocol_b(combo: str, engine: str, c1a_by_family: dict | None) -> dict | No
             den = float((ok["n"] * (ok["C1_A"] - ok["C1_B"])).sum())
             out[f"pooled_repair_k{k}"] = num / den if den != 0 else float("nan")
             out[f"pooled_families_k{k}"] = int(len(ok))
+            # seed-level pooled ratio: C1_A stays the seed mean (plan 3.3), C1_B and C2_B per seed
+            fs = [f for f in range(len(fams)) if (f, k) in seed_c2]
+            n_f = {f: int((fam == f).sum()) for f in fs}
+            c1a = {f: c1a_by_family[f] for f in fs}
+            per_seed = []
+            for s_i in range(len(runs)):
+                nm = sum(n_f[f] * (seed_c2[(f, k)][s_i] - seed_c1[f][s_i]) for f in fs)
+                dn = sum(n_f[f] * (c1a[f] - seed_c1[f][s_i]) for f in fs)
+                per_seed.append(nm / dn if dn != 0 else float("nan"))
+            out[f"pooled_repair_k{k}_seeds"] = per_seed
+            out[f"pooled_repair_k{k}_ci"] = seed_ci(per_seed)
             out[f"weighted_C2_B_k{k}"] = (
                 float(np.average(ok[f"C2_B_k{k}"], weights=ok["n"])) if len(ok) else float("nan")
             )
@@ -213,8 +226,22 @@ def rule_a(t2: pd.DataFrame, t3: pd.DataFrame) -> dict:
         "sign_k10_equals_k20": sign_ok,
         "notes": notes,
     }
+    c4 = t2[t2["condition"] == "C4"].set_index("k")["same_family_share"]
+    c4_same_high = bool(any(float(c4.get(k, 0.0)) >= 0.8 for k in (10, 20)))
+    out["C4_same_family_share_k10_k20"] = [float(c4.get(10, np.nan)), float(c4.get(20, np.nan))]
+    if c4_same_high:
+        notes.append("C4 same-family share >= 0.8 at k = 10/20: C2 - C4 cannot be read for H1' (plan 4.3)")
     if not sign_ok:
         out["rule"], out["verdict"] = "uncertain", "sign of C2-C3 or C2-C4 differs between k = 10 and k = 20"
+    elif c4_same_high and not (d23["mean"] < SECONDARY_PP and abs(c2_minus_c1_r3) < 0.03):
+        out["rule"], out["verdict"] = (
+            "uncertain",
+            (
+                "C2-C3 passes but C2-C4 is not readable (C4 neighbours >= 80 % same family)"
+                if d23["passes_5pp"]
+                else "no row of the rule table applies"
+            ),
+        )
     elif d23["passes_5pp"] and d24["passes_5pp"] and out["C2_minus_C1_k20"] >= -0.03:
         out["rule"], out["verdict"] = "A1", "multiple worlds; family rule identifiable from few samples; not locality"
     elif d23["passes_5pp"] and d24["mean"] < SECONDARY_PP:
