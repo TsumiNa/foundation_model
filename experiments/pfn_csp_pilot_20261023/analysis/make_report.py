@@ -426,6 +426,7 @@ tr.tot td { font-weight: 600; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .sw { width: 12px; height: 10px; border-radius: 2px; display: inline-block; }
 .sw.s1 { background: var(--s1); } .sw.s2 { background: var(--s2); }
+.sw.s3 { background: var(--s3); } .sw.s4 { background: var(--s4); }
 .sw-line { width: 18px; height: 0; border-top: 2px solid; display: inline-block; }
 .sw-line.s1 { border-color: var(--s1); } .sw-line.s2 { border-color: var(--s2); }
 .sw-line.s3 { border-color: var(--s3); } .sw-line.s4 { border-color: var(--s4); }

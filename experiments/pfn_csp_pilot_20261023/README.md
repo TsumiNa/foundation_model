@@ -74,6 +74,10 @@ eight estimators, not by the context size. All fit sets are ≤ 1,139 rows and �
   longest array task 18 min 47 s, no failed unit. Outputs mirrored to `artifacts/runs/`.
 - 17:40 Summary, report (`results/report.html`), published as a private artifact:
   https://claude.ai/artifact/7fnHZtx5At8RYFrnj88K3B
+- 17:57 Follow-ups: job 208460 (6 array tasks, 95 units from `scripts/rikyu/units_followup.txt`, commit 0d7b374);
+  all completed, longest task 21 min 50 s. `analysis/followups.py` → `results/followups.json`;
+  `analysis/make_followup_report.py` → `results/followups.html`, published at
+  https://claude.ai/artifact/2qLhYRif6WTeis8b1owEJH
 
 ## Deviations from the plan
 
@@ -120,6 +124,19 @@ metric; differences are paired per seed with the same bootstrap CI as the pilot.
    - *Few own samples help on top of global data*: |F|-weighted M(k = 10) − C1_B ≥ 5 pp, CI excluding 0.
    - *No added value*: M(10) − C1_B < 3 pp. Between 3 and 5 pp, or CI including 0: uncertain.
    - Also reported: mixed repair ratio (M − C1_B) / (C1_A − C1_B) and M − C2 (paired).
+
+### Follow-up outcomes (TabPFN-3.5; TabICLv2 agrees on every verdict)
+
+| follow-up | key numbers | verdict |
+|---|---|---|
+| 1. retrieval | C4 − C1: AB −0.5 pp [−1.6, +0.5] at k = 100; ABX3 −1.4 pp [−2.7, −0.3] at k = 200; C4 − C5 +9.3 / +3.4 pp | retrieval suffices (from k = 50; TabICLv2 AB from k = 20) |
+| 2. intermetallics split (L2) | gap 13.9 pp; pooled repair k = 10 −0.26 [−0.33, −0.20] (TabICLv2 0.12, L1 0.31) | repair was one family (B2) |
+| 3. mixed context, k = 10 | M − C1_B: ABX3 +5.6 [+4.8, +6.4]; AB P1x +3.3 [+2.9, +3.7]; AB P1 +25.5 [+24.9, +25.9] | useful / uncertain (+6.2 at k = 20) / useful |
+
+Reading: no evidence for family-specific rules; the global model performs like a lookup of the ~100 nearest
+compounds, and a few examples of a new family help on top of global data, strongly only where the family's
+chemistry is missing from training. This argues for a generic PFN or kNN-style model with a retrieved context
+and against a library of family rules as a prior.
 
 ## Outcome (2026-10-23)
 
