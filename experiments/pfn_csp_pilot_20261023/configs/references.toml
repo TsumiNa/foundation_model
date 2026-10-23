@@ -1,0 +1,24 @@
+# Reference structures for the L2 aristotype library (plan 2.3 step 4).
+# One entry per prototype of the "expected competition" column of plan 2.2; `aristotype` is the
+# L2 class name. Several references may share one aristotype (distorted perovskite variants);
+# every addition beyond the plan table is recorded under "Deviations" in the README.
+
+[AB]
+"rocksalt (NaCl)"       = { material_id = "mp-22862", formula = "NaCl", aristotype = "rocksalt" }
+"CsCl"                  = { material_id = "mp-22865", formula = "CsCl", aristotype = "CsCl" }
+"zincblende (ZnS)"      = { material_id = "mp-10695", formula = "ZnS",  aristotype = "zincblende" }
+"wurtzite (ZnO)"        = { material_id = "mp-2133",  formula = "ZnO",  aristotype = "wurtzite" }
+"NiAs"                  = { material_id = "mp-590",   formula = "NiAs", aristotype = "NiAs" }
+"FeSi"                  = { material_id = "mp-871",   formula = "FeSi", aristotype = "FeSi" }
+"FeB"                   = { material_id = "mp-20787", formula = "FeB",  aristotype = "FeB" }
+"CrB (= TlI)"           = { material_id = "mp-260",   formula = "CrB",  aristotype = "CrB" }
+
+[ABX3]
+"cubic perovskite (SrTiO3)"        = { material_id = "mp-5229",   formula = "SrTiO3", aristotype = "perovskite" }
+"ilmenite (MgTiO3)"                = { material_id = "mp-3771",   formula = "MgTiO3", aristotype = "ilmenite" }
+"2H hexagonal perovskite (BaNiO3)" = { material_id = "mp-19138",  formula = "BaNiO3", aristotype = "2H hexagonal perovskite" }
+"4H hexagonal perovskite (SrMnO3)" = { material_id = "mp-19001",  formula = "SrMnO3", aristotype = "4H hexagonal perovskite" }
+"6H hexagonal perovskite (BaTiO3)" = { material_id = "mp-5933",   formula = "BaTiO3", aristotype = "6H hexagonal perovskite" }
+"9R hexagonal perovskite (BaMnO3)" = { material_id = "mp-18840",  formula = "BaMnO3", aristotype = "9R hexagonal perovskite" }
+"calcite (CaCO3)"                  = { material_id = "mp-3953",   formula = "CaCO3",  aristotype = "calcite" }
+"aragonite (CaCO3)"                = { material_id = "mp-4626",   formula = "CaCO3",  aristotype = "aragonite" }
