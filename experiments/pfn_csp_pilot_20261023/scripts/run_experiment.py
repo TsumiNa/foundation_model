@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pickle
 import subprocess
 import sys
@@ -209,7 +210,10 @@ def main() -> None:
         res = protocol_a(eng, x, y, fam, a.seed, a.conditions.split(","), log)
     else:
         res = protocol_b(eng, x, y, fam, a.seed, log)
-    commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=EXP).stdout.strip()
+    commit = (
+        os.environ.get("PFN_CSP_COMMIT")
+        or subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=EXP).stdout.strip()
+    )
     meta = {
         "args": vars(a),
         "labels": labels,
