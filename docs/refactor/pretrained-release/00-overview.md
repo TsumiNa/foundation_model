@@ -63,7 +63,13 @@ A single exported model is a bundle with one member, so there is only one format
 | `descriptor` | `kind = "kmd"`, `n_grids`, the element list, and the sha256 of `element_features.csv`. The loader checks the hash so the input is identical to training. Precomputed descriptors cannot be exported |
 | `model` | the full `[model]` section: encoder type and widths, Transformer settings, autoencoder, head and kernel-regression widths, `n_kernel` |
 | `heads` | per task: name, kind, display name, unit, per-task width overrides. Classification adds `num_classes` and class names. Kernel regression adds `t` name and unit, `t_min` / `t_max`, the training mesh and `n_kernel`. Kernel centres and widths are parameters inside the weights |
-| `targets` | per regression / kernel-regression task, the target transform as an ordered list of plain-number steps. Supported steps: `standard_scaler` (`with_mean`, `with_std`, `mean`, `scale`); `power_transformer` (`yeo-johnson` / `box-cox`, `lambdas`, `standardize` and its inner mean / scale); `arcsinh`; `identity`. Classification heads carry `LabelEncoder` classes. Export rejects any other step by name rather than approximating it. Shape-only heads have no entry |
+| `targets` | per regression / kernel-regression task, the target transform as an ordered list of plain-number steps. Supported steps:
+  - `standard_scaler` (`with_mean`, `with_std`, `mean`, `scale`);
+  - `power_transformer` (`yeo-johnson` / `box-cox`, `lambdas`, `standardize` and its inner mean / scale);
+  - `log1p` (with an optional lower clip of the input);
+  - `arcsinh`;
+  - `clip` (bounds on the transformed value; its inverse saturates at the bounds, which the head's metadata reports);
+  - `identity`. Classification heads carry `LabelEncoder` classes. Export rejects any other step by name rather than approximating it. Shape-only heads have no entry |
 | `license`, `provenance` | the bundle licence (see Decisions). Provenance holds the pretraining and consolidation configs, git commit, data snapshot names, split seed, and `derived_from` (repository, revision, member, licence) for derived bundles |
 
 ## Public interface (1.0)
@@ -98,7 +104,7 @@ Each PR passes review and is squash-merged before the next one starts.
 | PR | Scope | Acceptance |
 |---|---|---|
 | 0 | this design | matches the plan the user approved on 2026-11-04; review findings addressed |
-| 1 | `foundation_model/data/targets.py`: target transforms as data. Covers the supported steps; conversion from the existing sklearn objects (`Pipeline[StandardScaler, PowerTransformer]`, the AGIS `StandardScaler(with_mean=False) → arcsinh → StandardScaler`, `LabelEncoder`); `fit` with the default recipe; the per-row max-abs shape normalisation | forward and inverse match sklearn to within 1e-12 on every scaler in `data/*preprocessing*.pkl.z` and on the AGIS pipeline; JSON round-trip; an unsupported step is rejected by name |
+| 1 | `foundation_model/data/targets.py`: target transforms as data. Covers the supported steps; conversion from the existing sklearn objects (`Pipeline[StandardScaler, PowerTransformer]`, the AGIS `StandardScaler(with_mean=False) → arcsinh → StandardScaler`, `LabelEncoder`); `fit` with the default recipe; the per-row max-abs shape normalisation | forward and inverse match sklearn to within 1e-12 on every scaler in `data/*preprocessing*.pkl.z` and on the AGIS pipeline. The recorded NEMAD / phonix-db transforms reproduce their `_norm` tables to within 1e-12. JSON round-trip; an unsupported step is rejected by name |
 | 2 | `hub/bundle.py` schema + `export_run` + `fm export --license`; records observed range and default grid per kernel-regression task, including heterogeneous per-row grids; refuses members whose architecture or heads differ | a bundle loaded back predicts exactly what the source checkpoint predicts on a fixed composition set (torch `equal` on CPU); the default grid is checked for a shared-grid task and a per-row-grid task |
 | 3 | `load_pretrained` / `load_suite` / `predict` / `predict_curve`; `fm predict --pretrained`; strict loading; hub download behind the optional extra | runs in a clean environment with no dataset files and no network (hub calls mocked); out-of-range `t` warns |
 | 4 | `fm finetune --pretrained` and `model.save`: user-only catalogs, unit conversion for existing heads, new heads, `derived_from` / licence propagation | end to end: tiny model → export → fine-tune an existing head and a new head on new data only → save → load → predict |
@@ -108,12 +114,18 @@ Each PR passes review and is squash-merged before the next one starts.
 
 Independent of PRs 1–7, and needed before the release suite is trained:
 
-- **NEMAD and phonix-db normalisation, rebuilt reproducibly.** The tables `NEMAD_magnetic_20260419_norm`,
-  `NEMAD_superconductor_20260425_norm` and `phonix-db-filtered_20260425_norm` cover 7 tasks. Neither their
-  transforms nor the code that made them is in the repository: refitting the usual recipe on the raw
-  values does not reproduce them, and the row counts differ. One script in `data/scripts/` rebuilds them
-  with the shared recipe from PR 1, fitted on the training split, and saves the transforms beside the tables.
-  The user approved this on 2026-11-04;
+- **NEMAD and phonix-db transforms, recorded.** The tables `NEMAD_magnetic_20260419_norm`,
+  `NEMAD_superconductor_20260425_norm` and `phonix-db-filtered_20260425_norm` cover 7 tasks. Their code and
+  transforms are not in the repository, but the transforms were recovered exactly, to within 1.3e-15 on
+  every row:
+  1. keep the first row per composition;
+  2. `log1p` of the value clipped below at 0;
+  3. z-score with the training split's mean and population std;
+  4. for phonix `kp` / `klat` only, clip at +5.
+
+  The tables therefore stay as they are. A script in `data/scripts/` records these transforms with the
+  PR 1 steps, checks them against the tables, and saves them beside the tables. A full rebuild, which the
+  user approved on 2026-11-04 as the fallback, is not needed;
 - a pretraining option that keeps the run seed fixed across members while the task order changes;
 - exclusion of the 31 unresolved Materials Project rows (`docs/licensing/data_sources.md`, open item 1);
 - the post-#99 composition-grouped splits.
