@@ -286,3 +286,32 @@ def test_fm_export_cli(catalog_raw: dict, tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert read_config(tmp_path / "b").license == "apache-2.0"
     assert read_manifest(tmp_path / "b").default == "base"
+
+
+@pytest.mark.parametrize("bad", ["../escaped", "/abs", "a/b", "..", ".hidden", "", "x" * 65])
+def test_member_ids_must_be_one_safe_path_component(catalog_raw: dict, tmp_path: Path, bad: str) -> None:
+    with pytest.raises(BundleError, match="one path component"):
+        _export(catalog_raw, [_checkpoint(catalog_raw, tmp_path / "c.pt", 0)], tmp_path / "b", member_ids=[bad])
+    assert not (tmp_path / "escaped").exists() and not (tmp_path / "b").exists()
+
+
+def test_write_bundle_rejects_no_members(tmp_path: Path) -> None:
+    from foundation_model.hub import write_bundle
+
+    with pytest.raises(BundleError, match="at least one member"):
+        write_bundle(tmp_path / "b", None, [])  # type: ignore[arg-type]
+
+
+def test_interrupted_write_leaves_nothing(catalog_raw: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import foundation_model.hub.bundle as bundle_mod
+
+    def disk_full(*args: object, **kwargs: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(bundle_mod, "save_file", disk_full)
+    out = tmp_path / "b"
+    out.mkdir()  # an empty target directory is allowed and must survive a failed write
+    with pytest.raises(OSError, match="No space left"):
+        _export(catalog_raw, [_checkpoint(catalog_raw, tmp_path / "c.pt", 0)], out)
+    assert out.is_dir() and not any(out.iterdir())
+    assert not [p for p in tmp_path.iterdir() if p.name.endswith(".partial")]

@@ -21,6 +21,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import shutil
+import tempfile
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
@@ -68,6 +71,8 @@ MEMBER_FILE = "member.json"
 _KINDS = ("regression", "classification", "kernel_regression")
 _OUTPUT_SCALES = ("physical", "shape")
 _ELEMENT_FEATURES = Path(__file__).resolve().parents[1] / "utils" / "element_features.csv"
+# A member id names a directory under members/: one portable path component, no separators or dots-only.
+_MEMBER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 class BundleError(ValueError):
@@ -352,6 +357,13 @@ class MemberInfo:
     source: str | None = None
     metrics: Mapping[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.id, str) or not _MEMBER_ID.match(self.id):
+            raise BundleError(
+                f"member id {self.id!r} must be one path component of letters, digits, '.', '_' or '-' "
+                "(starting with a letter or digit, at most 64 characters)."
+            )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -430,23 +442,38 @@ def write_bundle(
     *,
     default: str | None = None,
 ) -> Path:
-    """Write a bundle to an empty or missing directory ``out``; the default member is the first."""
+    """Write a bundle to an empty or missing directory ``out``; the default member is the first.
+
+    The bundle is assembled in a sibling staging directory and moved into place only when complete, so
+    an interrupted write (e.g. a full disk) leaves ``out`` as it was.
+    """
     out = Path(out)
+    if not members:
+        raise BundleError("a bundle needs at least one member.")
     if out.exists() and any(out.iterdir()):
         raise BundleError(f"{out} is not empty; a bundle is written to a fresh directory.")
     manifest = Manifest(members=tuple(info for info, _ in members), default=default or members[0][0].id)
     reference = build_model(config).state_dict()
     for info, state in members:
         _check_state(state, reference, info.id)
-    out.mkdir(parents=True, exist_ok=True)
-    _write_json(out / CONFIG_FILE, config.to_dict())
-    _write_json(out / MANIFEST_FILE, manifest.to_dict())
-    for info, state in members:
-        member_dir = out / MEMBERS_DIR / info.id
-        member_dir.mkdir(parents=True)
-        # Clone so tensors that share storage (or are views) serialise as independent, contiguous blobs.
-        save_file({k: v.detach().cpu().contiguous().clone() for k, v in state.items()}, str(member_dir / WEIGHTS_FILE))
-        _write_json(member_dir / MEMBER_FILE, info.to_dict())
+    out.parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix=f".{out.name}.", suffix=".partial", dir=out.parent))
+    try:
+        _write_json(stage / CONFIG_FILE, config.to_dict())
+        _write_json(stage / MANIFEST_FILE, manifest.to_dict())
+        for info, state in members:
+            member_dir = stage / MEMBERS_DIR / info.id
+            member_dir.mkdir(parents=True)
+            # Clone so tensors that share storage (or are views) serialise as independent, contiguous blobs.
+            tensors = {k: v.detach().cpu().contiguous().clone() for k, v in state.items()}
+            save_file(tensors, str(member_dir / WEIGHTS_FILE))
+            _write_json(member_dir / MEMBER_FILE, info.to_dict())
+        if out.exists():
+            out.rmdir()  # empty, checked above
+        stage.rename(out)
+    except BaseException:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
     return out
 
 

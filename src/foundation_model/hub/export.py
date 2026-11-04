@@ -201,12 +201,15 @@ def _verify(
     n_compositions: int,
 ) -> None:
     names = [h.name for h in config.heads]
-    pool: list[str] = []
+    pool: dict[str, None] = {}  # insertion-ordered set: O(1) membership, stops at n_compositions
     for name in names:
-        pool.extend(c for c in catalog.task_frames([name])[name].index if c not in pool)
+        for comp in catalog.task_frames([name])[name].index:
+            if len(pool) >= n_compositions:
+                break
+            pool.setdefault(comp, None)
         if len(pool) >= n_compositions:
             break
-    desc = catalog.descriptor_fn()(pool[:n_compositions])
+    desc = catalog.descriptor_fn()(list(pool))
     x = torch.tensor(desc.values, dtype=torch.float32)
     for info, checkpoint in members:
         reference = build_model_for_checkpoint(catalog, model_cfg, names)
@@ -279,7 +282,7 @@ def export_runs(
         members.append((info, weights))
 
     out = Path(out)
-    write_bundle(out, config, members)
+    write_bundle(out, config, members)  # staged: a failed write leaves nothing behind
     try:
         _verify(
             out,
