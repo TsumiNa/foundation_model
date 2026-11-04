@@ -1,5 +1,20 @@
 # Recent Updates
 
+## 2026-11-04 (release bundles: `fm export`)
+
+- New `foundation_model.hub` package with the release bundle, schema v1.
+  - `config.json`: descriptor with an element-features hash, architecture, and per-head metadata (resolved
+    widths, plain-data target transform or class names, units, shape-only marker, `t` range and default
+    grid). It also carries the licence and provenance.
+  - `manifest.json` and per-member `model.safetensors`.
+  - `build_model` rebuilds the architecture from `config.json` alone; `load_member` loads with `strict=True`.
+- `fm export --config --run ... --out --license`: one member per run.
+  - Refuses members whose heads or widths differ, heads without a transform (unless `output_scale = "shape"`)
+    and classification heads without class names.
+  - Verifies that every member's outputs are bit-identical to its checkpoint.
+- `[[tasks]]` gains release metadata `unit`, `t_unit`, `output_scale`. `[tasks.scaler]` also accepts JSON
+  transform records. New dependency: `safetensors`.
+
 ## 2026-11-04 (target transforms as data)
 
 - `foundation_model.data.targets`: a target transform is an ordered list of plain-number steps,

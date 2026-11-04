@@ -17,6 +17,7 @@ dependencies = [
     "pymatgen>=2025.5.28",
     "qpsolvers>=4.7.0",
     "quadprog>=0.1.13",
+    "safetensors>=0.4",
     "scikit-learn>=1.7.0",
     "scipy>=1.15.2",
     "seaborn>=0.13.2",

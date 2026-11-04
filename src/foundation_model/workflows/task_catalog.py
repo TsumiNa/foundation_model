@@ -23,6 +23,7 @@ not the default.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -45,6 +46,7 @@ from foundation_model.data.composition_sources import (
     resolve_splits,
 )
 from foundation_model.data.datamodule import CompoundDataModule
+from foundation_model.data.targets import ClassLabels, TargetTransform, from_sklearn
 from foundation_model.models.model_config import (
     ClassificationTaskConfig,
     KernelRegressionTaskConfig,
@@ -98,10 +100,15 @@ def _coerce_task_kind(value: Any) -> TaskKind:
 
 @dataclass(kw_only=True)
 class ScalerSpec:
-    """Points at a fitted scaler used to inverse-transform a task's predictions for reporting."""
+    """Points at a task's fitted target transform (or a classification head's label encoder).
+
+    ``path`` is a joblib pickle of a fitted sklearn object, or a ``*_transforms.json`` record written
+    by ``foundation_model.data.targets`` tooling; ``key`` selects one entry (a dict key in the pickle,
+    a ``tasks`` key in the JSON record). ``None`` = the whole object.
+    """
 
     path: Path
-    key: str | None = None  # key inside a dict-of-scalers pickle; None = the whole object
+    key: str | None = None
 
     def __post_init__(self) -> None:
         self.path = Path(self.path)
@@ -155,9 +162,26 @@ class TaskSpec:
     x_hidden_dims: list[int] | None = None  # kernel_regression value-branch hidden widths
     t_hidden_dims: list[int] | None = None  # kernel_regression coordinate-branch hidden widths
     n_kernel: int | None = None  # kernel_regression kernel-center count
+    # Release metadata (read by ``fm export``; ignored by training). ``unit`` is the physical unit of
+    # the target, ``t_unit`` that of a kernel-regression coordinate. ``output_scale = "shape"`` marks a
+    # head trained on per-row max-abs normalised curves: it has no transform back to physical units.
+    unit: str | None = None
+    t_unit: str | None = None
+    output_scale: str | None = None
 
     def __post_init__(self) -> None:
         self.kind = _coerce_task_kind(self.kind)
+        if self.output_scale is not None:
+            if self.output_scale != "shape":
+                raise ValueError(
+                    f"Task '{self.name}': output_scale must be 'shape' when given, got {self.output_scale!r}."
+                )
+            if self.kind is TaskKind.CLASSIFICATION:
+                raise ValueError(f"Task '{self.name}': output_scale is not valid for classification.")
+            if self.scaler is not None:
+                raise ValueError(f"Task '{self.name}': a shape-only head (output_scale = 'shape') takes no scaler.")
+        if self.t_unit is not None and self.kind is not TaskKind.KERNEL_REGRESSION:
+            raise ValueError(f"Task '{self.name}': 't_unit' is only valid for kernel_regression.")
         if self.kind is TaskKind.KERNEL_REGRESSION and not self.t_column:
             raise ValueError(f"Task '{self.name}': kernel_regression requires 't_column'.")
         if self.kind is not TaskKind.KERNEL_REGRESSION and self.t_column:
@@ -735,13 +759,49 @@ class TaskCatalog:
         if spec.scaler is None:
             return None
         if name not in self._scalers:
-            obj = joblib.load(spec.scaler.path)
-            if spec.scaler.key is not None:
-                if spec.scaler.key not in obj:
-                    raise KeyError(f"Task '{name}': scaler key '{spec.scaler.key}' not found in {spec.scaler.path}.")
-                obj = obj[spec.scaler.key]
+            path, key = spec.scaler.path, spec.scaler.key
+            if path.suffix == ".json":
+                record = json.loads(path.read_text(encoding="utf-8"))
+                entries = record.get("tasks", {})
+                if key is None or key not in entries:
+                    raise KeyError(
+                        f"Task '{name}': transform key {key!r} not found in {path} (have {sorted(entries)})."
+                    )
+                obj: Any = TargetTransform.from_dict(entries[key]["transform"])
+            else:
+                obj = joblib.load(path)
+                if key is not None:
+                    if key not in obj:
+                        raise KeyError(f"Task '{name}': scaler key '{key}' not found in {path}.")
+                    obj = obj[key]
             self._scalers[name] = obj
         return self._scalers[name]
+
+    def target_transform(self, name: str) -> TargetTransform | None:
+        """The task's target transform as plain data, or ``None`` when no scaler is configured.
+
+        Raises :class:`~foundation_model.data.targets.UnsupportedTransformError` when the configured
+        object has no plain-data equivalent, and ``TypeError`` when it is a label encoder.
+        """
+
+        obj = self.scaler(name)
+        if obj is None or isinstance(obj, TargetTransform):
+            return obj
+        converted = from_sklearn(obj)
+        if not isinstance(converted, TargetTransform):
+            raise TypeError(f"Task '{name}': the configured scaler is a label encoder, not a target transform.")
+        return converted
+
+    def class_labels(self, name: str) -> ClassLabels | None:
+        """Class names of a classification task, from its configured ``LabelEncoder``; ``None`` if unset."""
+
+        obj = self.scaler(name)
+        if obj is None:
+            return None
+        converted = from_sklearn(obj)
+        if not isinstance(converted, ClassLabels):
+            raise TypeError(f"Task '{name}': the configured scaler is not a label encoder.")
+        return converted
 
     def inverse_transform(self, name: str, values: np.ndarray) -> np.ndarray:
         """Apply the task's scaler inverse-transform if configured, else identity."""
@@ -749,6 +809,8 @@ class TaskCatalog:
         scaler = self.scaler(name)
         if scaler is None:
             return np.asarray(values)
+        if isinstance(scaler, TargetTransform):
+            return scaler.inverse(values)
         restored = scaler.inverse_transform(np.asarray(values, dtype=float).reshape(-1, 1))
         return np.asarray(restored).reshape(-1)
 
