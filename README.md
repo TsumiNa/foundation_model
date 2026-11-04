@@ -120,10 +120,17 @@ fm predict  --config samples/predict.toml \
     --checkpoint artifacts/finetune/training/final_model.pt
 ```
 
-Every subcommand accepts the common flags `--config` (required), `--output-dir`,
-`--set section.key=value` (repeatable; the value is parsed with TOML semantics, so quote strings:
-`--set 'data.composition_column="composition"'`), `--seed`, `--accelerator`, and `--sample` (cap
-rows for a fast smoke run). `*_smoke.toml` companions under [`samples/`](samples/) run the whole
+The four catalog-based subcommands (`pretrain`, `finetune`, `inverse`, `predict`) accept the common
+flags `--config`, `--output-dir`, `--set section.key=value`, `--seed`, `--accelerator` and `--sample`:
+
+- `--config` is required, except for `predict --pretrained`;
+- `--set` is repeatable and parsed with TOML semantics, so quote strings:
+  `--set 'data.composition_column="composition"'`;
+- `--sample` caps rows for a fast smoke run.
+
+`predict --pretrained` reads no config or data, so it rejects `--set`, `--seed`, `--accelerator` and
+`--sample`. `export` and `publish` have their own options (`fm export --help`, `fm publish --help`;
+[docs/configuration.md](docs/configuration.md#cli-flags)). `*_smoke.toml` companions under [`samples/`](samples/) run the whole
 chain end-to-end on CPU in minutes.
 
 ### Configuration

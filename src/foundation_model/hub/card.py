@@ -118,7 +118,7 @@ def _heads_table(config: BundleConfig) -> list[str]:
             assert h.classes is not None
             output, unit = f"class: {' / '.join(h.classes.classes)}", "—"
         elif h.output_scale == "shape":
-            output, unit = "curve shape (each curve divided by its max abs value)", "dimensionless"
+            output, unit = "curve shape (trained on curves each divided by its max abs value)", "dimensionless"
         else:
             output = "curve" if h.kind == "kernel_regression" else "value"
             unit = h.unit or "—"
@@ -162,7 +162,8 @@ def render_card(
         "",
         *_heads_table(config),
         "",
-        "Outputs are in the listed units. Shape heads predict a normalised curve shape, not an absolute value.",
+        "Outputs are in the listed units. Shape heads predict on the per-curve max-abs scale they were trained on: "
+        "a shape, not an absolute value.",
         "",
         "## Use",
         "",

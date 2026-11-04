@@ -35,8 +35,9 @@ model.predict_curve(["Bi2Te3", "PbTe"], "seebeck", t=[[300, 350], [400, 450, 500
 ```
 
 - **Units.** Regression and curve outputs are in physical units. Classification gives class names.
-  Shape-only heads (`units()[name] == "shape"`, e.g. the DOS) return each curve divided by its maximum
-  absolute value. They predict a shape, not an absolute value.
+  Shape-only heads (`units()[name] == "shape"`, e.g. the DOS) were trained on curves each divided by its
+  own maximum absolute value. They predict on that dimensionless scale: a shape, not an absolute value.
+  The prediction itself is not renormalised, so its peak is near but not exactly 1.
 - **Extrapolation.** A curve head knows the `t` range it was trained on (`model.config.head(name).t_range`).
   Points outside that range raise `ExtrapolationWarning` but are still predicted.
 - **Inputs.** Compositions are formula strings (`"Fe2O3"`, `"Fe0.5 Ni0.5"`). Anything the KMD descriptor
@@ -59,7 +60,7 @@ tasks. They are interchangeable, so the first *k* are a random sample:
 ```python
 from foundation_model.hub import load_suite
 
-suite = load_suite("<owner>/<repo>@v1.0.0")   # downloads every member once; loads lazily
+suite = load_suite("<owner>/<repo>@v1.0.0")   # metadata only; each member downloads + loads on first access
 for member_id in suite.member_ids[:5]:          # only these five are loaded
     print(member_id, suite[member_id].predict(["Fe2O3"], ["band_gap"])["band_gap"].item())
 ```
@@ -114,7 +115,9 @@ fm finetune --config my_finetune.toml
 - **Output.** `runs/my_finetune/bundle` is a new bundle. Load it with `load_pretrained` like any other.
   It keeps the source licence and records where it came from (`provenance.derived_from`).
 - **Not available.** Replaying the pretraining data (rehearsal) is impossible: the data are not
-  released. With `freeze_encoder = true` the original heads are unaffected; with `false` they may drift.
+  released. With `freeze_encoder = true` the encoder and every head you do **not** list in `tasks` keep their
+  predictions; the heads you list are trained (that is the point). With `false` the unlisted heads may
+  drift too, since they share the encoder.
 
 From Python, after loading: `model.save("out/copy")` writes a one-member derived bundle.
 
