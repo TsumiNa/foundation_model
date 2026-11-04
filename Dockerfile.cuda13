@@ -27,10 +27,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && apt-get purge --yes --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Hatchling needs README.md to populate project metadata. Bind the README and
-# source tree only while building/installing the wheel so the raw repository
-# files are not retained in an image layer.
+# Hatchling needs README.md to populate project metadata, and LICENSE / NOTICE
+# for the wheel's license files (NOTICE carries the bundled XenonPy BSD-3-Clause
+# notice). Bind them and the source tree only while building/installing the
+# wheel so the raw repository files are not retained in an image layer.
 RUN --mount=type=bind,source=README.md,target=/opt/foundation-model/README.md \
+    --mount=type=bind,source=LICENSE,target=/opt/foundation-model/LICENSE \
+    --mount=type=bind,source=NOTICE,target=/opt/foundation-model/NOTICE \
     --mount=type=bind,source=src,target=/opt/foundation-model/src \
     --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
@@ -50,10 +53,12 @@ LABEL org.opencontainers.image.title="${IMAGE_TITLE}" \
 
 WORKDIR /workspace
 
-# Fail the build if uv selected the wrong platform or CUDA wheel, or if the
-# installed CLI cannot start.
+# Fail the build if uv selected the wrong platform or CUDA wheel, if the
+# installed package lost its license files, or if the installed CLI cannot start.
 RUN EXPECTED_ARCH="${EXPECTED_ARCH}" python -c \
     "import os, platform, torch; assert platform.machine() == os.environ['EXPECTED_ARCH']; assert torch.version.cuda == '13.0', torch.version.cuda" \
+    && python -c \
+    "from importlib.metadata import distribution as d; f = {p.name for p in d('foundation-model').files or ()}; assert {'LICENSE', 'NOTICE'} <= f, sorted(f)[:20]" \
     && fm --help >/dev/null
 
 ENTRYPOINT ["fm"]
