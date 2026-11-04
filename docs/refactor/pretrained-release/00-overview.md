@@ -10,6 +10,16 @@ Licensing is decided in `docs/licensing/`:
 - the pretraining data is not released, so post-training that needs it (rehearsal / replay) is out of scope;
 - models trained from scratch with the code are not covered by the weights licence.
 
+Execution status (2026-11-04):
+
+- Merged: PR 0 (#102), the run-seed option (#103), PR 1 (#104), PR 2 (#105), PR 3 (#106), PR 4 (#107),
+  PR 5 (#108) and PR 6 (#109). PR 7, the 1.0.0 release, closes the sequence.
+- The NEMAD / phonix-db transforms are recovered and recorded (#104).
+- Still open, outside the code:
+  - train the release suite: fixed run seed, the post-#99 splits, and the 31 unresolved Materials Project
+    rows excluded;
+  - the owner's Hugging Face account, token and gating text, before the first `fm publish`.
+
 ## Problem
 
 A run writes `training/final_model.pt`, which holds a `state_dict` plus `task_sequence`, and

@@ -1,5 +1,20 @@
 # Recent Updates
 
+## 2026-11-04 (1.0.0 — store, publish and reuse pretrained models)
+
+foundation-model 1.0 gives models a stable home outside the training repository. The public interface is
+bundle schema v1, `foundation_model.hub` and the `--pretrained` CLI paths. It follows semantic versioning
+from here (`docs/pretrained_models.md`). The entries below, from target transforms to `fm publish`, make
+up the release; the design is in `docs/refactor/pretrained-release/00-overview.md`.
+
+- Store: `fm export`.
+- Publish: `fm publish`, with model cards and gating.
+- Reuse:
+  - `load_pretrained` / `fm predict --pretrained`, in physical units;
+  - `fm finetune --pretrained`, with derived bundles that inherit the licence;
+  - `fm inverse --pretrained`, with physical-unit targets.
+- Legacy checkpoints and catalog-based commands keep working unchanged.
+
 ## 2026-11-04 (publish: `fm publish`, model cards)
 
 - `fm publish BUNDLE --repo owner/name --tag v1.0.0 --visibility private|gated|public`. Every member is

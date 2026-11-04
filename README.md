@@ -3,6 +3,24 @@
 A multi-task learning model for predicting material properties from composition descriptors, with
 gradient-based inverse design on top of the trained checkpoint.
 
+**Using a released model** needs no training data. Use it to predict in physical units, fine-tune on
+your own data, or run inverse design:
+
+```bash
+pip install 'foundation-model[hub]'
+fm predict --pretrained <owner>/<repo>@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
+```
+
+```python
+from foundation_model.hub import load_pretrained
+model = load_pretrained("<owner>/<repo>@v1.0.0")
+model.predict(["Fe2O3", "NaCl"])
+```
+
+See [docs/pretrained_models.md](docs/pretrained_models.md). It covers fine-tuning (`fm finetune
+--pretrained`), inverse design (`fm inverse --pretrained`), the licence of the weights and the 1.0
+stability promise.
+
 ## Model Architecture
 
 The `FlexibleMultiTaskModel` is a modular multi-task regressor + classifier built around a shared
@@ -79,8 +97,11 @@ RIKYU-specific Apptainer details are in [docs/rikyu_container.md](docs/rikyu_con
 
 ## Usage
 
-Everything runs through a single console command, **`fm`**, with four subcommands. Each reads a
-TOML config and writes `run_provenance.json` + `run.log` into its output directory.
+Everything runs through a single console command, **`fm`**. Four subcommands train and use models;
+each reads a TOML config and writes `run_provenance.json` + `run.log` into its output directory. Two more
+turn runs into release bundles and publish them (`fm export`, `fm publish`; see
+[docs/pretrained_models.md](docs/pretrained_models.md)). `fm predict`, `fm finetune` and `fm inverse`
+also take `--pretrained SOURCE` to work from a released bundle instead of a checkpoint and catalog.
 
 ```bash
 # 1. Replay-based continual pre-training (interval replay, optional n_runs sweep).
