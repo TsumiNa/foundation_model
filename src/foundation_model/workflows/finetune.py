@@ -316,6 +316,12 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
             logger.warning("learnable_loss_balancer is ignored when fine-tuning a released bundle.")
         root, src = resolve(cfg.pretrained)
         model, bundle_config, member = load_member(root, src.member, training=cfg.training)
+        desc = cfg.catalog.descriptor
+        if desc.kind != "kmd" or desc.n_grids != bundle_config.descriptor.n_grids:
+            raise ValueError(
+                f'[descriptor] must match the bundle: kind = "kmd", n_grids = {bundle_config.descriptor.n_grids} '
+                f"(the config has kind = {desc.kind!r}, n_grids = {desc.n_grids})."
+            )
         catalog = TaskCatalog(cfg.catalog, target_inputs=_target_inputs(cfg, bundle_config))
         section = bundle_config.model
         existing = [h.name for h in bundle_config.heads]

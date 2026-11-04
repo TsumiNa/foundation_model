@@ -114,6 +114,10 @@ def test_pretrained_config_rejections(bundle: Path, user_data: Path, tmp_path: P
     raw["tasks"][0]["num_classes"] = 2
     with pytest.raises(ValueError, match="bundle's head is regression"):
         finetune_run(build_finetune_config(raw))
+    raw = _raw(user_data, bundle, tmp_path / "d", ["band_gap"])
+    raw["descriptor"]["n_grids"] = 6
+    with pytest.raises(ValueError, match=r"\[descriptor\] must match the bundle.*n_grids = 4"):
+        finetune_run(build_finetune_config(raw))
     raw = _raw(user_data, bundle, tmp_path / "z", ["hardness"], add_new_tasks=False)
     with pytest.raises(ValueError, match="not in the bundle and add_new_tasks = false"):
         finetune_run(build_finetune_config(raw))
