@@ -409,7 +409,8 @@ def write_scenario_md(sc_dir: Path, scenario: ScenarioConfig, summary: list[dict
 
 
 def write_root_summary(root: Path, all_summary: Mapping[str, Any], cfg: InverseConfig) -> None:
-    lines = ["# Inverse design — all scenarios", "", f"Checkpoint: `{cfg.checkpoint}`", ""]
+    source = f"Released bundle: `{cfg.pretrained}`" if cfg.pretrained is not None else f"Checkpoint: `{cfg.checkpoint}`"
+    lines = ["# Inverse design — all scenarios", "", source, ""]
     for name, summary in all_summary.items():
         best = min(summary, key=lambda row: row["objective_mean"]) if summary else None
         best_str = f"best path by objective: **{best['path']}** ({best['objective_mean']})" if best else "(no paths)"

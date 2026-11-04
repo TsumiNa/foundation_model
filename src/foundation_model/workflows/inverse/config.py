@@ -68,6 +68,7 @@ class SeedStrategy(str, Enum):
     WEIGHTED_RANDOM = "weighted_random"  # sample; selection probability rises with a task's true label
     RANDOM = "random"
     EXPLICIT = "explicit"
+    ELEMENTS = "elements"  # random compositions over a given element set; needs no data
 
 
 @dataclass(kw_only=True)
@@ -87,6 +88,8 @@ class SeedConfig:
     explicit: list[str] = field(default_factory=list)
     explicit_append: list[str] = field(default_factory=list)
     dedup_by_element_system: bool = True
+    # elements only: draw n compositions with Dirichlet(1) atomic fractions over these elements.
+    elements: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not isinstance(self.strategy, SeedStrategy):
@@ -97,6 +100,11 @@ class SeedConfig:
             raise ValueError(f"seeds.split must be train/val/test/all, got {self.split!r}.")
         if self.strategy is SeedStrategy.EXPLICIT and not self.explicit:
             raise ValueError("seeds.strategy='explicit' requires a non-empty seeds.explicit list.")
+        if self.strategy is SeedStrategy.ELEMENTS:
+            if len(self.elements) < 2 or len(set(self.elements)) != len(self.elements):
+                raise ValueError("seeds.strategy='elements' requires seeds.elements: at least two distinct elements.")
+        elif self.elements:
+            raise ValueError("seeds.elements only applies to strategy='elements'.")
         if self.strategy is SeedStrategy.WEIGHTED_RANDOM and not self.weight_task:
             raise ValueError("seeds.strategy='weighted_random' requires seeds.weight_task.")
         weight_keys_set = (
@@ -381,7 +389,7 @@ def _default_paths() -> list[PathConfig]:
 class InverseConfig:
     catalog: TaskCatalogConfig
     model: ModelSectionConfig
-    checkpoint: Path
+    checkpoint: Path | None
     seeds: SeedConfig
     scenarios: list[ScenarioConfig]
     paths: list[PathConfig]
@@ -393,9 +401,21 @@ class InverseConfig:
     animation_formats: list[str] = field(default_factory=lambda: ["gif"])
     seed: int = 2025
     accelerator: str = "auto"
+    # Released bundle to design from instead of a checkpoint. Targets are then in physical units and
+    # class names, converted at config build; ``physical_targets`` keeps them as written for reports.
+    pretrained: str | None = None
+    physical_targets: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.checkpoint = Path(self.checkpoint)
+        if (self.checkpoint is None) == (self.pretrained is None):
+            raise ValueError("give exactly one of a checkpoint (--checkpoint) or a released bundle (--pretrained).")
+        if self.checkpoint is not None:
+            self.checkpoint = Path(self.checkpoint)
+        if self.pretrained is not None and self.seeds.strategy not in (SeedStrategy.EXPLICIT, SeedStrategy.ELEMENTS):
+            raise ValueError(
+                "a released bundle carries no data to draw seeds from: use seeds.strategy = 'explicit' "
+                f"(a composition list) or 'elements' (random compositions over an element set), not {SeedStrategy(self.seeds.strategy).value!r}."
+            )
         self.output_dir = Path(self.output_dir)
         if not self.scenarios:
             raise ValueError("at least one [[inverse.scenarios]] is required.")
@@ -456,21 +476,87 @@ def _build_path(raw: Mapping[str, Any]) -> PathConfig:
     return PathConfig(**data)
 
 
+def _bundle_catalog(bundle_config: Any, source: str) -> TaskCatalogConfig:
+    """A data-free catalog mirroring a bundle's heads: kinds, columns and KMD settings only.
+
+    Its dataset path is a placeholder that is never read: bundle seed strategies need no data.
+    """
+    tasks = []
+    for head in bundle_config.heads:
+        task: dict[str, Any] = {"name": head.name, "kind": head.kind, "dataset": "__bundle__", "column": head.name}
+        if head.kind == "kernel_regression":
+            task["t_column"] = head.t_name or "t"
+        if head.kind == "classification":
+            task["num_classes"] = head.num_classes
+        tasks.append(task)
+    return build_task_catalog_config(
+        {
+            "descriptor": {"kind": "kmd", "n_grids": bundle_config.descriptor.n_grids},
+            # Never read: bundle runs only use explicit / element seeds. A missing file under the bundle
+            # keeps the dataset config valid and makes any accidental read fail loudly.
+            "datasets": {"__bundle__": {"path": str(Path(source) / "__no_training_data__.parquet")}},
+            "tasks": tasks,
+        }
+    )
+
+
+def _to_training_scale(raw: Mapping[str, Any], head: Any, where: str) -> dict[str, Any]:
+    """One target written in physical units / class names → the head's training scale / indices."""
+    data = dict(raw)
+    if "classes" in data and head.kind == "classification":
+        names = [c for c in data["classes"] if isinstance(c, str)]
+        if names:
+            try:
+                data["classes"] = [
+                    head.classes.indices([c])[0] if isinstance(c, str) else int(c) for c in data["classes"]
+                ]
+            except KeyError as exc:
+                raise ValueError(f"{where}: {exc.args[0]}") from None
+    if head.transform is None:  # classification or a shape-only head: already on the model's scale
+        return data
+    if data.get("value") is not None:
+        data["value"] = float(head.transform.transform([float(data["value"])])[0])
+    if data.get("points") is not None:
+        pts = [list(p) for p in data["points"]]
+        ys = head.transform.transform([float(p[1]) for p in pts if len(p) == 2])
+        if len(ys) == len(pts):
+            data["points"] = [[float(p[0]), float(y)] for p, y in zip(pts, ys)]
+    return data  # direction targets: every transform step is monotone increasing, so high/low is unchanged
+
+
 def build_inverse_config(
-    raw: Mapping[str, Any], *, output_dir: str | Path | None = None, checkpoint: str | Path | None = None
+    raw: Mapping[str, Any],
+    *,
+    output_dir: str | Path | None = None,
+    checkpoint: str | Path | None = None,
+    pretrained: str | None = None,
 ) -> InverseConfig:
     """Normalize a parsed-TOML tree into an :class:`InverseConfig`."""
 
     reject_unknown("<root>", raw, _INVERSE_ROOT_KEYS)
-    catalog = build_task_catalog_config({k: raw[k] for k in _CATALOG_KEYS if k in raw})
-    model = build_model_section(raw.get("model", {}))
-
     inv_raw = dict(raw.get("inverse", {}))
+    resolved_pretrained = pretrained if pretrained is not None else inv_raw.get("pretrained")
+    bundle_config = None
+    if resolved_pretrained is not None:
+        given = sorted(k for k in (*_CATALOG_KEYS, "model") if k in raw)
+        if given:
+            raise ValueError(f"{given} do not apply when designing from a released bundle: the bundle defines them.")
+        from foundation_model.hub.bundle import read_config
+        from foundation_model.hub.pretrained import resolve
+
+        bundle_config = read_config(resolve(str(resolved_pretrained))[0])
+        catalog = _bundle_catalog(bundle_config, str(resolved_pretrained))
+        model = bundle_config.model
+    else:
+        catalog = build_task_catalog_config({k: raw[k] for k in _CATALOG_KEYS if k in raw})
+        model = build_model_section(raw.get("model", {}))
+
     reject_unknown(
         "inverse",
         inv_raw,
         {
             "checkpoint",
+            "pretrained",
             "steps",
             "lr",
             "record_trajectory",
@@ -484,21 +570,39 @@ def build_inverse_config(
         },
     )
     resolved_checkpoint = checkpoint if checkpoint is not None else inv_raw.get("checkpoint")
-    if resolved_checkpoint is None:
-        raise ValueError("checkpoint must be given via --checkpoint or [inverse].checkpoint.")
+    if resolved_checkpoint is None and resolved_pretrained is None:
+        raise ValueError("checkpoint must be given via --checkpoint or [inverse].checkpoint (or --pretrained).")
+    if resolved_checkpoint is not None and resolved_pretrained is not None:
+        raise ValueError("give either a checkpoint or a released bundle (--pretrained), not both.")
     resolved_output = output_dir if output_dir is not None else raw.get("output", {}).get("dir")
     if resolved_output is None:
         raise ValueError("output directory must be given via --output-dir or [output].dir.")
 
     seeds = _build_seed_config(inv_raw.get("seeds", {}))
     task_specs = {t.name: t for t in catalog.tasks}
-    scenarios = [_build_scenario(s, task_specs) for s in inv_raw.get("scenarios", [])]
+    scenarios_raw = [dict(s) for s in inv_raw.get("scenarios", [])]
+    physical: dict[str, list[dict[str, Any]]] = {}
+    if bundle_config is not None:
+        heads = {h.name: h for h in bundle_config.heads}
+        for s in scenarios_raw:
+            name = str(s.get("name", "?"))
+            targets = [dict(t) for t in s.get("targets", [])]
+            physical[name] = targets
+            s["targets"] = [
+                _to_training_scale(t, heads[t["task"]], f"inverse.scenarios.{name}.targets[{i}]")
+                if t.get("task") in heads
+                else t
+                for i, t in enumerate(targets)
+            ]
+    scenarios = [_build_scenario(s, task_specs) for s in scenarios_raw]
     paths = [_build_path(p) for p in inv_raw.get("paths", [])]
 
     return InverseConfig(
         catalog=catalog,
         model=model,
-        checkpoint=Path(resolved_checkpoint),
+        checkpoint=Path(resolved_checkpoint) if resolved_checkpoint is not None else None,
+        pretrained=str(resolved_pretrained) if resolved_pretrained is not None else None,
+        physical_targets=physical,
         seeds=seeds,
         scenarios=scenarios,
         paths=paths,

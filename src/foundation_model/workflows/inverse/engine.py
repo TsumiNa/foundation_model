@@ -12,7 +12,7 @@ those four.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import matplotlib
@@ -28,7 +28,7 @@ from loguru import logger  # noqa: E402
 from .._engine import descriptor_tensor, resolve_device  # noqa: E402
 from ..recording import RunRecorder  # noqa: E402
 from ..task_catalog import TaskCatalog  # noqa: E402
-from .config import InverseConfig, InverseMethod, ScenarioConfig, target_label, TargetSpec  # noqa: E402
+from .config import InverseConfig, InverseMethod, ScenarioConfig, TargetKind, target_label, TargetSpec  # noqa: E402
 from .paths import emit_trajectory, run_composition_path, run_latent_path  # noqa: E402
 from .report import (  # noqa: E402
     plot_comparison,
@@ -52,7 +52,16 @@ def run(
     seed_everything(cfg.seed, workers=True)
 
     try:
-        model, ckpt_tasks = rebuild_model(cfg, catalog)
+        if cfg.pretrained is not None:
+            from foundation_model.hub.bundle import load_member
+            from foundation_model.hub.pretrained import resolve
+
+            root, src = resolve(cfg.pretrained)
+            model, bundle_config, _ = load_member(root, src.member)
+            transforms = {h.name: h.transform for h in bundle_config.heads if h.transform is not None}
+        else:
+            model, _ = rebuild_model(cfg, catalog)
+            transforms = {}
         _validate_heads(model, cfg)
         device = resolve_device(cfg.accelerator)
         model.to(device)
@@ -74,7 +83,7 @@ def run(
         all_summary: dict[str, Any] = {}
         for scenario in scenarios:
             logger.info(f"=== scenario '{scenario.name}' ({len(cfg.paths)} paths) ===")
-            summary = _run_scenario(cfg, catalog, model, scenario, seeds, x_seed, rec)
+            summary = _run_scenario(cfg, catalog, model, scenario, seeds, x_seed, rec, transforms=transforms)
             all_summary[scenario.name] = summary
 
         (rec.paths.root / "inverse_design.json").write_text(json.dumps(all_summary, indent=2), encoding="utf-8")
@@ -103,7 +112,10 @@ def _run_scenario(
     seeds: list[str],
     x_seed: torch.Tensor,
     rec: RunRecorder,
+    *,
+    transforms: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    """``transforms`` (bundle runs) map each regression channel back to physical units in the reports."""
     sc_dir = rec.paths.root / scenario.name
     sc_dir.mkdir(parents=True, exist_ok=True)
     seed_channels, seed_objective = evaluate_descriptors(model, x_seed, scenario.targets)
@@ -135,6 +147,15 @@ def _run_scenario(
             )
         results.append(r)
 
+    transforms = dict(transforms or {})
+    for r in results:  # physical-unit copies of the regression channels (released bundles only)
+        physical = {
+            s.task: transforms[s.task].inverse(np.asarray(r["channels_after_decode"][s.task], dtype=float)).tolist()
+            for s in scenario.targets
+            if s.task in transforms and s.kind in (TargetKind.VALUE, TargetKind.DIRECTION)
+        }
+        if physical:
+            r["channels_after_decode_physical"] = physical
     summary = _summarise(results, scenario.targets)
     target_dump = [t.dump() for t in scenario.targets]
 
@@ -160,7 +181,13 @@ def _run_scenario(
             {
                 "name": scenario.name,
                 "targets": target_dump,
-                "checkpoint": str(cfg.checkpoint),
+                "checkpoint": str(cfg.checkpoint) if cfg.checkpoint is not None else None,
+                "pretrained": cfg.pretrained,
+                **(
+                    {"targets_physical": cfg.physical_targets[scenario.name]}
+                    if scenario.name in cfg.physical_targets
+                    else {}
+                ),
             },
             indent=2,
         ),
@@ -222,5 +249,9 @@ def _summarise(results: list[dict[str, Any]], specs: Sequence[TargetSpec]) -> li
             vals = np.asarray(r["channels_after_decode"][s.task], dtype=float)
             row[f"{s.task}_after_mean"] = round(float(vals.mean()), 3)
             row[f"{s.task}_after_std"] = round(float(vals.std()), 3)
+            phys = r.get("channels_after_decode_physical", {}).get(s.task)
+            if phys is not None:
+                row[f"{s.task}_after_mean_physical"] = float(np.mean(phys))
+                row[f"{s.task}_after_std_physical"] = float(np.std(phys))
         rows.append(row)
     return rows

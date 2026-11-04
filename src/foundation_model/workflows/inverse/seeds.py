@@ -67,6 +67,8 @@ def element_system(composition: str) -> frozenset[str]:
 
 
 def rebuild_model(cfg: InverseConfig, catalog: TaskCatalog) -> tuple[Any, list[str]]:
+    if cfg.checkpoint is None:
+        raise ValueError("rebuild_model needs a checkpoint; bundle runs load the model from the bundle.")
     state = load_checkpoint_state(cfg.checkpoint)
     ckpt_tasks = checkpoint_task_order(state)
     catalog_tasks = {t.name for t in cfg.catalog.tasks}
@@ -78,6 +80,20 @@ def rebuild_model(cfg: InverseConfig, catalog: TaskCatalog) -> tuple[Any, list[s
     model.load_state_dict(state["model"], strict=False)
     model.eval()
     return model, ckpt_tasks
+
+
+def random_compositions(elements: Sequence[str], n: int, *, seed: int) -> list[str]:
+    """``n`` compositions over ``elements`` with Dirichlet(1) atomic fractions (4 decimals, all > 0)."""
+    rng = np.random.default_rng(seed)
+    out: list[str] = []
+    while len(out) < n:
+        fractions = rng.dirichlet(np.ones(len(elements)))
+        if (np.round(fractions, 4) <= 0).any():
+            continue  # an element would vanish on formatting; redraw
+        comp = " ".join(f"{el}{x:.4f}" for el, x in zip(elements, fractions))
+        if comp not in out:
+            out.append(comp)
+    return out
 
 
 def _dedup_by_system(candidates: Sequence[str], n: int, *, enabled: bool) -> list[str]:
@@ -139,6 +155,10 @@ def select_seeds(
     if seed_cfg.strategy is SeedStrategy.EXPLICIT:
         pool = [c for c in seed_cfg.explicit if _has_descriptor(c)]
         return _merge(_dedup_by_system(pool, n_strategy, enabled=seed_cfg.dedup_by_element_system))
+
+    if seed_cfg.strategy is SeedStrategy.ELEMENTS:
+        # Every draw shares one element system, so system dedup does not apply here.
+        return random_compositions(seed_cfg.elements, n_strategy, seed=seed) + appended
 
     if seed_cfg.strategy is SeedStrategy.WEIGHTED_RANDOM:
         # Pool = the weight task's rows in the chosen split with a valid label; draw a full

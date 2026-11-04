@@ -1,5 +1,15 @@
 # Recent Updates
 
+## 2026-11-04 (reuse: `fm inverse --pretrained`)
+
+- `fm inverse --pretrained SOURCE` (or `[inverse].pretrained`) designs from a released bundle with no
+  catalog or data.
+  - Targets are written in physical units and class names, and converted with the bundle's transforms;
+    shape-only heads stay in shape units.
+  - Reports add physical-unit regression channels, and `scenario.json` keeps the targets as written.
+  - Given the same seeds and targets, the result matches the catalog path's.
+- New seed strategy `elements`: random compositions over an element set, available with or without a bundle.
+
 ## 2026-11-04 (reuse: `fm finetune --pretrained`, derived bundles)
 
 - `fm finetune --pretrained SOURCE` (or `[finetune].pretrained`) fine-tunes a released bundle. The TOML
