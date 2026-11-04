@@ -53,7 +53,7 @@ Current state, to fix whichever licence is chosen:
 
 - `pyproject.toml` declares `license = "MIT"` with `license-files = ["LICENSE"]`, but the repository has no
   `LICENSE` file.
-- `data/scripts/process_agis_data.py` carries `SPDX-License-Identifier: Apache-2.0`, which disagrees with the
-  MIT declaration.
+- 84 tracked Python files, 77 of them under `src/`, carry `SPDX-License-Identifier: Apache-2.0`. That disagrees
+  with the MIT declaration, so the package currently states two licences.
 - All commits are by the repository owner (two git identities). A relicence needs no other contributor's
   consent.
