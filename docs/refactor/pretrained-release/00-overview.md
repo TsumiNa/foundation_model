@@ -33,8 +33,10 @@ architecture can load silently.
 | Code location | new subpackage `foundation_model.hub`; model code stays in this package and Hugging Face holds data only |
 | Weights format | `safetensors` (new required dependency); no pickle anywhere on the load path |
 | Hub access | `huggingface_hub`, optional extra `foundation-model[hub]`; the token is read from `HF_TOKEN` / `hf auth login` |
-| Units at the interface | users give and receive **physical units**. The bundle's target transforms convert to and from the training scale. This applies to prediction outputs, fine-tuning data for existing heads, and inverse-design targets |
-| Kernel-regression `t` | physical units, never transformed; only `y` has a target transform. The model accepts any `t` values and lengths per row; the constraint is that a row's `t` and `y` have equal length. The bundle records the training `t` range and mesh, which are the default prediction grid. A `t` outside the training range warns (extrapolation) and does not fail |
+| Units at the interface | users give and receive **physical units**. The bundle's target transforms convert to and from the training scale. This applies to prediction outputs, fine-tuning data for existing heads, and inverse-design targets. The exception is shape-only heads (below) |
+| Shape-only heads | a head whose training target was normalised per row has no shared transform back to physical units. It is marked `output_scale = "shape"`, and its outputs, fine-tuning data and inverse targets are all in that per-row normalised form. A helper applies the same normalisation to user data. `dos_density` is one: `DOS_smoothing.ipynb` resamples E − E_F onto `linspace(-6, 10, 300)` eV and divides each curve by its own max abs value (`InterpSmooth(normalize=True)`) |
+| Kernel-regression `t` | physical units, never transformed; only `y` has a target transform. The model accepts any `t` values and lengths per row; the constraint is that a row's `t` and `y` have equal length. Per task the bundle records two things. The **observed range** is the union of `t` over training rows. The **default grid** is used by `predict_curve(t=None)`: it is the shared grid when every training row uses the same one (DOS), else `n` points evenly spaced over the observed range, where `n` is the most common row length. Transport curves are resampled to 300 points between each curve's own rounded temperature bounds (`process_ac_qe_te_data.ipynb`), so their grids differ per row. A `t` outside the observed range warns (extrapolation) and does not fail |
+| Licence of a bundle | a per-bundle `license` field, set at export (`fm export --license`); there is no default. A bundle derived from another inherits the source licence, and a ShareAlike source cannot be relicensed. The model card shows the bundle's own licence. CC BY-NC-SA 4.0 therefore applies to the released weights and their derivatives only, never to a model a user trains from scratch and exports |
 | Suite | one release = one repository holding N members (up to 100) that differ only in pretraining task order. Shared `config.json`; per-member weights. Members are exchangeable; the default member is `m000` |
 | Composition hashes | not published |
 | Legacy | `.pt` checkpoints and the catalog-based CLI paths keep working unchanged; the bundle is an additional path |
@@ -61,8 +63,8 @@ A single exported model is a bundle with one member, so there is only one format
 | `descriptor` | `kind = "kmd"`, `n_grids`, the element list, and the sha256 of `element_features.csv`. The loader checks the hash so the input is identical to training. Precomputed descriptors cannot be exported |
 | `model` | the full `[model]` section: encoder type and widths, Transformer settings, autoencoder, head and kernel-regression widths, `n_kernel` |
 | `heads` | per task: name, kind, display name, unit, per-task width overrides. Classification adds `num_classes` and class names. Kernel regression adds `t` name and unit, `t_min` / `t_max`, the training mesh and `n_kernel`. Kernel centres and widths are parameters inside the weights |
-| `targets` | per regression / kernel-regression task, the target transform as plain numbers: StandardScaler `mean`, `scale`; PowerTransformer `method`, `lambdas`, `standardize` and its inner scaler |
-| `provenance` | pretraining and consolidation configs, git commit, data snapshot names, split seed, licence, and `derived_from` (repository, revision, member) for fine-tuned bundles |
+| `targets` | per regression / kernel-regression task, the target transform as an ordered list of plain-number steps. Supported steps: `standard_scaler` (`with_mean`, `with_std`, `mean`, `scale`); `power_transformer` (`yeo-johnson` / `box-cox`, `lambdas`, `standardize` and its inner mean / scale); `arcsinh`; `identity`. Classification heads carry `LabelEncoder` classes. Export rejects any other step by name rather than approximating it. Shape-only heads have no entry |
+| `license`, `provenance` | the bundle licence (see Decisions). Provenance holds the pretraining and consolidation configs, git commit, data snapshot names, split seed, and `derived_from` (repository, revision, member, licence) for derived bundles |
 
 ## Public interface (1.0)
 
@@ -83,7 +85,7 @@ CLI, where `SOURCE` is a local bundle path or `repo[@revision][#member]`:
 |---|---|
 | `fm export --config <toml> --run <dir> [--run <dir> ...] --out <bundle>` | new. One or more runs become one bundle; with several runs, each run is one member |
 | `fm predict --pretrained SOURCE` | the model and units come from the bundle; the TOML lists only compositions and tasks |
-| `fm finetune --pretrained SOURCE` | the TOML catalog lists only the user's tasks. Data for an existing head is given in physical units and transformed with the bundle's transform; a new head fits its own. The run writes a bundle with `derived_from` and the CC BY-NC-SA 4.0 licence |
+| `fm finetune --pretrained SOURCE` | the TOML catalog lists only the user's tasks. Data for an existing head is given in physical units and transformed with the bundle's transform. A new head fits its own transform on the training split (default recipe `standard_scaler → power_transformer(yeo-johnson)`), and the transform is stored in the output bundle. The run writes a bundle with `derived_from` and the **source bundle's** licence |
 | `fm inverse --pretrained SOURCE` | targets in physical units; classes by name; seeds from a user composition list or an element-system generator, since the bundle carries no data |
 | `fm publish <bundle> --repo <id> --tag <v>` | new. Writes the model card and pushes to a private or gated repository |
 
@@ -96,8 +98,8 @@ Each PR passes review and is squash-merged before the next one starts.
 | PR | Scope | Acceptance |
 |---|---|---|
 | 0 | this design | matches the plan the user approved on 2026-11-04; review findings addressed |
-| 1 | `hub/transforms.py`: target transforms as data, converted from the existing sklearn `Pipeline[StandardScaler, PowerTransformer]` and `LabelEncoder` objects | forward and inverse transforms match sklearn to within 1e-12 on every scaler in the current preprocessing files; round-trip through JSON |
-| 2 | `hub/bundle.py` schema + `export_run` + `fm export`; records the `t` range and mesh per kernel-regression task; refuses members whose architecture or heads differ | a bundle loaded back predicts exactly what the source checkpoint predicts on a fixed composition set (torch `equal` on CPU) |
+| 1 | `foundation_model/data/targets.py`: target transforms as data. Covers the supported steps; conversion from the existing sklearn objects (`Pipeline[StandardScaler, PowerTransformer]`, the AGIS `StandardScaler(with_mean=False) → arcsinh → StandardScaler`, `LabelEncoder`); `fit` with the default recipe; the per-row max-abs shape normalisation | forward and inverse match sklearn to within 1e-12 on every scaler in `data/*preprocessing*.pkl.z` and on the AGIS pipeline; JSON round-trip; an unsupported step is rejected by name |
+| 2 | `hub/bundle.py` schema + `export_run` + `fm export --license`; records observed range and default grid per kernel-regression task, including heterogeneous per-row grids; refuses members whose architecture or heads differ | a bundle loaded back predicts exactly what the source checkpoint predicts on a fixed composition set (torch `equal` on CPU); the default grid is checked for a shared-grid task and a per-row-grid task |
 | 3 | `load_pretrained` / `load_suite` / `predict` / `predict_curve`; `fm predict --pretrained`; strict loading; hub download behind the optional extra | runs in a clean environment with no dataset files and no network (hub calls mocked); out-of-range `t` warns |
 | 4 | `fm finetune --pretrained` and `model.save`: user-only catalogs, unit conversion for existing heads, new heads, `derived_from` / licence propagation | end to end: tiny model → export → fine-tune an existing head and a new head on new data only → save → load → predict |
 | 5 | `fm inverse --pretrained`: physical-unit targets, class names, seed lists / element-system seeds | inverse from a bundle with no data reproduces the catalog path's result on the same seeds and targets after unit conversion |
@@ -106,6 +108,12 @@ Each PR passes review and is squash-merged before the next one starts.
 
 Independent of PRs 1–7, and needed before the release suite is trained:
 
+- **NEMAD and phonix-db normalisation, rebuilt reproducibly.** The tables `NEMAD_magnetic_20260419_norm`,
+  `NEMAD_superconductor_20260425_norm` and `phonix-db-filtered_20260425_norm` cover 7 tasks. Neither their
+  transforms nor the code that made them is in the repository: refitting the usual recipe on the raw
+  values does not reproduce them, and the row counts differ. One script in `data/scripts/` rebuilds them
+  with the shared recipe from PR 1, fitted on the training split, and saves the transforms beside the tables.
+  The user approved this on 2026-11-04;
 - a pretraining option that keeps the run seed fixed across members while the task order changes;
 - exclusion of the 31 unresolved Materials Project rows (`docs/licensing/data_sources.md`, open item 1);
 - the post-#99 composition-grouped splits.
@@ -118,6 +126,29 @@ These happen at PR 6. Nothing is pushed before then.
 2. Create a write token and store it outside the repository, for example in the macOS keychain, read
    through `HF_TOKEN` at call time.
 3. Approve the gating form text and switch on manual approval in the repository settings.
+
+## Data preprocessing in the CLI: what 1.0 includes
+
+The user asked whether data preprocessing should join the `fm` CLI, with a plugin path for new data
+sources. The decision is to split it:
+
+- **In 1.0, the generic part lives in `src/`:**
+  - target transforms (fit, apply, invert, serialise), PR 1;
+  - curve resampling (`utils/interpolate.InterpSmooth`, already there);
+  - the shape normalisation;
+  - composition normalisation (`data/composition_sources`, already there).
+
+  `fm finetune --pretrained` applies these to a user's raw table. The user-facing preprocessing that
+  reuse needs is therefore inside `fm` from 1.0.
+- **After 1.0, source adapters as plugins.** Parsing a specific database is per-source code: NEMAD's
+  text-mined units, Starrydata's curve bundles, the Catalysis-Hub API. A later `fm data build` would
+  discover adapters through a `foundation_model.datasets` entry-point group. Each adapter turns one raw
+  source into a composition-keyed raw table plus a recipe, and the shared code above does the rest. Until
+  then the adapters stay in `data/scripts/` and call the `src/` API, starting with the NEMAD / phonix-db
+  rebuild.
+
+Why not in 1.0: the plugin contract is only worth fixing once there are two or three adapters written
+against the shared API. Freezing it now would make 1.0 promise an interface that has not been tried.
 
 ## Non-goals
 
