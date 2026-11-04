@@ -24,8 +24,14 @@ foundation_model/
 │   │   └── model_config.py      # EncoderConfig + per-task config dataclasses
 │   ├── data/                    # CompoundDataModule + per-task data sources + splitter
 │   ├── utils/                   # KMD + plotting / training helpers
+│   ├── hub/                     # Release bundles: store / publish / reuse (the 1.0 interface)
+│   │   ├── bundle.py            #   schema v1: config.json + manifest.json + members/*/model.safetensors
+│   │   ├── export.py            #   runs → bundle, verified bit-identical to the checkpoints
+│   │   ├── pretrained.py        #   load_pretrained / load_suite / predict in physical units
+│   │   ├── derive.py            #   derived bundles: inherited licence + lineage
+│   │   ├── card.py, publish.py  #   model card; push to the Hugging Face Hub
 │   ├── cli/                     # `fm` CLI — thin click dispatch → workflows
-│   │   └── main.py                       # fm {pretrain,finetune,inverse,predict}
+│   │   └── main.py                       # fm {pretrain,finetune,inverse,predict,export,publish}
 │   └── workflows/               # Workflow engines behind the fm subcommands
 │       ├── task_catalog.py               # TOML → dataset/task/descriptor/scaler config + loaders
 │       ├── recording.py                  # RunRecorder: layout, provenance, checkpoints, metrics
@@ -76,6 +82,25 @@ scope before filtering/sampling, or reads a shared external manifest. Split
 precedence is resolved before keep-first duplicate handling; fallback and swaps
 operate on whole groups. Effective assignments drive both DataModule partitions
 and train-derived head metadata. Generic non-formula lookup IDs are not merged.
+
+## Release bundles (`hub/`)
+
+A bundle is the unit in which a model is stored, published and reused; `docs/refactor/pretrained-release/`
+holds the design. Four rules hold everywhere:
+
+- **`config.json` alone rebuilds the architecture.** It holds resolved head widths, KMD settings with the
+  `element_features.csv` hash, and per-head metadata: target transform as plain data, class names, units,
+  shape-only marker, and the `t` range and default grid. `bundle.build_model` never consults a task
+  catalog or a dataset.
+- **Strict loading only.** `load_member` loads with `strict=True` after checking every key and shape.
+  The legacy `.pt` paths keep `strict=False`.
+- **Export proves itself.** `export.export_runs` reloads every member and compares its encoder and head
+  outputs with the checkpoint loaded through the `fm predict` catalog path (`torch.equal`). If they
+  differ, the bundle is deleted.
+- **Units at the boundary.** Data enter and leave in physical units through `data/targets.py` transforms.
+  `TaskCatalog(target_inputs=...)` applies them when fine-tuning a bundle, and the inverse config
+  converts targets the same way. Derived bundles (`derive.py`) copy the source licence and append to
+  `provenance.lineage`.
 
 ## Distributed training: removed, and probably not worth re-adding
 

@@ -1,6 +1,6 @@
 [project]
 name = "foundation-model"
-version = "0.6.0"
+version = "1.0.0"
 description = "A multi-task learning model for predicting material properties"
 readme = "README.md"
 authors = [{ name = "TsumiNa", email = "liu.chang.1865@gmail.com" }]
@@ -31,7 +31,7 @@ license = "Apache-2.0 AND BSD-3-Clause"
 license-files = ["LICENSE", "NOTICE"]
 keywords = ["foundation-model", "pytorch", "transformers"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.12",

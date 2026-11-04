@@ -39,6 +39,15 @@ passed to the builder directly and take precedence over `[…].checkpoint` / `[o
 `inverse` and `predict` do **not** read `[training]`; their seed/accelerator live in `[inverse]` /
 `[predict]` instead.
 
+`export` reads only the catalog sections and `[model]`. `publish` reads no TOML. With `--pretrained`:
+
+- `predict` needs no TOML at all;
+- `finetune` takes the catalog sections for **your** tasks, plus `[training]`, `[finetune]` and `[output]`,
+  but no `[model]`;
+- `inverse` takes only `[inverse]` and `[output]`.
+
+The bundle supplies everything else.
+
 ---
 
 # Shared sections
