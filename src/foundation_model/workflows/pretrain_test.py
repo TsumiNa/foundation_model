@@ -1014,3 +1014,38 @@ n_runs = 2
     aggregate = json.loads((out / "experiment_records.json").read_text())
     assert sorted({r["run"] for r in aggregate}) == [0, 1]
     assert not (out / "training").exists()  # root training/ stays absent for n_runs > 1
+
+
+def test_run_seed_defaults_to_per_run() -> None:
+    from foundation_model.workflows.pretrain import RunSeed, _run_seed
+
+    cfg = _build(_four_task_toml("n_runs = 3"))
+    assert cfg.run_seed is RunSeed.PER_RUN
+    assert [_run_seed(cfg, i) for i in range(3)] == [cfg.training.seed + i for i in range(3)]
+
+
+def test_fixed_run_seed_varies_only_the_order() -> None:
+    from foundation_model.workflows.pretrain import _run_seed, _run_task_order
+
+    cfg = _build(_four_task_toml('n_runs = 4\nrun_seed = "fixed"\ntask_order = "random"\ntask_order_seed = 11'))
+    seeds = [_run_seed(cfg, i) for i in range(4)]
+    assert seeds == [cfg.training.seed] * 4
+    orders = {tuple(_run_task_order(cfg, seeds[i], i)) for i in range(4)}
+    assert len(orders) > 1  # the shuffle still differs per run through task_order_seed + i
+
+
+def test_fixed_run_seed_with_random_order_needs_task_order_seed() -> None:
+    with pytest.raises(ValueError, match="requires task_order_seed"):
+        _build(_four_task_toml('run_seed = "fixed"\ntask_order = "random"'))
+
+
+def test_fixed_run_seed_with_fixed_order_is_allowed() -> None:
+    from foundation_model.workflows.pretrain import RunSeed
+
+    cfg = _build(_four_task_toml('n_runs = 2\nrun_seed = "fixed"'))
+    assert cfg.run_seed is RunSeed.FIXED
+
+
+def test_invalid_run_seed_raises() -> None:
+    with pytest.raises(ValueError, match="run_seed must be one of"):
+        _build(_four_task_toml('run_seed = "sometimes"'))

@@ -1,5 +1,11 @@
 # Recent Updates
 
+## 2026-11-04 (pretrain: fixed run seed)
+
+- `[pretrain] run_seed = "fixed"` keeps `[training].seed` for every run of an `n_runs` sweep, so a
+  random-order sweep (`task_order = "random"` + `task_order_seed`) differs only in task order. The
+  default `"per_run"` keeps the historical `[training].seed + i`.
+
 ## 2026-11-04 (licence: Apache-2.0)
 
 - The code is licensed under Apache-2.0. `pyproject.toml` declared MIT and pointed to a missing `LICENSE`

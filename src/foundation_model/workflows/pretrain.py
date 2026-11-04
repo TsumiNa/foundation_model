@@ -67,6 +67,13 @@ class TaskOrder(str, Enum):
     RANDOM = "random"
 
 
+class RunSeed(str, Enum):
+    """How run *i* of an ``n_runs`` sweep picks its training seed."""
+
+    PER_RUN = "per_run"  # [training].seed + i — runs differ in seed (and order, if random)
+    FIXED = "fixed"  # [training].seed for every run — runs differ only in task order
+
+
 # --- config dataclasses -------------------------------------------------------------------
 
 
@@ -127,6 +134,9 @@ class PretrainConfig:
     # kernel-regression tasks stay in a final block while the order within blocks is randomized.
     task_order_seed: int | None = None
     task_order_groups: list[list[str]] = field(default_factory=list)
+    # "fixed" holds the training seed constant across runs, so a random-order sweep isolates the
+    # effect of task order: it needs task_order_seed, or every run would shuffle identically.
+    run_seed: RunSeed = RunSeed.PER_RUN
     # Warm-start: load encoder + heads from this checkpoint, treat its tasks as already learned, and
     # continue the sequence with the task_sequence tasks it doesn't already contain. None = from scratch.
     checkpoint: Path | None = None
@@ -142,6 +152,13 @@ class PretrainConfig:
             self.checkpoint = Path(self.checkpoint)
         if not isinstance(self.task_order, TaskOrder):
             self.task_order = TaskOrder(str(self.task_order))
+        if not isinstance(self.run_seed, RunSeed):
+            try:
+                self.run_seed = RunSeed(str(self.run_seed))
+            except ValueError:
+                raise ValueError(
+                    f"pretrain.run_seed must be one of {[s.value for s in RunSeed]}, got {self.run_seed!r}."
+                ) from None
         if self.n_runs < 1:
             raise ValueError(f"pretrain.n_runs must be >= 1, got {self.n_runs}.")
         catalog_tasks = {t.name for t in self.catalog.tasks}
@@ -175,6 +192,11 @@ class PretrainConfig:
                 raise ValueError('pretrain.task_order_seed requires task_order = "random".')
             if self.task_order_groups:
                 raise ValueError('pretrain.task_order_groups requires task_order = "random".')
+        if self.run_seed is RunSeed.FIXED and self.task_order is TaskOrder.RANDOM and self.task_order_seed is None:
+            raise ValueError(
+                'pretrain.run_seed = "fixed" with task_order = "random" requires task_order_seed: '
+                "without it the shuffle follows the (now identical) run seed and every run gets the same order."
+            )
         if self.task_order_groups:
             flat = [t for group in self.task_order_groups for t in group]
             dupes = sorted({t for t in flat if flat.count(t) > 1})
@@ -217,6 +239,7 @@ def build_pretrain_config(
             "task_order",
             "task_order_seed",
             "task_order_groups",
+            "run_seed",
             "replay",
             "checkpoint",
             "resume",
@@ -248,6 +271,7 @@ def build_pretrain_config(
         task_order=TaskOrder(str(pretrain_raw.get("task_order", "fixed"))),
         task_order_seed=(None if pretrain_raw.get("task_order_seed") is None else int(pretrain_raw["task_order_seed"])),
         task_order_groups=[list(group) for group in pretrain_raw.get("task_order_groups", [])],
+        run_seed=pretrain_raw.get("run_seed", RunSeed.PER_RUN.value),
         checkpoint=Path(resolved_checkpoint) if resolved_checkpoint is not None else None,
         resume=resume or bool(pretrain_raw.get("resume", False)),
     )
@@ -291,7 +315,7 @@ def run(cfg: PretrainConfig, recorder: RunRecorder | None = None) -> dict[str, A
 
     try:
         for run_idx in range(cfg.n_runs):
-            run_seed = cfg.training.seed + run_idx
+            run_seed = _run_seed(cfg, run_idx)
             order = _run_task_order(cfg, run_seed, run_idx)
             if cfg.n_runs == 1:
                 run_recorder = root_recorder
@@ -331,6 +355,11 @@ def run(cfg: PretrainConfig, recorder: RunRecorder | None = None) -> dict[str, A
     finally:
         if owns_recorder:
             root_recorder.close()
+
+
+def _run_seed(cfg: PretrainConfig, run_idx: int) -> int:
+    """Training seed of run ``run_idx``: ``[training].seed + run_idx``, or the base seed when fixed."""
+    return cfg.training.seed + (run_idx if cfg.run_seed is RunSeed.PER_RUN else 0)
 
 
 def _run_task_order(cfg: PretrainConfig, run_seed: int, run_idx: int = 0) -> list[str]:
