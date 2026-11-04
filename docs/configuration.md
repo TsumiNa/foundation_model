@@ -115,15 +115,20 @@ One entry per prediction head. At least one is required; names must be unique.
 | `x_hidden_dims` | list[int] | `None` | positive ints; KR only | Override `[model].kr_x_hidden_dims` (value branch). |
 | `t_hidden_dims` | list[int] | `None` | positive ints; KR only | Override `[model].kr_t_hidden_dims` (coordinate branch). |
 | `n_kernel` | int | `None` | positive int; KR only | Override `[model].n_kernel` for this head. |
+| `unit` | str | `None` | | Release metadata: physical unit of the target (e.g. `"eV"`), written into exported bundles. Ignored by training. |
+| `t_unit` | str | `None` | KR only | Release metadata: unit of the kernel-regression coordinate (e.g. `"K"`). |
+| `output_scale` | str | `None` | `"shape"`; reg/KR only; excludes `scaler` | Marks a head trained on per-row max-abs normalised targets (e.g. the DOS curve). It has no transform back to physical units, and `fm export` records it as shape-only. |
 
-### `[[tasks]].scaler` — optional inverse-transform for reporting
+### `[[tasks]].scaler` — the task's target transform (or label encoder)
 
-A nested table on a task. Used only to inverse-transform predictions to human-readable units.
+A nested table on a task. It is used to inverse-transform predictions to physical units. `fm export` also
+uses it to write the transform into a bundle: regression / KR heads need one unless `output_scale = "shape"`,
+and classification heads need their `LabelEncoder` for class names.
 
 | Key | Type | Default | Constraint | Description |
 |---|---|---|---|---|
-| `path` | str (path) | — | required | Fitted scaler (joblib). |
-| `key` | str | `None` | | Key inside a dict-of-scalers pickle; `None` = the whole object is the scaler. |
+| `path` | str (path) | — | required | A fitted sklearn scaler / pipeline / `LabelEncoder` (joblib), or a `*_transforms.json` record of plain-data transforms (`foundation_model.data.targets`). |
+| `key` | str | `None` | required for `.json` | Key inside a dict-of-scalers pickle (`None` = the whole object), or the `tasks` key inside a JSON record. |
 
 ## Python-layer fields vs TOML keys
 
@@ -499,8 +504,15 @@ Per-subcommand flags:
 | `finetune` | `--checkpoint PATH`, `--tasks a,b` (→ `finetune.tasks`), `--epochs N` |
 | `inverse` | `--checkpoint PATH`, `--scenario NAME` (repeatable; run only these), `--steps N`, `--no-trajectory`, `--animation-formats gif,html,svg` |
 | `predict` | `--checkpoint PATH`, `--tasks a,b`, `--split train\|val\|test\|all`, `--compositions "Fe2 O3,Al2 O3"` (overrides split), `--no-metrics` |
+| `export` | `--run PATH` (run dir or checkpoint; repeat for a suite, one member each), `--out DIR` (new or empty), `--license ID` (**required**, no default), `--member-id ID` (repeatable, in `--run` order; default `m000`, `m001`, …), `--set`. Reads only the catalog sections and `[model]`. |
 
 Run `fm <subcommand> --help` for the exact list.
+
+`fm export` writes a release bundle (schema v1): `config.json` (descriptor, architecture, heads with
+transforms / class names / units / `t` range and default grid, licence, provenance), `manifest.json`, and
+`members/<id>/model.safetensors`. It then loads every member back strictly and checks that its outputs
+are bit-identical to the source checkpoint's; an unverified bundle is removed. Format and interface:
+`docs/refactor/pretrained-release/00-overview.md`.
 
 ---
 

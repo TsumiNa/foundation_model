@@ -121,7 +121,7 @@ def common_options(func: Callable[..., Any]) -> Callable[..., Any]:
 @click.group()
 @click.version_option(package_name="foundation-model", prog_name="fm")
 def main() -> None:
-    """Unified foundation-model CLI (pretrain / finetune / inverse / predict)."""
+    """Unified foundation-model CLI (pretrain / finetune / inverse / predict / export)."""
 
 
 def _pretrain_config(
@@ -361,6 +361,64 @@ def predict_cmd(
     recorder.write_provenance(config=cfg, argv=list(sys.argv), seeds={"seed": cfg.seed})
     predict_run(cfg, recorder)
     recorder.close()
+
+
+_EXPORT_CATALOG_KEYS = ("data", "descriptor", "datasets", "tasks")
+
+
+@main.command("export")
+@click.option(
+    "--config",
+    "config_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="TOML with the task catalog and [model] the runs were trained with (other sections are ignored).",
+)
+@click.option(
+    "--run",
+    "runs",
+    multiple=True,
+    required=True,
+    type=click.Path(exists=True),
+    help="Run directory (training/final_model.pt inside) or checkpoint file; repeat for a suite, one member each.",
+)
+@click.option(
+    "--out", "out", required=True, type=click.Path(file_okay=False), help="Bundle directory (must be empty or new)."
+)
+@click.option(
+    "--license",
+    "license_id",
+    required=True,
+    help="Licence identifier of the weights, e.g. cc-by-nc-sa-4.0. No default: a model trained from scratch is yours.",
+)
+@click.option("--member-id", "member_ids", multiple=True, help="Member ids in --run order (default m000, m001, …).")
+@click.option("--set", "overrides", multiple=True, metavar="KEY=VALUE", help="Override a config value (TOML).")
+def export_cmd(
+    config_path: str,
+    runs: tuple[str, ...],
+    out: str,
+    license_id: str,
+    member_ids: tuple[str, ...],
+    overrides: tuple[str, ...],
+) -> None:
+    """Export training runs as a release bundle, verified against the source checkpoints."""
+    from foundation_model.hub.export import export_runs
+    from foundation_model.workflows._sections import build_model_section
+    from foundation_model.workflows.task_catalog import build_task_catalog_config
+
+    raw = load_raw_config(config_path, overrides)
+    catalog = build_task_catalog_config({k: raw[k] for k in _EXPORT_CATALOG_KEYS if k in raw})
+    model = build_model_section(raw.get("model", {}))
+    path = export_runs(
+        catalog,
+        model,
+        list(runs),
+        out,
+        license=license_id,
+        member_ids=list(member_ids) or None,
+        provenance={"export_config": str(config_path), "argv": list(sys.argv)},
+    )
+    click.echo(f"wrote bundle {path}")
 
 
 if __name__ == "__main__":  # pragma: no cover
