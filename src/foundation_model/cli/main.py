@@ -242,6 +242,7 @@ def _inverse_config(
     steps: int | None,
     no_trajectory: bool,
     animation_formats: str | None,
+    pretrained: str | None = None,
 ) -> InverseConfig:
     raw = load_raw_config(
         config_path,
@@ -259,12 +260,17 @@ def _inverse_config(
     if animation_formats is not None:
         fmts = [f.strip() for f in animation_formats.split(",") if f.strip()]
         _set_dotted(raw, "inverse.animation_formats", fmts)
-    return build_inverse_config(raw, output_dir=output_dir, checkpoint=checkpoint)
+    return build_inverse_config(raw, output_dir=output_dir, checkpoint=checkpoint, pretrained=pretrained)
 
 
 @main.command("inverse")
 @common_options
 @click.option("--checkpoint", default=None, type=click.Path(dir_okay=False), help="Checkpoint to inverse-design from.")
+@click.option(
+    "--pretrained",
+    default=None,
+    help="Released bundle (directory or owner/name[@rev][#member]); targets in physical units, no catalog or data.",
+)
 @click.option("--scenario", "scenarios", multiple=True, help="Run only the named scenario(s) (repeatable).")
 @click.option("--steps", type=int, default=None, help="Override inverse.steps.")
 @click.option("--no-trajectory", is_flag=True, default=False, help="Disable trajectory recording.")
@@ -277,12 +283,13 @@ def inverse_cmd(
     accelerator: str | None,
     sample: int | None,
     checkpoint: str | None,
+    pretrained: str | None,
     scenarios: tuple[str, ...],
     steps: int | None,
     no_trajectory: bool,
     animation_formats: str | None,
 ) -> None:
-    """Inverse design (scenarios × algorithm paths)."""
+    """Inverse design (scenarios × algorithm paths) from a checkpoint or a released bundle."""
     cfg = _inverse_config(
         config_path,
         overrides,
@@ -294,9 +301,10 @@ def inverse_cmd(
         steps,
         no_trajectory,
         animation_formats,
+        pretrained,
     )
     recorder = RunRecorder(cfg.output_dir)
-    recorder.write_provenance(config=cfg, argv=list(sys.argv), seeds={"seed": 2025})
+    recorder.write_provenance(config=cfg, argv=list(sys.argv), seeds={"seed": cfg.seed})
     inverse_run(cfg, recorder, only_scenarios=list(scenarios) or None)
     recorder.close()
 

@@ -403,7 +403,8 @@ head. The catalog lists only **your** tasks, with data in **physical units** and
 
 | Key | Type | Default | Constraint | Description |
 |---|---|---|---|---|
-| `checkpoint` | str (path) | — | required (or `--checkpoint`) | Trained checkpoint to inverse-design from. |
+| `checkpoint` | str (path) | — | exactly one of `checkpoint` / `pretrained` (or `--checkpoint`) | Trained checkpoint to inverse-design from. |
+| `pretrained` | str | — | exactly one of `checkpoint` / `pretrained` (or `--pretrained`); no catalog sections, no `[model]` | Released bundle (directory or `owner/name[@revision][#member]`). See below. |
 | `steps` | int | `300` | | Gradient-optimization steps (`--steps` overrides). |
 | `lr` | float | `0.05` | | Optimizer learning rate. |
 | `record_trajectory` | bool | `true` | | Record + emit optimization trajectories (`--no-trajectory` disables). |
@@ -416,11 +417,23 @@ head. The catalog lists only **your** tasks, with data in **physical units** and
 `[[inverse.paths]]` arrays below. If `[[inverse.paths]]` is omitted, a built-in set of **11 default
 paths** (3 latent + 8 composition) is used.
 
+**Designing from a released bundle** (`pretrained`): the bundle supplies the model, the heads and the
+KMD descriptor; the TOML holds only `[inverse]` and `[output]`.
+
+- **Targets are in physical units.** A regression `value` and the `y` of curve `points` are converted with
+  the head's transform; curve `t` stays physical. `direction` is unchanged, because every transform step
+  is monotone increasing.
+- **Classes** may be given by name.
+- **Shape-only heads** (e.g. DOS) take targets in their normalised shape units.
+- **Seeds** must be `explicit` or `elements`: the bundle carries no data to draw candidates from.
+- **Reports** add `<task>_after_mean_physical` / `_std_physical` for regression targets, and
+  `scenario.json` keeps the targets as written (`targets_physical`).
+
 ### `[inverse.seeds]` — how starting compositions are chosen
 
 | Key | Type | Default | Constraint | Description |
 |---|---|---|---|---|
-| `strategy` | str | `"top_objective"` | `top_objective` \| `weighted_random` \| `random` \| `explicit` | Seed-selection algorithm. `top_objective` ranks the candidate pool (the target tasks' rows in the chosen split) by the scenario's objective score — the exact weighted loss the optimizers minimise — and takes the best (lowest) `n`. `weighted_random` samples without replacement with probability proportional to the rank of `weight_task`'s true label (higher label = more likely). |
+| `strategy` | str | `"top_objective"` | `top_objective` \| `weighted_random` \| `random` \| `explicit` \| `elements` | Seed-selection algorithm. `elements` draws `n` random compositions (Dirichlet(1) atomic fractions) over `elements` and needs no data. `top_objective` ranks the candidate pool (the target tasks' rows in the chosen split) by the scenario's objective score — the exact weighted loss the optimizers minimise — and takes the best (lowest) `n`. `weighted_random` samples without replacement with probability proportional to the rank of `weight_task`'s true label (higher label = more likely). |
 | `weight_task` | str | `None` | required iff `strategy = "weighted_random"`; must be a regression task | Task whose TRUE labels weight the sampling. |
 | `weight_direction` | str | `"high"` | `high` \| `low`; `weighted_random` only; exclusive with `weight_value` | `high`: higher label = more likely; `low`: lower label = more likely. |
 | `weight_value` | float | `None` | `weighted_random` only; exclusive with `weight_direction` | Sample by closeness: labels nearer this value are more likely. |
@@ -428,7 +441,8 @@ paths** (3 latent + 8 composition) is used.
 | `split` | str | `"test"` | `train`/`val`/`test`/`all` | Split to draw candidates from. |
 | `explicit` | list[str] | `[]` | required (non-empty) when `strategy = explicit` | Explicit candidate pool. |
 | `explicit_append` | list[str] | `[]` | each must have a computable descriptor | Extra seeds appended to every strategy's output. |
-| `dedup_by_element_system` | bool | `true` | | Keep only one composition per element system (set of element symbols). |
+| `dedup_by_element_system` | bool | `true` | | Keep only one composition per element system (set of element symbols). Not applied to `elements` seeds, which share one system. |
+| `elements` | list[str] | `[]` | `strategy = "elements"` only; ≥ 2 distinct symbols | Element set for random seed compositions. |
 
 ### `[[inverse.scenarios]]` — design objectives (array of tables)
 

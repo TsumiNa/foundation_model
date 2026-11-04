@@ -67,6 +67,8 @@ def element_system(composition: str) -> frozenset[str]:
 
 
 def rebuild_model(cfg: InverseConfig, catalog: TaskCatalog) -> tuple[Any, list[str]]:
+    if cfg.checkpoint is None:
+        raise ValueError("rebuild_model needs a checkpoint; bundle runs load the model from the bundle.")
     state = load_checkpoint_state(cfg.checkpoint)
     ckpt_tasks = checkpoint_task_order(state)
     catalog_tasks = {t.name for t in cfg.catalog.tasks}
@@ -78,6 +80,39 @@ def rebuild_model(cfg: InverseConfig, catalog: TaskCatalog) -> tuple[Any, list[s
     model.load_state_dict(state["model"], strict=False)
     model.eval()
     return model, ckpt_tasks
+
+
+_DECIMALS = 4
+
+
+def random_compositions(elements: Sequence[str], n: int, *, seed: int, exclude: Sequence[str] = ()) -> list[str]:
+    """``n`` distinct compositions over ``elements``: Dirichlet(1) atomic fractions, 4 decimals, all > 0.
+
+    ``exclude`` lists compositions that must not be returned, e.g. seeds appended explicitly. Draws are
+    bounded: a request the formatted space cannot satisfy fails with a clear error instead of looping.
+    """
+    k = len(elements)
+    grid = 10**_DECIMALS
+    if k == 2 and n > grid - 1:  # the second fraction is implied: grid - 1 strictly positive splits
+        raise ValueError(
+            f"only {grid - 1} distinct {_DECIMALS}-decimal compositions exist over 2 elements; asked for {n}."
+        )
+    rng = np.random.default_rng(seed)
+    seen = set(exclude)
+    out: list[str] = []
+    for _ in range(max(1000, 50 * n)):
+        if len(out) >= n:
+            break
+        fractions = rng.dirichlet(np.ones(k))
+        if (np.round(fractions, _DECIMALS) <= 0).any():
+            continue  # an element would vanish on formatting; redraw
+        comp = " ".join(f"{el}{x:.{_DECIMALS}f}" for el, x in zip(elements, fractions))
+        if comp not in seen:
+            seen.add(comp)
+            out.append(comp)
+    if len(out) < n:
+        raise ValueError(f"could draw only {len(out)} distinct compositions over {list(elements)}; asked for {n}.")
+    return out
 
 
 def _dedup_by_system(candidates: Sequence[str], n: int, *, enabled: bool) -> list[str]:
@@ -139,6 +174,10 @@ def select_seeds(
     if seed_cfg.strategy is SeedStrategy.EXPLICIT:
         pool = [c for c in seed_cfg.explicit if _has_descriptor(c)]
         return _merge(_dedup_by_system(pool, n_strategy, enabled=seed_cfg.dedup_by_element_system))
+
+    if seed_cfg.strategy is SeedStrategy.ELEMENTS:
+        # Every draw shares one element system, so system dedup does not apply here.
+        return random_compositions(seed_cfg.elements, n_strategy, seed=seed, exclude=appended) + appended
 
     if seed_cfg.strategy is SeedStrategy.WEIGHTED_RANDOM:
         # Pool = the weight task's rows in the chosen split with a valid label; draw a full
