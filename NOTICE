@@ -1,0 +1,14 @@
+foundation-model
+Copyright 2025-2026 TsumiNa
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+src/foundation_model/utils/element_features.csv is derived from the
+`elements_completed` table of XenonPy (https://github.com/yoshida-lab/XenonPy),
+Copyright (c) 2021 TsumiNa, released under the BSD 3-Clause License.
+
+The source code license does not cover pretrained model weights or training
+data. Pretrained weights published by the copyright holder are distributed
+separately under CC BY-NC-SA 4.0, which also applies to models derived from
+them. Models trained from scratch with this code on other data are not
+subject to that license.

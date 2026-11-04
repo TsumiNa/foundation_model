@@ -22,15 +22,27 @@ the institute's intellectual-property office before the first public release.
 - **Training data:** every audited source is CC BY 4.0, which allows this release. It requires attribution and
   a statement of changes; see `data_sources.md` for the one open item on Materials Project `BY-NC` entries.
 
-## To decide: licence for the weights
+## Weights licence: CC BY-NC-SA 4.0 (decided 2026-11-04)
 
-| Option | Derivatives must stay non-commercial | Notes |
+Scope, as decided:
+
+| Model | Licence | Commercial use |
 |---|---|---|
-| **CC BY-NC-SA 4.0** | yes, ShareAlike makes adaptations carry the same licence | standard, Hugging Face tag `cc-by-nc-sa-4.0` |
-| CC BY-NC 4.0 | only the original weights inside a derivative stay non-commercial; the adapter may license their own additions differently | weaker for "derivatives too" |
-| Custom licence (`license: other`) | as written | can define "commercial use", "derivative" (fine-tuned weights) and whether predictions are restricted; needs legal drafting |
+| Weights trained and published by the owner | CC BY-NC-SA 4.0 | no |
+| A model derived from those weights, by fine-tuning, adding heads or any other training that starts from them | CC BY-NC-SA 4.0 (ShareAlike: same licence) | no |
+| A model a user trains **from scratch** with this code and their own data | not covered. The code is Apache-2.0 and the user's data carries its own terms | the owner places no restriction |
 
-Two caveats apply to every option:
+The line between the last two rows is whether training starts from the published weights. The model card and
+the gated-access terms state it in those words.
+
+Alternatives considered:
+
+| Option | Derivatives must stay non-commercial | Why not |
+|---|---|---|
+| CC BY-NC 4.0 | only the original weights inside a derivative stay non-commercial; the adapter may license their own additions differently | weaker for "derivatives too" |
+| Custom licence (`license: other`) | as written | needs legal drafting; kept as the fallback if predictions must also be restricted |
+
+Two caveats remain:
 
 - **Copyright in weights is unsettled.** Creative Commons licences rest on copyright and database rights, and
   whether trained weights are protected is not settled law in Japan or the US. The gated repository's access
@@ -39,21 +51,28 @@ Two caveats apply to every option:
 - **Model outputs.** None of the CC licences clearly covers predictions made with the model. If commercial
   use of predictions should also be excluded, that needs a custom licence or explicit terms in the access form.
 
-## To decide: licence for the code
+## Code licence: Apache-2.0 (decided 2026-11-04)
 
-The stated requirement is that anyone may use, modify, redistribute and sell the code, provided the original
-licence and attribution are kept. **MIT already says exactly that.** It requires the copyright notice and
-licence text to be kept in all copies. Apache-2.0 says the same and adds:
+The requirement is that anyone may use, modify, redistribute and sell the code, provided the original licence
+and attribution are kept. Apache-2.0 meets it. It was chosen over MIT, which also meets it, to leave room for a
+possible commercial version later. On top of MIT it adds three things:
 
-- a `NOTICE` file whose attribution text must be carried by redistributions;
+- a `NOTICE` file whose attribution text redistributions must carry;
 - a statement in modified files that they were changed;
 - an explicit patent licence from contributors.
 
-Current state, to fix whichever licence is chosen:
+Before the switch, `pyproject.toml` declared MIT and pointed to a `LICENSE` file that did not exist, while 84
+tracked Python files carried `SPDX-License-Identifier: Apache-2.0`. Now:
 
-- `pyproject.toml` declares `license = "MIT"` with `license-files = ["LICENSE"]`, but the repository has no
-  `LICENSE` file.
-- 84 tracked Python files, 77 of them under `src/`, carry `SPDX-License-Identifier: Apache-2.0`. That disagrees
-  with the MIT declaration, so the package currently states two licences.
-- All commits are by the repository owner (two git identities). A relicence needs no other contributor's
-  consent.
+- `LICENSE` holds the Apache-2.0 text, from apache.org/licenses/LICENSE-2.0.txt, sha256 `cfc7749b…3d30`.
+- `NOTICE` holds the copyright line and the XenonPy origin of `element_features.csv`, and states that the code
+  licence does not cover the weights or the training data.
+- `pyproject.toml` declares `license = "Apache-2.0"` and `license-files = ["LICENSE", "NOTICE"]`. The trove
+  licence classifier was dropped: PEP 639 replaces it with the licence expression.
+- Per-file SPDX headers stay as they are. Apache-2.0 does not require them; files without one are covered by
+  `LICENSE`.
+
+Every commit so far is by the repository owner (two git identities), so the switch needed no other
+contributor's consent. A commercial version stays possible because the owner holds the copyright and can
+license it on other terms. Once outside contributions arrive, keeping that option needs a contributor licence
+agreement, since Apache-2.0 alone does not let the owner relicense contributed code.

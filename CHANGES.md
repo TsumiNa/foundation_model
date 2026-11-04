@@ -1,5 +1,12 @@
 # Recent Updates
 
+## 2026-11-04 (licence: Apache-2.0)
+
+- The code is licensed under Apache-2.0. `pyproject.toml` declared MIT and pointed to a missing `LICENSE`
+  file, while the source headers already said Apache-2.0; `LICENSE` and `NOTICE` are now in the repository
+  and the package metadata matches them. The licence does not cover pretrained weights or training data
+  (`docs/licensing/`).
+
 ## 2026-10-02 (0.5.0 — selectable feature-token encoders)
 
 - Expose Transformer encoders through TOML for pretraining, fine-tuning, prediction and inverse
