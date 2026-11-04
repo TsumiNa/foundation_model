@@ -130,7 +130,7 @@ def curve_data(tmp_path: Path) -> Path:
     n = len(_FORMULAS)
     temps = [np.linspace(250 + 5 * i, 900, 4 + (i % 3)) for i in range(n)]  # beyond the source 300–745 K
     dos_e = np.linspace(-6, 10, 7)
-    dos = [rng.normal(size=7) for _ in range(n)]
+    dos: list[np.ndarray | None] = [rng.normal(size=7) for _ in range(n)]
     dos[0] = np.zeros(7)
     dos[1] = None
     path = tmp_path / "curves.parquet"
