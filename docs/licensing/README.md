@@ -20,7 +20,7 @@ the institute's intellectual-property office before the first public release.
 - **Weights and their derivatives are non-commercial** (decided 2026-11-04). A derivative includes a model
   fine-tuned from the weights.
 - **Training data:** every audited source is CC BY 4.0, which allows this release. It requires attribution and
-  a statement of changes; see `data_sources.md` for the one open item on Materials Project `BY-NC` entries.
+  a statement of changes. Materials Project `BY-NC` (GNoME) entries were checked: none are in the data (`data_sources.md`).
 
 ## Weights licence: CC BY-NC-SA 4.0 (decided 2026-11-04)
 
