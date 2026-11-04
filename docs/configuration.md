@@ -504,6 +504,7 @@ Per-subcommand flags:
 | `finetune` | `--checkpoint PATH`, `--tasks a,b` (→ `finetune.tasks`), `--epochs N` |
 | `inverse` | `--checkpoint PATH`, `--scenario NAME` (repeatable; run only these), `--steps N`, `--no-trajectory`, `--animation-formats gif,html,svg` |
 | `predict` | `--checkpoint PATH`, `--tasks a,b`, `--split train\|val\|test\|all`, `--compositions "Fe2 O3,Al2 O3"` (overrides split), `--no-metrics` |
+| `predict --pretrained SOURCE` | `SOURCE` = a bundle directory or `owner/name[@revision][#member]`. No `--config`, `--checkpoint`, `--split` or data. Needs `--output-dir` and `--compositions` and/or `--compositions-file` (one per line). `--tasks` defaults to every head. Writes `predictions.csv` (scalar heads in physical units; classification as class name plus `<task>:<class>` probabilities), `<task>_curve.csv` per kernel-regression head (default grid), and `prediction_info.json` (member, licence, units). |
 | `export` | `--run PATH` (run dir or checkpoint; repeat for a suite, one member each), `--out DIR` (new or empty), `--license ID` (**required**, no default), `--member-id ID` (repeatable, in `--run` order; default `m000`, `m001`, …), `--set`. Reads only the catalog sections and `[model]`. |
 
 Run `fm <subcommand> --help` for the exact list.

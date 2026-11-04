@@ -10,6 +10,8 @@ provenance, and calls exactly one ``workflows.<mod>.run(cfg)``. No business logi
 
 from __future__ import annotations
 
+import functools
+import json
 import sys
 import tomllib
 from collections.abc import Callable, Sequence
@@ -85,15 +87,15 @@ def load_raw_config(
     return raw
 
 
-def common_options(func: Callable[..., Any]) -> Callable[..., Any]:
+def common_options(func: Callable[..., Any], *, config_required: bool = True) -> Callable[..., Any]:
     """Attach the options shared by every subcommand."""
     options = [
         click.option(
             "--config",
             "config_path",
-            required=True,
+            required=config_required,
             type=click.Path(exists=True, dir_okay=False),
-            help="Path to the run's TOML config file (required).",
+            help="Path to the run's TOML config file" + (" (required)." if config_required else "."),
         ),
         click.option(
             "--output-dir", "output_dir", default=None, help="Override [output].dir (the run output directory)."
@@ -324,8 +326,19 @@ def _predict_config(
 
 
 @main.command("predict")
-@common_options
+@functools.partial(common_options, config_required=False)
 @click.option("--checkpoint", default=None, type=click.Path(dir_okay=False), help="Checkpoint to predict with.")
+@click.option(
+    "--pretrained",
+    default=None,
+    help="Released bundle: a local directory or owner/name[@revision][#member]. Needs no --config or data.",
+)
+@click.option(
+    "--compositions-file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="With --pretrained: a text file of compositions, one per line.",
+)
 @click.option("--tasks", default=None, help="Comma-separated heads to predict (default: all checkpoint heads).")
 @click.option("--split", default=None, help="train | val | test | all.")
 @click.option("--compositions", default=None, help="Comma-separated compositions (overrides split).")
@@ -342,8 +355,26 @@ def predict_cmd(
     split: str | None,
     compositions: str | None,
     no_metrics: bool,
+    pretrained: str | None,
+    compositions_file: str | None,
 ) -> None:
-    """Evaluate / predict with an arbitrary checkpoint."""
+    """Evaluate / predict with a checkpoint (catalog path) or a released bundle (--pretrained)."""
+    if pretrained is not None:
+        _predict_pretrained(
+            pretrained,
+            config_path=config_path,
+            checkpoint=checkpoint,
+            split=split,
+            output_dir=output_dir,
+            tasks=tasks,
+            compositions=compositions,
+            compositions_file=compositions_file,
+        )
+        return
+    if config_path is None:
+        raise click.UsageError("--config is required unless --pretrained is given.")
+    if compositions_file is not None:
+        raise click.UsageError("--compositions-file applies to --pretrained only; use --compositions.")
     cfg = _predict_config(
         config_path,
         overrides,
@@ -361,6 +392,59 @@ def predict_cmd(
     recorder.write_provenance(config=cfg, argv=list(sys.argv), seeds={"seed": cfg.seed})
     predict_run(cfg, recorder)
     recorder.close()
+
+
+def _predict_pretrained(
+    source: str,
+    *,
+    config_path: str | None,
+    checkpoint: str | None,
+    split: str | None,
+    output_dir: str | None,
+    tasks: str | None,
+    compositions: str | None,
+    compositions_file: str | None,
+) -> None:
+    """``fm predict --pretrained``: physical-unit predictions from a bundle, no catalog or data."""
+    from foundation_model.hub import load_pretrained
+
+    for flag, value in (("--config", config_path), ("--checkpoint", checkpoint), ("--split", split)):
+        if value is not None:
+            raise click.UsageError(f"{flag} does not apply to --pretrained (the bundle carries the model).")
+    if output_dir is None:
+        raise click.UsageError("--pretrained needs --output-dir.")
+    comps = [c.strip() for c in (compositions or "").split(",") if c.strip()]
+    if compositions_file is not None:
+        comps += [ln.strip() for ln in Path(compositions_file).read_text(encoding="utf-8").splitlines() if ln.strip()]
+    if not comps:
+        raise click.UsageError("--pretrained needs --compositions and/or --compositions-file.")
+
+    model = load_pretrained(source)
+    wanted = [t.strip() for t in tasks.split(",")] if tasks else model.tasks
+    heads = {h.name: h for h in model.heads}
+    unknown = [t for t in wanted if t not in heads]
+    if unknown:
+        raise click.UsageError(f"unknown task(s) {unknown}; the bundle has {model.tasks}.")
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    scalar = [t for t in wanted if heads[t].kind != "kernel_regression"]
+    written: list[str] = []
+    if scalar:
+        model.predict(comps, scalar, probabilities=True).to_csv(out / "predictions.csv", index=False)
+        written.append("predictions.csv")
+    for task in (t for t in wanted if heads[t].kind == "kernel_regression"):
+        model.predict_curve(comps, task).to_csv(out / f"{task}_curve.csv", index=False)
+        written.append(f"{task}_curve.csv")
+    info = {
+        "source": source,
+        "member": model.member.id,
+        "license": model.license,
+        "fm_version": model.config.fm_version,
+        "units": {t: model.units()[t] for t in wanted},
+        "files": written,
+    }
+    (out / "prediction_info.json").write_text(json.dumps(info, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    click.echo(f"wrote {', '.join(written)} to {out} (member {model.member.id}, licence {model.license})")
 
 
 _EXPORT_CATALOG_KEYS = ("data", "descriptor", "datasets", "tasks")

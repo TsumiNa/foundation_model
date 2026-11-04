@@ -21,18 +21,24 @@ from .bundle import (
     write_bundle,
 )
 from .export import export_runs
+from .pretrained import ExtrapolationWarning, PretrainedModel, Suite, load_pretrained, load_suite
 
 __all__ = [
     "SCHEMA_VERSION",
     "BundleConfig",
     "BundleError",
     "DescriptorSpec",
+    "ExtrapolationWarning",
     "HeadSpec",
     "Manifest",
     "MemberInfo",
+    "PretrainedModel",
+    "Suite",
     "build_model",
     "export_runs",
     "load_member",
+    "load_pretrained",
+    "load_suite",
     "read_config",
     "read_manifest",
     "write_bundle",
