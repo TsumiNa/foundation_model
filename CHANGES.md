@@ -1,5 +1,19 @@
 # Recent Updates
 
+## 2026-11-04 (target transforms as data)
+
+- `foundation_model.data.targets`: a target transform is an ordered list of plain-number steps,
+  with forward, inverse and JSON round trip and no pickle:
+  - steps: `standard_scaler`, `power_transformer`, `log1p`, `arcsinh`, `clip`, `identity`;
+  - `from_sklearn` converts every scaler in the project's preprocessing files and the AGIS
+    pipeline, and rejects other estimators by name;
+  - `fit_default` fits the default recipe;
+  - `ClassLabels` holds classification label names;
+  - `normalize_max_abs` gives the per-row normalisation of shape-only heads.
+- `data/scripts/record_nemad_phonix_transforms_20261104.py` records the recovered transforms of the
+  NEMAD and phonix-db `_norm` tables. It writes them only after checking them against every row, to
+  within 1e-12.
+
 ## 2026-11-04 (pretrain: fixed run seed)
 
 - `[pretrain] run_seed = "fixed"` keeps `[training].seed` for every run of an `n_runs` sweep, so a
