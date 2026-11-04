@@ -812,6 +812,8 @@ class TaskCatalog:
         given = self._target_inputs.get(name)
         if isinstance(given, (TargetTransform, ClassLabels)):
             return given
+        if given == "shape":
+            return None  # per-row normalised: no shared inverse, whatever scaler is configured
         if spec.scaler is None:
             return None
         if name not in self._scalers:

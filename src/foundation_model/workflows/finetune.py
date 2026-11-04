@@ -264,16 +264,24 @@ def _target_inputs(cfg: FinetuneConfig, bundle_config: Any) -> dict[str, Any]:
             head = heads[name]
             if head.kind != kind:
                 raise ValueError(f"Task '{name}': the bundle's head is {head.kind}, the config says {kind}.")
+            # Units are not converted: data must be in the head's own units. An omitted unit means "as the head".
+            for label, given, expected in (("unit", spec.unit, head.unit), ("t_unit", spec.t_unit, head.t_unit)):
+                if given is not None and expected is not None and given != expected:
+                    raise ValueError(
+                        f"Task '{name}': {label} {given!r} differs from the bundle head's {expected!r}; "
+                        f"give the data in {expected} (units are not converted)."
+                    )
             if kind == "classification":
                 if spec.num_classes != head.num_classes:
                     raise ValueError(f"Task '{name}': num_classes {spec.num_classes} != the head's {head.num_classes}.")
                 inputs[name] = head.classes
-            elif head.output_scale == "shape":
-                inputs[name] = "shape"
-            else:
-                inputs[name] = head.transform
-            if (spec.output_scale == "shape") != (head.output_scale == "shape") and kind != "classification":
-                raise ValueError(f"Task '{name}': output_scale disagrees with the bundle's head ({head.output_scale}).")
+                continue
+            # output_scale is inherited from the head when omitted; only an explicit conflict is an error.
+            if spec.output_scale is not None and spec.output_scale != head.output_scale:
+                raise ValueError(
+                    f"Task '{name}': output_scale {spec.output_scale!r} disagrees with the bundle's head ({head.output_scale})."
+                )
+            inputs[name] = "shape" if head.output_scale == "shape" else head.transform
             continue
         frame = raw_catalog.task_frames([name])[name]
         mask = frame[spec.column].notna()
@@ -298,6 +306,32 @@ def _target_inputs(cfg: FinetuneConfig, bundle_config: Any) -> dict[str, Any]:
             flat = np.concatenate(values) if kind == "kernel_regression" and len(values) else np.asarray(values, float)
             inputs[name] = fit_default(flat)
     return inputs
+
+
+def _refreshed_curve(head: Any, catalog: TaskCatalog) -> Any:
+    """A fine-tuned existing curve head's metadata, covering both the source and the new training ``t``.
+
+    The observed range becomes the union. The default grid is kept when it already spans that range;
+    otherwise it is re-spaced over the union with the same number of points.
+    """
+    from dataclasses import replace
+
+    spec = catalog.task_spec(head.name)
+    assert spec.t_column is not None
+    frame = catalog.task_frames([head.name])[head.name]
+    mask = frame[spec.column].notna()
+    if "split" in frame.columns:
+        mask &= frame["split"] == "train"
+    rows = [as_float_array(c) for c in frame.loc[mask, spec.t_column].dropna()]
+    values = np.concatenate(rows) if rows else np.array([])
+    values = values[np.isfinite(values)]
+    if values.size == 0 or head.t_range is None:
+        return head
+    lo, hi = min(head.t_range[0], float(values.min())), max(head.t_range[1], float(values.max()))
+    grid = head.t_grid
+    if grid and (grid[0] > lo or grid[-1] < hi):
+        grid = tuple(float(v) for v in np.linspace(lo, hi, len(grid)))
+    return replace(head, t_range=(lo, hi), t_grid=grid)
 
 
 def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[str, Any]:
@@ -332,6 +366,18 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
             if name in existing and spec.class_weights == "balanced":
                 model.task_configs_map[name].class_weights = catalog._class_weights(name)  # noqa: SLF001
         reapply_class_weights(model, [n for n in cfg.tasks if n in existing])
+        # Per-task lr / weight_decay overrides apply to existing heads exactly as to new ones.
+        for name in cfg.tasks:
+            spec = catalog.task_spec(name)
+            if name in existing and (spec.lr is not None or spec.weight_decay is not None):
+                is_kr = spec.kind.value == "kernel_regression"
+                lr = spec.lr if spec.lr is not None else (cfg.training.kr_lr if is_kr else cfg.training.head_lr)
+                wd = (
+                    spec.weight_decay
+                    if spec.weight_decay is not None
+                    else (cfg.training.kr_weight_decay if is_kr else cfg.training.head_weight_decay)
+                )
+                model.task_configs_map[name].optimizer = cfg.training.optimizer_config(lr=lr, weight_decay=wd)
 
         added = [t for t in cfg.tasks if t not in existing]
         if added and not cfg.add_new_tasks:
@@ -346,7 +392,10 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
         order = list(member.task_order) + added
         rec.save_final_model(model, existing + added, _task_spec_dump(catalog, [t for t in cfg.tasks]))
 
-        heads = list(bundle_config.heads) + [_head_spec(catalog, section, name) for name in added]
+        heads = [
+            _refreshed_curve(h, catalog) if h.kind == "kernel_regression" and h.name in cfg.tasks else h
+            for h in bundle_config.heads
+        ] + [_head_spec(catalog, section, name) for name in added]
         derived_from = {
             "source": cfg.pretrained,
             "revision": src.revision,
