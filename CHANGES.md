@@ -1,5 +1,19 @@
 # Recent Updates
 
+## 2026-11-04 (reuse: `fm finetune --pretrained`, derived bundles)
+
+- `fm finetune --pretrained SOURCE` (or `[finetune].pretrained`) fine-tunes a released bundle. The TOML
+  lists only the user's tasks, with data in physical units:
+  - existing heads use the bundle's transform, class names or shape normalisation;
+  - new heads fit their own transform on the training split.
+- The run writes `<output>/bundle`, a derived bundle with the source licence and `derived_from`.
+  Lineage chains across repeated fine-tunes.
+- `PretrainedModel.save(path)` writes a one-member derived bundle the same way.
+- `TaskCatalog(target_inputs=…)` maps physical-unit columns onto the training scale: transforms,
+  shape normalisation, and class names to indices.
+- `fm finetune`'s fit and evaluation are factored into one helper, shared by the checkpoint path and the
+  bundle path. The checkpoint path is unchanged.
+
 ## 2026-11-04 (using released models: `load_pretrained`, `fm predict --pretrained`)
 
 - `foundation_model.hub.load_pretrained(source, member=, revision=)` loads one member, strictly, from a

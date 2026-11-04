@@ -10,6 +10,16 @@ intentional change): the encoder and every non-target head are frozen, **except 
 autoencoder head which always stays trainable** (at ``ae_lr``); ``task_log_sigmas`` are frozen.
 Non-target heads are disabled for the fit and restored before saving so the checkpoint keeps
 every head.
+
+From a released bundle (``--pretrained`` / ``[finetune].pretrained``) the bundle supplies the
+architecture and every existing head, so the catalog lists only the user's own tasks. Their data are in
+physical units:
+
+* an existing head's targets go through the bundle's transform (or the per-row shape normalisation);
+* a new head fits ``StandardScaler → PowerTransformer`` on its training split.
+
+The run also writes a derived bundle (``<output>/bundle``). It carries the source licence and
+``derived_from``.
 """
 
 from __future__ import annotations
@@ -20,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from lightning import Trainer, seed_everything
 from lightning.pytorch.callbacks import Callback
 from loguru import logger
@@ -27,6 +38,7 @@ from loguru import logger
 from ._engine import (
     AE_NAME,
     DropLastTrainCompoundDataModule,
+    as_float_array,
     build_empty_model,
     guard_single_device,
     task_names_from_state,
@@ -57,15 +69,20 @@ class FinetuneConfig:
     catalog: TaskCatalogConfig
     model: ModelSectionConfig
     training: TrainingSectionConfig
-    checkpoint: Path  # checkpoint to fine-tune from (--checkpoint or [finetune].checkpoint)
+    checkpoint: Path | None  # checkpoint to fine-tune from (--checkpoint or [finetune].checkpoint)
     tasks: list[str]  # heads to fine-tune; other heads stay frozen (the AE head always trains)
     output_dir: Path
+    # Released bundle to fine-tune from instead of a checkpoint: a directory or owner/name[@rev][#member].
+    pretrained: str | None = None
     epochs: int = 20  # fine-tune epochs (distinct from [training].max_epochs)
     freeze_encoder: bool = True  # freeze the shared encoder + non-target heads (BatchNorm buffers too)
     add_new_tasks: bool = True  # if a target task isn't in the checkpoint, add a fresh head for it
 
     def __post_init__(self) -> None:
-        self.checkpoint = Path(self.checkpoint)
+        if (self.checkpoint is None) == (self.pretrained is None):
+            raise ValueError("give exactly one of a checkpoint (--checkpoint) or a released bundle (--pretrained).")
+        if self.checkpoint is not None:
+            self.checkpoint = Path(self.checkpoint)
         self.output_dir = Path(self.output_dir)
         if not self.tasks:
             raise ValueError("finetune.tasks must be non-empty.")
@@ -78,21 +95,35 @@ class FinetuneConfig:
 
 
 def build_finetune_config(
-    raw: Mapping[str, Any], *, output_dir: str | Path | None = None, checkpoint: str | Path | None = None
+    raw: Mapping[str, Any],
+    *,
+    output_dir: str | Path | None = None,
+    checkpoint: str | Path | None = None,
+    pretrained: str | None = None,
 ) -> FinetuneConfig:
     """Normalize a parsed-TOML tree into a :class:`FinetuneConfig`."""
 
     reject_unknown("<root>", raw, _FINETUNE_ROOT_KEYS)
     catalog = build_task_catalog_config({k: raw[k] for k in _CATALOG_KEYS if k in raw})
-    model = build_model_section(raw.get("model", {}))
     training = build_training_section(raw.get("training", {}))
 
     ft_raw = dict(raw.get("finetune", {}))
-    reject_unknown("finetune", ft_raw, {"checkpoint", "tasks", "epochs", "freeze_encoder", "add_new_tasks"})
+    reject_unknown(
+        "finetune", ft_raw, {"checkpoint", "pretrained", "tasks", "epochs", "freeze_encoder", "add_new_tasks"}
+    )
 
+    resolved_pretrained = pretrained if pretrained is not None else ft_raw.get("pretrained")
     resolved_checkpoint = checkpoint if checkpoint is not None else ft_raw.get("checkpoint")
-    if resolved_checkpoint is None:
-        raise ValueError("checkpoint must be given via --checkpoint or [finetune].checkpoint.")
+    if resolved_pretrained is not None:
+        if "model" in raw:
+            raise ValueError(
+                "[model] does not apply when fine-tuning a released bundle: the bundle defines the architecture."
+            )
+        if resolved_checkpoint is not None:
+            raise ValueError("give either a checkpoint or a released bundle (--pretrained), not both.")
+    elif resolved_checkpoint is None:
+        raise ValueError("checkpoint must be given via --checkpoint or [finetune].checkpoint (or --pretrained).")
+    model = build_model_section(raw.get("model", {}))
     resolved_output = output_dir if output_dir is not None else raw.get("output", {}).get("dir")
     if resolved_output is None:
         raise ValueError("output directory must be given via --output-dir or [output].dir.")
@@ -101,7 +132,8 @@ def build_finetune_config(
         catalog=catalog,
         model=model,
         training=training,
-        checkpoint=Path(resolved_checkpoint),
+        checkpoint=Path(resolved_checkpoint) if resolved_checkpoint is not None else None,
+        pretrained=str(resolved_pretrained) if resolved_pretrained is not None else None,
         tasks=list(ft_raw.get("tasks", [])),
         output_dir=Path(resolved_output),
         epochs=int(ft_raw.get("epochs", 20)),
@@ -145,6 +177,9 @@ class _FrozenEncoderEval(Callback):
 def run(cfg: FinetuneConfig, recorder: RunRecorder | None = None) -> dict[str, Any]:
     """Fine-tune ``cfg.tasks`` on top of ``cfg.checkpoint``; return the finetune summary dict."""
 
+    if cfg.pretrained is not None:
+        return _run_pretrained(cfg, recorder)
+    assert cfg.checkpoint is not None
     catalog = TaskCatalog(cfg.catalog)
     owns_recorder = recorder is None
     rec = recorder or RunRecorder(cfg.output_dir)
@@ -188,59 +223,7 @@ def run(cfg: FinetuneConfig, recorder: RunRecorder | None = None) -> dict[str, A
             logger.info(f"Adding new head '{name}' (absent from checkpoint).")
             model.add_task(build_head_config(catalog, cfg.model, cfg.training, name, masking_ratio=1.0))
 
-        apply_freeze_policy(model, cfg.tasks, freeze_encoder=cfg.freeze_encoder)
-        frozen = sum(1 for _, p in model.named_parameters() if not p.requires_grad)
-        trainable = sum(1 for _, p in model.named_parameters() if p.requires_grad)
-
-        # Disable non-target supervised heads for the fit (keep the AE active + trainable); restore
-        # before saving so the checkpoint retains every head.
-        disabled = [n for n in list(model.task_heads) if n not in cfg.tasks and n != AE_NAME]
-        if disabled:
-            model.disable_task(*disabled)
-
-        datamodule = catalog.build_datamodule(
-            cfg.tasks,
-            masking_ratios={t: 1.0 for t in cfg.tasks},
-            datamodule_cls=DropLastTrainCompoundDataModule,  # drop size-1 tail batch (BatchNorm)
-        )
-        datamodule.setup("fit")
-        test_keys = _test_keys(datamodule)
-
-        before = {
-            name: evaluate_task(
-                model, catalog, name, rec, rec.paths.training / "before_finetune", is_new=False, test_keys=test_keys
-            )
-            for name in cfg.tasks
-        }
-
-        callbacks, loggers, enable_ckpt = build_trainer_extras(
-            cfg.training,
-            log_dir=rec.paths.root / "logs",
-            ckpt_dir=rec.paths.training / "finetune" / "lightning",
-            run_name="finetune",
-        )
-        if cfg.freeze_encoder:
-            callbacks.append(_FrozenEncoderEval())  # keep frozen encoder's BatchNorm buffers fixed
-        trainer = Trainer(
-            max_epochs=cfg.epochs,
-            accelerator=cfg.training.accelerator,
-            devices=cfg.training.devices,
-            logger=loggers,
-            enable_checkpointing=enable_ckpt,
-            enable_progress_bar=False,
-            callbacks=callbacks,
-        )
-        guard_single_device(trainer)
-        trainer.fit(model, datamodule=datamodule)
-
-        if disabled:
-            model.enable_task(*disabled)
-
-        eval_dir = rec.paths.training / "finetune"
-        after: dict[str, dict[str, float]] = {}
-        for name in cfg.tasks:
-            after[name] = evaluate_task(model, catalog, name, rec, eval_dir, is_new=True, test_keys=test_keys)
-
+        fit = _fit(model, catalog, cfg, rec)
         rec.save_final_model(model, ckpt_tasks + added_tasks, _task_spec_dump(catalog, ckpt_tasks + added_tasks))
         summary = {
             "from_checkpoint": str(cfg.checkpoint),
@@ -248,21 +231,213 @@ def run(cfg: FinetuneConfig, recorder: RunRecorder | None = None) -> dict[str, A
             "added_tasks": added_tasks,
             "checkpoint_tasks": ckpt_tasks,
             "epochs": cfg.epochs,
-            "epochs_run": trainer.current_epoch,
-            "freeze_encoder": cfg.freeze_encoder,
-            "frozen_params": frozen,
-            "trainable_params": trainable,
-            "metrics_before": before,
-            "metrics_after": after,
+            **fit,
         }
         (rec.paths.training / "finetune_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-        logger.info(
-            f"Fine-tuned {cfg.tasks} for {trainer.current_epoch} epochs → {rec.paths.training / 'final_model.pt'}"
-        )
+        logger.info(f"Fine-tuned {cfg.tasks} for {fit['epochs_run']} epochs → {rec.paths.training / 'final_model.pt'}")
         return summary
     finally:
         if owns_recorder:
             rec.close()
+
+
+def _target_inputs(cfg: FinetuneConfig, bundle_config: Any) -> dict[str, Any]:
+    """How each fine-tuned task's physical-unit data reach the training scale.
+
+    Existing heads use the bundle's transform, its class names, or the shape normalisation. New heads
+    get a transform fitted on their own training split, or class names from their labels.
+    """
+    from foundation_model.data.targets import ClassLabels, fit_default
+
+    raw_catalog = TaskCatalog(cfg.catalog)  # untransformed, to read the user's own values
+    heads = {h.name: h for h in bundle_config.heads}
+    inputs: dict[str, Any] = {}
+    for name in cfg.tasks:
+        spec = raw_catalog.task_spec(name)
+        if spec.scaler is not None:
+            raise ValueError(
+                f"Task '{name}': no [tasks.scaler] when fine-tuning a released bundle. Give the data in physical "
+                "units; the bundle (existing heads) or the fit on your training split (new heads) normalises it."
+            )
+        kind = spec.kind.value
+        if name in heads:
+            head = heads[name]
+            if head.kind != kind:
+                raise ValueError(f"Task '{name}': the bundle's head is {head.kind}, the config says {kind}.")
+            if kind == "classification":
+                if spec.num_classes != head.num_classes:
+                    raise ValueError(f"Task '{name}': num_classes {spec.num_classes} != the head's {head.num_classes}.")
+                inputs[name] = head.classes
+            elif head.output_scale == "shape":
+                inputs[name] = "shape"
+            else:
+                inputs[name] = head.transform
+            if (spec.output_scale == "shape") != (head.output_scale == "shape") and kind != "classification":
+                raise ValueError(f"Task '{name}': output_scale disagrees with the bundle's head ({head.output_scale}).")
+            continue
+        frame = raw_catalog.task_frames([name])[name]
+        mask = frame[spec.column].notna()
+        if "split" in frame.columns:
+            mask &= frame["split"] == "train"
+        train = frame.loc[mask, spec.column]
+        if kind == "classification":
+            assert spec.num_classes is not None
+            if train.map(lambda v: isinstance(v, str)).all():
+                names = sorted({str(v) for v in train})
+                if len(names) != spec.num_classes:
+                    raise ValueError(
+                        f"Task '{name}': {len(names)} class names in the training split, num_classes = {spec.num_classes}."
+                    )
+                inputs[name] = ClassLabels(tuple(names))
+            else:
+                inputs[name] = ClassLabels(tuple(str(i) for i in range(spec.num_classes)))
+        elif spec.output_scale == "shape":
+            inputs[name] = "shape"
+        else:
+            values = train if kind == "regression" else [as_float_array(c) for c in train]
+            flat = np.concatenate(values) if kind == "kernel_regression" and len(values) else np.asarray(values, float)
+            inputs[name] = fit_default(flat)
+    return inputs
+
+
+def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[str, Any]:
+    """Fine-tune from a released bundle; writes the legacy checkpoint and a derived bundle."""
+    from foundation_model.hub.bundle import load_member
+    from foundation_model.hub.derive import save_derived
+    from foundation_model.hub.export import _head_spec
+    from foundation_model.hub.pretrained import resolve
+
+    assert cfg.pretrained is not None
+    owns_recorder = recorder is None
+    rec = recorder or RunRecorder(cfg.output_dir)
+    seed_everything(cfg.training.seed, workers=True)
+    try:
+        if cfg.training.learnable_loss_balancer:
+            logger.warning("learnable_loss_balancer is ignored when fine-tuning a released bundle.")
+        root, src = resolve(cfg.pretrained)
+        model, bundle_config, member = load_member(root, src.member, training=cfg.training)
+        catalog = TaskCatalog(cfg.catalog, target_inputs=_target_inputs(cfg, bundle_config))
+        section = bundle_config.model
+        existing = [h.name for h in bundle_config.heads]
+
+        # Classification heads being fine-tuned weight their loss from the user's labels, as configured.
+        for name in cfg.tasks:
+            spec = catalog.task_spec(name)
+            if name in existing and spec.class_weights == "balanced":
+                model.task_configs_map[name].class_weights = catalog._class_weights(name)  # noqa: SLF001
+        reapply_class_weights(model, [n for n in cfg.tasks if n in existing])
+
+        added = [t for t in cfg.tasks if t not in existing]
+        if added and not cfg.add_new_tasks:
+            raise ValueError(
+                f"Heads {added} are not in the bundle and add_new_tasks = false (bundle heads: {existing})."
+            )
+        for name in added:
+            logger.info(f"Adding new head '{name}' to the released model.")
+            model.add_task(build_head_config(catalog, section, cfg.training, name, masking_ratio=1.0))
+
+        fit = _fit(model, catalog, cfg, rec)
+        order = list(member.task_order) + added
+        rec.save_final_model(model, existing + added, _task_spec_dump(catalog, [t for t in cfg.tasks]))
+
+        heads = list(bundle_config.heads) + [_head_spec(catalog, section, name) for name in added]
+        derived_from = {
+            "source": cfg.pretrained,
+            "revision": src.revision,
+            "member": member.id,
+            "license": bundle_config.license,
+            "fm_version": bundle_config.fm_version,
+        }
+        bundle_dir = save_derived(
+            rec.paths.root / "bundle",
+            bundle_config,
+            model.eval(),
+            heads=heads,
+            task_order=order,
+            derived_from=derived_from,
+            provenance={"finetuned_heads": list(cfg.tasks), "added_heads": added},
+        )
+        summary = {
+            "from_pretrained": cfg.pretrained,
+            "member": member.id,
+            "license": bundle_config.license,
+            "finetuned_heads": list(cfg.tasks),
+            "added_tasks": added,
+            "bundle": str(bundle_dir),
+            "epochs": cfg.epochs,
+            **fit,
+        }
+        (rec.paths.training / "finetune_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        logger.info(f"Fine-tuned {cfg.tasks} from {cfg.pretrained} → {bundle_dir} (licence {bundle_config.license})")
+        return summary
+    finally:
+        if owns_recorder:
+            rec.close()
+
+
+def _fit(model: Any, catalog: TaskCatalog, cfg: FinetuneConfig, rec: RunRecorder) -> dict[str, Any]:
+    """Freeze, fit ``cfg.tasks`` and evaluate before / after; non-target heads are restored afterwards."""
+    apply_freeze_policy(model, cfg.tasks, freeze_encoder=cfg.freeze_encoder)
+    frozen = sum(1 for _, p in model.named_parameters() if not p.requires_grad)
+    trainable = sum(1 for _, p in model.named_parameters() if p.requires_grad)
+
+    # Disable non-target supervised heads for the fit (keep the AE active + trainable); restore
+    # before saving so the checkpoint retains every head.
+    disabled = [n for n in list(model.task_heads) if n not in cfg.tasks and n != AE_NAME]
+    if disabled:
+        model.disable_task(*disabled)
+
+    datamodule = catalog.build_datamodule(
+        cfg.tasks,
+        masking_ratios={t: 1.0 for t in cfg.tasks},
+        datamodule_cls=DropLastTrainCompoundDataModule,  # drop size-1 tail batch (BatchNorm)
+    )
+    datamodule.setup("fit")
+    test_keys = _test_keys(datamodule)
+
+    before = {
+        name: evaluate_task(
+            model, catalog, name, rec, rec.paths.training / "before_finetune", is_new=False, test_keys=test_keys
+        )
+        for name in cfg.tasks
+    }
+
+    callbacks, loggers, enable_ckpt = build_trainer_extras(
+        cfg.training,
+        log_dir=rec.paths.root / "logs",
+        ckpt_dir=rec.paths.training / "finetune" / "lightning",
+        run_name="finetune",
+    )
+    if cfg.freeze_encoder:
+        callbacks.append(_FrozenEncoderEval())  # keep frozen encoder's BatchNorm buffers fixed
+    trainer = Trainer(
+        max_epochs=cfg.epochs,
+        accelerator=cfg.training.accelerator,
+        devices=cfg.training.devices,
+        logger=loggers,
+        enable_checkpointing=enable_ckpt,
+        enable_progress_bar=False,
+        callbacks=callbacks,
+    )
+    guard_single_device(trainer)
+    trainer.fit(model, datamodule=datamodule)
+
+    if disabled:
+        model.enable_task(*disabled)
+
+    eval_dir = rec.paths.training / "finetune"
+    after: dict[str, dict[str, float]] = {}
+    for name in cfg.tasks:
+        after[name] = evaluate_task(model, catalog, name, rec, eval_dir, is_new=True, test_keys=test_keys)
+
+    return {
+        "epochs_run": trainer.current_epoch,
+        "freeze_encoder": cfg.freeze_encoder,
+        "frozen_params": frozen,
+        "trainable_params": trainable,
+        "metrics_before": before,
+        "metrics_after": after,
+    }
 
 
 def _test_keys(datamodule: Any) -> set[str] | None:

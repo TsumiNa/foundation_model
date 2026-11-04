@@ -29,7 +29,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import joblib  # type: ignore[import-untyped]
 import numpy as np
@@ -46,7 +46,7 @@ from foundation_model.data.composition_sources import (
     resolve_splits,
 )
 from foundation_model.data.datamodule import CompoundDataModule
-from foundation_model.data.targets import ClassLabels, TargetTransform, from_sklearn
+from foundation_model.data.targets import ClassLabels, TargetTransform, from_sklearn, normalize_max_abs
 from foundation_model.models.model_config import (
     ClassificationTaskConfig,
     KernelRegressionTaskConfig,
@@ -58,6 +58,41 @@ from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, KMD, element_featu
 from ._sections import reject_unknown, validate_hidden_dims, validate_positive_int
 
 TaskConfig = RegressionTaskConfig | ClassificationTaskConfig | KernelRegressionTaskConfig
+TargetInput = TargetTransform | ClassLabels | Literal["shape"]
+
+
+def _apply_target_input(name: str, spec: TaskSpec, column: pd.Series, given: TargetInput) -> pd.Series:
+    """Map a physical-unit column onto the training scale (see ``TaskCatalog(target_inputs=...)``)."""
+    if spec.kind is TaskKind.CLASSIFICATION:
+        if not isinstance(given, ClassLabels):
+            raise TypeError(f"Task '{name}': a classification task takes ClassLabels, not {type(given).__name__}.")
+        labels = column.dropna()
+        if labels.map(lambda v: isinstance(v, str)).all():
+            mapped = pd.Series(given.indices([str(v) for v in labels]), index=labels.index, dtype=float)
+        else:
+            mapped = pd.to_numeric(labels, errors="raise").astype(float)
+            bad = mapped[(mapped < 0) | (mapped >= len(given.classes)) | (mapped % 1 != 0)]
+            if not bad.empty:
+                raise ValueError(
+                    f"Task '{name}': label indices out of range 0..{len(given.classes) - 1}: {bad.iloc[:5].tolist()}."
+                )
+        return mapped.reindex(column.index)
+    if isinstance(given, ClassLabels):
+        raise TypeError(f"Task '{name}': ClassLabels apply to classification tasks only.")
+    if spec.kind is TaskKind.REGRESSION:
+        if given == "shape":
+            raise ValueError(f"Task '{name}': 'shape' normalisation applies to curve (kernel_regression) tasks only.")
+        assert isinstance(given, TargetTransform)
+        return pd.Series(given.transform(column.to_numpy(dtype=float)), index=column.index)
+
+    def per_row(cell: Any) -> Any:
+        if cell is None or (isinstance(cell, float) and np.isnan(cell)):
+            return cell
+        values = _as_float_array(cell)
+        return normalize_max_abs(values) if given == "shape" else given.transform(values)  # type: ignore[union-attr]
+
+    return column.map(per_row)
+
 
 # A composition key element token, e.g. "Fe" / "Cu" in "Fe0.5 Cu0.5".
 ELEMENT_TOKEN = re.compile(r"[A-Z][a-z]?")
@@ -422,9 +457,25 @@ def _as_float_array(cell: Any) -> np.ndarray:
 class TaskCatalog:
     """Loads composition-keyed frames + descriptors once; hands out task configs and datamodules."""
 
-    def __init__(self, config: TaskCatalogConfig, *, split_tasks: Sequence[str] | None = None) -> None:
+    def __init__(
+        self,
+        config: TaskCatalogConfig,
+        *,
+        split_tasks: Sequence[str] | None = None,
+        target_inputs: Mapping[str, TargetInput] | None = None,
+    ) -> None:
+        """``target_inputs`` maps a task to how its column, given in physical units, reaches the
+        training scale. A :class:`TargetTransform` is applied forward, to every element of a curve.
+        ``"shape"`` max-abs normalises each curve row. :class:`ClassLabels` maps class names to
+        indices. Fine-tuning from a released bundle uses this; the transform then also serves
+        :meth:`inverse_transform` in place of any configured scaler.
+        """
         self.config = config
         self._task_specs = {t.name: t for t in config.tasks}
+        self._target_inputs: dict[str, TargetInput] = dict(target_inputs or {})
+        unknown_inputs = sorted(set(self._target_inputs) - set(self._task_specs))
+        if unknown_inputs:
+            raise ValueError(f"target_inputs for unknown task(s): {unknown_inputs}.")
         self._split_tasks = list(split_tasks) if split_tasks is not None else list(self._task_specs)
         if not set(self._split_tasks).issubset(self._task_specs):
             raise ValueError("Unknown task in split_tasks.")
@@ -599,6 +650,8 @@ class TaskCatalog:
                     frame[spec.t_column] = source[spec.t_column]
                 if "split" in source.columns:
                     frame["split"] = source["split"]
+                if name in self._target_inputs:
+                    frame[spec.column] = _apply_target_input(name, spec, frame[spec.column], self._target_inputs[name])
                 self._task_frames[name] = frame
             out[name] = self._task_frames[name]
         return out
@@ -756,6 +809,9 @@ class TaskCatalog:
         """The fitted scaler for ``name`` (loaded lazily), or ``None`` if not configured."""
 
         spec = self.task_spec(name)
+        given = self._target_inputs.get(name)
+        if isinstance(given, (TargetTransform, ClassLabels)):
+            return given
         if spec.scaler is None:
             return None
         if name not in self._scalers:
@@ -787,6 +843,8 @@ class TaskCatalog:
         obj = self.scaler(name)
         if obj is None or isinstance(obj, TargetTransform):
             return obj
+        if isinstance(obj, ClassLabels):
+            raise TypeError(f"Task '{name}': the configured scaler is a label encoder, not a target transform.")
         converted = from_sklearn(obj)
         if not isinstance(converted, TargetTransform):
             raise TypeError(f"Task '{name}': the configured scaler is a label encoder, not a target transform.")
@@ -796,8 +854,8 @@ class TaskCatalog:
         """Class names of a classification task, from its configured ``LabelEncoder``; ``None`` if unset."""
 
         obj = self.scaler(name)
-        if obj is None:
-            return None
+        if obj is None or isinstance(obj, ClassLabels):
+            return obj
         converted = from_sklearn(obj)
         if not isinstance(converted, ClassLabels):
             raise TypeError(f"Task '{name}': the configured scaler is not a label encoder.")
@@ -811,6 +869,8 @@ class TaskCatalog:
             return np.asarray(values)
         if isinstance(scaler, TargetTransform):
             return scaler.inverse(values)
+        if isinstance(scaler, ClassLabels):
+            return np.asarray(values)
         restored = scaler.inverse_transform(np.asarray(values, dtype=float).reshape(-1, 1))
         return np.asarray(restored).reshape(-1)
 

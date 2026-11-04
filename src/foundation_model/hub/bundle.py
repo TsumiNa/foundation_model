@@ -44,7 +44,7 @@ from foundation_model.models.model_config import (
 )
 from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, KMD, element_features
 from foundation_model.workflows._engine import AE_NAME, build_encoder_config
-from foundation_model.workflows._sections import ModelSectionConfig, build_model_section
+from foundation_model.workflows._sections import ModelSectionConfig, TrainingSectionConfig, build_model_section
 from foundation_model.workflows.task_catalog import TaskConfig
 
 __all__ = [
@@ -420,21 +420,41 @@ class Manifest:
 # --- model construction and I/O ------------------------------------------------------------------
 
 
-def build_model(config: BundleConfig) -> FlexibleMultiTaskModel:
-    """The bundle's architecture with freshly initialised weights, in eval mode."""
+def build_model(config: BundleConfig, training: TrainingSectionConfig | None = None) -> FlexibleMultiTaskModel:
+    """The bundle's architecture with freshly initialised weights, in eval mode.
+
+    Without ``training`` every parameter group gets an inference placeholder optimizer. With it, the
+    groups get ``[training]``'s learning rates and weight decays, so the model can be fine-tuned. The
+    encoder, the AE and each head use the same rules as ``fm pretrain`` / ``fm finetune``. The
+    learnable loss balancer is never enabled: its parameters are not part of a bundle.
+    """
     config.descriptor.check()
     section = config.model
+
+    def opt(lr: float, weight_decay: float) -> OptimizerConfig:
+        if training is None:
+            return OptimizerConfig(lr=1e-3, weight_decay=1e-2, scheduler_enabled=False)
+        return training.optimizer_config(lr=lr, weight_decay=weight_decay)
+
     model = FlexibleMultiTaskModel(
         task_configs=[],
         encoder_config=build_encoder_config(section, config.descriptor.dim()),
         enable_autoencoder=True,
         autoencoder_hidden_dims=section.autoencoder_hidden_dims,
-        shared_block_optimizer=OptimizerConfig(lr=1e-3, weight_decay=1e-2, scheduler_enabled=False),
+        shared_block_optimizer=opt(training.encoder_lr, training.encoder_weight_decay) if training else opt(0, 0),
     )
     if AE_NAME in model.task_configs_map:
-        model.task_configs_map[AE_NAME].optimizer = OptimizerConfig(lr=1e-3, weight_decay=1e-2, scheduler_enabled=False)
+        model.task_configs_map[AE_NAME].optimizer = (
+            opt(training.ae_lr, training.ae_weight_decay) if training else opt(0, 0)
+        )
     for head in config.heads:
-        model.add_task(head.task_config(section.latent_dim))
+        task_config = head.task_config(section.latent_dim)
+        if training is not None:
+            if head.kind == "kernel_regression":
+                task_config.optimizer = opt(training.kr_lr, training.kr_weight_decay)
+            else:
+                task_config.optimizer = opt(training.head_lr, training.head_weight_decay)
+        model.add_task(task_config)
     return model.eval()
 
 
@@ -516,15 +536,20 @@ def read_manifest(path: str | Path) -> Manifest:
     return Manifest.from_dict(json.loads(file.read_text(encoding="utf-8")))
 
 
-def load_member(path: str | Path, member: str | None = None) -> tuple[FlexibleMultiTaskModel, BundleConfig, MemberInfo]:
-    """Build the architecture from ``config.json`` and load one member's weights strictly."""
+def load_member(
+    path: str | Path, member: str | None = None, *, training: TrainingSectionConfig | None = None
+) -> tuple[FlexibleMultiTaskModel, BundleConfig, MemberInfo]:
+    """Build the architecture from ``config.json`` and load one member's weights strictly.
+
+    ``training`` sets the optimizers for fine-tuning (see :func:`build_model`).
+    """
     path = Path(path)
     config = read_config(path)
     info = read_manifest(path).member(member)
     weights = path / MEMBERS_DIR / info.id / WEIGHTS_FILE
     if not weights.exists():
         raise BundleError(f"member {info.id!r} has no weights at {weights}.")
-    model = build_model(config)
+    model = build_model(config, training)
     state = load_file(str(weights))
     _check_state(state, model.state_dict(), info.id)
     model.load_state_dict(state, strict=True)
