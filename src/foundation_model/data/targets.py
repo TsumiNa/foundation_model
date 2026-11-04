@@ -1,0 +1,419 @@
+# Copyright 2026 TsumiNa.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Target transforms as plain data: fit, apply, invert and serialise without pickle.
+
+A training target is stored on a normalised scale; a :class:`TargetTransform` maps physical
+values onto that scale (:meth:`~TargetTransform.transform`) and back
+(:meth:`~TargetTransform.inverse`). It is an ordered list of steps whose parameters are numbers,
+so it round-trips through JSON and can be shipped inside a released model bundle without
+executing code at load time.
+
+The step set covers every transform the project's datasets use:
+
+* ``standard_scaler`` — ``(x - mean) / scale`` (sklearn ``StandardScaler``, incl. ``with_mean=False``);
+* ``power_transformer`` — Yeo-Johnson or Box-Cox, optionally standardised (sklearn ``PowerTransformer``);
+* ``log1p`` — ``log1p(max(x, clip_lower))``;
+* ``arcsinh`` — ``arcsinh(x)``;
+* ``clip`` — bounds on the transformed value; its inverse cannot undo the clipping, so values at a
+  bound come back as the bound's pre-image (:attr:`TargetTransform.saturates`);
+* ``identity``.
+
+:func:`from_sklearn` converts the fitted sklearn objects found in ``data/*preprocessing*.pkl.z``
+and rejects anything else by name. :func:`fit_default` fits the project's default recipe
+(``StandardScaler → PowerTransformer(yeo-johnson)``) on training values. Classification labels
+are :class:`ClassLabels`; per-row max-abs normalised curves (the DOS head) use
+:func:`normalize_max_abs` and carry no transform at all.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, ClassVar, Literal, Sequence
+
+import numpy as np
+
+__all__ = [
+    "ArcsinhStep",
+    "ClassLabels",
+    "ClipStep",
+    "IdentityStep",
+    "Log1pStep",
+    "PowerTransformerStep",
+    "StandardScalerStep",
+    "Step",
+    "TargetTransform",
+    "UnsupportedTransformError",
+    "fit_default",
+    "from_sklearn",
+    "normalize_max_abs",
+]
+
+_EPS = np.spacing(1.0)  # sklearn's own threshold for "lambda == 0" / "lambda == 2"
+
+
+class UnsupportedTransformError(TypeError):
+    """A fitted transform (or one of its steps) has no plain-data equivalent."""
+
+
+def _as_1d(values: Any) -> np.ndarray:
+    arr = np.asarray(values, dtype=float)
+    if arr.ndim > 1:
+        if arr.ndim == 2 and arr.shape[1] == 1:
+            return arr[:, 0]
+        raise ValueError(f"a target transform acts on one column; got shape {arr.shape}.")
+    return arr
+
+
+# --- steps ---------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class StandardScalerStep:
+    """``(x - mean) / scale``; ``mean = 0`` / ``scale = 1`` encode ``with_mean`` / ``with_std`` off."""
+
+    kind: ClassVar[str] = "standard_scaler"
+    mean: float = 0.0
+    scale: float = 1.0
+
+    def __post_init__(self) -> None:
+        if not np.isfinite(self.scale) or self.scale == 0:
+            raise ValueError(f"standard_scaler.scale must be finite and non-zero, got {self.scale}.")
+
+    def forward(self, x: np.ndarray) -> np.ndarray:
+        return (x - self.mean) / self.scale
+
+    def backward(self, y: np.ndarray) -> np.ndarray:
+        return y * self.scale + self.mean
+
+    def params(self) -> dict[str, Any]:
+        return {"mean": self.mean, "scale": self.scale}
+
+
+@dataclass(frozen=True)
+class PowerTransformerStep:
+    """Yeo-Johnson / Box-Cox with one ``lmbda``, then ``(z - mean) / scale`` when ``standardize``."""
+
+    kind: ClassVar[str] = "power_transformer"
+    method: Literal["yeo-johnson", "box-cox"]
+    lmbda: float
+    standardize: bool = True
+    mean: float = 0.0
+    scale: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.method not in ("yeo-johnson", "box-cox"):
+            raise ValueError(f"power_transformer.method must be 'yeo-johnson' or 'box-cox', got {self.method!r}.")
+        if self.standardize and (not np.isfinite(self.scale) or self.scale == 0):
+            raise ValueError(f"power_transformer.scale must be finite and non-zero, got {self.scale}.")
+
+    def _yj(self, x: np.ndarray) -> np.ndarray:
+        lam = self.lmbda
+        out = np.full_like(x, np.nan)
+        pos = x >= 0
+        neg = x < 0
+        if abs(lam) < _EPS:
+            out[pos] = np.log1p(x[pos])
+        else:
+            out[pos] = (np.power(x[pos] + 1, lam) - 1) / lam
+        if abs(lam - 2) > _EPS:
+            out[neg] = -(np.power(-x[neg] + 1, 2 - lam) - 1) / (2 - lam)
+        else:
+            out[neg] = -np.log1p(-x[neg])
+        return out
+
+    def _yj_inv(self, y: np.ndarray) -> np.ndarray:
+        lam = self.lmbda
+        out = np.full_like(y, np.nan)
+        pos = y >= 0
+        neg = y < 0
+        if abs(lam) < _EPS:
+            out[pos] = np.expm1(y[pos])
+        else:
+            out[pos] = np.power(y[pos] * lam + 1, 1 / lam) - 1
+        if abs(lam - 2) > _EPS:
+            out[neg] = 1 - np.power(-(2 - lam) * y[neg] + 1, 1 / (2 - lam))
+        else:
+            out[neg] = -np.expm1(-y[neg])
+        return out
+
+    def forward(self, x: np.ndarray) -> np.ndarray:
+        if self.method == "yeo-johnson":
+            z = self._yj(x)
+        else:
+            if np.any(x[np.isfinite(x)] <= 0):
+                raise ValueError("box-cox requires strictly positive values.")
+            z = np.log(x) if abs(self.lmbda) < _EPS else (np.power(x, self.lmbda) - 1) / self.lmbda
+        return (z - self.mean) / self.scale if self.standardize else z
+
+    def backward(self, y: np.ndarray) -> np.ndarray:
+        z = y * self.scale + self.mean if self.standardize else y
+        if self.method == "yeo-johnson":
+            return self._yj_inv(z)
+        return np.exp(z) if abs(self.lmbda) < _EPS else np.power(z * self.lmbda + 1, 1 / self.lmbda)
+
+    def params(self) -> dict[str, Any]:
+        return {
+            "method": self.method,
+            "lmbda": self.lmbda,
+            "standardize": self.standardize,
+            "mean": self.mean,
+            "scale": self.scale,
+        }
+
+
+@dataclass(frozen=True)
+class Log1pStep:
+    """``log1p(max(x, clip_lower))``; ``clip_lower = None`` applies no clip."""
+
+    kind: ClassVar[str] = "log1p"
+    clip_lower: float | None = None
+
+    def forward(self, x: np.ndarray) -> np.ndarray:
+        return np.log1p(x if self.clip_lower is None else np.maximum(x, self.clip_lower))
+
+    def backward(self, y: np.ndarray) -> np.ndarray:
+        return np.expm1(y)
+
+    def params(self) -> dict[str, Any]:
+        return {"clip_lower": self.clip_lower}
+
+
+@dataclass(frozen=True)
+class ArcsinhStep:
+    kind: ClassVar[str] = "arcsinh"
+
+    def forward(self, x: np.ndarray) -> np.ndarray:
+        return np.arcsinh(x)
+
+    def backward(self, y: np.ndarray) -> np.ndarray:
+        return np.sinh(y)
+
+    def params(self) -> dict[str, Any]:
+        return {}
+
+
+@dataclass(frozen=True)
+class ClipStep:
+    """Bound the transformed value; the inverse is the identity, so bounds saturate."""
+
+    kind: ClassVar[str] = "clip"
+    lower: float | None = None
+    upper: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.lower is None and self.upper is None:
+            raise ValueError("clip needs at least one of lower / upper.")
+        if self.lower is not None and self.upper is not None and self.lower >= self.upper:
+            raise ValueError(f"clip.lower must be < clip.upper, got {self.lower} >= {self.upper}.")
+
+    def forward(self, x: np.ndarray) -> np.ndarray:
+        return np.clip(x, self.lower, self.upper)
+
+    def backward(self, y: np.ndarray) -> np.ndarray:
+        return y
+
+    def params(self) -> dict[str, Any]:
+        return {"lower": self.lower, "upper": self.upper}
+
+
+@dataclass(frozen=True)
+class IdentityStep:
+    kind: ClassVar[str] = "identity"
+
+    def forward(self, x: np.ndarray) -> np.ndarray:
+        return x
+
+    def backward(self, y: np.ndarray) -> np.ndarray:
+        return y
+
+    def params(self) -> dict[str, Any]:
+        return {}
+
+
+Step = StandardScalerStep | PowerTransformerStep | Log1pStep | ArcsinhStep | ClipStep | IdentityStep
+_STEP_TYPES: dict[str, type] = {
+    cls.kind: cls for cls in (StandardScalerStep, PowerTransformerStep, Log1pStep, ArcsinhStep, ClipStep, IdentityStep)
+}
+
+
+# --- transform -----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TargetTransform:
+    """An ordered list of steps between physical values and the training scale.
+
+    NaN passes through every step unchanged, matching the masked-target convention.
+    """
+
+    steps: tuple[Step, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "steps", tuple(self.steps))
+        for step in self.steps:
+            if type(step) not in _STEP_TYPES.values():
+                raise UnsupportedTransformError(f"not a target-transform step: {type(step).__name__}.")
+
+    def transform(self, values: Any) -> np.ndarray:
+        """Physical values → training scale."""
+        out = _as_1d(values).copy()
+        for step in self.steps:
+            out = step.forward(out)
+        return out
+
+    def inverse(self, values: Any) -> np.ndarray:
+        """Training scale → physical values (a ``clip`` bound comes back saturated)."""
+        out = _as_1d(values).copy()
+        for step in reversed(self.steps):
+            out = step.backward(out)
+        return out
+
+    @property
+    def saturates(self) -> bool:
+        """True when a ``clip`` step makes the inverse lose values beyond its bounds."""
+        return any(isinstance(step, ClipStep) for step in self.steps)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"steps": [{"kind": step.kind, **step.params()} for step in self.steps]}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TargetTransform:
+        steps_raw = data.get("steps")
+        if not isinstance(steps_raw, list):
+            raise ValueError("a target transform needs a 'steps' list.")
+        steps: list[Step] = []
+        for i, raw in enumerate(steps_raw):
+            raw = dict(raw)
+            kind = raw.pop("kind", None)
+            if kind not in _STEP_TYPES:
+                raise UnsupportedTransformError(f"step {i}: unknown kind {kind!r}; supported: {sorted(_STEP_TYPES)}.")
+            try:
+                steps.append(_STEP_TYPES[kind](**raw))
+            except TypeError as exc:
+                raise ValueError(f"step {i} ({kind}): {exc}") from None
+        return cls(tuple(steps))
+
+
+@dataclass(frozen=True)
+class ClassLabels:
+    """Class names of a classification head, in label-index order (sklearn ``LabelEncoder.classes_``)."""
+
+    classes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "classes", tuple(str(c) for c in self.classes))
+        if len(set(self.classes)) != len(self.classes):
+            raise ValueError(f"class names must be unique, got {list(self.classes)}.")
+
+    def names(self, indices: Any) -> list[str]:
+        return [self.classes[int(i)] for i in np.asarray(indices).ravel()]
+
+    def indices(self, names: Sequence[str]) -> list[int]:
+        lookup = {c: i for i, c in enumerate(self.classes)}
+        missing = [n for n in names if n not in lookup]
+        if missing:
+            raise KeyError(f"unknown class name(s) {missing}; classes are {list(self.classes)}.")
+        return [lookup[n] for n in names]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"classes": list(self.classes)}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ClassLabels:
+        return cls(tuple(data["classes"]))
+
+
+# --- conversion and fitting -----------------------------------------------------------------
+
+
+def _scalar(arr: Any, name: str, owner: str) -> float:
+    values = np.asarray(arr, dtype=float).ravel()
+    if values.size != 1:
+        raise UnsupportedTransformError(
+            f"{owner}.{name} has {values.size} entries; a target transform is single-column."
+        )
+    return float(values[0])
+
+
+def _steps_from_estimator(est: Any) -> list[Step]:
+    from sklearn.pipeline import Pipeline  # type: ignore[import-untyped]
+    from sklearn.preprocessing import (  # type: ignore[import-untyped]
+        FunctionTransformer,
+        PowerTransformer,
+        StandardScaler,
+    )
+
+    name = type(est).__name__
+    if isinstance(est, Pipeline):
+        return [step for _, sub in est.steps for step in _steps_from_estimator(sub)]
+    if isinstance(est, StandardScaler):
+        mean = _scalar(est.mean_, "mean_", name) if est.with_mean else 0.0
+        scale = _scalar(est.scale_, "scale_", name) if est.with_std else 1.0
+        return [StandardScalerStep(mean=mean, scale=scale)]
+    if isinstance(est, PowerTransformer):
+        inner = getattr(est, "_scaler", None)
+        mean, scale = 0.0, 1.0
+        if est.standardize:
+            if inner is None:
+                raise UnsupportedTransformError("PowerTransformer(standardize=True) without a fitted inner scaler.")
+            mean, scale = _scalar(inner.mean_, "mean_", name), _scalar(inner.scale_, "scale_", name)
+        return [
+            PowerTransformerStep(
+                method=est.method,
+                lmbda=_scalar(est.lambdas_, "lambdas_", name),
+                standardize=bool(est.standardize),
+                mean=mean,
+                scale=scale,
+            )
+        ]
+    if isinstance(est, FunctionTransformer):
+        if est.func is np.arcsinh and est.inverse_func is np.sinh:
+            return [ArcsinhStep()]
+        if est.func is np.log1p and est.inverse_func is np.expm1:
+            return [Log1pStep()]
+        if est.func is None and est.inverse_func is None:
+            return [IdentityStep()]
+        raise UnsupportedTransformError(
+            f"FunctionTransformer({getattr(est.func, '__name__', est.func)!s}) has no plain-data equivalent."
+        )
+    raise UnsupportedTransformError(f"{name} has no plain-data equivalent; supported: {sorted(_STEP_TYPES)}.")
+
+
+def from_sklearn(obj: Any) -> TargetTransform | ClassLabels:
+    """Convert a fitted sklearn scaler / pipeline (→ :class:`TargetTransform`) or ``LabelEncoder``.
+
+    Raises :class:`UnsupportedTransformError` naming the first estimator that cannot be expressed.
+    """
+    from sklearn.preprocessing import LabelEncoder  # type: ignore[import-untyped]
+
+    if isinstance(obj, LabelEncoder):
+        return ClassLabels(tuple(obj.classes_.tolist()))
+    return TargetTransform(tuple(_steps_from_estimator(obj)))
+
+
+def fit_default(train_values: Any) -> TargetTransform:
+    """Fit ``StandardScaler → PowerTransformer(yeo-johnson)`` on finite training values."""
+    from sklearn.pipeline import make_pipeline  # type: ignore[import-untyped]
+    from sklearn.preprocessing import PowerTransformer, StandardScaler  # type: ignore[import-untyped]
+
+    x = _as_1d(train_values)
+    x = x[np.isfinite(x)]
+    if x.size < 2:
+        raise ValueError(f"fitting a target transform needs at least 2 finite training values, got {x.size}.")
+    pipe = make_pipeline(StandardScaler(), PowerTransformer(method="yeo-johnson", standardize=True))
+    pipe.fit(x.reshape(-1, 1))
+    result = from_sklearn(pipe)
+    assert isinstance(result, TargetTransform)
+    return result
+
+
+def normalize_max_abs(curve: Any) -> np.ndarray:
+    """Divide one curve by its own max abs value — the per-row normalisation of shape-only heads.
+
+    Matches ``InterpSmooth(normalize=True)``: an all-zero curve is returned unchanged.
+    """
+    y = _as_1d(curve)
+    finite = y[np.isfinite(y)]
+    peak = float(np.max(np.abs(finite))) if finite.size else 0.0
+    return y / peak if peak > 0 else y.copy()
