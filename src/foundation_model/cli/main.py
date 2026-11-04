@@ -123,7 +123,7 @@ def common_options(func: Callable[..., Any], *, config_required: bool = True) ->
 @click.group()
 @click.version_option(package_name="foundation-model", prog_name="fm")
 def main() -> None:
-    """Unified foundation-model CLI (pretrain / finetune / inverse / predict / export)."""
+    """Unified foundation-model CLI (pretrain / finetune / inverse / predict / export / publish)."""
 
 
 def _pretrain_config(
@@ -532,6 +532,54 @@ def export_cmd(
         provenance={"export_config": str(config_path), "argv": list(sys.argv)},
     )
     click.echo(f"wrote bundle {path}")
+
+
+@main.command("publish")
+@click.argument("bundle", type=click.Path(exists=True, file_okay=False))
+@click.option("--repo", "repo_id", required=True, help="Hugging Face repository, owner/name.")
+@click.option("--tag", default=None, help="Release tag, e.g. v1.0.0 (recommended: pins the release).")
+@click.option(
+    "--visibility",
+    type=click.Choice(["private", "gated", "public"]),
+    default="private",
+    show_default=True,
+    help="private: only you / your organisation; gated: public page, downloads after manual approval; public.",
+)
+@click.option("--title", default=None, help="Model card title (default: the repository name).")
+@click.option(
+    "--card-extra",
+    "card_extra",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Markdown file appended to the model card (repeatable), e.g. data citations.",
+)
+@click.option("--overwrite-card", is_flag=True, default=False, help="Regenerate README.md even if the bundle has one.")
+@click.option("--dry-run", is_flag=True, default=False, help="Check the bundle and write the card; upload nothing.")
+def publish_cmd(
+    bundle: str,
+    repo_id: str,
+    tag: str | None,
+    visibility: str,
+    title: str | None,
+    card_extra: tuple[str, ...],
+    overwrite_card: bool,
+    dry_run: bool,
+) -> None:
+    """Write the model card and push a bundle to the Hugging Face Hub (token from HF_TOKEN / hf auth login)."""
+    from foundation_model.hub.card import read_extra
+    from foundation_model.hub.publish import publish
+
+    result = publish(
+        bundle,
+        repo_id,
+        tag=tag,
+        visibility=visibility,  # type: ignore[arg-type]
+        title=title,
+        card_extra=read_extra(card_extra),
+        overwrite_card=overwrite_card,
+        dry_run=dry_run,
+    )
+    click.echo(f"card written to {result} (dry run)" if dry_run else f"published to {result}")
 
 
 if __name__ == "__main__":  # pragma: no cover
