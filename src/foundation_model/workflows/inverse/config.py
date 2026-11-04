@@ -103,6 +103,14 @@ class SeedConfig:
         if self.strategy is SeedStrategy.ELEMENTS:
             if len(self.elements) < 2 or len(set(self.elements)) != len(self.elements):
                 raise ValueError("seeds.strategy='elements' requires seeds.elements: at least two distinct elements.")
+            from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS
+
+            unknown = [e for e in self.elements if e not in DEFAULT_ELEMENTS]
+            if unknown:
+                raise ValueError(
+                    f"seeds.elements {unknown} are outside the descriptor's element table "
+                    f"({DEFAULT_ELEMENTS[0]}–{DEFAULT_ELEMENTS[-1]})."
+                )
         elif self.elements:
             raise ValueError("seeds.elements only applies to strategy='elements'.")
         if self.strategy is SeedStrategy.WEIGHTED_RANDOM and not self.weight_task:
@@ -405,12 +413,20 @@ class InverseConfig:
     # class names, converted at config build; ``physical_targets`` keeps them as written for reports.
     pretrained: str | None = None
     physical_targets: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    # The bundle snapshot the targets were converted with (pinned commit for the Hub); the engine loads
+    # exactly this snapshot and member, so a moving branch cannot swap the model under the targets.
+    pretrained_root: Path | None = None
+    pretrained_member: str | None = None
 
     def __post_init__(self) -> None:
         if (self.checkpoint is None) == (self.pretrained is None):
             raise ValueError("give exactly one of a checkpoint (--checkpoint) or a released bundle (--pretrained).")
         if self.checkpoint is not None:
             self.checkpoint = Path(self.checkpoint)
+        if self.seeds.strategy is SeedStrategy.ELEMENTS and self.catalog.descriptor.kind != "kmd":
+            raise ValueError(
+                "seeds.strategy='elements' needs descriptor.kind = 'kmd' (new compositions need computed descriptors)."
+            )
         if self.pretrained is not None and self.seeds.strategy not in (SeedStrategy.EXPLICIT, SeedStrategy.ELEMENTS):
             raise ValueError(
                 "a released bundle carries no data to draw seeds from: use seeds.strategy = 'explicit' "
@@ -537,6 +553,8 @@ def build_inverse_config(
     inv_raw = dict(raw.get("inverse", {}))
     resolved_pretrained = pretrained if pretrained is not None else inv_raw.get("pretrained")
     bundle_config = None
+    bundle_root: Path | None = None
+    bundle_src: Any = None
     if resolved_pretrained is not None:
         given = sorted(k for k in (*_CATALOG_KEYS, "model") if k in raw)
         if given:
@@ -544,7 +562,8 @@ def build_inverse_config(
         from foundation_model.hub.bundle import read_config
         from foundation_model.hub.pretrained import resolve
 
-        bundle_config = read_config(resolve(str(resolved_pretrained))[0])
+        bundle_root, bundle_src = resolve(str(resolved_pretrained))
+        bundle_config = read_config(bundle_root)
         catalog = _bundle_catalog(bundle_config, str(resolved_pretrained))
         model = bundle_config.model
     else:
@@ -603,6 +622,8 @@ def build_inverse_config(
         checkpoint=Path(resolved_checkpoint) if resolved_checkpoint is not None else None,
         pretrained=str(resolved_pretrained) if resolved_pretrained is not None else None,
         physical_targets=physical,
+        pretrained_root=bundle_root if bundle_config is not None else None,
+        pretrained_member=bundle_src.member if bundle_config is not None else None,
         seeds=seeds,
         scenarios=scenarios,
         paths=paths,

@@ -128,3 +128,53 @@ def test_shape_head_targets_stay_on_the_shape_scale(bundle_and_ckpt: tuple[Path,
                  seeds={"strategy": "explicit", "explicit": _SEEDS}, pretrained=str(bundle))
     )  # fmt: skip
     np.testing.assert_allclose(np.array(cfg.scenarios[0].targets[0].points), [[0.0, 0.5], [2.0, 1.0]])
+
+
+def test_engine_uses_the_snapshot_the_targets_were_converted_with(
+    bundle_and_ckpt: tuple[Path, Path], tmp_path: Path
+) -> None:
+    bundle, _ = bundle_and_ckpt
+    seeds = {"strategy": "explicit", "explicit": _SEEDS}
+    cfg = build_inverse_config(
+        _inverse([{"task": "band_gap", "value": 1.0}], tmp_path / "o", seeds=seeds, pretrained=str(bundle))
+    )
+    assert cfg.pretrained_root == bundle and cfg.pretrained_member == "m000"
+    cfg.pretrained = "owner/moved-on@main"  # a later resolution of the source must not matter
+    inverse_run(cfg)
+    assert (tmp_path / "o" / "s" / "summary.json").exists()
+
+
+def test_element_seed_validation_and_bounds() -> None:
+    from foundation_model.workflows.inverse.config import SeedConfig
+
+    with pytest.raises(ValueError, match=r"\['Og'\] are outside the descriptor's element table"):
+        SeedConfig(strategy="elements", elements=["Fe", "Og"])
+    with pytest.raises(ValueError, match="only 9999 distinct 4-decimal compositions exist over 2 elements"):
+        random_compositions(["Fe", "Co"], 10_000, seed=0)
+    first = random_compositions(["Fe", "Co", "Ni"], 1, seed=4)[0]
+    again = random_compositions(["Fe", "Co", "Ni"], 5, seed=4, exclude=[first])
+    assert first not in again and len(set(again)) == 5
+
+
+def test_element_seeds_need_a_kmd_descriptor(tmp_path: Path) -> None:
+    raw = {
+        "descriptor": {"kind": "precomputed", "path": str(tmp_path / "d.parquet")},
+        "datasets": {"d": {"path": str(tmp_path / "x.parquet")}},
+        "tasks": [{"name": "a", "kind": "regression", "dataset": "d", "column": "a"}],
+        "model": {"latent_dim": 8},
+        **_inverse([{"task": "a", "value": 1.0}], tmp_path / "o", seeds={"strategy": "elements", "elements": ["Fe", "Ni"]},
+                   checkpoint="c.pt"),
+    }  # fmt: skip
+    raw["inverse"]["paths"] = [_PATHS[0]]  # latent only, so the composition-path KMD check does not fire first
+    with pytest.raises(ValueError, match="needs descriptor.kind = 'kmd'"):
+        build_inverse_config(raw)
+
+
+def test_appended_seeds_are_not_drawn_again(bundle_and_ckpt: tuple[Path, Path], tmp_path: Path) -> None:
+    bundle, _ = bundle_and_ckpt
+    appended = random_compositions(["Fe", "Ni"], 1, seed=11)  # what the elements strategy would draw first
+    seeds = {"strategy": "elements", "elements": ["Fe", "Ni"], "n": 4, "explicit_append": appended}
+    inverse_run(build_inverse_config(_inverse([{"task": "band_gap", "value": 1.0}], tmp_path / "o", seeds=seeds,
+                                              pretrained=str(bundle))))  # fmt: skip
+    chosen = json.loads((tmp_path / "o" / "seeds.json").read_text())["seeds"]
+    assert len(chosen) == 4 and len(set(chosen)) == 4 and chosen[-1] == appended[0]

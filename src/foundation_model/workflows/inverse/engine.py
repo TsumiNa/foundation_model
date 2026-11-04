@@ -54,10 +54,9 @@ def run(
     try:
         if cfg.pretrained is not None:
             from foundation_model.hub.bundle import load_member
-            from foundation_model.hub.pretrained import resolve
 
-            root, src = resolve(cfg.pretrained)
-            model, bundle_config, _ = load_member(root, src.member)
+            assert cfg.pretrained_root is not None  # set by build_inverse_config with the converted targets
+            model, bundle_config, _ = load_member(cfg.pretrained_root, cfg.pretrained_member)
             transforms = {h.name: h.transform for h in bundle_config.heads if h.transform is not None}
         else:
             model, _ = rebuild_model(cfg, catalog)
