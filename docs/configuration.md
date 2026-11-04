@@ -360,11 +360,32 @@ finetune/inverse/predict consume. Enable to *also* emit Lightning `.ckpt` files.
 
 | Key | Type | Default | Constraint | Description |
 |---|---|---|---|---|
-| `checkpoint` | str (path) | — | required (or `--checkpoint`) | Checkpoint to fine-tune from. |
+| `checkpoint` | str (path) | — | exactly one of `checkpoint` / `pretrained` (or `--checkpoint`) | Checkpoint to fine-tune from. |
+| `pretrained` | str | — | exactly one of `checkpoint` / `pretrained` (or `--pretrained`); no `[model]` | Released bundle to fine-tune from: a directory or `owner/name[@revision][#member]`. See below. |
 | `tasks` | list[str] | — | required, non-empty | Heads to fine-tune; other heads stay frozen (the AE head always trains). |
 | `epochs` | int | `20` | | Fine-tune epochs (distinct from `[training].max_epochs`). |
 | `freeze_encoder` | bool | `true` | | Freeze the shared encoder + non-target heads (BatchNorm buffers included). |
 | `add_new_tasks` | bool | `true` | | If a target task isn't in the checkpoint, add a fresh head for it. |
+
+**Fine-tuning a released bundle** (`pretrained`): the bundle supplies the architecture and every existing
+head. The catalog lists only **your** tasks, with data in **physical units** and no `[tasks.scaler]`.
+
+- **Existing heads** (same task name as in the bundle; the kind and `num_classes` must match) use the bundle's
+  target transform. Shape-only heads get the per-row max-abs normalisation. Classification labels may be
+  given as the bundle's class names.
+  - Units are **not converted**: give data in the head's units. A different `unit` / `t_unit` is an error,
+    and an omitted one means "as the head".
+  - `output_scale` is inherited when omitted.
+  - Per-task `lr` / `weight_decay` apply as for new heads.
+  - A fine-tuned curve head's `t` range and default grid are widened to cover your training `t`.
+- **New heads** fit `StandardScaler → PowerTransformer(yeo-johnson)` on their training split. A new
+  classification head takes its class names from string labels, or `"0"…"n-1"` for integer labels. A new
+  curve head may set `output_scale = "shape"`.
+- **Outputs.** Besides `training/final_model.pt`, the run writes `<output>/bundle`. That derived bundle keeps
+  the source licence (ShareAlike licences cannot change) and records `derived_from` (source, revision,
+  member, licence). The new heads appear with their transforms, units and `t` grids.
+- **Not supported:** the learnable loss balancer is ignored, and replay of the pretraining data is not
+  available, since the data are not released.
 
 ## `[predict]` — evaluate / predict with a checkpoint
 

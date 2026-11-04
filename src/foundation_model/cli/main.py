@@ -189,18 +189,24 @@ def _finetune_config(
     checkpoint: str | None,
     tasks: str | None,
     epochs: int | None,
+    pretrained: str | None = None,
 ) -> FinetuneConfig:
     raw = load_raw_config(config_path, overrides, seed=seed, accelerator=accelerator, sample=sample)
     if tasks is not None:
         _set_dotted(raw, "finetune.tasks", [t.strip() for t in tasks.split(",") if t.strip()])
     if epochs is not None:
         _set_dotted(raw, "finetune.epochs", epochs)
-    return build_finetune_config(raw, output_dir=output_dir, checkpoint=checkpoint)
+    return build_finetune_config(raw, output_dir=output_dir, checkpoint=checkpoint, pretrained=pretrained)
 
 
 @main.command("finetune")
 @common_options
 @click.option("--checkpoint", default=None, type=click.Path(dir_okay=False), help="Checkpoint to fine-tune from.")
+@click.option(
+    "--pretrained",
+    default=None,
+    help="Released bundle to fine-tune from (directory or owner/name[@rev][#member]); the TOML lists only your tasks.",
+)
 @click.option("--tasks", default=None, help="Comma-separated heads to fine-tune (overrides finetune.tasks).")
 @click.option("--epochs", type=int, default=None, help="Override finetune.epochs.")
 def finetune_cmd(
@@ -211,11 +217,14 @@ def finetune_cmd(
     accelerator: str | None,
     sample: int | None,
     checkpoint: str | None,
+    pretrained: str | None,
     tasks: str | None,
     epochs: int | None,
 ) -> None:
-    """Frozen-encoder fine-tuning of selected task heads."""
-    cfg = _finetune_config(config_path, overrides, output_dir, seed, accelerator, sample, checkpoint, tasks, epochs)
+    """Frozen-encoder fine-tuning of selected task heads (from a checkpoint or a released bundle)."""
+    cfg = _finetune_config(
+        config_path, overrides, output_dir, seed, accelerator, sample, checkpoint, tasks, epochs, pretrained
+    )
     recorder = RunRecorder(cfg.output_dir)
     recorder.write_provenance(config=cfg, argv=list(sys.argv), seeds={"seed": cfg.training.seed})
     finetune_run(cfg, recorder)

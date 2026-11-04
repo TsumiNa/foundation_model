@@ -47,7 +47,15 @@ from .bundle import (
     read_manifest,
 )
 
-__all__ = ["ExtrapolationWarning", "PretrainedModel", "Suite", "load_pretrained", "load_suite", "parse_source"]
+__all__ = [
+    "ExtrapolationWarning",
+    "PretrainedModel",
+    "Suite",
+    "load_pretrained",
+    "load_suite",
+    "parse_source",
+    "resolve",
+]
 
 _REPO_RE = re.compile(r"^(?P<repo>[\w.-]+/[\w.-]+)(?:@(?P<rev>[^#]+))?(?:#(?P<member>.+))?$")
 
@@ -152,6 +160,33 @@ class PretrainedModel:
         self.source = source
         self.revision = revision
         self._kmd = config.descriptor.kmd()
+
+    def save(self, out: str | Path, *, provenance: dict[str, Any] | None = None) -> Path:
+        """Write this member as a one-member bundle at ``out``.
+
+        The bundle keeps the source licence and records ``derived_from`` (source, revision, member,
+        licence). Saving a fine-tuned model therefore carries the ShareAlike terms forward.
+        """
+        from .derive import save_derived
+
+        return save_derived(
+            out,
+            self.config,
+            self.model,
+            heads=self.config.heads,
+            task_order=self.member.task_order,
+            derived_from=self.derived_from(),
+            provenance=provenance,
+        )
+
+    def derived_from(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "revision": self.revision,
+            "member": self.member.id,
+            "license": self.config.license,
+            "fm_version": self.config.fm_version,
+        }
 
     def __repr__(self) -> str:
         return f"PretrainedModel({self.source!r}, member={self.member.id!r}, heads={len(self.config.heads)})"
@@ -340,15 +375,32 @@ def load_pretrained(
     On the Hub the revision is pinned to its commit first; then the metadata and only that member are
     downloaded.
     """
+    root, src = resolve(source, member=member, revision=revision, token=token, cache_dir=cache_dir)
+    model, config, info = load_member(root, src.member)
+    return PretrainedModel(model, config, info, str(source), revision=src.revision)
+
+
+def resolve(
+    source: str | Path,
+    *,
+    member: str | None = None,
+    revision: str | None = None,
+    token: str | bool | None = None,
+    cache_dir: str | Path | None = None,
+) -> tuple[Path, Source]:
+    """A local directory holding ``source``'s metadata and one member, plus the parsed source.
+
+    The returned source names the member (the default member when none was asked for) and, for the
+    Hub, the commit its revision was pinned to.
+    """
     src = parse_source(source, revision=revision, member=member)
     if src.path is not None:
-        root, wanted = src.path, src.member
-    else:
-        src = _pin(src, token)
-        wanted = src.member or read_manifest(_fetch(src, [], token, cache_dir)).default
-        root = _fetch(src, [wanted], token, cache_dir)
-    model, config, info = load_member(root, wanted)
-    return PretrainedModel(model, config, info, str(source), revision=src.revision)
+        wanted = src.member or read_manifest(src.path).default
+        return src.path, Source(path=src.path, member=wanted)
+    pinned = _pin(src, token)
+    chosen: str = pinned.member or read_manifest(_fetch(pinned, [], token, cache_dir)).default
+    root = _fetch(pinned, [chosen], token, cache_dir)
+    return root, Source(repo=pinned.repo, revision=pinned.revision, member=chosen)
 
 
 def load_suite(
