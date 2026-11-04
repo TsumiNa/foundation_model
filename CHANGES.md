@@ -1,5 +1,16 @@
 # Recent Updates
 
+## 2026-11-04 (publish: `fm publish`, model cards)
+
+- `fm publish BUNDLE --repo owner/name --tag v1.0.0 --visibility private|gated|public`. Every member is
+  loaded back first. The command creates the repository, sets gating (manual approval), uploads the bundle
+  and tags the release; `--dry-run` writes the card only.
+- `foundation_model.hub.render_card` generates `README.md`:
+  - YAML header: licence (Hub id or `other`), `library_name: foundation-model`, tags, and for gated repos
+    an access form with non-commercial and licence checkboxes;
+  - body: the heads table (units, shape heads, `t` ranges), members, usage (Python + CLI), limitations,
+    licence terms (including the scratch-trained exemption), lineage, and any `--card-extra` Markdown.
+
 ## 2026-11-04 (reuse: `fm inverse --pretrained`)
 
 - `fm inverse --pretrained SOURCE` (or `[inverse].pretrained`) designs from a released bundle with no

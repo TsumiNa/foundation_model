@@ -20,8 +20,10 @@ from .bundle import (
     read_manifest,
     write_bundle,
 )
+from .card import render_card
 from .export import export_runs
 from .pretrained import ExtrapolationWarning, PretrainedModel, Suite, load_pretrained, load_suite
+from .publish import publish
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -39,7 +41,9 @@ __all__ = [
     "load_member",
     "load_pretrained",
     "load_suite",
+    "publish",
     "read_config",
     "read_manifest",
+    "render_card",
     "write_bundle",
 ]
