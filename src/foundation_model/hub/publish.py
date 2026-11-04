@@ -73,11 +73,15 @@ def publish(
 
     api = _api(token)
     url = api.create_repo(repo_id, private=visibility == "private", exist_ok=True, repo_type="model")
-    if visibility == "gated":
+    # create_repo ignores visibility for an existing repository, so set it explicitly every time, before
+    # any weights are uploaded.
+    if visibility == "private":
+        api.update_repo_settings(repo_id, private=True)
+    elif visibility == "gated":
         api.update_repo_settings(repo_id, gated="manual", private=False)
-    elif visibility == "public":
+    else:
         api.update_repo_settings(repo_id, gated=False, private=False)
-    api.upload_folder(
+    commit = api.upload_folder(
         repo_id=repo_id,
         folder_path=str(path),
         repo_type="model",
@@ -85,8 +89,12 @@ def publish(
         ignore_patterns=[".*", "**/.*"],
     )
     if tag is not None:
+        # Tag the commit this upload created, not whatever the branch head is by the time we get here.
         api.create_tag(
-            repo_id, tag=tag, tag_message=f"foundation-model {config.fm_version}, schema {config.schema_version}"
+            repo_id,
+            tag=tag,
+            revision=getattr(commit, "oid", None),
+            tag_message=f"foundation-model {config.fm_version}, schema {config.schema_version}",
         )
     if not str(url):
         raise BundleError(f"the Hub returned no URL for {repo_id}.")

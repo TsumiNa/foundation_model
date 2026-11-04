@@ -44,6 +44,27 @@ def _is_non_commercial(license_id: str) -> bool:
     return any(tag in license_id.lower() for tag in _NON_COMMERCIAL)
 
 
+def _cc_terms(license_id: str) -> str | None:
+    """The derivative terms of a Creative Commons licence id, or ``None`` for any other licence.
+
+    NC: non-commercial use only. SA: adaptations must carry the same licence. ND: adaptations may not be
+    shared. A non-CC licence gets no paraphrase, only its name: the card must not invent terms for it.
+    """
+    lic = license_id.lower()
+    if not lic.startswith("cc-by"):
+        return None
+    parts = set(lic.removesuffix("-4.0").split("-"))
+    use = "for non-commercial purposes only" if "nc" in parts else "for any purpose, including commercially"
+    terms = f"may be used {use}, with attribution"
+    if "nd" in parts:
+        return f"{terms}; adapted models (for example fine-tuned ones) may not be shared"
+    if "sa" in parts:
+        return f"{terms}; models derived from them (for example by fine-tuning) must carry the same licence"
+    if "nc" in parts:
+        return f"{terms}; models derived from them stay non-commercial"
+    return terms
+
+
 def _yaml_str(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)  # a JSON string is a valid YAML scalar
 
@@ -65,14 +86,13 @@ def _front_matter(config: BundleConfig, *, gated: bool) -> list[str]:
     ]
     if gated:
         nc = _is_non_commercial(lic)
+        terms = _cc_terms(lic)
         prompt = (
             "Access is reviewed by the authors. "
             + (
-                "These weights, and every model derived from them (for example by fine-tuning), are licensed "
-                f"under {config.license}: non-commercial use only, with attribution, and derivatives under the "
-                "same licence. "
-                if nc
-                else f"These weights are licensed under {config.license}. "
+                f"These weights are licensed under {config.license}: they {terms}. "
+                if terms
+                else f"These weights are licensed under {config.license}; see its terms. "
             )
             + "Models you train from scratch with the foundation-model code and your own data are not covered."
         )
@@ -84,10 +104,9 @@ def _front_matter(config: BundleConfig, *, gated: bool) -> list[str]:
             "  Intended use: text",
         ]
         if nc:
-            lines.append(
-                "  I will use these weights and any model derived from them for non-commercial purposes only: checkbox"
-            )
-        lines.append(f"  I accept the {config.license} licence terms: checkbox")
+            label = "I will use these weights and any model derived from them for non-commercial purposes only"
+            lines.append(f"  {_yaml_str(label)}: checkbox")
+        lines.append(f"  {_yaml_str(f'I accept the {config.license} licence terms')}: checkbox")
     lines.append("---")
     return lines
 
@@ -185,15 +204,11 @@ def render_card(
         "## Licence",
         "",
     ]
-    if _is_non_commercial(config.license):
-        lines += [
-            f"The weights are licensed under {config.license}. They, and every model derived from them "
-            "(including models fine-tuned from them), may be used for **non-commercial purposes only**, "
-            "with attribution, and derivatives must carry the same licence.",
-            "",
-        ]
+    terms = _cc_terms(config.license)
+    if terms:
+        lines += [f"The weights are licensed under **{config.license}**: they {terms}.", ""]
     else:
-        lines += [f"The weights are licensed under {config.license}.", ""]
+        lines += [f"The weights are licensed under **{config.license}**; its own terms apply.", ""]
     lines += [
         "Models trained **from scratch** with the foundation-model code (Apache-2.0) on your own data are not "
         "covered by this licence.",

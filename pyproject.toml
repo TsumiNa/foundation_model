@@ -41,7 +41,7 @@ classifiers = [
 
 [project.optional-dependencies]
 # Download released bundles from the Hugging Face Hub (foundation_model.hub.load_pretrained).
-hub = ["huggingface_hub>=0.24"]
+hub = ["huggingface_hub>=0.26"]  # update_repo_settings(private=...) is 0.26+
 
 [project.scripts]
 fm = "foundation_model.cli.main:main"
