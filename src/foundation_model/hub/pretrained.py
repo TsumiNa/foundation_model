@@ -8,7 +8,7 @@ Hub access needs the optional extra ``foundation-model[hub]``. A gated repositor
 ``HF_TOKEN`` or ``hf auth login``.
 
     >>> from foundation_model.hub import load_pretrained
-    >>> model = load_pretrained("TsumiNa/fm-inorganic@v1.0.0")          # default member
+    >>> model = load_pretrained("<owner>/<repo>@v1.0.0")                 # default member
     >>> model.predict(["Fe2O3", "NaCl"], tasks=["band_gap"])             # eV, not the training scale
     >>> model.predict_curve(["Bi2Te3"], "seebeck")                        # on the training grid
 
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -100,17 +100,36 @@ def _snapshot(repo: str, revision: str | None, patterns: list[str], token: str |
 _METADATA = [CONFIG_FILE, MANIFEST_FILE, "README.md"]
 
 
-def _materialise(src: Source, members: Sequence[str] | None, token: str | bool | None, cache_dir: Any) -> Path:
-    """A local directory holding the bundle metadata plus ``members``.
+_METADATA = [CONFIG_FILE, MANIFEST_FILE, "README.md"]
 
-    ``members = None`` means every member. With the metadata only, the manifest decides what to fetch.
+
+def _commit(repo: str, revision: str | None, token: str | bool | None) -> str:
+    """The commit a (possibly symbolic) Hub revision points to right now."""
+    try:
+        from huggingface_hub import HfApi
+    except ImportError as exc:  # pragma: no cover - depends on the environment
+        raise ImportError(
+            "loading from the Hugging Face Hub needs the optional extra: pip install 'foundation-model[hub]'"
+        ) from exc
+    sha = HfApi().model_info(repo, revision=revision, token=token).sha
+    if not sha:
+        raise BundleError(f"the Hub did not resolve {repo}@{revision or 'main'} to a commit.")
+    return str(sha)
+
+
+def _pin(src: Source, token: str | bool | None) -> Source:
+    """Resolve a Hub source's revision to its commit once, so every later download reads one snapshot.
+
+    A branch or tag can move between the metadata download and the weights download; a commit cannot.
     """
-    if src.path is not None:
-        return src.path
+    if src.repo is None:
+        return src
+    return Source(repo=src.repo, revision=_commit(src.repo, src.revision, token), member=src.member)
+
+
+def _fetch(src: Source, members: Sequence[str], token: str | bool | None, cache_dir: Any) -> Path:
+    """The local snapshot of a pinned Hub source with its metadata and ``members`` (empty = metadata only)."""
     assert src.repo is not None
-    if members is None:
-        root = _snapshot(src.repo, src.revision, _METADATA, token, cache_dir)
-        members = [m.id for m in read_manifest(root).members]
     patterns = [*_METADATA, *(f"{MEMBERS_DIR}/{m}/*" for m in members)]
     return _snapshot(src.repo, src.revision, patterns, token, cache_dir)
 
@@ -118,11 +137,20 @@ def _materialise(src: Source, members: Sequence[str] | None, token: str | bool |
 class PretrainedModel:
     """One loaded member of a bundle, with a physical-unit prediction API."""
 
-    def __init__(self, model: FlexibleMultiTaskModel, config: BundleConfig, member: MemberInfo, source: str) -> None:
+    def __init__(
+        self,
+        model: FlexibleMultiTaskModel,
+        config: BundleConfig,
+        member: MemberInfo,
+        source: str,
+        *,
+        revision: str | None = None,
+    ) -> None:
         self.model = model.eval()
         self.config = config
         self.member = member
         self.source = source
+        self.revision = revision
         self._kmd = config.descriptor.kmd()
 
     def __repr__(self) -> str:
@@ -262,12 +290,21 @@ class PretrainedModel:
 
 
 class Suite:
-    """All members of a bundle. Members load lazily, so iterating over a 100-member suite stays cheap."""
+    """All members of a bundle. Members are downloaded and loaded on first access, one at a time."""
 
-    def __init__(self, root: Path, source: str) -> None:
+    def __init__(
+        self,
+        root: Path,
+        source: str,
+        *,
+        fetch: Callable[[str], Path] | None = None,
+        revision: str | None = None,
+    ) -> None:
         self.root = root
         self.source = source
+        self.revision = revision
         self.manifest: Manifest = read_manifest(root)
+        self._fetch = fetch
         self._loaded: dict[str, PretrainedModel] = {}
 
     @property
@@ -279,8 +316,10 @@ class Suite:
 
     def __getitem__(self, member_id: str) -> PretrainedModel:
         if member_id not in self._loaded:
-            model, config, info = load_member(self.root, member_id)
-            self._loaded[member_id] = PretrainedModel(model, config, info, self.source)
+            self.manifest.member(member_id)  # KeyError naming the members, before any download
+            root = self._fetch(member_id) if self._fetch is not None else self.root
+            model, config, info = load_member(root, member_id)
+            self._loaded[member_id] = PretrainedModel(model, config, info, self.source, revision=self.revision)
         return self._loaded[member_id]
 
     def __iter__(self) -> Iterator[PretrainedModel]:
@@ -296,18 +335,20 @@ def load_pretrained(
     token: str | bool | None = None,
     cache_dir: str | Path | None = None,
 ) -> PretrainedModel:
-    """Load one member (the bundle's default unless ``member`` is given) from a bundle or Hub repository."""
+    """Load one member (the bundle's default unless ``member`` is given) from a bundle or Hub repository.
+
+    On the Hub the revision is pinned to its commit first; then the metadata and only that member are
+    downloaded.
+    """
     src = parse_source(source, revision=revision, member=member)
-    wanted = src.member
     if src.path is not None:
-        root = src.path
+        root, wanted = src.path, src.member
     else:
-        assert src.repo is not None
-        if wanted is None:  # fetch the manifest first, then only the default member
-            wanted = read_manifest(_snapshot(src.repo, src.revision, _METADATA, token, cache_dir)).default
-        root = _materialise(src, [wanted], token, cache_dir)
+        src = _pin(src, token)
+        wanted = src.member or read_manifest(_fetch(src, [], token, cache_dir)).default
+        root = _fetch(src, [wanted], token, cache_dir)
     model, config, info = load_member(root, wanted)
-    return PretrainedModel(model, config, info, str(source))
+    return PretrainedModel(model, config, info, str(source), revision=src.revision)
 
 
 def load_suite(
@@ -317,9 +358,18 @@ def load_suite(
     token: str | bool | None = None,
     cache_dir: str | Path | None = None,
 ) -> Suite:
-    """Every member of a bundle or Hub repository (downloaded once, loaded on first use)."""
+    """Every member of a bundle or Hub repository. Only the metadata is read up front; each member is
+    downloaded (Hub) and loaded the first time it is accessed."""
     src = parse_source(source, revision=revision)
     if src.member is not None:
         raise BundleError(f"{source!r} names member {src.member!r}; load_suite loads all members.")
-    root = _materialise(src, None, token, cache_dir)
-    return Suite(root, str(source))
+    if src.path is not None:
+        return Suite(src.path, str(source))
+    pinned = _pin(src, token)
+    root = _fetch(pinned, [], token, cache_dir)
+    return Suite(
+        root,
+        str(source),
+        fetch=lambda member_id: _fetch(pinned, [member_id], token, cache_dir),
+        revision=pinned.revision,
+    )

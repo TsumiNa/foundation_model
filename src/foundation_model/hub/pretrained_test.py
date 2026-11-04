@@ -134,8 +134,13 @@ def _fake_hub(monkeypatch: pytest.MonkeyPatch, bundle: Path, tmp_path: Path) -> 
     calls: list[list[str]] = []
     cache = tmp_path / "hub-cache"
 
-    def snapshot(repo, revision, patterns, token, cache_dir):  # noqa: ANN001
+    def commit(repo, revision, token):  # noqa: ANN001
         assert repo == "owner/fm" and revision == "v1"
+        calls.append(["<resolve v1>"])
+        return "c0ffee"
+
+    def snapshot(repo, revision, patterns, token, cache_dir):  # noqa: ANN001
+        assert repo == "owner/fm" and revision == "c0ffee"  # every download uses the pinned commit
         calls.append(list(patterns))
         for file in bundle.rglob("*"):
             rel = file.relative_to(bundle).as_posix()
@@ -145,6 +150,7 @@ def _fake_hub(monkeypatch: pytest.MonkeyPatch, bundle: Path, tmp_path: Path) -> 
         return cache
 
     monkeypatch.setattr(pretrained_mod, "_snapshot", snapshot)
+    monkeypatch.setattr(pretrained_mod, "_commit", commit)
     return calls
 
 
@@ -153,8 +159,8 @@ def test_hub_download_fetches_only_the_needed_member(
 ) -> None:
     calls = _fake_hub(monkeypatch, bundle, tmp_path)
     model = load_pretrained("owner/fm@v1")
-    assert model.member.id == "m000"
-    assert calls[0] == ["config.json", "manifest.json", "README.md"]
+    assert model.member.id == "m000" and model.revision == "c0ffee"
+    assert calls[0] == ["<resolve v1>"] and calls[1] == ["config.json", "manifest.json", "README.md"]
     assert "members/m000/*" in calls[-1] and not any("m001" in p for c in calls for p in c)
     assert not (tmp_path / "hub-cache" / "members" / "m001").exists()
 
@@ -163,10 +169,16 @@ def test_hub_download_fetches_only_the_needed_member(
     assert any("members/m002/*" in c for c in calls)
 
 
-def test_hub_suite_downloads_every_member(bundle: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_hub_suite_downloads_members_on_access(bundle: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _fake_hub(monkeypatch, bundle, tmp_path)
     suite = load_suite("owner/fm@v1")
-    assert len(suite) == 3 and {"members/m000/*", "members/m002/*"} <= set(calls[-1])
+    assert len(suite) == 3 and suite.member_ids == ["m000", "m001", "m002"]
+    assert not any(p.startswith("members/") for c in calls for p in c)  # metadata only so far
+    suite["m002"].predict(_COMPS[:1], ["band_gap"])
+    fetched = {p for c in calls for p in c if p.startswith("members/")}
+    assert fetched == {"members/m002/*"} and suite["m002"].revision == "c0ffee"
+    with pytest.raises(KeyError, match="no member 'm009'"):
+        suite["m009"]
     with pytest.raises(BundleError, match="load_suite loads all members"):
         load_suite("owner/fm@v1#m001")
 
@@ -195,3 +207,14 @@ def test_fm_predict_pretrained_cli(bundle: Path, tmp_path: Path) -> None:
     assert result.exit_code != 0 and "--output-dir" in result.output
     result = runner.invoke(main, ["predict", "--compositions", "Fe2 Al3"])
     assert result.exit_code != 0 and "--config is required" in result.output
+    result = runner.invoke(main, ["predict", "--pretrained", str(bundle), "--compositions", "Fe2 Al3",
+                                  "--output-dir", str(out), "--set", "predict.tasks=[\"band_gap\"]", "--seed", "3"])  # fmt: skip
+    assert result.exit_code != 0 and "--set, --seed do not apply to --pretrained" in result.output
+
+
+@pytest.mark.parametrize("bad", ["/tmp/result", "../up", "a/b", "a\\b", "", "_hidden"])
+def test_head_names_must_be_safe_file_names(bad: str) -> None:
+    from foundation_model.hub.bundle import HeadSpec
+
+    with pytest.raises(BundleError, match="no path separators"):
+        HeadSpec(name=bad, kind="classification", num_classes=2, hidden_dims=(4,))

@@ -360,6 +360,18 @@ def predict_cmd(
 ) -> None:
     """Evaluate / predict with a checkpoint (catalog path) or a released bundle (--pretrained)."""
     if pretrained is not None:
+        ignored = [
+            flag
+            for flag, value in (
+                ("--set", overrides),
+                ("--seed", seed),
+                ("--accelerator", accelerator),
+                ("--sample", sample),
+            )
+            if value
+        ]
+        if ignored:
+            raise click.UsageError(f"{', '.join(ignored)} do not apply to --pretrained (no config or data is read).")
         _predict_pretrained(
             pretrained,
             config_path=config_path,

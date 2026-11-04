@@ -73,6 +73,7 @@ _OUTPUT_SCALES = ("physical", "shape")
 _ELEMENT_FEATURES = Path(__file__).resolve().parents[1] / "utils" / "element_features.csv"
 # A member id names a directory under members/: one portable path component, no separators or dots-only.
 _MEMBER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_HEAD_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 class BundleError(ValueError):
@@ -184,6 +185,12 @@ class HeadSpec:
     transform: TargetTransform | None = None
 
     def __post_init__(self) -> None:
+        # Head names become file names (e.g. fm predict's "<task>_curve.csv"): one portable component only.
+        if not isinstance(self.name, str) or not _HEAD_NAME.match(self.name):
+            raise BundleError(
+                f"head name {self.name!r} must be letters, digits, '.', '_' or '-' (starting with a letter or "
+                "digit, at most 128 characters); no path separators."
+            )
         if self.kind not in _KINDS:
             raise BundleError(f"head {self.name!r}: kind must be one of {_KINDS}, got {self.kind!r}.")
         if self.output_scale not in _OUTPUT_SCALES:
