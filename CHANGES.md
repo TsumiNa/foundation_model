@@ -1,5 +1,20 @@
 # Recent Updates
 
+## 2026-11-04 (using released models: `load_pretrained`, `fm predict --pretrained`)
+
+- `foundation_model.hub.load_pretrained(source, member=, revision=)` loads one member, strictly, from a
+  local bundle or a Hub repository `owner/name[@revision][#member]`. On the Hub only the metadata and the
+  requested member are downloaded.
+- `load_suite` gives all members, loaded on first use.
+- `PretrainedModel` methods:
+  - `predict`: scalar heads in physical units; classification as class names, with optional
+    probabilities;
+  - `predict_curve`: the default grid, one shared grid, or one grid per composition; out-of-range `t`
+    raises `ExtrapolationWarning`;
+  - also `latent`, `descriptors` and `units`.
+- `fm predict --pretrained SOURCE --compositions … --output-dir …` needs no config or data.
+- New optional extra `foundation-model[hub]` (`huggingface_hub`).
+
 ## 2026-11-04 (release bundles: `fm export`)
 
 - New `foundation_model.hub` package with the release bundle, schema v1.
