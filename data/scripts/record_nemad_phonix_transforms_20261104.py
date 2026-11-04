@@ -13,8 +13,8 @@ transforms were recovered on 2026-11-04 (docs/refactor/pretrained-release/00-ove
   4. phonix-db kp / klat only: clip at +5.
 
 This script rebuilds each transform from the raw table and the `_norm` table's split, applies it to
-every row, and checks that the result equals the `_norm` column to within 1e-12. Only on success it writes
-the transforms (foundation_model.data.targets, plain JSON) beside the tables. The tables themselves
+every row, and checks that the result equals the `_norm` column to within 1e-12. Only when every table
+passes does it write the transforms (foundation_model.data.targets, plain JSON) beside the tables. The tables themselves
 are not changed.
 
 Outputs (new files; nothing existing is overwritten):
@@ -88,14 +88,17 @@ def recover(raw: pd.DataFrame, norm: pd.DataFrame, raw_col: str, norm_col: str, 
 
 
 def main() -> None:
+    outputs = {stem: DATA / f"{stem}_transforms.json" for stem in TABLES}
+    existing = [str(p) for p in outputs.values() if p.exists()]
+    if existing:
+        raise FileExistsError(f"{existing} exist; this script never overwrites")
+    # Validate every table first; write only when all of them reproduce, so a failure leaves nothing behind.
+    records: dict[str, dict] = {}
     for stem, columns in TABLES.items():
-        out = DATA / f"{stem}_transforms.json"
-        if out.exists():
-            raise FileExistsError(f"{out} exists; this script never overwrites")
         raw = pd.read_parquet(DATA / f"{stem}.parquet")
         norm = pd.read_parquet(DATA / f"{stem}_norm.parquet")
         print(stem)
-        record = {
+        records[stem] = {
             "source": f"{stem}.parquet",
             "normalized": f"{stem}_norm.parquet",
             "recipe": "first row per composition -> log1p(max(x, 0)) -> train z-score (ddof=0)"
@@ -103,8 +106,9 @@ def main() -> None:
             "script": "data/scripts/record_nemad_phonix_transforms_20261104.py",
             "tasks": {norm_col: recover(raw, norm, raw_col, norm_col, clip) for raw_col, norm_col, clip in columns},
         }
-        out.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        print(f"  wrote {out.relative_to(DATA.parent)}")
+    for stem, record in records.items():
+        outputs[stem].write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"wrote {outputs[stem].relative_to(DATA.parent)}")
 
 
 if __name__ == "__main__":

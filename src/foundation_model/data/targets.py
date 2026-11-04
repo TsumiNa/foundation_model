@@ -15,8 +15,8 @@ The step set covers every transform the project's datasets use:
 * ``power_transformer`` — Yeo-Johnson or Box-Cox, optionally standardised (sklearn ``PowerTransformer``);
 * ``log1p`` — ``log1p(max(x, clip_lower))``;
 * ``arcsinh`` — ``arcsinh(x)``;
-* ``clip`` — bounds on the transformed value; its inverse cannot undo the clipping, so values at a
-  bound come back as the bound's pre-image (:attr:`TargetTransform.saturates`);
+* ``clip`` — bounds on the transformed value. The inverse clamps to the same bounds, so values at or
+  beyond a bound come back as the bound's pre-image (:attr:`TargetTransform.saturates`);
 * ``identity``.
 
 :func:`from_sklearn` converts the fitted sklearn objects found in ``data/*preprocessing*.pkl.z``
@@ -115,9 +115,9 @@ class PowerTransformerStep:
         if abs(lam) < _EPS:
             out[pos] = np.log1p(x[pos])
         else:
-            out[pos] = (np.power(x[pos] + 1, lam) - 1) / lam
+            out[pos] = np.expm1(lam * np.log1p(x[pos])) / lam  # stable for lambda near 0
         if abs(lam - 2) > _EPS:
-            out[neg] = -(np.power(-x[neg] + 1, 2 - lam) - 1) / (2 - lam)
+            out[neg] = -np.expm1((2 - lam) * np.log1p(-x[neg])) / (2 - lam)
         else:
             out[neg] = -np.log1p(-x[neg])
         return out
@@ -130,9 +130,9 @@ class PowerTransformerStep:
         if abs(lam) < _EPS:
             out[pos] = np.expm1(y[pos])
         else:
-            out[pos] = np.power(y[pos] * lam + 1, 1 / lam) - 1
+            out[pos] = np.expm1(np.log1p(y[pos] * lam) / lam)
         if abs(lam - 2) > _EPS:
-            out[neg] = 1 - np.power(-(2 - lam) * y[neg] + 1, 1 / (2 - lam))
+            out[neg] = -np.expm1(np.log1p(-(2 - lam) * y[neg]) / (2 - lam))
         else:
             out[neg] = -np.expm1(-y[neg])
         return out
@@ -143,14 +143,15 @@ class PowerTransformerStep:
         else:
             if np.any(x[np.isfinite(x)] <= 0):
                 raise ValueError("box-cox requires strictly positive values.")
-            z = np.log(x) if abs(self.lmbda) < _EPS else (np.power(x, self.lmbda) - 1) / self.lmbda
+            # expm1 / log1p keep full precision for lambda near (but not at) 0, as scipy's boxcox does.
+            z = np.log(x) if abs(self.lmbda) < _EPS else np.expm1(self.lmbda * np.log(x)) / self.lmbda
         return (z - self.mean) / self.scale if self.standardize else z
 
     def backward(self, y: np.ndarray) -> np.ndarray:
         z = y * self.scale + self.mean if self.standardize else y
         if self.method == "yeo-johnson":
             return self._yj_inv(z)
-        return np.exp(z) if abs(self.lmbda) < _EPS else np.power(z * self.lmbda + 1, 1 / self.lmbda)
+        return np.exp(z) if abs(self.lmbda) < _EPS else np.exp(np.log1p(z * self.lmbda) / self.lmbda)
 
     def params(self) -> dict[str, Any]:
         return {
@@ -195,7 +196,11 @@ class ArcsinhStep:
 
 @dataclass(frozen=True)
 class ClipStep:
-    """Bound the transformed value; the inverse is the identity, so bounds saturate."""
+    """Bound the transformed value. The inverse clamps to the same bounds before passing values on.
+
+    A model can output values beyond the bounds it was trained on; clamping them makes the inverse
+    saturate at the bound's pre-image instead of extrapolating past it.
+    """
 
     kind: ClassVar[str] = "clip"
     lower: float | None = None
@@ -211,7 +216,7 @@ class ClipStep:
         return np.clip(x, self.lower, self.upper)
 
     def backward(self, y: np.ndarray) -> np.ndarray:
-        return y
+        return np.clip(y, self.lower, self.upper)
 
     def params(self) -> dict[str, Any]:
         return {"lower": self.lower, "upper": self.upper}
@@ -263,7 +268,7 @@ class TargetTransform:
         return out
 
     def inverse(self, values: Any) -> np.ndarray:
-        """Training scale → physical values (a ``clip`` bound comes back saturated)."""
+        """Training scale → physical values (values at or beyond a ``clip`` bound come back saturated)."""
         out = _as_1d(values).copy()
         for step in reversed(self.steps):
             out = step.backward(out)
@@ -307,7 +312,15 @@ class ClassLabels:
             raise ValueError(f"class names must be unique, got {list(self.classes)}.")
 
     def names(self, indices: Any) -> list[str]:
-        return [self.classes[int(i)] for i in np.asarray(indices).ravel()]
+        """Class names for integer label indices in ``[0, len(classes))``; anything else raises."""
+        arr = np.asarray(indices).ravel()
+        if arr.size and (not np.issubdtype(arr.dtype, np.number) or np.any(arr % 1 != 0)):
+            raise ValueError(f"class indices must be integers, got {arr[:5].tolist()}.")
+        ints = arr.astype(int)
+        bad = ints[(ints < 0) | (ints >= len(self.classes))]
+        if bad.size:
+            raise ValueError(f"class indices out of range 0..{len(self.classes) - 1}: {bad[:5].tolist()}.")
+        return [self.classes[i] for i in ints]
 
     def indices(self, names: Sequence[str]) -> list[int]:
         lookup = {c: i for i, c in enumerate(self.classes)}
@@ -347,6 +360,11 @@ def _steps_from_estimator(est: Any) -> list[Step]:
     name = type(est).__name__
     if isinstance(est, Pipeline):
         return [step for _, sub in est.steps for step in _steps_from_estimator(sub)]
+    n_features = getattr(est, "n_features_in_", 1)
+    if n_features != 1:
+        raise UnsupportedTransformError(
+            f"{name} was fitted on {n_features} columns; a target transform is single-column."
+        )
     if isinstance(est, StandardScaler):
         mean = _scalar(est.mean_, "mean_", name) if est.with_mean else 0.0
         scale = _scalar(est.scale_, "scale_", name) if est.with_std else 1.0

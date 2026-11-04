@@ -75,6 +75,21 @@ def test_box_cox_matches_sklearn() -> None:
     _assert_matches(PowerTransformer(method="box-cox").fit(x.reshape(-1, 1)), x)
 
 
+@pytest.mark.parametrize("method", ["box-cox", "yeo-johnson"])
+@pytest.mark.parametrize("lmbda", [1e-10, -1e-9, 2 + 1e-10])
+def test_power_transformer_is_precise_near_singular_lambdas(method: str, lmbda: float) -> None:
+    from scipy import stats  # type: ignore[import-untyped]
+    from scipy.special import boxcox, inv_boxcox  # type: ignore[import-untyped]
+
+    x = np.array([0.5, 2.0, 7.0]) if method == "box-cox" else np.array([-3.0, -0.5, 0.5, 2.0, 7.0])
+    step = PowerTransformerStep(method=method, lmbda=lmbda, standardize=False)  # type: ignore[arg-type]
+    ref = boxcox(x, lmbda) if method == "box-cox" else stats.yeojohnson(x, lmbda)
+    np.testing.assert_allclose(step.forward(x), ref, rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(step.backward(step.forward(x)), x, rtol=1e-12)
+    if method == "box-cox":
+        np.testing.assert_allclose(step.backward(ref), inv_boxcox(ref, lmbda), rtol=1e-12)
+
+
 def test_agis_prescale_arcsinh_pipeline_matches_sklearn() -> None:
     # data/scripts/process_agis_data.py: StandardScaler(with_mean=False) -> arcsinh -> StandardScaler.
     x = _rng_values() * 50
@@ -99,6 +114,9 @@ def test_label_encoder_becomes_class_labels() -> None:
     assert labels.classes == ("DAC", "DQC", "IAC", "IQC", "others")
     assert labels.names([0, 4]) == ["DAC", "others"]
     assert labels.indices(["IQC"]) == [3]
+    for bad in ([-1], [5], [0.9]):
+        with pytest.raises(ValueError, match="class indices"):
+            labels.names(bad)
     with pytest.raises(KeyError, match="unknown class"):
         labels.indices(["QC"])
     assert ClassLabels.from_dict(json.loads(json.dumps(labels.to_dict()))) == labels
@@ -112,9 +130,12 @@ def test_unsupported_estimator_is_rejected_by_name() -> None:
         from_sklearn(FunctionTransformer(np.square))
 
 
-def test_multi_column_scaler_is_rejected() -> None:
+@pytest.mark.parametrize("with_mean", [True, False])
+@pytest.mark.parametrize("with_std", [True, False])
+def test_multi_column_scaler_is_rejected(with_mean: bool, with_std: bool) -> None:
+    scaler = StandardScaler(with_mean=with_mean, with_std=with_std).fit(np.arange(8.0).reshape(4, 2))
     with pytest.raises(UnsupportedTransformError, match="single-column"):
-        from_sklearn(StandardScaler().fit(np.ones((4, 2)) * np.arange(4)[:, None]))
+        from_sklearn(scaler)
 
 
 def test_unknown_step_kind_in_json_is_rejected() -> None:
@@ -136,6 +157,10 @@ def test_log1p_zscore_clip_recipe_and_saturation() -> None:
     back = t.inverse(y)
     assert back[2] == pytest.approx(3.0)
     assert back[3] == pytest.approx(np.expm1(5.0 * 0.5 + 1.5))  # saturated at the clip bound
+    # A model output beyond the bound saturates too, instead of extrapolating past it.
+    assert t.inverse([7.0])[0] == pytest.approx(np.expm1(5.0 * 0.5 + 1.5))
+    both = TargetTransform((ClipStep(lower=-1.0, upper=1.0),))
+    np.testing.assert_array_equal(both.inverse([-3.0, 0.5, 3.0]), [-1.0, 0.5, 1.0])
     assert t.saturates and not TargetTransform((Log1pStep(),)).saturates
 
 
