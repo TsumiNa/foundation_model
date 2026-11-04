@@ -26,7 +26,7 @@ dependencies = [
     "torchmetrics>=1.4.0",
 ]
 
-license = "Apache-2.0"
+license = "Apache-2.0 AND BSD-3-Clause"
 license-files = ["LICENSE", "NOTICE"]
 keywords = ["foundation-model", "pytorch", "transformers"]
 classifiers = [

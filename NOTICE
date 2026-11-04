@@ -1,14 +1,51 @@
 foundation-model
 Copyright 2025-2026 TsumiNa
 
-This product is licensed under the Apache License, Version 2.0 (see LICENSE).
-
-src/foundation_model/utils/element_features.csv is derived from the
-`elements_completed` table of XenonPy (https://github.com/yoshida-lab/XenonPy),
-Copyright (c) 2021 TsumiNa, released under the BSD 3-Clause License.
+The source code of this product is licensed under the Apache License,
+Version 2.0 (see LICENSE).
 
 The source code license does not cover pretrained model weights or training
 data. Pretrained weights published by the copyright holder are distributed
 separately under CC BY-NC-SA 4.0, which also applies to models derived from
 them. Models trained from scratch with this code on other data are not
 subject to that license.
+
+notebooks/teaching_inverse_design/data/qc_inverse_design_teaching.parquet is
+derived from HYPOD-X, Materials Project, Starrydata2, NEMAD and phonix-db, all
+licensed under CC BY 4.0, and is redistributed under CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/). Sources, citations and the
+changes made are listed in notebooks/teaching_inverse_design/data/README.md.
+
+-------------------------------------------------------------------------------
+
+src/foundation_model/utils/element_features.csv is derived from the
+`elements_completed` table of XenonPy (https://github.com/yoshida-lab/XenonPy),
+distributed under the following license:
+
+Copyright (c) 2021 TsumiNa. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Google Inc. nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
