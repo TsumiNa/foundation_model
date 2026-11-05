@@ -245,6 +245,17 @@ def plan_campaign(
         raise ValueError("Require the complete eight-compound, three-pressure dataset")
     if len(preprocessing["folds"]) != 8:
         raise ValueError("Require all eight outer folds")
+    if preprocessing.get("design") == "balanced_nested_learning_curve":
+        n_train = preprocessing["n_train"]
+        if n_train not in range(1, 7):
+            raise ValueError("Additional learning-curve datasets require one through six training compounds")
+        universe = {f["heldout_composition"] for f in preprocessing["folds"]}
+        for fold in preprocessing["folds"]:
+            train, test = set(fold["fit_compositions"]), set(fold["test_compositions"])
+            if len(train) != n_train or len(test) != 8 - n_train or train & test or train | test != universe:
+                raise ValueError("Learning-curve train/test compositions must partition all eight materials")
+            if fold["heldout_composition"] not in test:
+                raise ValueError("The reference heldout composition must remain in every nested test set")
     base = tomllib.loads(base_config.read_text())
     # Training architecture is the architecture of the selected checkpoint population.
     model_keys = ("latent_dim", "encoder_hidden_dims", "head_hidden_dims")
@@ -282,7 +293,7 @@ def plan_campaign(
         "pretraining_overlap": "La3Ni2O7 has an original non-AGIS Tc label; this is an AGIS-label holdout",
         "warm_protocol": {
             "active_tasks": "Two non-target AGIS pressure heads only; original pretrained heads retained but inactive",
-            "replay": "All seven training compounds of previously appended AGIS pressures only",
+            "replay": "All training compounds of previously appended AGIS pressures only",
             "epoch_selection": "Fixed warm_epochs per appended task; no validation or early stopping",
         },
     }
@@ -317,8 +328,10 @@ def final_config(manifest: dict[str, Any], unit: RunUnit) -> dict[str, Any]:
     )
     raw["datasets"].update(fragment["datasets"])
     raw["tasks"].extend(fragment["tasks"])
-    # One full batch of seven compounds. No test/validation label enters the fit.
-    raw["data"].update(batch_size=7, num_workers=0, val_split=0.0, test_split=0.0)
+    fold = manifest["preprocessing"]["folds"][unit.fold - 1]
+    n_train = len(fold["fit_compositions"])
+    # One full batch of training compounds. No test/validation label enters the fit.
+    raw["data"].update(batch_size=n_train, num_workers=0, val_split=0.0, test_split=0.0)
     raw["training"].update(
         seed=settings.seed + unit.fold * 100 + unit.pressure,
         accelerator="gpu",
@@ -356,9 +369,8 @@ def warm_config(manifest: dict[str, Any], unit: RunUnit) -> dict[str, Any]:
     settings = CampaignSettings(**manifest["settings"])
     raw = final_config(manifest, unit)
     raw.pop("finetune")
-    raw["data"].update(batch_size=7, val_split=0.0, test_split=0.0)
     raw["training"].update(max_epochs=settings.warm_epochs)
-    # Seven AGIS training compounds, no inner validation; preserve a fixed warm-stage budget.
+    # No inner validation; preserve a fixed warm-stage budget at every training size.
     raw["training"]["early_stopping"] = {"enabled": False}
     raw["training"]["checkpoint"] = {"enabled": False}
     raw["training"]["scheduler"]["patience"] = 5
@@ -368,7 +380,12 @@ def warm_config(manifest: dict[str, Any], unit: RunUnit) -> dict[str, Any]:
         "active_tasks": sequence,
         "n_runs": 1,
         "task_order": "fixed",
-        "replay": {"interval": 1, "amount": 0.3, "resample": "epoch", "per_task": dict.fromkeys(sequence, 7)},
+        "replay": {
+            "interval": 1,
+            "amount": 0.3,
+            "resample": "epoch",
+            "per_task": dict.fromkeys(sequence, raw["data"]["batch_size"]),
+        },
     }
     return raw
 
@@ -398,14 +415,16 @@ def initialize_target(raw: dict[str, Any], source: Path | None, destination: Pat
     return destination
 
 
-def verify_final(output: Path, target: str, heldout: str, epochs: int) -> None:
+def verify_final(output: Path, target: str, heldout: str | list[str], epochs: int) -> None:
     frame = pd.read_parquet(output / "training/finetune" / f"{target}_pred.parquet")
-    if len(frame) != 300 or set(frame.composition) != {heldout}:
-        raise ValueError("Final prediction must contain exactly 300 points of the heldout compound")
+    compositions = [heldout] if isinstance(heldout, str) else heldout
+    if len(frame) != 300 * len(compositions) or set(frame.composition) != set(compositions):
+        raise ValueError("Final prediction must contain exactly 300 points per heldout compound")
     if not np.isfinite(frame[["true", "pred", "t"]].to_numpy()).all():
         raise ValueError("Nonfinite final predictions or targets")
-    if not np.allclose(frame.t, np.linspace(6, 290, 300)):
-        raise ValueError("The final prediction grid differs from the shared 6–290 K grid")
+    for _, curve in frame.groupby("composition"):
+        if len(curve) != 300 or not np.allclose(curve.t, np.linspace(6, 290, 300)):
+            raise ValueError("The final prediction grid differs from the shared 6–290 K grid")
     summary = json.loads((output / "training/finetune_summary.json").read_text())
     if summary["epochs_run"] != epochs:
         raise ValueError("The fixed final-fit epoch budget was not completed")
@@ -479,12 +498,14 @@ def execute_unit(manifest_path: Path, index: int, output_root: Path) -> None:
         else:
             bind_identity(identity_path, identity)
         if (root / "DONE").exists():
-            heldout = manifest["preprocessing"]["folds"][unit.fold - 1]["heldout_composition"]
+            fold = manifest["preprocessing"]["folds"][unit.fold - 1]
+            heldout = fold.get("test_compositions", fold["heldout_composition"])
             for label in ["unfrozen"] if unit.route == Route.SCRATCH else ["frozen", "unfrozen"]:
                 verify_final(root / label, f"agis_rho_{unit.pressure}gpa", heldout, settings.final_epochs)
             logger.info("Already complete: {}", unit.name)
             return
-        heldout = manifest["preprocessing"]["folds"][unit.fold - 1]["heldout_composition"]
+        fold = manifest["preprocessing"]["folds"][unit.fold - 1]
+        heldout = fold.get("test_compositions", fold["heldout_composition"])
         source: Path | None = None
         if unit.checkpoint_index is not None:
             selected = manifest["selection"]["models"][unit.checkpoint_index]

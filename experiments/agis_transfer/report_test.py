@@ -108,6 +108,63 @@ def test_collect_validates_provenance_and_exports_original_unit_metrics(
     assert len(paired) == 2 and np.allclose(paired["warm_minus_direct"], 0)
 
 
+@pytest.mark.parametrize("wrong_reference", [False, True])
+def test_multiple_test_materials_use_fixed_material_scalers_and_count_models_once(
+    cohort: tuple[Path, Path, Path], tmp_path: Path, wrong_reference: bool
+) -> None:
+    path, root, project = cohort
+    manifest = json.loads(path.read_text())
+    preprocessing = manifest["preprocessing"]
+    preprocessing.update(
+        design="balanced_nested_learning_curve",
+        n_train=6,
+        config={"temperature_min_K": 6, "temperature_max_K": 290, "n_points": 300},
+    )
+    fold = preprocessing["folds"][0]
+    fold.update(test_compositions=["La3 Ni2 O7", "other"], fit_compositions=["training"])
+    preprocessing["folds"].append({**copy.deepcopy(fold), "heldout_composition": "other"})
+    reference = copy.deepcopy(preprocessing)
+    reference["folds"][0]["fit_compositions"] = ["training", "other"]
+    reference["folds"][1]["fit_compositions"] = ["training", "La3 Ni2 O7"]
+    reference["folds"][1]["scalers"]["0"]["asinh_std"] = 4.0
+    reference_path = tmp_path / "reference.json"
+    reference_path.write_text(json.dumps(reference))
+    preprocessing["reference_sha256"] = sha256(reference_path) if not wrong_reference else "wrong digest"
+    data_path = project / "data/fold_01/data.parquet"
+    frame = pd.read_parquet(data_path)
+    second = frame.copy()
+    second["composition"] = "other"
+    pd.concat([frame, second], ignore_index=True).to_parquet(data_path)
+    manifest["input_sha256"]["data/fold_01/data.parquet"] = sha256(data_path)
+    path.write_text(json.dumps(manifest))
+    identity = json.loads((root / "campaign_identity.json").read_text())
+    identity["manifest_sha256"] = sha256(path)
+    for identity_path in [root / "campaign_identity.json", *root.glob("*/campaign_identity.json")]:
+        identity_path.write_text(json.dumps(identity))
+    for result_path in root.glob("*/result.json"):
+        result = json.loads(result_path.read_text())
+        result["heldout"] = fold["test_compositions"]
+        result_path.write_text(json.dumps(result))
+    for pred_path in root.glob("*/*/training/finetune/*_pred.parquet"):
+        frame = pd.read_parquet(pred_path)
+        second = frame.copy()
+        second["composition"] = "other"
+        pd.concat([frame, second], ignore_index=True).to_parquet(pred_path)
+    out = tmp_path / "multi_report"
+    if wrong_reference:
+        with pytest.raises(ValueError, match="digest"):
+            collect_results(path, root, project, out, ReportSettings(metric_preprocessing_manifest=reference_path))
+        return
+    metrics = collect_results(path, root, project, out, ReportSettings(metric_preprocessing_manifest=reference_path))
+    assert len(metrics) == 10 and metrics.is_anchor.sum() == 5
+    provenance = json.loads((out / "report_manifest_20261001.json").read_text())
+    assert provenance["n_final_models"] == 5 and provenance["n_evaluated_curves"] == 10
+    assert len(pd.read_csv(out / "paired_warm_direct_20261001.csv")) == 4
+    first = metrics[metrics.composition == "La3 Ni2 O7"].z_rmse.to_numpy()
+    second = metrics[metrics.composition == "other"].z_rmse.to_numpy()
+    np.testing.assert_allclose(first / second, 5)
+
+
 def test_missing_units_cannot_be_reported_as_complete(cohort: tuple[Path, Path, Path], tmp_path: Path) -> None:
     path, root, project = cohort
     collect_results(path, root, project, tmp_path / "report", ReportSettings())
@@ -118,6 +175,7 @@ def test_missing_units_cannot_be_reported_as_complete(cohort: tuple[Path, Path, 
     collect_results(path, root, project, tmp_path / "report", ReportSettings(allow_partial=True))
     assert not json.loads((tmp_path / "report/report_manifest_20261001.json").read_text())["complete_cohort"]
     assert pd.read_csv(tmp_path / "report/paired_warm_direct_20261001.csv").empty
+    assert "composition" in pd.read_csv(tmp_path / "report/paired_warm_direct_20261001.csv").columns
 
 
 @pytest.mark.parametrize("failure", [None, "holdout", "train", "grid", "scale", "pressures", "folds"])

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class LinearLayer(nn.Module):
@@ -28,7 +29,20 @@ class LinearLayer(nn.Module):
     def forward(self, x):
         _out = self.layer(x)
         if self.normal:
-            _out = self.normal(_out)
+            if self.normal.training and _out.ndim == 2 and _out.shape[0] == 1:
+                # One composition has no batch variance. Keep stored statistics and affine
+                # gradients, including for an unfrozen encoder and reconstruction head.
+                _out = F.batch_norm(
+                    _out,
+                    self.normal.running_mean,
+                    self.normal.running_var,
+                    self.normal.weight,
+                    self.normal.bias,
+                    training=False,
+                    eps=self.normal.eps,
+                )
+            else:
+                _out = self.normal(_out)
         if self.activation:
             _out = self.activation(_out)
 
