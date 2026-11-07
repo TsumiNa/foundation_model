@@ -247,7 +247,7 @@ def _target_inputs(cfg: FinetuneConfig, bundle_config: Any) -> dict[str, Any]:
     Existing heads use the bundle's transform, its class names, or the shape normalisation. New heads
     get a transform fitted on their own training split, or class names from their labels.
     """
-    from foundation_model.data.targets import ClassLabels, fit_default, guard_inverse_domain
+    from foundation_model.data.targets import ClassLabels, fit_default, strip_inverse_guard
 
     raw_catalog = TaskCatalog(cfg.catalog)  # untransformed, to read the user's own values
     heads = {h.name: h for h in bundle_config.heads}
@@ -281,7 +281,9 @@ def _target_inputs(cfg: FinetuneConfig, bundle_config: Any) -> dict[str, Any]:
                 raise ValueError(
                     f"Task '{name}': output_scale {spec.output_scale!r} disagrees with the bundle's head ({head.output_scale})."
                 )
-            inputs[name] = "shape" if head.output_scale == "shape" else head.transform
+            # Labels are normalised with the unguarded transform, so held-out values past the source's
+            # training range are not clipped; the guard only applies when predictions are inverted.
+            inputs[name] = "shape" if head.output_scale == "shape" else strip_inverse_guard(head.transform)
             continue
         frame = raw_catalog.task_frames([name])[name]
         mask = frame[spec.column].notna()
@@ -304,11 +306,29 @@ def _target_inputs(cfg: FinetuneConfig, bundle_config: Any) -> dict[str, Any]:
         else:
             values = train if kind == "regression" else [as_float_array(c) for c in train]
             flat = np.concatenate(values) if kind == "kernel_regression" and len(values) else np.asarray(values, float)
-            # A fitted Yeo-Johnson lambda < 0 (or > 2) leaves the inverse undefined past the training range;
-            # the guard makes predictions there saturate at the most extreme training value instead of NaN.
-            fitted = fit_default(flat)
-            inputs[name] = guard_inverse_domain(fitted, fitted.transform(flat))
+            # Unguarded here, so every split's labels keep their values; the derived bundle's head spec
+            # (``_head_spec``) adds the guard for inverting predictions.
+            inputs[name] = fit_default(flat)
     return inputs
+
+
+def _reguarded(head: Any, catalog: TaskCatalog) -> Any:
+    """A fine-tuned existing head whose inverse guard covers the source's range and the new training data."""
+    from dataclasses import replace
+
+    from foundation_model.data.targets import ClipStep, guard_inverse_domain, strip_inverse_guard
+    from foundation_model.hub.export import _train_targets
+
+    if head.transform is None:
+        return head
+    old = head.transform.steps[-1] if head.transform.steps else None
+    base = strip_inverse_guard(head.transform)
+    if base is head.transform:
+        return head  # no guard to widen
+    assert isinstance(old, ClipStep)
+    kept = [b for b in (old.lower, old.upper) if b is not None]
+    values = np.concatenate([_train_targets(catalog, head.name), np.asarray(kept, dtype=float)])
+    return replace(head, transform=guard_inverse_domain(base, values))
 
 
 def _refreshed_curve(head: Any, catalog: TaskCatalog) -> Any:
@@ -396,7 +416,9 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
         rec.save_final_model(model, existing + added, _task_spec_dump(catalog, [t for t in cfg.tasks]))
 
         heads = [
-            _refreshed_curve(h, catalog) if h.kind == "kernel_regression" and h.name in cfg.tasks else h
+            _reguarded(_refreshed_curve(h, catalog) if h.kind == "kernel_regression" else h, catalog)
+            if h.name in cfg.tasks
+            else h
             for h in bundle_config.heads
         ] + [_head_spec(catalog, section, name) for name in added]
         derived_from = {

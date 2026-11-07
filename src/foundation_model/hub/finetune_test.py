@@ -234,3 +234,31 @@ def test_shape_input_overrides_a_configured_scaler(tmp_path: Path) -> None:
     catalog = TaskCatalog(build_task_catalog_config(raw), target_inputs={"c": "shape"})
     assert catalog.scaler("c") is None
     np.testing.assert_array_equal(catalog.inverse_transform("c", np.array([0.5])), [0.5])
+
+
+def test_new_head_guard_applies_to_predictions_not_labels(bundle: Path, user_data: Path, tmp_path: Path) -> None:
+    from foundation_model.data.targets import ClipStep, fit_default
+    from foundation_model.workflows.finetune import _target_inputs
+
+    # A heavy right tail makes the fitted Yeo-Johnson lambda negative; the largest value is held out.
+    frame = pd.read_parquet(user_data)
+    frame["hardness_GPa"] = np.random.default_rng(5).lognormal(0.0, 2.5, len(frame))
+    extreme = frame.index[frame["split"] == "test"][0]
+    frame.loc[extreme, "hardness_GPa"] = frame["hardness_GPa"].max() * 50
+    frame.to_parquet(user_data)
+    train = frame.loc[frame["split"] == "train", "hardness_GPa"].to_numpy()
+    fitted = fit_default(train)
+    assert np.isfinite(fitted.inverse_domain()[1])
+
+    out = tmp_path / "ft"
+    cfg = build_finetune_config(_raw(user_data, bundle, out, ["hardness"]))
+    labels = _target_inputs(cfg, read_config(bundle))["hardness"]
+    assert not any(isinstance(s, ClipStep) for s in labels.steps)  # held-out labels keep their values
+    held_out = labels.transform(np.array([frame.loc[extreme, "hardness_GPa"]]))[0]
+    assert held_out > fitted.transform(train).max()
+
+    finetune_run(cfg)
+    guarded = read_config(out / "bundle").head("hardness").transform
+    assert guarded is not None and isinstance(guarded.steps[-1], ClipStep)
+    assert guarded.steps[-1].upper == pytest.approx(fitted.transform(train).max())
+    assert np.isfinite(guarded.inverse(np.array([held_out + 10.0]))).all()

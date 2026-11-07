@@ -29,6 +29,7 @@ from foundation_model.data.targets import (
     from_sklearn,
     guard_inverse_domain,
     normalize_max_abs,
+    strip_inverse_guard,
 )
 
 REPO = Path(__file__).resolve().parents[3]
@@ -305,3 +306,25 @@ def test_guard_steps_inside_a_training_value_on_the_domain_edge() -> None:
     clip = g.steps[-1]
     assert isinstance(clip, ClipStep) and clip.upper is not None
     assert clip.upper < edge and np.isfinite(g.inverse(np.array([10.0]))).all()
+
+
+def test_domain_keeps_bounds_from_earlier_steps() -> None:
+    bounded = PowerTransformerStep(method="yeo-johnson", lmbda=-1.0, standardize=False)  # image (-inf, 1)
+    identity_power = PowerTransformerStep(method="yeo-johnson", lmbda=1.0, standardize=False)
+    stacked = TargetTransform((bounded, identity_power))
+    assert stacked.inverse_domain() == (-np.inf, pytest.approx(1.0))
+    then_log = TargetTransform((bounded, Log1pStep()))
+    assert then_log.inverse_domain() == (-np.inf, pytest.approx(np.log(2.0)))
+    for t in (stacked, then_log):
+        g = guard_inverse_domain(t, t.transform(np.array([-3.0, 0.0, 5.0])))
+        assert isinstance(g.steps[-1], ClipStep)
+        assert np.isfinite(g.inverse(np.array([2.0]))).all()
+
+
+def test_strip_removes_only_a_guard() -> None:
+    t = fit_default(np.random.default_rng(2).lognormal(0.0, 2.0, 500))
+    g = guard_inverse_domain(t, t.transform(np.random.default_rng(2).lognormal(0.0, 2.0, 500)))
+    assert g is not t and strip_inverse_guard(g) == t
+    assert strip_inverse_guard(t) is t
+    phonix = TargetTransform((Log1pStep(clip_lower=0.0), StandardScalerStep(mean=1.0, scale=2.0), ClipStep(upper=5.0)))
+    assert strip_inverse_guard(phonix) is phonix  # part of the normalisation, not a guard

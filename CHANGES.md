@@ -11,8 +11,11 @@
     unchanged (`clip` is an existing step).
   - `predict` / `predict_curve` raise the new `SaturationWarning` when values saturate, and when a bundle
     exported with 1.0.0 still yields NaN (re-export it).
-  - Per-step evaluation with a configured scaler computed R² over NaN and stopped the run. Metrics now
-    leave out non-finite predictions and record how many (`nonfinite`).
+  - Labels are normalised with the unguarded transform (`strip_inverse_guard`), so held-out values past the
+    training range keep their values when fine-tuning; a fine-tuned existing head's guard widens to its new
+    training range.
+  - Per-step evaluation with a configured scaler computed R² over NaN and stopped the run. Metrics and
+    plots now leave out non-finite predictions, and the metrics record how many (`nonfinite`).
 - `--pretrained` / `load_pretrained` accept `<bundle dir>#member` for local bundles, as Hub sources do.
 - Model cards group the heads table by kind, abbreviate class lists longer than 12, and note saturation.
 - The release repository is `TsumiNa/fm`; examples use it.

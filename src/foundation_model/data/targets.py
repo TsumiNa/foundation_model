@@ -52,6 +52,7 @@ __all__ = [
     "fit_default",
     "from_sklearn",
     "guard_inverse_domain",
+    "strip_inverse_guard",
     "normalize_max_abs",
 ]
 
@@ -296,22 +297,14 @@ class TargetTransform:
         return out
 
     def inverse_domain(self) -> tuple[float, float]:
-        """The interval of training-scale values the inverse is defined on (``±inf`` = unbounded)."""
+        """The interval of training-scale values the inverse is defined on (``±inf`` = unbounded).
+
+        Built forward: start from the whole physical line and map the interval through each step, keeping
+        the bounds every earlier step imposes.
+        """
         lo, hi = -np.inf, np.inf
         for step in self.steps:
-            if isinstance(step, PowerTransformerStep):
-                lo, hi = step.image()
-            elif isinstance(step, ClipStep):
-                # The inverse clamps first: a side whose bound lies inside the domain is defined everywhere.
-                lo = -np.inf if step.lower is not None and step.lower > lo else lo
-                hi = np.inf if step.upper is not None and step.upper < hi else hi
-            elif np.isfinite(lo) or np.isfinite(hi):
-                # Every other step is monotone: map both ends and re-sort (a negative scale flips them).
-                # An end the step cannot map (NaN) is left open.
-                with np.errstate(all="ignore"):
-                    a, b = (float(v) for v in step.forward(np.array([lo, hi], dtype=float)))
-                ends = sorted(v for v in (a, b) if not np.isnan(v))
-                lo, hi = (ends[0], ends[-1]) if len(ends) == 2 else (-np.inf, np.inf)
+            lo, hi = _map_interval(step, lo, hi)
         return float(lo), float(hi)
 
     @property
@@ -466,6 +459,40 @@ def fit_default(train_values: Any) -> TargetTransform:
     return result
 
 
+def _map_interval(step: Step, lo: float, hi: float) -> tuple[float, float]:
+    """Where the inverse up to and including ``step`` is defined, given that of the steps before it.
+
+    Every step is monotone, so an interval maps to the interval between its mapped ends (re-sorted for a
+    negative scale). Infinite ends map to the step's limits.
+    """
+    ends = np.array([lo, hi], dtype=float)
+    with np.errstate(all="ignore"):
+        if isinstance(step, StandardScalerStep):
+            mapped = step.forward(ends)
+        elif isinstance(step, Log1pStep):
+            # The inverse is expm1, defined everywhere and > -1; the forward clip does not bound it.
+            mapped = np.log1p(np.maximum(ends, -1.0))
+        elif isinstance(step, ArcsinhStep):
+            mapped = np.arcsinh(ends)
+        elif isinstance(step, PowerTransformerStep):
+            if step.method == "yeo-johnson":
+                mapped = step.forward(ends)  # a bijection of the real line; ±inf map to the image limits
+            else:
+                x = np.maximum(ends, 0.0)  # Box-Cox's inverse returns positive values only
+                lam = step.lmbda
+                z = np.log(x) if abs(lam) < _EPS else (np.power(x, lam) - 1.0) / lam
+                mapped = (z - step.mean) / step.scale if step.standardize else z
+        elif isinstance(step, ClipStep):
+            # The inverse clamps first, so a side bounded inside the incoming interval becomes total.
+            new_lo = -np.inf if step.lower is not None and step.lower > lo else lo
+            new_hi = np.inf if step.upper is not None and step.upper < hi else hi
+            return new_lo, new_hi
+        else:  # identity
+            return lo, hi
+    a, b = (float(v) for v in mapped)
+    return (a, b) if a <= b else (b, a)
+
+
 def guard_inverse_domain(transform: TargetTransform, train_scaled: Any) -> TargetTransform:
     """``transform`` plus a ``clip`` at the training range on each side where its inverse is undefined.
 
@@ -485,6 +512,23 @@ def guard_inverse_domain(transform: TargetTransform, train_scaled: Any) -> Targe
     if lower is not None and upper is not None and lower >= upper:
         raise ValueError(f"degenerate training range [{lower}, {upper}] for a guarded transform.")
     return TargetTransform((*transform.steps, ClipStep(lower=lower, upper=upper)))
+
+
+def strip_inverse_guard(transform: TargetTransform) -> TargetTransform:
+    """``transform`` without the clip :func:`guard_inverse_domain` added, if it ends with one.
+
+    The guard only ever bounds a side whose inverse is undefined past it; a trailing clip that bounds an
+    open side (the phonix-db ``kp`` / ``klat`` clip at +5, part of how those targets were normalised) is
+    kept. Use the stripped transform to normalise labels, so held-out values past the training range are
+    not clipped; keep the guarded one for inverting predictions.
+    """
+    if not transform.steps or not isinstance(transform.steps[-1], ClipStep):
+        return transform
+    clip, base = transform.steps[-1], TargetTransform(transform.steps[:-1])
+    lo, hi = base.inverse_domain()
+    if (clip.lower is None or np.isfinite(lo)) and (clip.upper is None or np.isfinite(hi)):
+        return base
+    return transform
 
 
 def _inside(bound: float, transform: TargetTransform, direction: int) -> float:
