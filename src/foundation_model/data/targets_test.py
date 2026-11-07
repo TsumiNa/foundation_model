@@ -27,7 +27,9 @@ from foundation_model.data.targets import (
     UnsupportedTransformError,
     fit_default,
     from_sklearn,
+    guard_inverse_domain,
     normalize_max_abs,
+    strip_inverse_guard,
 )
 
 REPO = Path(__file__).resolve().parents[3]
@@ -242,3 +244,105 @@ def test_every_project_scaler_round_trips(path: Path) -> None:
             err_msg=key,
         )
     assert checked
+
+
+# --- inverse domain ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("method", "lmbda", "bounded"),
+    [("yeo-johnson", -0.5, "upper"), ("yeo-johnson", 3.0, "lower"), ("yeo-johnson", 1.0, None),
+     ("box-cox", 0.5, "lower"), ("box-cox", -0.5, "upper"), ("box-cox", 0.0, None)],
+)  # fmt: skip
+def test_power_transformer_image_is_where_the_inverse_is_defined(
+    method: str, lmbda: float, bounded: str | None
+) -> None:
+    step = PowerTransformerStep(method=method, lmbda=lmbda, standardize=True, mean=0.3, scale=1.7)  # type: ignore[arg-type]
+    lo, hi = TargetTransform((step,)).inverse_domain()
+    assert (np.isfinite(lo), np.isfinite(hi)) == (bounded == "lower", bounded == "upper")
+    with np.errstate(all="ignore"):
+        if bounded == "upper":
+            assert np.isfinite(step.backward(np.array([hi - 1e-6]))).all()
+            assert not np.isfinite(step.backward(np.array([hi + 1e-6]))).any()
+        if bounded == "lower":
+            assert np.isfinite(step.backward(np.array([lo + 1e-6]))).all()
+            assert not np.isfinite(step.backward(np.array([lo - 1e-6]))).any()
+
+
+def test_guard_saturates_at_the_training_range_on_the_bounded_side_only() -> None:
+    rng = np.random.default_rng(1)
+    heavy = rng.lognormal(0.0, 2.0, 2000)  # heavy right tail: the fitted Yeo-Johnson lambda is negative
+    t = fit_default(heavy)
+    assert np.isfinite(t.inverse_domain()[1]) and not np.isfinite(t.inverse_domain()[0])
+    scaled = t.transform(heavy)
+    with np.errstate(all="ignore"):
+        assert np.isnan(t.inverse(np.array([scaled.max() + 50.0]))).all()  # the defect being guarded
+
+    g = guard_inverse_domain(t, scaled)
+    assert isinstance(g.steps[-1], ClipStep) and g.steps[-1].lower is None
+    assert g.steps[-1].upper == pytest.approx(scaled.max())
+    far = g.inverse(np.array([scaled.max() + 50.0, scaled.min() - 50.0]))
+    # Saturates at the largest training value; next to the singular edge the inverse is ill-conditioned.
+    assert far[0] == pytest.approx(heavy.max(), rel=1e-4)
+    assert np.isfinite(far[1]) and far[1] < heavy.min()  # the open side still extrapolates
+    np.testing.assert_allclose(g.transform(heavy), scaled)  # training values are untouched
+    assert TargetTransform.from_dict(json.loads(json.dumps(g.to_dict()))) == g
+
+
+def test_guard_leaves_an_everywhere_invertible_transform_alone() -> None:
+    plain = TargetTransform((StandardScalerStep(mean=1.0, scale=2.0),))
+    assert guard_inverse_domain(plain, np.array([0.0, 1.0])) is plain
+    # An existing clip (phonix-db kp / klat) already makes the inverse defined everywhere.
+    clipped = TargetTransform((Log1pStep(clip_lower=0.0), StandardScalerStep(mean=1.0, scale=2.0), ClipStep(upper=5.0)))
+    assert clipped.inverse_domain() == (-np.inf, np.inf)
+    assert guard_inverse_domain(clipped, np.array([0.0, 5.0])) is clipped
+
+
+def test_guard_steps_inside_a_training_value_on_the_domain_edge() -> None:
+    step = PowerTransformerStep(method="yeo-johnson", lmbda=-2.0, standardize=False)
+    t = TargetTransform((step,))
+    edge = t.inverse_domain()[1]  # 0.5: inverts to +inf
+    g = guard_inverse_domain(t, np.array([0.0, edge]))
+    clip = g.steps[-1]
+    assert isinstance(clip, ClipStep) and clip.upper is not None
+    assert clip.upper < edge and np.isfinite(g.inverse(np.array([10.0]))).all()
+
+
+def test_domain_keeps_bounds_from_earlier_steps() -> None:
+    bounded = PowerTransformerStep(method="yeo-johnson", lmbda=-1.0, standardize=False)  # image (-inf, 1)
+    identity_power = PowerTransformerStep(method="yeo-johnson", lmbda=1.0, standardize=False)
+    stacked = TargetTransform((bounded, identity_power))
+    assert stacked.inverse_domain() == (-np.inf, pytest.approx(1.0))
+    then_log = TargetTransform((bounded, Log1pStep()))
+    assert then_log.inverse_domain() == (-np.inf, pytest.approx(np.log(2.0)))
+    for t in (stacked, then_log):
+        g = guard_inverse_domain(t, t.transform(np.array([-3.0, 0.0, 5.0])))
+        assert isinstance(g.steps[-1], ClipStep)
+        assert np.isfinite(g.inverse(np.array([2.0]))).all()
+
+
+def test_strip_removes_only_a_guard() -> None:
+    t = fit_default(np.random.default_rng(2).lognormal(0.0, 2.0, 500))
+    g = guard_inverse_domain(t, t.transform(np.random.default_rng(2).lognormal(0.0, 2.0, 500)))
+    assert g is not t and strip_inverse_guard(g) == t
+    assert strip_inverse_guard(t) is t
+    phonix = TargetTransform((Log1pStep(clip_lower=0.0), StandardScalerStep(mean=1.0, scale=2.0), ClipStep(upper=5.0)))
+    assert strip_inverse_guard(phonix) is phonix  # part of the normalisation, not a guard
+
+
+def test_intrinsic_clip_on_a_bounded_side_is_not_a_guard() -> None:
+    # A normalisation that itself ends with a clip on the side a power step bounds (schema v1 allows it).
+    power = PowerTransformerStep(method="yeo-johnson", lmbda=-1.0, standardize=False)
+    intrinsic = TargetTransform((power, ClipStep(upper=0.5)))
+    assert strip_inverse_guard(intrinsic) is intrinsic
+    guarded = guard_inverse_domain(TargetTransform((power,)), np.array([0.0, 0.4]))
+    assert guarded.steps[-1] == ClipStep(upper=0.4, guard=True)
+
+
+def test_guard_flag_serialises_only_when_set() -> None:
+    assert ClipStep(upper=1.0).params() == {"lower": None, "upper": 1.0}  # identical to schema v1
+    marked = TargetTransform((ClipStep(upper=1.0, guard=True),))
+    assert marked.to_dict()["steps"][0]["guard"] is True
+    assert TargetTransform.from_dict(marked.to_dict()) == marked
+    v1 = TargetTransform.from_dict({"steps": [{"kind": "clip", "lower": None, "upper": 1.0}]})
+    assert v1.steps[0] == ClipStep(upper=1.0) and not v1.steps[0].guard  # type: ignore[union-attr]

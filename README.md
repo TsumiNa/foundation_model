@@ -8,12 +8,12 @@ your own data, or run inverse design:
 
 ```bash
 pip install 'foundation-model[hub]'
-fm predict --pretrained <owner>/<repo>@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
+fm predict --pretrained TsumiNa/fm@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
 ```
 
 ```python
 from foundation_model.hub import load_pretrained
-model = load_pretrained("<owner>/<repo>@v1.0.0")
+model = load_pretrained("TsumiNa/fm@v1.0.0")
 model.predict(["Fe2O3", "NaCl"])
 ```
 

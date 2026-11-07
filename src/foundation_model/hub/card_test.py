@@ -77,3 +77,17 @@ def test_custom_licence_is_quoted_and_not_paraphrased(bundle: Path) -> None:
 def test_no_gating_form_when_not_gated(bundle: Path) -> None:
     meta = _front(_card(bundle, gated=False))
     assert "extra_gated_fields" not in meta and "extra_gated_prompt" not in meta
+
+
+def test_heads_grouped_by_kind_and_long_class_lists_abbreviated(bundle: Path) -> None:
+    config = read_config(bundle)
+    phase = next(h for h in config.heads if h.kind == "classification")
+    assert phase.classes is not None
+    many = replace(phase, num_classes=151, classes=replace(phase.classes, classes=tuple(f"c{i}" for i in range(151))))
+    config = replace(config, heads=tuple(many if h is phase else h for h in reversed(config.heads)))
+    card = render_card(config, read_manifest(bundle), repo_id="owner/fm", gated=True)
+    rows = [line for line in card.splitlines() if line.startswith("| `")]
+    kinds = [row.split(" | ")[1] for row in rows]
+    assert kinds == sorted(kinds, key=["regression", "classification", "kernel regression"].index)
+    assert "class: 151 classes" in card and "c150" not in card
+    assert "SaturationWarning" in card

@@ -13,16 +13,16 @@ pip install 'foundation-model[hub]'   # the extra pulls huggingface_hub for down
 hf auth login                          # gated repositories: request access on the model page first
 ```
 
-A *source* is either a local bundle directory or a Hub repository written
-`owner/name[@revision][#member]`, for example `<owner>/<repo>@v1.0.0#m003`. `<owner>/<repo>` stands for the
-release repository named on each model card.
+A *source* is a local bundle directory, optionally `<dir>#member`, or a Hub repository written
+`owner/name[@revision][#member]`, for example `TsumiNa/fm@v1.0.0#m003`. The released suites live in
+`TsumiNa/fm`; each tag is one release.
 
 ## Predict
 
 ```python
 from foundation_model.hub import load_pretrained
 
-model = load_pretrained("<owner>/<repo>@v1.0.0")   # the default member, downloaded on its own
+model = load_pretrained("TsumiNa/fm@v1.0.0")   # the default member, downloaded on its own
 model.tasks                                              # head names
 model.units()                                            # unit of each head ("shape" for shape-only heads)
 
@@ -40,6 +40,10 @@ model.predict_curve(["Bi2Te3", "PbTe"], "seebeck", t=[[300, 350], [400, 450, 500
   The prediction itself is not renormalised, so its peak is near but not exactly 1.
 - **Extrapolation.** A curve head knows the `t` range it was trained on (`model.config.head(name).t_range`).
   Points outside that range raise `ExtrapolationWarning` but are still predicted.
+- **Saturation.** Some heads' transforms cannot be inverted past the training range (a Yeo-Johnson
+  λ < 0 maps every physical value below a bound). For those heads a prediction past the training range
+  comes back as the most extreme training value and raises `SaturationWarning`; the bundle marks them
+  with a final `clip` step (`model.config.head(name).transform.saturates`).
 - **Inputs.** Compositions are formula strings (`"Fe2O3"`, `"Fe0.5 Ni0.5"`). Anything the KMD descriptor
   cannot parse raises an error that names the composition. `model.latent(compositions)` gives the shared
   latent vectors.
@@ -47,7 +51,7 @@ model.predict_curve(["Bi2Te3", "PbTe"], "seebeck", t=[[300, 350], [400, 450, 500
 Command line, with no config needed:
 
 ```bash
-fm predict --pretrained <owner>/<repo>@v1.0.0 \
+fm predict --pretrained TsumiNa/fm@v1.0.0 \
     --compositions "Fe2O3,NaCl" --compositions-file more.txt --output-dir pred/
 # → predictions.csv, <task>_curve.csv per curve head, prediction_info.json (member, licence, units)
 ```
@@ -60,7 +64,7 @@ tasks. They are interchangeable, so the first *k* are a random sample:
 ```python
 from foundation_model.hub import load_suite
 
-suite = load_suite("<owner>/<repo>@v1.0.0")   # metadata only; each member downloads + loads on first access
+suite = load_suite("TsumiNa/fm@v1.0.0")   # metadata only; each member downloads + loads on first access
 for member_id in suite.member_ids[:5]:          # only these five are loaded
     print(member_id, suite[member_id].predict(["Fe2O3"], ["band_gap"])["band_gap"].item())
 ```
@@ -95,7 +99,7 @@ unit = "GPa"
 accelerator = "auto"
 
 [finetune]
-pretrained = "<owner>/<repo>@v1.0.0"
+pretrained = "TsumiNa/fm@v1.0.0"
 tasks = ["band_gap", "hardness"]
 epochs = 50
 freeze_encoder = true
@@ -125,7 +129,7 @@ From Python, after loading: `model.save("out/copy")` writes a one-member derived
 
 ```toml
 [inverse]
-pretrained = "<owner>/<repo>@v1.0.0"
+pretrained = "TsumiNa/fm@v1.0.0"
 steps = 300
 
 [inverse.seeds]
@@ -173,12 +177,12 @@ Data sources and their licences: [`docs/licensing/`](licensing/).
 ```bash
 # One bundle from a suite of runs: one member per run, each verified bit-identical to its checkpoint.
 fm export --config release.toml --run runs/order_00 --run runs/order_01 ... \
-    --out bundles/fm-inorganic-v1 --license cc-by-nc-sa-4.0
+    --out bundles/fm-v1 --license cc-by-nc-sa-4.0
 
 # Review the card, then push: gated = public page, downloads after manual approval.
-fm publish bundles/fm-inorganic-v1 --repo <owner>/<repo> --tag v1.0.0 \
+fm publish bundles/fm-v1 --repo TsumiNa/fm --tag v1.0.0 \
     --visibility gated --card-extra docs/licensing/citations.md --dry-run
-fm publish bundles/fm-inorganic-v1 --repo <owner>/<repo> --tag v1.0.0 --visibility gated
+fm publish bundles/fm-v1 --repo TsumiNa/fm --tag v1.0.0 --visibility gated
 ```
 
 `release.toml` is the training catalog with `[model]`. Every head needs either a `[tasks.scaler]` (a
@@ -189,7 +193,7 @@ need their `LabelEncoder`. Set `unit` / `t_unit` so the card and the outputs say
 
 From 1.0, these follow semantic versioning:
 
-- bundle schema v1;
+- the bundle schema: v2 since 1.0.1, which adds the `guard` marker on saturation clips; every reader accepts v1;
 - `foundation_model.hub` (`load_pretrained`, `load_suite`, `PretrainedModel`, `export_runs`, `publish`);
 - the `--pretrained` CLI paths.
 

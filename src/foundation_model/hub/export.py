@@ -28,6 +28,7 @@ import numpy as np
 import torch
 from loguru import logger
 
+from foundation_model.data.targets import guard_inverse_domain
 from foundation_model.models.task_head.kernel_regression import expand_for_kernel_regression
 from foundation_model.workflows._engine import (
     AE_NAME,
@@ -87,6 +88,20 @@ def default_grid(rows: Sequence[np.ndarray]) -> tuple[tuple[float, float], tuple
     return (lo, hi), tuple(float(v) for v in np.linspace(lo, hi, int(n)))
 
 
+def _train_targets(catalog: TaskCatalog, name: str) -> np.ndarray:
+    """A task's training-split targets on the training scale, curves flattened."""
+    spec = catalog.task_spec(name)
+    frame = catalog.task_frames([name])[name]
+    mask = frame[spec.column].notna()
+    if "split" in frame.columns:
+        mask &= frame["split"] == "train"
+    cells = frame.loc[mask, spec.column]
+    if spec.kind is TaskKind.KERNEL_REGRESSION:
+        rows = [as_float_array(c) for c in cells]
+        return np.concatenate(rows) if rows else np.array([])
+    return cells.to_numpy(dtype=float)
+
+
 def _head_spec(catalog: TaskCatalog, model_cfg: ModelSectionConfig, name: str) -> HeadSpec:
     spec = catalog.task_spec(name)
     kind = spec.kind
@@ -116,6 +131,7 @@ def _head_spec(catalog: TaskCatalog, model_cfg: ModelSectionConfig, name: str) -
                 f"task '{name}': no target transform. Configure [tasks.scaler] (the scaler used to normalise "
                 'the column) or mark a per-row-normalised head with output_scale = "shape".'
             )
+        transform = guard_inverse_domain(transform, _train_targets(catalog, name))
         scale = "physical"
 
     if kind is TaskKind.REGRESSION:

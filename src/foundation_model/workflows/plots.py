@@ -38,8 +38,10 @@ MATERIAL_TYPE_DISPLAY_ORDER: tuple[str, ...] = ("others", "AC", "QC")
 def plot_parity(true: np.ndarray, pred: np.ndarray, *, r2: float, title: str) -> Figure:
     """Regression parity scatter (true vs predicted) with ideal line and an R² annotation."""
     fig, ax = plt.subplots(figsize=(5, 5))
+    ok = np.isfinite(true) & np.isfinite(pred)  # non-finite predictions are left out, as in the metrics
+    true, pred = true[ok], pred[ok]
     ax.scatter(true, pred, s=14, alpha=0.55, color=SCATTER_COLOR, edgecolor="none")
-    lo, hi = float(min(true.min(), pred.min())), float(max(true.max(), pred.max()))
+    lo, hi = (float(min(true.min(), pred.min())), float(max(true.max(), pred.max()))) if ok.any() else (0.0, 1.0)
     ax.plot([lo, hi], [lo, hi], color="#444444", ls="--", lw=1.2, label="ideal")
     ax.set_xlabel("True")
     ax.set_ylabel("Predicted")
@@ -151,7 +153,10 @@ def plot_kr_sequences(
         ax.set_xlabel("t")
         if i == 0:
             ax.set_ylabel("Value")
-        r2_i = float(r2_score(true_i, pred_i)) if n >= 2 and float(np.var(true_i)) > 0 else float("nan")
+        ok = np.isfinite(true_i) & np.isfinite(pred_i)  # an uninvertible prediction must not stop the run
+        r2_i = (
+            float(r2_score(true_i[ok], pred_i[ok])) if ok.sum() >= 2 and float(np.var(true_i[ok])) > 0 else float("nan")
+        )
         ax.text(
             0.96,
             0.96,

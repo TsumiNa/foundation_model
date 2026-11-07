@@ -67,3 +67,11 @@ def test_plot_saves_to_file(tmp_path) -> None:
     fig.savefig(out)
     plots.plt.close(fig)
     assert out.exists()
+
+
+def test_plots_tolerate_non_finite_predictions() -> None:
+    true = np.array([1.0, 2.0, 3.0, 4.0])
+    pred = np.array([1.1, np.nan, np.inf, 3.9])
+    assert plots.plot_parity(true, pred, r2=0.9, title="t") is not None
+    fig = plots.plot_kr_sequences(["a"], [np.arange(4.0)], [true], pred, title="t")
+    assert fig is not None

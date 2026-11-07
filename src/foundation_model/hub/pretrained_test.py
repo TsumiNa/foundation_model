@@ -17,7 +17,7 @@ import torch
 from click.testing import CliRunner
 
 from foundation_model.cli.main import main
-from foundation_model.hub import BundleError, ExtrapolationWarning, load_pretrained, load_suite
+from foundation_model.hub import BundleError, ExtrapolationWarning, SaturationWarning, load_pretrained, load_suite
 from foundation_model.hub import pretrained as pretrained_mod
 from foundation_model.hub.pretrained import parse_source
 from foundation_model.workflows.task_catalog import TaskCatalog, build_task_catalog_config
@@ -127,6 +127,40 @@ def test_parse_source() -> None:
     assert parse_source("TsumiNa/fm-inorganic", revision="main", member="m001").revision == "main"
     with pytest.raises(BundleError, match="neither an existing bundle directory"):
         parse_source("not a repo")
+
+
+def test_local_bundle_takes_a_member_suffix(bundle: Path) -> None:
+    src = parse_source(f"{bundle}#m002")
+    assert (src.path, src.member, src.repo) == (bundle, "m002", None)
+    assert load_pretrained(f"{bundle}#m002").member.id == "m002"
+    assert parse_source(f"{bundle}#m002", member="m001").member == "m001"  # the keyword wins
+
+
+def _set_gap_steps(bundle: Path, steps: list[dict]) -> None:
+    path = bundle / "config.json"
+    cfg = json.loads(path.read_text())
+    next(h for h in cfg["heads"] if h["name"] == "band_gap")["transform"] = {"steps": steps}
+    path.write_text(json.dumps(cfg))
+
+
+def test_saturated_predictions_warn_and_return_the_bound(bundle: Path) -> None:
+    _set_gap_steps(bundle, [{"kind": "identity"}])  # physical == training scale: shows the raw outputs
+    raw = load_pretrained(bundle).predict(_COMPS, ["band_gap"])["band_gap"].to_numpy(dtype=float)
+    cap = float(np.sort(raw)[1])
+    _set_gap_steps(bundle, [{"kind": "identity"}, {"kind": "clip", "lower": None, "upper": cap}])
+    with pytest.warns(SaturationWarning, match="most extreme training value"):
+        out = load_pretrained(bundle).predict(_COMPS, ["band_gap"])["band_gap"].to_numpy(dtype=float)
+    np.testing.assert_allclose(out, np.minimum(raw, cap))
+
+
+def test_uninvertible_predictions_warn_instead_of_silent_nan(bundle: Path) -> None:
+    # A bundle exported before 1.0.1: Yeo-Johnson lambda = -1 and no guard. Its inverse is defined only
+    # below z = 1, i.e. below a training-scale value of 1 - 1000, which every prediction exceeds.
+    _set_gap_steps(bundle, [{"kind": "power_transformer", "method": "yeo-johnson", "lmbda": -1.0,
+                             "standardize": True, "mean": 1000.0, "scale": 1.0}])  # fmt: skip
+    with pytest.warns(SaturationWarning, match="Re-export"):
+        out = load_pretrained(bundle).predict(_COMPS, ["band_gap"])["band_gap"]
+    assert out.isna().any()
 
 
 def _fake_hub(monkeypatch: pytest.MonkeyPatch, bundle: Path, tmp_path: Path) -> list[list[str]]:
