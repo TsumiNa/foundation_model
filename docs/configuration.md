@@ -554,7 +554,7 @@ Per-subcommand flags:
 
 Run `fm <subcommand> --help` for the exact list.
 
-`fm export` writes a release bundle (schema v1): `config.json` (descriptor, architecture, heads with
+`fm export` writes a release bundle (schema v2; v1 bundles still load): `config.json` (descriptor, architecture, heads with
 transforms / class names / units / `t` range and default grid, licence, provenance), `manifest.json`, and
 `members/<id>/model.safetensors`. It then loads every member back strictly and checks that its outputs
 are bit-identical to the source checkpoint's; an unverified bundle is removed. Format and interface:

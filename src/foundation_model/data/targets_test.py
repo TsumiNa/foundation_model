@@ -328,3 +328,21 @@ def test_strip_removes_only_a_guard() -> None:
     assert strip_inverse_guard(t) is t
     phonix = TargetTransform((Log1pStep(clip_lower=0.0), StandardScalerStep(mean=1.0, scale=2.0), ClipStep(upper=5.0)))
     assert strip_inverse_guard(phonix) is phonix  # part of the normalisation, not a guard
+
+
+def test_intrinsic_clip_on_a_bounded_side_is_not_a_guard() -> None:
+    # A normalisation that itself ends with a clip on the side a power step bounds (schema v1 allows it).
+    power = PowerTransformerStep(method="yeo-johnson", lmbda=-1.0, standardize=False)
+    intrinsic = TargetTransform((power, ClipStep(upper=0.5)))
+    assert strip_inverse_guard(intrinsic) is intrinsic
+    guarded = guard_inverse_domain(TargetTransform((power,)), np.array([0.0, 0.4]))
+    assert guarded.steps[-1] == ClipStep(upper=0.4, guard=True)
+
+
+def test_guard_flag_serialises_only_when_set() -> None:
+    assert ClipStep(upper=1.0).params() == {"lower": None, "upper": 1.0}  # identical to schema v1
+    marked = TargetTransform((ClipStep(upper=1.0, guard=True),))
+    assert marked.to_dict()["steps"][0]["guard"] is True
+    assert TargetTransform.from_dict(marked.to_dict()) == marked
+    v1 = TargetTransform.from_dict({"steps": [{"kind": "clip", "lower": None, "upper": 1.0}]})
+    assert v1.steps[0] == ClipStep(upper=1.0) and not v1.steps[0].guard  # type: ignore[union-attr]

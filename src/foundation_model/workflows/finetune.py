@@ -323,12 +323,12 @@ def _reguarded(head: Any, catalog: TaskCatalog) -> Any:
         return head
     old = head.transform.steps[-1] if head.transform.steps else None
     base = strip_inverse_guard(head.transform)
-    if base is head.transform:
-        return head  # no guard to widen
-    assert isinstance(old, ClipStep)
-    kept = [b for b in (old.lower, old.upper) if b is not None]
+    # Keep the source's guard bounds, so the clip only widens; a source without a guard (schema v1, or an
+    # everywhere-invertible transform) still gets one where it is needed.
+    kept = [b for b in (old.lower, old.upper) if b is not None] if isinstance(old, ClipStep) and old.guard else []
     values = np.concatenate([_train_targets(catalog, head.name), np.asarray(kept, dtype=float)])
-    return replace(head, transform=guard_inverse_domain(base, values))
+    guarded = guard_inverse_domain(base, values)
+    return head if guarded == head.transform else replace(head, transform=guarded)
 
 
 def _refreshed_curve(head: Any, catalog: TaskCatalog) -> Any:

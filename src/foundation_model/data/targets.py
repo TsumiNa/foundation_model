@@ -227,6 +227,8 @@ class ClipStep:
     kind: ClassVar[str] = "clip"
     lower: float | None = None
     upper: float | None = None
+    #: Added by :func:`guard_inverse_domain` (schema v2), not part of how the targets were normalised.
+    guard: bool = False
 
     def __post_init__(self) -> None:
         if self.lower is None and self.upper is None:
@@ -241,7 +243,8 @@ class ClipStep:
         return np.clip(y, self.lower, self.upper)
 
     def params(self) -> dict[str, Any]:
-        return {"lower": self.lower, "upper": self.upper}
+        # ``guard`` is written only when set, so an ordinary clip serialises exactly as in schema v1.
+        return {"lower": self.lower, "upper": self.upper, **({"guard": True} if self.guard else {})}
 
 
 @dataclass(frozen=True)
@@ -511,23 +514,20 @@ def guard_inverse_domain(transform: TargetTransform, train_scaled: Any) -> Targe
     upper = _inside(float(x.max()), transform, -1) if np.isfinite(hi_d) else None
     if lower is not None and upper is not None and lower >= upper:
         raise ValueError(f"degenerate training range [{lower}, {upper}] for a guarded transform.")
-    return TargetTransform((*transform.steps, ClipStep(lower=lower, upper=upper)))
+    return TargetTransform((*transform.steps, ClipStep(lower=lower, upper=upper, guard=True)))
 
 
 def strip_inverse_guard(transform: TargetTransform) -> TargetTransform:
     """``transform`` without the clip :func:`guard_inverse_domain` added, if it ends with one.
 
-    The guard only ever bounds a side whose inverse is undefined past it; a trailing clip that bounds an
-    open side (the phonix-db ``kp`` / ``klat`` clip at +5, part of how those targets were normalised) is
-    kept. Use the stripped transform to normalise labels, so held-out values past the training range are
-    not clipped; keep the guarded one for inverting predictions.
+    Only a clip marked ``guard`` is removed. A clip that is part of how the targets were normalised (the
+    phonix-db ``kp`` / ``klat`` clip at +5, or any clip in a schema-v1 bundle) is kept. Use the stripped
+    transform to normalise labels, so held-out values past the training range are not clipped; keep the
+    guarded one for inverting predictions.
     """
-    if not transform.steps or not isinstance(transform.steps[-1], ClipStep):
-        return transform
-    clip, base = transform.steps[-1], TargetTransform(transform.steps[:-1])
-    lo, hi = base.inverse_domain()
-    if (clip.lower is None or np.isfinite(lo)) and (clip.upper is None or np.isfinite(hi)):
-        return base
+    last = transform.steps[-1] if transform.steps else None
+    if isinstance(last, ClipStep) and last.guard:
+        return TargetTransform(transform.steps[:-1])
     return transform
 
 

@@ -1,7 +1,7 @@
 # Copyright 2026 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Store, publish and reuse pretrained models as release bundles (schema v1).
+"""Store, publish and reuse pretrained models as release bundles (schema v2; v1 still read).
 
 See ``docs/refactor/pretrained-release/00-overview.md`` for the format and the public interface.
 """

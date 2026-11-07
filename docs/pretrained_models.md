@@ -193,7 +193,7 @@ need their `LabelEncoder`. Set `unit` / `t_unit` so the card and the outputs say
 
 From 1.0, these follow semantic versioning:
 
-- bundle schema v1;
+- the bundle schema: v2 since 1.0.1, which adds the `guard` marker on saturation clips; every reader accepts v1;
 - `foundation_model.hub` (`load_pretrained`, `load_suite`, `PretrainedModel`, `export_runs`, `publish`);
 - the `--pretrained` CLI paths.
 

@@ -53,6 +53,11 @@ architecture can load silently.
 
 ## Bundle format, schema v1
 
+Schema v2 (1.0.1) is v1 plus one optional key: a `clip` step may carry `guard: true`. Export adds such a
+clip where a transform's inverse is undefined past the training range (Yeo-Johnson λ < 0 or > 2,
+Box-Cox), so predictions there saturate at the most extreme training value instead of returning NaN.
+Fine-tuning normalises labels without it. A v1 bundle has no guards, and readers accept it unchanged.
+
 ```
 <bundle>/
   README.md                         model card (YAML: license cc-by-nc-sa-4.0, library_name foundation-model, gating fields)

@@ -1,7 +1,7 @@
 # Copyright 2026 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The release bundle (schema v1): a self-describing model directory that needs no training data.
+"""The release bundle (schema v2; v1 still read): a self-describing model directory that needs no training data.
 
 Layout::
 
@@ -62,7 +62,10 @@ __all__ = [
     "write_bundle",
 ]
 
-SCHEMA_VERSION = 1
+#: Schema history. v1 (1.0.0): the format below. v2 (1.0.1): a ``clip`` step may carry ``guard: true``,
+#: marking the saturation clip that export adds where a transform's inverse is undefined past the training
+#: range. Readers accept every older schema: a v1 bundle has no guards, so all its clips are intrinsic.
+SCHEMA_VERSION = 2
 CONFIG_FILE = "config.json"
 MANIFEST_FILE = "manifest.json"
 MEMBERS_DIR = "members"

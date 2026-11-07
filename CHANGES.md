@@ -7,8 +7,9 @@
   prediction past it came back NaN with no warning.
   - `fm export` and fine-tuned new heads append a `clip` at the training-split range on each such side
     (`foundation_model.data.targets.guard_inverse_domain`). Predictions there saturate at the most extreme
-    training value; sides whose inverse is defined everywhere still extrapolate. The bundle schema is
-    unchanged (`clip` is an existing step).
+    training value; sides whose inverse is defined everywhere still extrapolate. These
+    clips are marked `guard: true`, so they are never confused with a clip that is part of a target's
+    normalisation. That key makes this **bundle schema v2**; readers accept v1 bundles, which have no guards.
   - `predict` / `predict_curve` raise the new `SaturationWarning` when values saturate, and when a bundle
     exported with 1.0.0 still yields NaN (re-export it).
   - Labels are normalised with the unguarded transform (`strip_inverse_guard`), so held-out values past the
