@@ -1,5 +1,21 @@
 # Recent Updates
 
+## 2026-11-08 (1.0.1 — predictions past a transform's range; local member selection)
+
+- **No more silent NaN.** A Yeo-Johnson step with λ < 0 (or > 2), and any Box-Cox step, has an inverse that
+  is undefined past a bound; the training maximum often sits on it (14 of the 41 release tasks). A
+  prediction past it came back NaN with no warning.
+  - `fm export` and fine-tuned new heads append a `clip` at the training-split range on each such side
+    (`foundation_model.data.targets.guard_inverse_domain`). Predictions there saturate at the most extreme
+    training value; sides whose inverse is defined everywhere still extrapolate. The bundle schema is
+    unchanged (`clip` is an existing step).
+  - `predict` / `predict_curve` raise the new `SaturationWarning` when values saturate, and when a bundle
+    exported with 1.0.0 still yields NaN (re-export it).
+  - Per-step evaluation with a configured scaler computed R² over NaN and stopped the run. Metrics now
+    leave out non-finite predictions and record how many (`nonfinite`).
+- `--pretrained` / `load_pretrained` accept `<bundle dir>#member` for local bundles, as Hub sources do.
+- The release repository is `TsumiNa/fm`; examples use it.
+
 ## 2026-11-04 (1.0.0 — store, publish and reuse pretrained models)
 
 foundation-model 1.0 gives models a stable home outside the training repository. The public interface is

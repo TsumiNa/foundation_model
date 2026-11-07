@@ -21,6 +21,7 @@ import pandas as pd
 import torch
 from lightning.pytorch.callbacks import Callback, EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, Logger, TensorBoardLogger
+from loguru import logger
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, r2_score  # type: ignore[import-untyped]
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 
@@ -369,6 +370,22 @@ def fig_rel(recorder: RunRecorder, step_dir: Path, filename: str) -> str:
     return str((step_dir / filename).relative_to(recorder.paths.root))
 
 
+def _regression_metrics(name: str, true: np.ndarray, pred: np.ndarray, *, samples: int) -> dict[str, float]:
+    """R² / MAE over the finite (true, pred) pairs; ``nonfinite`` counts predictions left out.
+
+    A configured scaler's inverse can be undefined past the training range (a Yeo-Johnson lambda < 0
+    returns NaN there), so an unconverged head can yield NaN in physical units. That is reported, and
+    must not stop a long run.
+    """
+    ok = np.isfinite(true) & np.isfinite(pred)
+    dropped = int((~np.isfinite(pred) & np.isfinite(true)).sum())
+    if dropped:
+        logger.warning(f"{name}: {dropped} prediction(s) have no finite physical value; metrics leave them out.")
+    r2 = float(r2_score(true[ok], pred[ok])) if ok.sum() >= 2 else float("nan")
+    mae = float(mean_absolute_error(true[ok], pred[ok])) if ok.any() else float("nan")
+    return {"r2": r2, "mae": mae, "samples": samples, "nonfinite": dropped, "primary": r2}
+
+
 def evaluate_task(
     model: FlexibleMultiTaskModel,
     catalog: TaskCatalog,
@@ -399,8 +416,8 @@ def evaluate_task(
             if spec.kind is TaskKind.REGRESSION:
                 pred = catalog.inverse_transform(name, head(h).squeeze(-1).cpu().numpy())
                 true = catalog.inverse_transform(name, frame.loc[comps, spec.column].astype(float).to_numpy())
-                r2 = float(r2_score(true, pred))
-                metric = {"r2": r2, "mae": float(mean_absolute_error(true, pred)), "samples": len(comps), "primary": r2}
+                metric = _regression_metrics(name, true, pred, samples=len(comps))
+                r2 = metric["r2"]
                 recorder.dump_predictions(
                     step_dir, name, pd.DataFrame({"composition": comps, "true": true, "pred": pred})
                 )
@@ -460,14 +477,9 @@ def evaluate_task(
         expanded_h, expanded_t = expand_for_kernel_regression(h_k, t_tensors)
         pred = catalog.inverse_transform(name, head(expanded_h, t=expanded_t).squeeze(-1).cpu().numpy())
         true = np.concatenate(true_parts)
-        r2 = float(r2_score(true, pred))
-        metric = {
-            "r2": r2,
-            "mae": float(mean_absolute_error(true, pred)),
-            "samples": len(keep),
-            "points": int(true.size),
-            "primary": r2,
-        }
+        metric = _regression_metrics(name, true, pred, samples=len(keep))
+        metric["points"] = int(true.size)
+        r2 = metric["r2"]
         recorder.dump_predictions(step_dir, name, _kr_long_frame(keep, t_list, true_parts, pred))
         recorder.dump_metrics(step_dir, name, metric)
         if is_new:

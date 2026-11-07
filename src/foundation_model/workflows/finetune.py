@@ -247,7 +247,7 @@ def _target_inputs(cfg: FinetuneConfig, bundle_config: Any) -> dict[str, Any]:
     Existing heads use the bundle's transform, its class names, or the shape normalisation. New heads
     get a transform fitted on their own training split, or class names from their labels.
     """
-    from foundation_model.data.targets import ClassLabels, fit_default
+    from foundation_model.data.targets import ClassLabels, fit_default, guard_inverse_domain
 
     raw_catalog = TaskCatalog(cfg.catalog)  # untransformed, to read the user's own values
     heads = {h.name: h for h in bundle_config.heads}
@@ -304,7 +304,10 @@ def _target_inputs(cfg: FinetuneConfig, bundle_config: Any) -> dict[str, Any]:
         else:
             values = train if kind == "regression" else [as_float_array(c) for c in train]
             flat = np.concatenate(values) if kind == "kernel_regression" and len(values) else np.asarray(values, float)
-            inputs[name] = fit_default(flat)
+            # A fitted Yeo-Johnson lambda < 0 (or > 2) leaves the inverse undefined past the training range;
+            # the guard makes predictions there saturate at the most extreme training value instead of NaN.
+            fitted = fit_default(flat)
+            inputs[name] = guard_inverse_domain(fitted, fitted.transform(flat))
     return inputs
 
 

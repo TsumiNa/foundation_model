@@ -355,3 +355,14 @@ def test_build_empty_model_groups_agree_on_a_non_default_scheduler_policy():
     result = cast(dict, built.configure_optimizers())
     scheduler = result["lr_scheduler"]["scheduler"]
     assert scheduler.patience == 11 and scheduler.factor == 0.25
+
+
+def test_regression_metrics_skip_and_count_non_finite_predictions() -> None:
+    from ._engine import _regression_metrics
+
+    true = np.array([1.0, 2.0, 3.0, 4.0])
+    pred = np.array([1.1, np.nan, 2.9, 4.2])
+    m = _regression_metrics("t", true, pred, samples=4)
+    assert m["nonfinite"] == 1 and m["samples"] == 4 and np.isfinite(m["r2"]) and m["primary"] == m["r2"]
+    assert m["mae"] == pytest.approx(np.mean([0.1, 0.1, 0.2]))
+    assert np.isnan(_regression_metrics("t", true[:1], pred[:1], samples=1)["r2"])

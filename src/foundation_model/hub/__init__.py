@@ -22,7 +22,7 @@ from .bundle import (
 )
 from .card import render_card
 from .export import export_runs
-from .pretrained import ExtrapolationWarning, PretrainedModel, Suite, load_pretrained, load_suite
+from .pretrained import ExtrapolationWarning, PretrainedModel, SaturationWarning, Suite, load_pretrained, load_suite
 from .publish import publish
 
 __all__ = [
@@ -35,6 +35,7 @@ __all__ = [
     "Manifest",
     "MemberInfo",
     "PretrainedModel",
+    "SaturationWarning",
     "Suite",
     "build_model",
     "export_runs",

@@ -315,3 +315,23 @@ def test_interrupted_write_leaves_nothing(catalog_raw: dict, tmp_path: Path, mon
         _export(catalog_raw, [_checkpoint(catalog_raw, tmp_path / "c.pt", 0)], out)
     assert out.is_dir() and not any(out.iterdir())
     assert not [p for p in tmp_path.iterdir() if p.name.endswith(".partial")]
+
+
+def test_export_guards_a_bounded_inverse_at_the_training_range(catalog_raw: dict, tmp_path: Path) -> None:
+    # A heavy right tail makes Yeo-Johnson pick lambda < 0, whose inverse is NaN past a bound.
+    frame = pd.read_parquet(catalog_raw["datasets"]["d"]["path"])
+    heavy = np.random.default_rng(3).lognormal(0.0, 2.5, len(frame))
+    pre = Path(catalog_raw["tasks"][0]["scaler"]["path"])
+    objects = joblib.load(pre)
+    objects["gap_scaler"] = make_pipeline(StandardScaler(), PowerTransformer()).fit(heavy.reshape(-1, 1))
+    assert objects["gap_scaler"][-1].lambdas_[0] < 0
+    joblib.dump(objects, pre)
+    frame["gap"] = objects["gap_scaler"].transform(heavy.reshape(-1, 1)).ravel()
+    frame.to_parquet(catalog_raw["datasets"]["d"]["path"])
+
+    out = _export(catalog_raw, [_checkpoint(catalog_raw, tmp_path / "c.pt", 0)], tmp_path / "b")
+    transform = read_config(out).head("band_gap").transform
+    assert transform is not None and transform.steps[-1].kind == "clip"
+    train_max = frame.loc[frame["split"] == "train", "gap"].max()
+    assert transform.steps[-1].upper == pytest.approx(train_max)  # type: ignore[union-attr]
+    assert np.isfinite(transform.inverse(np.array([train_max + 100.0]))).all()

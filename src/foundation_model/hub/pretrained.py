@@ -8,7 +8,7 @@ Hub access needs the optional extra ``foundation-model[hub]``. A gated repositor
 ``HF_TOKEN`` or ``hf auth login``.
 
     >>> from foundation_model.hub import load_pretrained
-    >>> model = load_pretrained("<owner>/<repo>@v1.0.0")                 # default member
+    >>> model = load_pretrained("TsumiNa/fm@v1.0.0")                 # default member
     >>> model.predict(["Fe2O3", "NaCl"], tasks=["band_gap"])             # eV, not the training scale
     >>> model.predict_curve(["Bi2Te3"], "seebeck")                        # on the training grid
 
@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from foundation_model.data.targets import ClipStep
 from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
 from foundation_model.models.task_head.kernel_regression import expand_for_kernel_regression
 from foundation_model.utils.kmd_plus import formula_to_composition
@@ -50,6 +51,7 @@ from .bundle import (
 __all__ = [
     "ExtrapolationWarning",
     "PretrainedModel",
+    "SaturationWarning",
     "Suite",
     "load_pretrained",
     "load_suite",
@@ -64,6 +66,42 @@ class ExtrapolationWarning(UserWarning):
     """A kernel-regression ``t`` lies outside the range the head was trained on."""
 
 
+class SaturationWarning(UserWarning):
+    """A prediction lies past the training range a head's transform can invert.
+
+    Bundles exported with 1.0.1 or later clip there, so the value comes back as the most extreme training
+    value. A bundle exported earlier has no such clip, and the value comes back NaN.
+    """
+
+
+def _to_physical(head: HeadSpec, raw: np.ndarray) -> np.ndarray:
+    """Training-scale head outputs → physical units, warning when values saturate or cannot be inverted."""
+    if head.transform is None:
+        return raw
+    with np.errstate(invalid="ignore", over="ignore"):
+        values = head.transform.inverse(raw)
+    lost = int((np.isfinite(raw) & ~np.isfinite(values)).sum())
+    if lost:
+        warnings.warn(
+            f"{head.name}: {lost} prediction(s) lie past the range this head's transform can invert and are "
+            "NaN. Re-export the bundle with foundation-model >= 1.0.1 to saturate them at the training range.",
+            SaturationWarning,
+            stacklevel=3,
+        )
+    last = head.transform.steps[-1] if head.transform.steps else None
+    if isinstance(last, ClipStep):
+        beyond = int((raw > last.upper).sum()) if last.upper is not None else 0
+        beyond += int((raw < last.lower).sum()) if last.lower is not None else 0
+        if beyond:
+            warnings.warn(
+                f"{head.name}: {beyond} prediction(s) lie beyond the training range and are returned as the "
+                "most extreme training value.",
+                SaturationWarning,
+                stacklevel=3,
+            )
+    return values
+
+
 @dataclass(frozen=True)
 class Source:
     """A parsed source: a local bundle path, or a Hub repository with an optional revision and member."""
@@ -75,11 +113,16 @@ class Source:
 
 
 def parse_source(source: str | Path, *, revision: str | None = None, member: str | None = None) -> Source:
-    """Resolve ``source``. An existing directory is local; otherwise ``owner/name[@rev][#member]``.
+    """Resolve ``source``. An existing directory, optionally ``<dir>#member``, is local; otherwise
+    ``owner/name[@rev][#member]``.
 
     Keyword ``revision`` / ``member`` override the ones written into the string.
     """
     path = Path(source)
+    if not path.exists() and "#" in str(source):
+        head, _, tail = str(source).rpartition("#")
+        if tail and Path(head).is_dir():
+            path, member = Path(head), member or tail
     if path.exists():
         if not path.is_dir():
             raise BundleError(f"{path} is a file; a bundle is a directory with {CONFIG_FILE}.")
@@ -260,7 +303,7 @@ class PretrainedModel:
                 raw = self.model.task_heads[head.name](h)
                 if head.kind == "regression":
                     values = raw.squeeze(-1).cpu().numpy().astype(float)
-                    out[head.name] = head.transform.inverse(values) if head.transform is not None else values
+                    out[head.name] = _to_physical(head, values)
                 else:
                     assert head.classes is not None
                     prob = torch.softmax(raw, dim=-1).cpu().numpy()
@@ -285,7 +328,7 @@ class PretrainedModel:
         with torch.no_grad():
             eh, et = expand_for_kernel_regression(h, [torch.tensor(g, dtype=torch.float32) for g in grids])
             raw = self.model.task_heads[head.name](eh, t=et).squeeze(-1).cpu().numpy().astype(float)
-        values = head.transform.inverse(raw) if head.transform is not None else raw
+        values = _to_physical(head, raw)
         t_col = head.t_name or "t"
         out = pd.DataFrame(
             {

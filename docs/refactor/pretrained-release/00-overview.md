@@ -87,10 +87,10 @@ A single exported model is a bundle with one member, so there is only one format
 Python, `foundation_model.hub`:
 
 ```python
-model = load_pretrained("TsumiNa/fm-inorganic", member="m003", revision="v1.0.0")   # or a local path
+model = load_pretrained("TsumiNa/fm", member="m003", revision="v1.0.0")   # or a local path
 model.predict(["Fe2O3", "NaCl"], tasks=["band_gap"])        # DataFrame in physical units
 model.predict_curve(["Bi2Te3"], task="seebeck", t=None)     # None → training mesh; out-of-range t warns
-suite = load_suite("TsumiNa/fm-inorganic", revision="v1.0.0")   # all members, lazily downloaded
+suite = load_suite("TsumiNa/fm", revision="v1.0.0")   # all members, lazily downloaded
 model.save("out/my-bundle")                                 # bundle, provenance and licence carried over
 export_run(run_dir, catalog_config, "out/bundle")           # pretrain / finetune run → bundle
 ```

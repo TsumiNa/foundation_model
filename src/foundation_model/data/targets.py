@@ -19,6 +19,11 @@ The step set covers every transform the project's datasets use:
   beyond a bound come back as the bound's pre-image (:attr:`TargetTransform.saturates`);
 * ``identity``.
 
+A Yeo-Johnson step with ``lambda < 0`` (or ``> 2``), and any Box-Cox step, maps the real line onto a
+half-bounded interval, so its inverse is undefined past that bound and returns NaN. A model can predict
+past it. :func:`guard_inverse_domain` appends a ``clip`` at the training range on each such side, so the
+inverse saturates at the most extreme training value instead.
+
 :func:`from_sklearn` converts the fitted sklearn objects found in ``data/*preprocessing*.pkl.z``
 and rejects anything else by name. :func:`fit_default` fits the project's default recipe
 (``StandardScaler → PowerTransformer(yeo-johnson)``) on training values. Classification labels
@@ -46,6 +51,7 @@ __all__ = [
     "UnsupportedTransformError",
     "fit_default",
     "from_sklearn",
+    "guard_inverse_domain",
     "normalize_max_abs",
 ]
 
@@ -136,6 +142,21 @@ class PowerTransformerStep:
         else:
             out[neg] = -np.expm1(-y[neg])
         return out
+
+    def image(self) -> tuple[float, float]:
+        """The open interval this step maps onto (after standardising); its inverse is NaN outside it."""
+        lam, inf = self.lmbda, float("inf")
+        if self.method == "yeo-johnson":
+            lo = 1.0 / (2.0 - lam) if lam > 2 + _EPS else -inf
+            hi = -1.0 / lam if lam < -_EPS else inf
+        elif abs(lam) < _EPS:
+            lo, hi = -inf, inf
+        else:
+            lo, hi = (-1.0 / lam, inf) if lam > 0 else (-inf, -1.0 / lam)
+        if not self.standardize:
+            return lo, hi
+        a, b = (lo - self.mean) / self.scale, (hi - self.mean) / self.scale
+        return (a, b) if a <= b else (b, a)
 
     def forward(self, x: np.ndarray) -> np.ndarray:
         if self.method == "yeo-johnson":
@@ -273,6 +294,25 @@ class TargetTransform:
         for step in reversed(self.steps):
             out = step.backward(out)
         return out
+
+    def inverse_domain(self) -> tuple[float, float]:
+        """The interval of training-scale values the inverse is defined on (``±inf`` = unbounded)."""
+        lo, hi = -np.inf, np.inf
+        for step in self.steps:
+            if isinstance(step, PowerTransformerStep):
+                lo, hi = step.image()
+            elif isinstance(step, ClipStep):
+                # The inverse clamps first: a side whose bound lies inside the domain is defined everywhere.
+                lo = -np.inf if step.lower is not None and step.lower > lo else lo
+                hi = np.inf if step.upper is not None and step.upper < hi else hi
+            elif np.isfinite(lo) or np.isfinite(hi):
+                # Every other step is monotone: map both ends and re-sort (a negative scale flips them).
+                # An end the step cannot map (NaN) is left open.
+                with np.errstate(all="ignore"):
+                    a, b = (float(v) for v in step.forward(np.array([lo, hi], dtype=float)))
+                ends = sorted(v for v in (a, b) if not np.isnan(v))
+                lo, hi = (ends[0], ends[-1]) if len(ends) == 2 else (-np.inf, np.inf)
+        return float(lo), float(hi)
 
     @property
     def saturates(self) -> bool:
@@ -424,6 +464,42 @@ def fit_default(train_values: Any) -> TargetTransform:
     result = from_sklearn(pipe)
     assert isinstance(result, TargetTransform)
     return result
+
+
+def guard_inverse_domain(transform: TargetTransform, train_scaled: Any) -> TargetTransform:
+    """``transform`` plus a ``clip`` at the training range on each side where its inverse is undefined.
+
+    ``train_scaled`` are training targets on the training scale (``transform.transform(physical)``).
+    A side whose inverse is defined everywhere stays open, so predictions there still extrapolate.
+    A transform whose inverse is defined everywhere is returned unchanged.
+    """
+    lo_d, hi_d = transform.inverse_domain()
+    if not (np.isfinite(lo_d) or np.isfinite(hi_d)):
+        return transform
+    x = _as_1d(train_scaled)
+    x = x[np.isfinite(x)]
+    if x.size == 0:
+        raise ValueError("guarding a transform's inverse needs finite training values.")
+    lower = _inside(float(x.min()), transform, +1) if np.isfinite(lo_d) else None
+    upper = _inside(float(x.max()), transform, -1) if np.isfinite(hi_d) else None
+    if lower is not None and upper is not None and lower >= upper:
+        raise ValueError(f"degenerate training range [{lower}, {upper}] for a guarded transform.")
+    return TargetTransform((*transform.steps, ClipStep(lower=lower, upper=upper)))
+
+
+def _inside(bound: float, transform: TargetTransform, direction: int) -> float:
+    """``bound`` moved ``direction`` (towards the interior) one ulp at a time until its inverse is finite.
+
+    A training value that sits on the domain edge in floating point inverts to ``inf``; the clip has to
+    sit just inside it.
+    """
+    value = bound
+    for _ in range(64):
+        with np.errstate(all="ignore"):
+            if np.isfinite(transform.inverse(np.array([value]))).all():
+                return value
+        value = float(np.nextafter(value, direction * np.inf))
+    raise ValueError(f"no finite inverse within 64 ulps of the training bound {bound}.")
 
 
 def normalize_max_abs(curve: Any) -> np.ndarray:
