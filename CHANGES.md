@@ -14,6 +14,7 @@
   - Per-step evaluation with a configured scaler computed R² over NaN and stopped the run. Metrics now
     leave out non-finite predictions and record how many (`nonfinite`).
 - `--pretrained` / `load_pretrained` accept `<bundle dir>#member` for local bundles, as Hub sources do.
+- Model cards group the heads table by kind, abbreviate class lists longer than 12, and note saturation.
 - The release repository is `TsumiNa/fm`; examples use it.
 
 ## 2026-11-04 (1.0.0 — store, publish and reuse pretrained models)
