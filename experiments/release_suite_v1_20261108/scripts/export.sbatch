@@ -60,7 +60,8 @@ with warnings.catch_warnings(record=True):
 print("seebeck curve:", curve.shape)
 PY
 printf 'Fe2O3\nNaCl\nBi2Te3\n' >"$OUTROOT/_export_check_compositions.txt"
-run fm predict --pretrained "/out/bundle#m001" --compositions-file /out/_export_check_compositions.txt \
+# A local bundle takes no "#member" suffix in 1.0.0 (Hub sources do): the CLI uses the default member.
+run fm predict --pretrained /out/bundle --compositions-file /out/_export_check_compositions.txt \
     --output-dir /out/_export_check_predict
 ls -la "$OUTROOT/_export_check_predict"
 du -sh "$OUTROOT/bundle"
