@@ -46,15 +46,16 @@ bundle is `members/bundle/`.
 
 ### Why training runs without scalers
 
-With a scaler configured, the per-step evaluation is computed in physical units. For 14 of the 41 tasks the
-Yeo-Johnson λ is negative (or above 2), so the inverse is only defined below (above) a bound, and the
+With a scaler configured, the per-step evaluation is computed in physical units. For 15 of the 41 tasks the
+Yeo-Johnson λ is negative (or above 2), so the inverse is only defined below (above) a bound, and for 14 the
 training maximum lies on that bound (e.g. `total_magnetization`: bound z = 2.26, data max z = 2.26). A head
 that predicts past it returns NaN, and the evaluation stops the run. Found in the local smoke on
 2026-11-08. Scalers never touch the weights, so training uses the normalised space every earlier campaign
 reported, and only the export config names them.
 
-The same NaN reaches `PretrainedModel.predict` for out-of-range predictions. That is a library fix
-(1.0.1) needed before the first `fm publish`; it does not affect training.
+The same NaN reached `PretrainedModel.predict` for out-of-range predictions. Fixed in 1.0.1 (PR #111):
+export adds a `guard` clip at the training range on each bounded side (bundle schema v2), so those predictions
+saturate with a `SaturationWarning`. The published bundle is exported with the 1.0.1 container.
 
 ## Gate results
 
@@ -65,6 +66,11 @@ The same NaN reaches `PretrainedModel.predict` for out-of-range predictions. Tha
 ## Execution log
 
 - 2026-11-08: data folders built; configs generated; local smoke passed.
+- 2026-11-08: RIKYU smoke (job 297096, export check 297119) passed on container 1.0.0.
+- 2026-11-08: suite submitted: training 297120 (2 GPUs × 5 members), git dbcfc61, container 1.0.0.
+- 2026-11-08: 1.0.1 merged (#111); the 1.0.0 export job 297121 cancelled. Smoke export check on container
+  1.0.1 (297514) passed: schema 2, 15 guarded heads, no NaN. Final export 297515 (container 1.0.1,
+  `members/bundle_v101`) waits on 297120.
 
 ## Plan: the remaining 23 tasks (not started)
 
