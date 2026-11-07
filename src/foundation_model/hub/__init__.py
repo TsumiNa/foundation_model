@@ -1,7 +1,7 @@
 # Copyright 2026 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Store, publish and reuse pretrained models as release bundles (schema v1).
+"""Store, publish and reuse pretrained models as release bundles (schema v2; v1 still read).
 
 See ``docs/refactor/pretrained-release/00-overview.md`` for the format and the public interface.
 """
@@ -22,7 +22,7 @@ from .bundle import (
 )
 from .card import render_card
 from .export import export_runs
-from .pretrained import ExtrapolationWarning, PretrainedModel, Suite, load_pretrained, load_suite
+from .pretrained import ExtrapolationWarning, PretrainedModel, SaturationWarning, Suite, load_pretrained, load_suite
 from .publish import publish
 
 __all__ = [
@@ -35,6 +35,7 @@ __all__ = [
     "Manifest",
     "MemberInfo",
     "PretrainedModel",
+    "SaturationWarning",
     "Suite",
     "build_model",
     "export_runs",

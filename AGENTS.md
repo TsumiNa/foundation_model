@@ -27,7 +27,7 @@
 - Multi-task PyTorch Lightning model for material/polymer property prediction.
 - Source: `src/foundation_model/`; tests are colocated as `<module>_test.py`.
 - CLI: `fm pretrain`, `fm finetune`, `fm inverse`, `fm predict`, `fm export`, `fm publish`.
-- Release bundles and the reuse API: `src/foundation_model/hub/`. Bundle schema v1, `foundation_model.hub` and the `--pretrained` CLI paths are the 1.0 public interface. Keep them backward compatible, and bump `SCHEMA_VERSION` with a reader for older schemas when the format changes.
+- Release bundles and the reuse API: `src/foundation_model/hub/`. The bundle schema (v2 since 1.0.1; v1 still read), `foundation_model.hub` and the `--pretrained` CLI paths are the 1.0 public interface. Keep them backward compatible, and bump `SCHEMA_VERSION` with a reader for older schemas when the format changes.
 - Architecture: `ARCHITECTURE.md`; usage: `README.md`; config schema: `docs/configuration.md`.
 - Sample TOML configs: `samples/*.toml`; experiment notebooks: `notebooks/`.
 

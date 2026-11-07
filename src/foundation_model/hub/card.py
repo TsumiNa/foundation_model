@@ -111,12 +111,19 @@ def _front_matter(config: BundleConfig, *, gated: bool) -> list[str]:
     return lines
 
 
+_KIND_ORDER = {"regression": 0, "classification": 1, "kernel_regression": 2}
+_MAX_LISTED_CLASSES = 12
+
+
 def _heads_table(config: BundleConfig) -> list[str]:
+    """One row per head, grouped by kind and sorted by name (the stored order is a member's task order)."""
     rows = ["| Head | Kind | Output | Unit |", "|---|---|---|---|"]
-    for h in config.heads:
+    for h in sorted(config.heads, key=lambda h: (_KIND_ORDER.get(h.kind, 3), h.name)):
         if h.kind == "classification":
             assert h.classes is not None
-            output, unit = f"class: {' / '.join(h.classes.classes)}", "—"
+            names = h.classes.classes
+            listed = " / ".join(names) if len(names) <= _MAX_LISTED_CLASSES else f"{len(names)} classes"
+            output, unit = f"class: {listed}", "—"
         elif h.output_scale == "shape":
             output, unit = "curve shape (trained on curves each divided by its max abs value)", "dimensionless"
         else:
@@ -201,6 +208,8 @@ def render_card(
         "that depend on it, such as cell volume or moment per formula unit, carry that caveat.",
         "- Curve heads are trained on the listed `t` ranges. Outside them, `predict_curve` warns that it is "
         "extrapolating.",
+        "- Where a head's target transform cannot be inverted past the training range, a prediction beyond it "
+        "comes back as the most extreme training value, with a `SaturationWarning`.",
         "",
         "## Licence",
         "",

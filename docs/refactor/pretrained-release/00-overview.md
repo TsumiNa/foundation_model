@@ -53,6 +53,11 @@ architecture can load silently.
 
 ## Bundle format, schema v1
 
+Schema v2 (1.0.1) is v1 plus one optional key: a `clip` step may carry `guard: true`. Export adds such a
+clip where a transform's inverse is undefined past the training range (Yeo-Johnson λ < 0 or > 2,
+Box-Cox), so predictions there saturate at the most extreme training value instead of returning NaN.
+Fine-tuning normalises labels without it. A v1 bundle has no guards, and readers accept it unchanged.
+
 ```
 <bundle>/
   README.md                         model card (YAML: license cc-by-nc-sa-4.0, library_name foundation-model, gating fields)
@@ -87,10 +92,10 @@ A single exported model is a bundle with one member, so there is only one format
 Python, `foundation_model.hub`:
 
 ```python
-model = load_pretrained("TsumiNa/fm-inorganic", member="m003", revision="v1.0.0")   # or a local path
+model = load_pretrained("TsumiNa/fm", member="m003", revision="v1.0.0")   # or a local path
 model.predict(["Fe2O3", "NaCl"], tasks=["band_gap"])        # DataFrame in physical units
 model.predict_curve(["Bi2Te3"], task="seebeck", t=None)     # None → training mesh; out-of-range t warns
-suite = load_suite("TsumiNa/fm-inorganic", revision="v1.0.0")   # all members, lazily downloaded
+suite = load_suite("TsumiNa/fm", revision="v1.0.0")   # all members, lazily downloaded
 model.save("out/my-bundle")                                 # bundle, provenance and licence carried over
 export_run(run_dir, catalog_config, "out/bundle")           # pretrain / finetune run → bundle
 ```

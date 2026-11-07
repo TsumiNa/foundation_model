@@ -25,7 +25,7 @@ foundation_model/
 │   ├── data/                    # CompoundDataModule + per-task data sources + splitter
 │   ├── utils/                   # KMD + plotting / training helpers
 │   ├── hub/                     # Release bundles: store / publish / reuse (the 1.0 interface)
-│   │   ├── bundle.py            #   schema v1: config.json + manifest.json + members/*/model.safetensors
+│   │   ├── bundle.py            #   schema v2 (reads v1): config.json + manifest.json + members/*/model.safetensors
 │   │   ├── export.py            #   runs → bundle, verified bit-identical to the checkpoints
 │   │   ├── pretrained.py        #   load_pretrained / load_suite / predict in physical units
 │   │   ├── derive.py            #   derived bundles: inherited licence + lineage
