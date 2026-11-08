@@ -38,3 +38,13 @@ def test_old_import_warns(stmt: str) -> None:
     code = f"import warnings; warnings.simplefilter('error', DeprecationWarning)\ntry:\n    {stmt}\nexcept DeprecationWarning as e:\n    print('warned', e)"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
     assert "renamed to yammi" in out
+
+
+def test_old_module_runs_with_python_m() -> None:
+    out = subprocess.run(
+        [sys.executable, "-W", "ignore", "-m", "foundation_model.cli.main", "--help"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "pretrain" in out and "Usage:" in out
