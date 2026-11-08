@@ -1,20 +1,20 @@
 # RIKYU container image
 
-The repository publishes an OCI image for RIKEN R-CCS RIKYU to GitHub Container Registry (GHCR):
+RIKYU uses the project's multi-arch image from GitHub Container Registry (GHCR); on RIKYU's AArch64
+nodes Apptainer pulls its `linux/arm64` variant automatically:
 
 ```text
-ghcr.io/tsumina/yammi:rikyu-<project.version>
+ghcr.io/tsumina/yammi:<project.version>
 ```
 
-The version is read from `pyproject.toml`; for example, project version `0.2.1` produces
-`rikyu-0.2.1`. Every published build also has an immutable `rikyu-sha-<commit>` tag. Pull requests
-build the image without publishing it. Pushes to `master` publish both tags, while manual workflow
-runs publish only the SHA tag and do not replace the version tag.
+The version is read from `pyproject.toml`. Every published build also has an immutable
+`sha-<commit>` tag. Pull requests build the image without publishing it; builds of `master` publish
+the version tag and `latest`. See `docs/container.md`.
 
 ## Compatibility choices
 
-RIKYU compute and login nodes are AArch64, so the workflow builds only `linux/arm64` on GitHub's
-native `ubuntu-24.04-arm` runner. The locked Linux environment installs PyTorch's CUDA 13 wheel.
+RIKYU compute and login nodes are AArch64. The workflow builds the `linux/arm64` variant on GitHub's
+native `ubuntu-24.04-arm` runner, next to the `linux/amd64` one. The locked Linux environment installs PyTorch's CUDA 13 wheel.
 At runtime, Apptainer's `--nv` option supplies the host NVIDIA driver; the image supplies PyTorch
 and its CUDA user-space libraries.
 
@@ -60,7 +60,7 @@ automatically:
 ```bash
 apptainer exec --nv \
   --bind "$RIKYU_GROUP_DIR:/work" \
-  "$HOME/containers/yammi_rikyu-$VERSION.sif" \
+  "$HOME/containers/yammi-$VERSION.sif" \
   yammi pretrain --config /work/configs/pretrain.toml --output-dir /work/runs/pretrain
 ```
 

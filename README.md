@@ -4,21 +4,37 @@ YAMMI (pronounced like *yummy*, /ˈjʌmi/) is a multi-task model that predicts m
 chemical composition alone, with gradient-based inverse design on top of the trained checkpoint. Up to
 1.x it was published as `foundation-model`; `import foundation_model` still works as a deprecated alias.
 
-**Using a released model** needs no training data. Use it to predict in physical units, fine-tune on
-your own data, or run inverse design:
+**Using a released model** needs no training data and, with the container, no installation. Predict in
+physical units, fine-tune on your own data, or run inverse design. The image `ghcr.io/tsumina/yammi`
+is multi-arch (x86-64 and Grace / AArch64, CUDA 13); the pull picks the right variant.
 
 ```bash
-pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'   # not on PyPI yet
-yammi predict --pretrained TsumiNa/yammi@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
+hf auth login   # the released models are gated: request access on huggingface.co/TsumiNa/yammi first
+
+# Docker
+docker run --rm --gpus all -v "$HOME/.cache/huggingface:/root/.cache/huggingface" -v "$PWD:/workspace" \
+  ghcr.io/tsumina/yammi:latest predict --pretrained TsumiNa/yammi@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
+
+# Apptainer / Singularity on HPC
+apptainer pull yammi.sif docker://ghcr.io/tsumina/yammi:latest
+apptainer exec --nv yammi.sif yammi predict --pretrained TsumiNa/yammi@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
+```
+
+For scripting from Python, or developing on top of yammi, install it into your own environment (not on
+PyPI yet):
+
+```bash
+pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'
 ```
 
 ```python
 from yammi.hub import load_pretrained
 model = load_pretrained("TsumiNa/yammi@v1.0.0")
-model.predict(["Fe2O3", "NaCl"])
+model.predict(["Fe2O3", "NaCl"], tasks=["band_gap", "is_metal"])
 ```
 
-See [docs/pretrained_models.md](docs/pretrained_models.md). It covers fine-tuning (`yammi finetune
+Container details (token, cache, offline compute nodes): [docs/container.md](docs/container.md). See
+[docs/pretrained_models.md](docs/pretrained_models.md). It covers fine-tuning (`yammi finetune
 --pretrained`), inverse design (`yammi inverse --pretrained`), the licence of the weights and the 1.0
 stability promise.
 

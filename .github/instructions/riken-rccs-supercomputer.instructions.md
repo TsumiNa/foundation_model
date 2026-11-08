@@ -220,9 +220,10 @@ than repeatedly mutating one environment in place.
 Run `uv sync --frozen --all-groups` separately in the GH200 clone and the x86-CUDA clone; do not
 reuse the resulting `.venv`.
 
-The public default container `ghcr.io/tsumina/yammi:<project.version>` is the supported
-x86-64 CUDA 13 image for `ai-h200-brc`. Convert it with SingularityCE and run with `--nv`; see
-`docs/container.md`. Do not use the AArch64 `rikyu-<project.version>` image on this partition.
+The public container `ghcr.io/tsumina/yammi:<project.version>` is multi-arch (amd64 + arm64):
+SingularityCE pulls the x86-64 variant on `ai-h200-brc` and the AArch64 one on the GH200 nodes.
+Convert it to SIF and run with `--nv`; see `docs/container.md`. Images before 2.0.0
+(`ghcr.io/tsumina/foundation_model`) were single-arch, with AArch64 under separate `rikyu-*` tags.
 
 `fs-mi300a` is AMD/ROCm. The repository's default Linux lock selects CUDA PyTorch and **cannot be
 used unchanged on MI300A**. Only select `fs-mi300a` after preparing and validating a dedicated

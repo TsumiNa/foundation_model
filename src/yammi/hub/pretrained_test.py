@@ -168,7 +168,7 @@ def _fake_hub(monkeypatch: pytest.MonkeyPatch, bundle: Path, tmp_path: Path) -> 
     calls: list[list[str]] = []
     cache = tmp_path / "hub-cache"
 
-    def commit(repo, revision, token):  # noqa: ANN001
+    def commit(repo, revision, token, cache_dir=None):  # noqa: ANN001
         assert repo == "owner/fm" and revision == "v1"
         calls.append(["<resolve v1>"])
         return "c0ffee"
@@ -252,3 +252,39 @@ def test_head_names_must_be_safe_file_names(bad: str) -> None:
 
     with pytest.raises(BundleError, match="no path separators"):
         HeadSpec(name=bad, kind="classification", num_classes=2, hidden_dims=(4,))
+
+
+def test_offline_revision_resolves_from_the_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Compute nodes often have no network: a revision cached on a login node must still load."""
+    import huggingface_hub
+    from huggingface_hub.errors import OfflineModeIsEnabled
+
+    def offline(*args: object, **kwargs: object) -> None:
+        raise OfflineModeIsEnabled("offline mode is enabled")
+
+    seen: dict[str, object] = {}
+
+    def cached(**kwargs: object) -> str:
+        seen.update(kwargs)
+        return str(tmp_path / "models--owner--fm" / "snapshots" / "c0ffee")
+
+    monkeypatch.setattr(huggingface_hub.HfApi, "model_info", offline)
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", cached)
+    assert pretrained_mod._commit("owner/fm", "v1", None, cache_dir=tmp_path) == "c0ffee"
+    assert seen["local_files_only"] is True and seen["revision"] == "v1" and seen["cache_dir"] == tmp_path
+
+
+def test_offline_and_not_cached_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    import huggingface_hub
+    from huggingface_hub.errors import LocalEntryNotFoundError, OfflineModeIsEnabled
+
+    def offline(*args: object, **kwargs: object) -> None:
+        raise OfflineModeIsEnabled("offline mode is enabled")
+
+    def missing(**kwargs: object) -> str:
+        raise LocalEntryNotFoundError("not cached")
+
+    monkeypatch.setattr(huggingface_hub.HfApi, "model_info", offline)
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", missing)
+    with pytest.raises(BundleError, match="not in the local cache"):
+        pretrained_mod._commit("owner/fm", "v1", None)

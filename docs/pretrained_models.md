@@ -8,10 +8,22 @@ for maintainers who export and publish bundles. Format and design:
 
 ## Install and access
 
+Most uses need **no installation**: the container `ghcr.io/tsumina/yammi:<version>` (or `:latest`)
+holds yammi, CUDA 13 and the Hub client, for x86-64 and Grace / AArch64 alike. Every `yammi` command
+below runs inside it unchanged; see [container.md](container.md) for Docker / Apptainer commands, the
+token, the download cache and offline compute nodes.
+
 ```bash
-# Not on PyPI yet: install from GitHub. The [hub] extra pulls huggingface_hub.
+hf auth login     # gated repositories: request access on the model page first
+apptainer exec --nv docker://ghcr.io/tsumina/yammi:latest yammi predict --pretrained TsumiNa/yammi@v1.0.0 \
+  --compositions "Fe2O3,NaCl" --output-dir pred/
+```
+
+Install into your own environment only to call yammi from Python or to develop on it (not on PyPI yet;
+the `[hub]` extra pulls `huggingface_hub`):
+
+```bash
 pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'
-hf auth login                          # gated repositories: request access on the model page first
 ```
 
 A *source* is a local bundle directory, optionally `<dir>#member`, or a Hub repository written

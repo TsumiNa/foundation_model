@@ -21,7 +21,7 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
-from .bundle import BundleConfig, Manifest
+from .bundle import BundleConfig, Manifest, fm_version
 
 __all__ = ["HF_LICENSES", "render_card"]
 
@@ -63,6 +63,12 @@ def _cc_terms(license_id: str) -> str | None:
     if "nc" in parts:
         return f"{terms}; models derived from them stay non-commercial"
     return terms
+
+
+def _image() -> str:
+    """The container image of the yammi release writing the card (multi-arch: amd64 and arm64)."""
+    version = fm_version()
+    return f"ghcr.io/tsumina/yammi:{version if version != 'unknown' else 'latest'}"
 
 
 def _writer(fm_version: str) -> str:
@@ -155,6 +161,12 @@ def render_card(
 ) -> str:
     """The full ``README.md`` text for a bundle."""
     repo = repo_id or "<owner>/<repo>"
+    image = _image()
+    access = (
+        "This is a gated repository: request access on this page, then log in once with `hf auth login`."
+        if gated
+        else "No login is needed for a public repository; for a private one, log in with `hf auth login`."
+    )
     n = len(manifest.members)
     name = title or (repo_id.split("/")[-1] if repo_id else "yammi bundle")
     curve = next((h for h in config.heads if h.kind == "kernel_regression" and h.output_scale == "physical"), None)
@@ -182,10 +194,26 @@ def render_card(
         "",
         "## Use",
         "",
+        access,
+        "",
+        f"**Container (recommended; nothing to install).** `{image}` runs on x86-64 and on Grace",
+        "(AArch64) NVIDIA machines alike; the pull picks the right variant. It contains yammi with CUDA 13",
+        "and downloads the weights on first use.",
+        "",
         "```bash",
-        "# Not on PyPI yet: install from GitHub.",
+        "# Docker: mount the Hugging Face cache (holds your token and the downloaded weights)",
+        'docker run --rm --gpus all -v "$HOME/.cache/huggingface:/root/.cache/huggingface" -v "$PWD:/workspace" \\',
+        f'  {image} predict --pretrained {repo} --compositions "Fe2O3,NaCl" --output-dir pred/',
+        "",
+        "# Apptainer / Singularity (HPC): $HOME, and with it the token and cache, is bound automatically",
+        f"apptainer pull yammi.sif docker://{image}",
+        f'apptainer exec --nv yammi.sif yammi predict --pretrained {repo} --compositions "Fe2O3,NaCl" --output-dir pred/',
+        "```",
+        "",
+        "**Python** (scripting, or developing on top of yammi). Not on PyPI yet: install from GitHub.",
+        "",
+        "```bash",
         "pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'",
-        "hf auth login   # gated repository: request access on this page first",
         "```",
         "",
         "```python",
@@ -199,7 +227,7 @@ def render_card(
     lines += [
         "```",
         "",
-        "Command line:",
+        "Command line (the same subcommands inside the container):",
         "",
         "```bash",
         f'yammi predict  --pretrained {repo} --compositions "Fe2O3,NaCl" --output-dir pred/',

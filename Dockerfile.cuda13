@@ -23,7 +23,7 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     apt-get update \
     && apt-get install --yes --no-install-recommends build-essential libgomp1 \
-    && uv sync --frozen --no-dev --no-install-project \
+    && uv sync --frozen --no-dev --extra hub --no-install-project \
     && apt-get purge --yes --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/*
 
@@ -36,7 +36,7 @@ RUN --mount=type=bind,source=README.md,target=/opt/yammi/README.md \
     --mount=type=bind,source=NOTICE,target=/opt/yammi/NOTICE \
     --mount=type=bind,source=src,target=/opt/yammi/src \
     --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-editable
+    uv sync --frozen --no-dev --extra hub --no-editable
 
 ARG EXPECTED_ARCH=x86_64
 ARG IMAGE_TITLE="yammi CUDA 13"
@@ -54,11 +54,13 @@ LABEL org.opencontainers.image.title="${IMAGE_TITLE}" \
 WORKDIR /workspace
 
 # Fail the build if uv selected the wrong platform or CUDA wheel, if the
-# installed package lost its license files, or if the installed CLI cannot start.
+# installed package lost its license files, if the Hub client (the [hub] extra,
+# for `--pretrained owner/name`) is missing, or if the installed CLI cannot start.
 RUN EXPECTED_ARCH="${EXPECTED_ARCH}" python -c \
     "import os, platform, torch; assert platform.machine() == os.environ['EXPECTED_ARCH']; assert torch.version.cuda == '13.0', torch.version.cuda" \
     && python -c \
     "from importlib.metadata import distribution as d; f = {p.name for p in d('yammi').files or ()}; assert {'LICENSE', 'NOTICE'} <= f, sorted(f)[:20]" \
+    && python -c "import huggingface_hub, yammi.hub; print('huggingface_hub', huggingface_hub.__version__)" \
     && yammi --help >/dev/null
 
 ENTRYPOINT ["yammi"]

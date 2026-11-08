@@ -16,7 +16,7 @@ cd "$PROJ"
 
 VERSION=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' pyproject.toml | head -n 1)
 test -n "$VERSION"
-IMAGE=${IMAGE:-$HOME/containers/yammi_cuda13-$VERSION.sif}
+IMAGE=${IMAGE:-$HOME/containers/yammi-$VERSION.sif}
 
 test -r "$IMAGE"
 
