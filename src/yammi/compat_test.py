@@ -48,3 +48,16 @@ def test_old_module_runs_with_python_m() -> None:
         check=True,
     ).stdout
     assert "pretrain" in out and "Usage:" in out
+
+
+def test_alias_keeps_the_canonical_spec() -> None:
+    import importlib.resources
+
+    import yammi.utils
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        importlib.import_module("foundation_model.utils")
+    assert yammi.utils.__spec__ is not None and yammi.utils.__spec__.name == "yammi.utils"
+    assert importlib.resources.files("yammi.utils").joinpath("element_features.csv").is_file()
+    assert importlib.reload(yammi.utils) is yammi.utils

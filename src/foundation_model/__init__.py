@@ -41,11 +41,20 @@ class _AliasFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
             is_package=target_spec.submodule_search_locations is not None,
         )
 
+    def __init__(self) -> None:
+        self._canonical: dict[str, importlib.machinery.ModuleSpec | None] = {}
+
     def create_module(self, spec: importlib.machinery.ModuleSpec) -> ModuleType:
-        return importlib.import_module(_NEW + spec.name[len(_OLD) :])
+        module = importlib.import_module(_NEW + spec.name[len(_OLD) :])
+        self._canonical[spec.name] = module.__spec__
+        return module
 
     def exec_module(self, module: ModuleType) -> None:
-        pass  # already executed under its yammi name
+        # Already executed under its yammi name. importlib has just replaced the module's __spec__ with the
+        # alias spec; give it back its own, so reload() and importlib.resources keep working on it.
+        alias = module.__spec__.name if module.__spec__ is not None else ""
+        if alias in self._canonical:
+            module.__spec__ = self._canonical.pop(alias)
 
     def get_code(self, fullname: str) -> CodeType | None:
         """Code of the yammi module, for ``python -m foundation_model.<module>`` (runpy asks for it)."""
