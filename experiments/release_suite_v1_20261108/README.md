@@ -42,7 +42,7 @@ order**: same data, same split manifest, same training seed, same hyper-paramete
 | `scripts/submit.sh` | `smoke`, `suite`, `export` |
 
 Outputs (untracked) on RIKYU under `/data1/rkp00067/rku00225/fm/release_suite_v1/{smoke,members}/`; the
-bundle is `members/bundle/`.
+published bundle is `members/bundle_v101/` (exported with 1.0.1; the 1.0.0 export was cancelled).
 
 ### Why training runs without scalers
 
