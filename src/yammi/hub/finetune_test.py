@@ -282,3 +282,22 @@ def test_num_classes_may_be_left_out(bundle: Path, user_data: Path, tmp_path: Pa
     derived = load_pretrained(tmp_path / "ft" / "bundle")
     classes = derived.config.head("grade").classes
     assert classes is not None and classes.classes == ("A", "B")
+
+
+def test_class_count_from_labels_or_indices() -> None:
+    from yammi.workflows.finetune import _class_count
+
+    assert _class_count("t", pd.Series(["b", "a", "b"])) == 2
+    assert _class_count("t", pd.Series([0, 2, 2.0])) == 3  # class indices: max + 1, not the distinct count
+    with pytest.raises(ValueError, match="non-negative integer"):
+        _class_count("t", pd.Series([0, 1.5]))
+
+
+def test_num_classes_inference_accepts_kind_aliases(bundle: Path, user_data: Path, tmp_path: Path) -> None:
+    raw = _raw(user_data, bundle, tmp_path / "ft", ["phase"])
+    for task in raw["tasks"]:
+        if task["name"] == "phase":
+            task.pop("num_classes")
+            task["kind"] = "CLF"  # the catalog's case-insensitive legacy spelling
+    counts = {t.name: t.num_classes for t in build_finetune_config(raw).catalog.tasks}
+    assert counts["phase"] == 3

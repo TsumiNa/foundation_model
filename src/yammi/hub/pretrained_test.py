@@ -176,23 +176,23 @@ def test_suite_predict_combines_members_and_skips_out_of_range_ones(bundle: Path
     probs = np.mean([m.predict(_COMPS, ["phase"], probabilities=True).filter(like="phase:").to_numpy(float)
                      for m in suite], axis=0)  # fmt: skip
     combined = load_suite(bundle).predict(_COMPS, ["band_gap", "phase"], probabilities=True)
-    np.testing.assert_allclose(combined["band_gap"], np.median(per, axis=0))
+    np.testing.assert_allclose(combined["band_gap"], per.mean(axis=0))
     np.testing.assert_allclose(combined["band_gap:std"], per.std(axis=0))
     classes = ["insulator", "metal", "semiconductor"]
     assert list(combined["phase"]) == [classes[i] for i in probs.argmax(axis=1)]
     assert combined.attrs["members"] == ["m000", "m001", "m002"]
 
-    # A guard below some members' outputs: those members drop out of the median on that row only.
+    # A guard below some members' outputs: those members drop out of the mean on that row only.
     _set_gap_steps(bundle, [{"kind": "identity"}])
     per = np.stack([m.predict(_COMPS, ["band_gap"])["band_gap"].to_numpy(float) for m in load_suite(bundle)])
     cap = float(np.median(per))
     _set_gap_steps(bundle, [{"kind": "identity"}, {"kind": "clip", "lower": None, "upper": cap, "guard": True}])
-    with pytest.warns(SaturationWarning, match="left out of the median"):
+    with pytest.warns(SaturationWarning, match="left out of the mean"):
         got = load_suite(bundle).predict(_COMPS, ["band_gap"])["band_gap"].to_numpy(float)
     kept = np.where(per <= cap, per, np.nan)
     with np.errstate(invalid="ignore"), warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        np.testing.assert_allclose(got, np.nanmedian(kept, axis=0))
+        np.testing.assert_allclose(got, np.nanmean(kept, axis=0))
 
 
 def test_uninvertible_predictions_warn_instead_of_silent_nan(bundle: Path) -> None:
@@ -275,7 +275,7 @@ def test_fm_predict_pretrained_cli(bundle: Path, tmp_path: Path) -> None:
     assert (out / "seebeck_curve.csv").exists() and (out / "dos_curve.csv").exists()
     info = json.loads((out / "prediction_info.json").read_text())
     # No "#member": every member is combined, with a spread column.
-    assert info["members"] == ["m000", "m001", "m002"] and info["combined"]
+    assert info["members"] == ["m000", "m001", "m002"] and info["combined"] and info["member"] is None
     assert info["license"] == "cc-by-nc-sa-4.0" and info["units"]["dos"] == "shape"
     assert "band_gap:std" in table.columns and "seebeck:std" in pd.read_csv(out / "seebeck_curve.csv").columns
 
@@ -284,7 +284,7 @@ def test_fm_predict_pretrained_cli(bundle: Path, tmp_path: Path) -> None:
                                   "--tasks", "band_gap", "--output-dir", str(one)])  # fmt: skip
     assert result.exit_code == 0, result.output
     info = json.loads((one / "prediction_info.json").read_text())
-    assert info["members"] == ["m001"] and info["combined"] is None
+    assert info["members"] == ["m001"] and info["member"] == "m001" and info["combined"] is None
     assert list(pd.read_csv(one / "predictions.csv").columns) == ["composition", "band_gap"]
 
     result = runner.invoke(main, ["predict", "--pretrained", str(bundle), "--compositions", "Fe2 Al3",
@@ -371,3 +371,22 @@ def test_hub_access_errors_say_what_to_do(
     monkeypatch.setattr(huggingface_hub, "snapshot_download", fail)
     with pytest.raises(BundleError, match=says):
         pretrained_mod._snapshot("owner/fm", "v9", ["config.json"], None, tmp_path)
+
+
+def test_suite_treats_an_infinite_member_output_as_out_of_range(bundle: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    suite = load_suite(bundle)
+    members = list(suite)
+    real = [m.predict(_COMPS, ["band_gap"])["band_gap"].to_numpy(float) for m in members]
+    original = type(members[0]).predict
+
+    def predict(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        out = original(self, *args, **kwargs)
+        if self.member.id == "m000":
+            out["band_gap"] = np.inf  # an overflowed inverse
+        return out
+
+    monkeypatch.setattr(type(members[0]), "predict", predict)
+    with pytest.warns(SaturationWarning, match="left out of the mean"):
+        got = suite.predict(_COMPS, ["band_gap"])
+    np.testing.assert_allclose(got["band_gap"], np.mean(real[1:], axis=0))
+    assert np.isfinite(got["band_gap:std"]).all()

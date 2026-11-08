@@ -451,7 +451,7 @@ def _predict_pretrained(
     from yammi.hub import load_suite
     from yammi.hub.pretrained import parse_source
 
-    # No "#member": combine every member (median of in-range members, plus a :std column). The suite's
+    # No "#member": combine every member (mean of in-range members, plus a :std column). The suite's
     # spread is an uncertainty, and the combination was more accurate than one member on most heads.
     suite = load_suite(source) if parse_source(source).member is None else None
     combine = suite is not None and len(suite) > 1
@@ -475,10 +475,9 @@ def _predict_pretrained(
     members = suite.member_ids if suite is not None and combine else [first.member.id]
     info = {
         "source": source,
+        "member": None if combine else members[0],  # kept for 2.0 readers; null when members are combined
         "members": members,
-        "combined": "median of the members whose output stays in range; <task>:std is their spread"
-        if combine
-        else None,
+        "combined": "mean of the members whose output stays in range; <task>:std is their spread" if combine else None,
         "license": first.license,
         "fm_version": first.config.fm_version,
         "units": {t: first.units()[t] for t in wanted},

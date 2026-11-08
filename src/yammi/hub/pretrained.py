@@ -109,7 +109,7 @@ def _to_physical(head: HeadSpec, raw: np.ndarray, saturated: str = "nan") -> np.
             values = np.where(beyond, np.nan, values)
             warnings.warn(
                 f"{head.name}: {n} prediction(s) lie past the range this head can express in physical units and "
-                "are NaN. An ensemble (load_suite(...).predict, or yammi predict without #member) keeps the "
+                "are NaN. The combined prediction (load_suite(...).predict, or yammi predict without #member) keeps the "
                 "members that stay in range; saturated='clip' returns the most extreme training value instead.",
                 SaturationWarning,
                 stacklevel=3,
@@ -539,11 +539,11 @@ class Suite:
     ) -> pd.DataFrame:
         """Every member's prediction, combined: the recommended way to predict with a suite.
 
-        Regression: the median over the members whose output stays in range, and ``"<task>:std"``, their
+        Regression: the mean over the members whose output stays in range, and ``"<task>:std"``, their
         standard deviation (a spread, usable as an uncertainty). NaN only when every member is out of
         range. Classification: the class with the highest mean probability over members;
         ``probabilities=True`` adds the mean ``"<task>:<class>"`` columns. On the v1 suite's test split the
-        combination had a higher R² than the default member on 26 of 29 regression heads.
+        combination had a higher R² than the default member on 27 of 29 regression heads.
         """
         models = list(self)
         names = list(tasks) if tasks else [h.name for h in models[0].heads if h.kind != "kernel_regression"]
@@ -555,10 +555,11 @@ class Suite:
         for name in names:
             if kinds[name] == "regression":
                 stack = np.stack([p[name].to_numpy(float) for p in per])
+                stack[~np.isfinite(stack)] = np.nan  # an overflowed inverse (inf) is out of range too
                 kept = np.isfinite(stack).sum(axis=0)
                 with warnings.catch_warnings(), np.errstate(invalid="ignore"):
                     warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN columns stay NaN
-                    out[name] = np.nanmedian(stack, axis=0)
+                    out[name] = np.nanmean(stack, axis=0)
                     out[f"{name}:std"] = np.nanstd(stack, axis=0)
                 _warn_dropped(name, kept, len(models))
             else:
@@ -574,16 +575,17 @@ class Suite:
         return out
 
     def predict_curve(self, compositions: Sequence[str], task: str, t: Any = None) -> pd.DataFrame:
-        """A curve head combined over members: the median of in-range members and ``"<task>:std"``."""
+        """A curve head combined over members: the mean of in-range members and ``"<task>:std"``."""
         models = list(self)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SaturationWarning)
             per = [m.predict_curve(compositions, task, t, saturated="nan") for m in models]
         out = per[0].drop(columns=[task]).copy()
         stack = np.stack([p[task].to_numpy(float) for p in per])
+        stack[~np.isfinite(stack)] = np.nan
         with warnings.catch_warnings(), np.errstate(invalid="ignore"):
             warnings.simplefilter("ignore", RuntimeWarning)
-            out[task] = np.nanmedian(stack, axis=0)
+            out[task] = np.nanmean(stack, axis=0)
             out[f"{task}:std"] = np.nanstd(stack, axis=0)
         _warn_dropped(task, np.isfinite(stack).sum(axis=0), len(models))
         out.attrs = {**per[0].attrs, "members": [m.member.id for m in models]}
@@ -597,7 +599,7 @@ def _warn_dropped(name: str, kept: np.ndarray, n_members: int) -> None:
     if partial or empty:
         warnings.warn(
             f"{name}: on {partial} row(s) some of the {n_members} members were out of range and left out of the "
-            f"median; {empty} row(s) are NaN because every member was.",
+            f"mean; {empty} row(s) are NaN because every member was.",
             SaturationWarning,
             stacklevel=3,
         )

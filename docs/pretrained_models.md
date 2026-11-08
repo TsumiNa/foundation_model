@@ -34,7 +34,7 @@ A *source* is a local bundle directory, optionally `<dir>#member`, or a Hub repo
 
 **Recommended: all members combined.** A release holds several members that differ only in the order in
 which pretraining met the tasks. Combined, they are more accurate than one member (higher held-out R² on
-26 of 29 regression heads of v1), and their spread is an uncertainty:
+27 of 29 regression heads of v1), and their spread is an uncertainty:
 
 ```python
 from yammi.hub import load_suite
@@ -44,7 +44,7 @@ suite.predict(["Fe2O3", "NaCl"], ["band_gap", "is_metal"])   # band_gap, band_ga
 suite.predict_curve(["Bi2Te3"], "zt", t=[300, 400, 500])     # composition, T, zt, zt:std
 ```
 
-Regression: the median of the members whose output stays in range, and `<task>:std` across them.
+Regression: the mean of the members whose output stays in range, and `<task>:std` across them.
 Classification: the class with the highest mean probability (`probabilities=True` adds the mean
 `<task>:<class>` columns). `yammi predict --pretrained owner/name` does this by default; add `#m003` for
 one member. The model card's accuracy table lists the held-out R² / accuracy of every head.

@@ -97,11 +97,20 @@ class FinetuneConfig:
 def _with_class_counts(raw: Mapping[str, Any], pretrained: str) -> Mapping[str, Any]:
     """Fill ``num_classes`` of classification tasks that leave it out, when fine-tuning a released bundle.
 
-    An existing head takes the bundle's count (the user's data may not show every class); a new head
-    counts the distinct labels in its column. Explicit values are kept and checked later.
+    An existing head takes the bundle's count (the user's data may not show every class). A new head
+    with string labels counts the distinct labels in its column; one with integer labels (class indices)
+    takes ``max index + 1``. Explicit values are kept and checked later.
     """
+    from yammi.workflows.task_catalog import TaskKind, _coerce_task_kind
+
+    def is_classification(task: Mapping[str, Any]) -> bool:
+        try:
+            return _coerce_task_kind(task.get("kind")) is TaskKind.CLASSIFICATION
+        except ValueError:
+            return False  # the catalog reports the bad kind
+
     tasks = list(raw.get("tasks", []))
-    if not any(t.get("kind") == "classification" and "num_classes" not in t for t in tasks):
+    if not any(is_classification(t) and "num_classes" not in t for t in tasks):
         return raw
     from yammi.data.composition_sources import read_data_file
     from yammi.hub.bundle import read_config
@@ -111,7 +120,7 @@ def _with_class_counts(raw: Mapping[str, Any], pretrained: str) -> Mapping[str, 
     datasets = raw.get("datasets", {})
     filled = []
     for task in tasks:
-        if task.get("kind") == "classification" and "num_classes" not in task:
+        if is_classification(task) and "num_classes" not in task:
             task = dict(task)
             head = heads.get(task.get("name", ""))
             if head is not None and head.num_classes:
@@ -120,9 +129,20 @@ def _with_class_counts(raw: Mapping[str, Any], pretrained: str) -> Mapping[str, 
                 path = datasets.get(task.get("dataset", ""), {}).get("path")
                 if path is None or "column" not in task:
                     raise ValueError(f"Task '{task.get('name')}': give num_classes, or a dataset and column to count.")
-                task["num_classes"] = int(read_data_file(str(path))[task["column"]].dropna().nunique())
+                labels = read_data_file(str(path))[task["column"]].dropna()
+                task["num_classes"] = _class_count(str(task.get("name")), labels)
         filled.append(task)
     return {**raw, "tasks": filled}
+
+
+def _class_count(name: str, labels: Any) -> int:
+    """Number of classes a label column implies: distinct names, or ``max + 1`` for class indices."""
+    if labels.map(lambda v: isinstance(v, str)).all():
+        return int(labels.nunique())
+    values = np.asarray(labels, dtype=float)
+    if not (np.isfinite(values).all() and (values >= 0).all() and (values == np.round(values)).all()):
+        raise ValueError(f"Task '{name}': numeric class labels must be non-negative integer indices.")
+    return int(values.max()) + 1 if values.size else 0
 
 
 def build_finetune_config(
@@ -318,17 +338,18 @@ def _target_inputs(cfg: FinetuneConfig, bundle_config: Any) -> dict[str, Any]:
             inputs[name] = "shape" if head.output_scale == "shape" else strip_inverse_guard(head.transform)
             continue
         frame = raw_catalog.task_frames([name])[name]
-        mask = frame[spec.column].notna()
-        if "split" in frame.columns:
-            mask &= frame["split"] == "train"
+        labeled = frame[spec.column].notna()
+        mask = labeled & (frame["split"] == "train") if "split" in frame.columns else labeled
         train = frame.loc[mask, spec.column]
         if kind == "classification":
             assert spec.num_classes is not None
-            if train.map(lambda v: isinstance(v, str)).all():
-                names = sorted({str(v) for v in train})
+            every = frame.loc[labeled, spec.column]  # the class vocabulary: every labelled row, not only train
+            if every.map(lambda v: isinstance(v, str)).all():
+                names = sorted({str(v) for v in every})
                 if len(names) != spec.num_classes:
                     raise ValueError(
-                        f"Task '{name}': {len(names)} class names in the training split, num_classes = {spec.num_classes}."
+                        f"Task '{name}': {len(names)} class names in the data the catalog keeps, num_classes = "
+                        f"{spec.num_classes}. Set num_classes to match, or check rows dropped by min_elements."
                     )
                 inputs[name] = ClassLabels(tuple(names))
             else:

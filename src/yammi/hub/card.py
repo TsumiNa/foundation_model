@@ -222,7 +222,7 @@ def render_card(
     ]
     if n > 1:
         lines += [
-            f'suite = load_suite("{repo}")   # all {n} members, combined: median of in-range members + ":std"',
+            f'suite = load_suite("{repo}")   # all {n} members, combined: mean of in-range members + ":std"',
             f'suite.predict(["Fe2O3", "NaCl"], tasks={scalar!r})',
         ]
         if curve is not None:

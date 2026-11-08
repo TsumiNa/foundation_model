@@ -48,10 +48,10 @@ suite.predict_curve(["Bi2Te3"], "zt", t=[300, 400, 500])       # long table: com
 model = load_pretrained("TsumiNa/yammi@v1.0.0#m003"); model.tasks; model.units()
 ```
 
-- **Default = all members combined** (CLI without `#member`, and `load_suite(...).predict`): median
+- **Default = all members combined** (CLI without `#member`, and `load_suite(...).predict`): mean
   of the members whose output stays in range, plus `<task>:std` (member spread, a usable uncertainty;
   it correlates with the error). On the held-out test split it had a higher R² than the default member
-  on 26 of 29 regression heads (MAE 13–41 % lower on band gap, formation energy, density, bulk
+  on 27 of 29 regression heads (MAE 13–41 % lower on band gap, formation energy, density, bulk
   modulus). Prefer it; report the `:std`.
 - **Choose heads with `tasks=` / `--tasks`.** Scalar heads via `predict`, curve heads
   (`kernel_regression`: `zt`, `seebeck`, `power_factor`, `thermal_conductivity`,

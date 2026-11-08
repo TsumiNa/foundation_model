@@ -11,10 +11,10 @@ offline use. Fixes:
   the most extreme training value, which was almost always far off (`total_magnetization` R² 0.25 → −24).
   `predict` / `predict_curve` now return NaN there with a `SaturationWarning`; `saturated="clip"` keeps
   the old behaviour.
-- **Combined predictions.** `Suite.predict` / `Suite.predict_curve`: median of the members that stay in
-  range, plus `<task>:std` (member spread). It had a higher held-out R² than the default member on 26 of 29
+- **Combined predictions.** `Suite.predict` / `Suite.predict_curve`: mean of the members that stay in
+  range, plus `<task>:std` (member spread). It had a higher held-out R² than the default member on 27 of 29
   regression heads. `yammi predict --pretrained owner/name` combines all members unless `#member` is given
-  (`prediction_info.json` lists `members`; it used to have `member`).
+  (`prediction_info.json` adds `members` and `combined`; `member` is null when members are combined).
 - **New heads fine-tuned from a bundle stay invertible.** `fit_default` keeps Yeo-Johnson λ in [0, 2].
   A zero-inflated target (HEA Curie temperature, 72 % zeros) had fitted λ = −3: test R² −2.4, now 0.82.
   The fine-tune log warns when its metrics leave out non-finite predictions.
