@@ -64,14 +64,22 @@ def test_licence_terms_follow_the_licence(bundle: Path, license_id: str, says: s
     assert never not in meta["extra_gated_prompt"] and never not in card.split("## Licence")[1]
     has_nc_box = any("non-commercial purposes only" in k for k in meta["extra_gated_fields"])
     assert has_nc_box == ("-nc" in license_id)
+    # The Hub refuses the upload when any metadata key contains "." or "$".
+    assert not [k for k in meta["extra_gated_fields"] if "." in k or "$" in k]
 
 
 def test_custom_licence_is_quoted_and_not_paraphrased(bundle: Path) -> None:
     card = _card(bundle, "Lab: Research-1.0 #internal")
     meta = _front(card)  # parses: YAML-significant characters are quoted everywhere
     assert meta["license"] == "other" and meta["license_name"] == "Lab: Research-1.0 #internal"
-    assert "I accept the Lab: Research-1.0 #internal licence terms" in meta["extra_gated_fields"]
+    assert "I accept the licence terms stated above" in meta["extra_gated_fields"]
     assert "its own terms apply" in card and "non-commercial" not in card.split("## Licence")[1]
+
+
+def test_install_line_points_at_the_code_repository(bundle: Path) -> None:
+    card = _card(bundle, "cc-by-4.0")
+    assert "pip install 'foundation-model[hub] @ git+https://github.com/TsumiNa/foundation_model'" in card
+    assert "pip install 'foundation-model[hub]'\n" not in card  # PyPI's foundation-model is another project
 
 
 def test_no_gating_form_when_not_gated(bundle: Path) -> None:

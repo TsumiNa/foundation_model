@@ -9,7 +9,8 @@ for maintainers who export and publish bundles. Format and design:
 ## Install and access
 
 ```bash
-pip install 'foundation-model[hub]'   # the extra pulls huggingface_hub for downloads
+# Not on PyPI: the PyPI project named foundation-model is unrelated. The [hub] extra pulls huggingface_hub.
+pip install 'foundation-model[hub] @ git+https://github.com/TsumiNa/foundation_model'
 hf auth login                          # gated repositories: request access on the model page first
 ```
 
