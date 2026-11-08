@@ -1,37 +1,50 @@
 # Copyright 2026 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
+"""Deprecated alias: the package is ``yammi`` from 2.0.
+
+``import foundation_model`` and ``foundation_model.<module>`` resolve to the same module objects as
+``yammi`` and ``yammi.<module>``, so code written for 1.x and checkpoints pickled under the old module
+paths keep loading. New code should import ``yammi``.
+"""
+
+from __future__ import annotations
+
+import importlib
+import importlib.abc
+import importlib.machinery
+import importlib.util
 import sys
+import warnings
+from types import ModuleType
 
-import torch
-from loguru import logger
+_OLD, _NEW = __name__, "yammi"
 
-# Set float32 matmul precision globally for the package
-# See https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html
-torch.set_float32_matmul_precision("high")
 
-# Configure logger for this package
-# Remove default handler to avoid duplicate logs
-logger.remove()
+class _AliasFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Resolve ``foundation_model.x`` to the already-importable ``yammi.x`` (one module object, not a copy)."""
 
-# Add a new handler with a specific format and level
-# This format includes timestamp, level, module, function, line number, and message
-# Filter to only show logs from foundation_model package to reduce noise from worker processes
-logger.add(
-    sys.stderr,
-    format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-    "<level>{level: <8}</level> | "
-    "<cyan>{module}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-    level="INFO",  # Set default logging level to INFO
-    colorize=True,
-)
+    def find_spec(
+        self, fullname: str, path: object = None, target: object = None
+    ) -> importlib.machinery.ModuleSpec | None:
+        if not fullname.startswith(_OLD + "."):
+            return None
+        new = _NEW + fullname[len(_OLD) :]
+        if importlib.util.find_spec(new) is None:
+            return None
+        return importlib.util.spec_from_loader(fullname, self)
 
-# Example file handler (optional, uncomment and customize if needed):
-# logger.add(
-#     "logs/foundation_model_{time}.log",
-#     rotation="10 MB",  # Rotate log file when it reaches 10 MB
-#     retention="10 days", # Keep logs for 10 days
-#     enqueue=True,      # Asynchronous logging
-#     format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
-#     level="DEBUG"        # Log DEBUG level and above to file
-# )
+    def create_module(self, spec: importlib.machinery.ModuleSpec) -> ModuleType:
+        return importlib.import_module(_NEW + spec.name[len(_OLD) :])
+
+    def exec_module(self, module: ModuleType) -> None:
+        pass  # already executed under its yammi name
+
+
+if not any(isinstance(f, _AliasFinder) for f in sys.meta_path):
+    sys.meta_path.insert(0, _AliasFinder())
+
+warnings.warn("foundation_model was renamed to yammi in 2.0; import yammi instead.", DeprecationWarning, stacklevel=2)
+
+_yammi = importlib.import_module(_NEW)
+sys.modules[_OLD] = _yammi

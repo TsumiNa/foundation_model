@@ -9,7 +9,7 @@
 > setup below is reproducible as an ordinary scenario (`classes = [1]`, `weight = 5.0`).
 
 One-page summary of the messages the replay-based continual pre-training + inverse-design pipeline
-(`fm pretrain` → `fm finetune` → `fm inverse`) carries. Written so each bullet maps to either a
+(`yammi pretrain` → `yammi finetune` → `yammi inverse`) carries. Written so each bullet maps to either a
 slide or a paragraph of the paper.
 
 ## Headline messages
@@ -126,7 +126,7 @@ slide or a paragraph of the paper.
   * `results.json` + `SUMMARY.md` — raw arrays and a markdown table.
 * Configs, seeds, and the trained checkpoint are all saved per run, so any figure can be
   regenerated from `results.json` alone (no re-running the optimisation needed for re-plots).
-* `fm inverse` writes each scenario into a sibling subfolder so the full study is one directory.
+* `yammi inverse` writes each scenario into a sibling subfolder so the full study is one directory.
 
 ### 8. Per-step optimisation trajectories explain why the same seed → different scenarios → different recipes.
 
@@ -184,6 +184,6 @@ see all 20 seeds individually instead of the mean, rerun with
 
 * **Method math + per-term design intent**: [docs/inverse_design_algorithms.md](inverse_design_algorithms.md)
 * **Per-scenario outputs**: `artifacts/inverse/<scenario>/` (gitignored — regenerate with
-  `fm inverse --config samples/inverse.toml --checkpoint <ckpt>`).
-* **Implementation**: [`workflows/inverse/`](../src/foundation_model/workflows/inverse/)
+  `yammi inverse --config samples/inverse.toml --checkpoint <ckpt>`).
+* **Implementation**: [`workflows/inverse/`](../src/yammi/workflows/inverse/)
   (scenario × path engine, including its `trajectory` module).

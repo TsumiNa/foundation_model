@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
-from foundation_model.data.composition_sources import normalize_composition
+from yammi.data.composition_sources import normalize_composition
 
 OUT_PATH = Path(__file__).resolve().parent / "data" / "qc_inverse_design_teaching.parquet"
 

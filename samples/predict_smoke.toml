@@ -1,8 +1,8 @@
-# Smoke-test config for `fm predict` — evaluate a smoke checkpoint on the test split.
+# Smoke-test config for `yammi predict` — evaluate a smoke checkpoint on the test split.
 #
 # Catalog + model dims match samples/pretrain_smoke.toml.
 #
-#   fm predict --config samples/predict_smoke.toml \
+#   yammi predict --config samples/predict_smoke.toml \
 #       --checkpoint artifacts/finetune_smoke/training/final_model.pt
 
 [data]

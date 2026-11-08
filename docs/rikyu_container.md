@@ -3,7 +3,7 @@
 The repository publishes an OCI image for RIKEN R-CCS RIKYU to GitHub Container Registry (GHCR):
 
 ```text
-ghcr.io/tsumina/foundation_model:rikyu-<project.version>
+ghcr.io/tsumina/yammi:rikyu-<project.version>
 ```
 
 The version is read from `pyproject.toml`; for example, project version `0.2.1` produces
@@ -60,8 +60,8 @@ automatically:
 ```bash
 apptainer exec --nv \
   --bind "$RIKYU_GROUP_DIR:/work" \
-  "$HOME/containers/foundation-model_rikyu-$VERSION.sif" \
-  fm pretrain --config /work/configs/pretrain.toml --output-dir /work/runs/pretrain
+  "$HOME/containers/yammi_rikyu-$VERSION.sif" \
+  yammi pretrain --config /work/configs/pretrain.toml --output-dir /work/runs/pretrain
 ```
 
 Do not write results into the SIF: it is read-only. Keep configs, data, checkpoints, and run

@@ -1,7 +1,7 @@
 [project]
-name = "foundation-model"
-version = "1.0.2"
-description = "A multi-task learning model for predicting material properties"
+name = "yammi"
+version = "2.0.0"
+description = "YAMMI — Yet Another Materials Model, Inverse-ready: multi-task property prediction and inverse design from chemical composition"
 readme = "README.md"
 authors = [{ name = "TsumiNa", email = "liu.chang.1865@gmail.com" }]
 requires-python = ">=3.12, <3.15"
@@ -29,7 +29,7 @@ dependencies = [
 
 license = "Apache-2.0 AND BSD-3-Clause"
 license-files = ["LICENSE", "NOTICE"]
-keywords = ["foundation-model", "pytorch", "transformers"]
+keywords = ["yammi", "materials", "materials-informatics", "foundation-model", "multi-task", "inverse-design", "pytorch"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
@@ -40,11 +40,15 @@ classifiers = [
 
 
 [project.optional-dependencies]
-# Download released bundles from the Hugging Face Hub (foundation_model.hub.load_pretrained).
+# Download released bundles from the Hugging Face Hub (yammi.hub.load_pretrained).
 hub = ["huggingface_hub>=0.26"]  # update_repo_settings(private=...) is 0.26+
 
 [project.scripts]
-fm = "foundation_model.cli.main:main"
+yammi = "yammi.cli.main:main"
+
+[tool.hatch.build.targets.wheel]
+# `foundation_model` is the pre-2.0 import name, kept as an alias so old code and pickled checkpoints load.
+packages = ["src/yammi", "src/foundation_model"]
 
 [build-system]
 requires = ["hatchling"]

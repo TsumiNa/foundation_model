@@ -169,7 +169,7 @@ done
 wait                                 # fail the task if any co-tenant failed
 ```
 
-`run_one` reads its grid line, skips if its DONE marker exists, and runs one `fm` invocation. Submit
+`run_one` reads its grid line, skips if its DONE marker exists, and runs one `yammi` invocation. Submit
 with `--array=0-$(((N + PACK - 1) / PACK - 1))%<throttle>`.
 
 Three things to get right:
@@ -346,7 +346,7 @@ cd "$PROJ"
 
 "$VENV_PY" -c \
   'import torch; print(torch.cuda.device_count(), torch.cuda.get_device_name(), torch.version.cuda)'
-"$VENV_PY" -m foundation_model.cli.main pretrain \
+"$VENV_PY" -m yammi.cli.main pretrain \
   --config <toml> \
   --output-dir "$PERSISTENT_OUT"
 ```
@@ -379,7 +379,7 @@ Add `--account=PROJECT_NAME` when required.
 
 ## Lightning GPU selection
 
-The `fm` CLI drives a Lightning `Trainer`; `[training].accelerator` and `[training].devices` select
+The `yammi` CLI drives a Lightning `Trainer`; `[training].accelerator` and `[training].devices` select
 among GPUs that Slurm has allocated.
 
 For a single-node job using 1–4 GPUs:
@@ -390,18 +390,18 @@ accelerator = "auto"  # or "gpu"
 devices = -1          # use all GPUs allocated to this job
 ```
 
-Lightning can launch single-node DDP itself; do not wrap the `fm` command in `mpirun`. The current
-`fm` CLI does not expose `num_nodes`, so do not request 8/12/16 GPUs for `fm` training until a
+Lightning can launch single-node DDP itself; do not wrap the `yammi` command in `mpirun`. The current
+`yammi` CLI does not expose `num_nodes`, so do not request 8/12/16 GPUs for `yammi` training until a
 Phase 2 multi-node launch path is implemented and tested.
 
-`fm predict` and `fm inverse` remain single-device workflows.
+`yammi predict` and `yammi inverse` remain single-device workflows.
 
 ## Long runs and resume
 
 The maximum walltime is 96 hours. Store checkpoints and output on persistent storage, never solely
 under `/tmp`.
 
-`fm pretrain --resume` can continue from the latest completed task-step by reusing the same
+`yammi pretrain --resume` can continue from the latest completed task-step by reusing the same
 `--output-dir`. A step interrupted mid-fit restarts from the previous completed step checkpoint;
 optimizer state is not restored because each task-step starts a new optimizer.
 
@@ -425,6 +425,6 @@ Do not reintroduce Phase 1 environment variables or partition names while these 
 
 ## Keeping macOS and RIKYU in sync
 
-`pyproject.toml` and `uv.lock` are shared through git (`origin = TsumiNa/foundation_model`).
+`pyproject.toml` and `uv.lock` are shared through git (`origin = TsumiNa/yammi`).
 Commit on one clone, pull the same commit on the other, then run `uv sync --frozen --all-groups`.
 Never copy `.venv` between macOS and RIKYU.

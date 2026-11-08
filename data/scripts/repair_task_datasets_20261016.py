@@ -16,13 +16,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from foundation_model.data.composition_sources import (
+from yammi.data.composition_sources import (
     canonical_key,
     composition_group_key,
     normalize_composition,
     resolve_splits,
 )
-from foundation_model.utils.kmd_plus import formula_to_composition
+from yammi.utils.kmd_plus import formula_to_composition
 
 DATE = "20261016"
 ROOT = Path(__file__).resolve().parents[2]

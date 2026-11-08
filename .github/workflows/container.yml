@@ -81,7 +81,7 @@ jobs:
             VCS_REF=${{ github.sha }}
             SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
             EXPECTED_ARCH=x86_64
-            IMAGE_TITLE=foundation-model CUDA 13
+            IMAGE_TITLE=yammi CUDA 13
             IMAGE_DESCRIPTION=x86-64 PyTorch CUDA 13 runtime for NVIDIA data-center GPUs
           cache-from: type=gha
           cache-to: type=gha,mode=min

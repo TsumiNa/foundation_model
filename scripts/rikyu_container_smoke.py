@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise an installed foundation-model image on CPU or a RIKYU GPU."""
+"""Exercise an installed yammi image on CPU or a RIKYU GPU."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from importlib.metadata import version
 
 import torch
 
-from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
-from foundation_model.models.model_config import MLPEncoderConfig, RegressionTaskConfig
+from yammi.models.flexible_multi_task_model import FlexibleMultiTaskModel
+from yammi.models.model_config import MLPEncoderConfig, RegressionTaskConfig
 
 
 def main() -> None:
@@ -45,7 +45,7 @@ def main() -> None:
         "cuda_available": torch.cuda.is_available(),
         "cuda_runtime": torch.version.cuda,
         "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
-        "foundation_model": version("foundation-model"),
+        "yammi": version("yammi"),
         "loss": loss.item(),
         "torch": torch.__version__,
     }

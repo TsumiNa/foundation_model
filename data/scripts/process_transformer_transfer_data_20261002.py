@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-from foundation_model.utils.kmd_plus import DEFAULT_ELEMENTS, element_features, formula_to_composition
+from yammi.utils.kmd_plus import DEFAULT_ELEMENTS, element_features, formula_to_composition
 
 SOURCE_TASKS = ("material_type", "volume", "formation_energy", "efermi", "band_gap", "seebeck", "zt")
 TARGET_TASKS = ("dielectric_total", "power_factor")

@@ -11,9 +11,9 @@ read from `pyproject.toml`.
 For example, version `0.2.1` publishes:
 
 ```text
-ghcr.io/tsumina/foundation_model:0.2.1
-ghcr.io/tsumina/foundation_model:latest
-ghcr.io/tsumina/foundation_model:rikyu-0.2.1
+ghcr.io/tsumina/yammi:0.2.1
+ghcr.io/tsumina/yammi:latest
+ghcr.io/tsumina/yammi:rikyu-0.2.1
 ```
 
 Every published build also receives an immutable commit-SHA tag. Version and `latest` tags are
@@ -33,8 +33,8 @@ On `riken-login`, convert the versioned default image to SIF once:
 cd "$HOME/projects/foundation_model-x86-cuda"
 VERSION=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' pyproject.toml | head -n 1)
 mkdir -p "$HOME/containers"
-singularity pull "$HOME/containers/foundation-model_cuda13-$VERSION.sif" \
-  "docker://ghcr.io/tsumina/foundation_model:$VERSION"
+singularity pull "$HOME/containers/yammi_cuda13-$VERSION.sif" \
+  "docker://ghcr.io/tsumina/yammi:$VERSION"
 ```
 
 Run the GPU smoke test from a job directory so Slurm logs remain outside the repository:
@@ -51,8 +51,8 @@ For normal tasks, bind datasets, configs, checkpoints, and outputs into the read
 ```bash
 singularity exec --nv \
   --bind "$RCCS_GROUP_DIR:/work" \
-  "$HOME/containers/foundation-model_cuda13-$VERSION.sif" \
-  fm pretrain --config /work/configs/pretrain.toml --output-dir /work/runs/pretrain
+  "$HOME/containers/yammi_cuda13-$VERSION.sif" \
+  yammi pretrain --config /work/configs/pretrain.toml --output-dir /work/runs/pretrain
 ```
 
 Do not use the default AMD64 image on RIKYU, and do not use the RIKYU AArch64 image on the H200

@@ -1,0 +1,190 @@
+# Copyright 2026 TsumiNa.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Tests for the per-task data-source fields added to BaseTaskConfig (composition refactor PR1)."""
+
+import pytest
+
+from yammi.models.model_config import (
+    PREDICT_IDX_LITERALS,
+    ClassificationTaskConfig,
+    KernelRegressionTaskConfig,
+    OptimizerConfig,
+    RegressionTaskConfig,
+    TaskType,
+    TransformerEncoderConfig,
+)
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"input_dim": 0}, "input_dim"),
+        ({"d_model": 9, "nhead": 2}, "divisible"),
+        ({"dropout": float("nan")}, "dropout"),
+        ({"dropout": 1.1}, "dropout"),
+        ({"output_dim": 0}, "output_dim"),
+        ({"tokenization": "grouped", "group_size": 5}, "divisible"),
+        ({"tokenization": "feature", "group_size": 2}, "group_size"),
+        ({"use_attention": False, "pooling": "cls", "tokenization": "feature"}, "CLS"),
+    ],
+)
+def test_transformer_options_reject_invalid_combinations(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        TransformerEncoderConfig(**({"input_dim": 12, "d_model": 8, "nhead": 2} | kwargs))
+
+
+def test_transformer_default_and_explicit_pooling_dimensions():
+    legacy = TransformerEncoderConfig(input_dim=12, d_model=8, nhead=2, use_cls_token=False)
+    assert legacy.pooling == "mean" and legacy.latent_dim == 8
+    modern = TransformerEncoderConfig(input_dim=12, d_model=8, nhead=2, pooling="concat", output_dim=6)
+    assert modern.pooling == "concat" and modern.latent_dim == 6
+
+
+# Subclasses whose extra positional fields all have defaults, so they can be built with
+# just ``name`` and exercise the inherited BaseTaskConfig.__post_init__.
+ALL_TASK_CONFIG_CLASSES = [
+    RegressionTaskConfig,
+    ClassificationTaskConfig,
+    KernelRegressionTaskConfig,
+]
+
+
+@pytest.mark.parametrize("config_cls", ALL_TASK_CONFIG_CLASSES)
+def test_new_fields_have_expected_defaults(config_cls):
+    """New per-task data-source fields default to inert values across all task types."""
+    cfg = config_cls(name="t")
+    assert cfg.data_files == ()
+    assert cfg.composition_column is None
+    assert cfg.split_column == "split"
+    assert cfg.task_masking_ratio is None
+    assert cfg.predict_idx is None
+
+
+def test_data_files_single_string_is_wrapped_in_tuple():
+    cfg = RegressionTaskConfig(name="t", data_files="a.parquet")
+    assert cfg.data_files == ("a.parquet",)
+
+
+def test_data_files_sequence_is_normalized_to_tuple_of_str():
+    cfg = RegressionTaskConfig(name="t", data_files=["a.csv", "b.pd.xz"])
+    assert cfg.data_files == ("a.csv", "b.pd.xz")
+    assert isinstance(cfg.data_files, tuple)
+
+
+@pytest.mark.parametrize("ratio", [0.0, 0.5, 1.0])
+def test_task_masking_ratio_accepts_unit_interval(ratio):
+    cfg = RegressionTaskConfig(name="t", task_masking_ratio=ratio)
+    assert cfg.task_masking_ratio == ratio
+
+
+@pytest.mark.parametrize("ratio", [-0.1, 1.0001, 2.0])
+def test_task_masking_ratio_rejects_out_of_range(ratio):
+    with pytest.raises(ValueError, match="task_masking_ratio must be in"):
+        RegressionTaskConfig(name="t", task_masking_ratio=ratio)
+
+
+@pytest.mark.parametrize("literal", sorted(PREDICT_IDX_LITERALS))
+def test_predict_idx_accepts_known_literals(literal):
+    cfg = RegressionTaskConfig(name="t", predict_idx=literal)
+    assert cfg.predict_idx == literal
+
+
+def test_predict_idx_rejects_unknown_string():
+    with pytest.raises(ValueError, match="predict_idx string must be one of"):
+        RegressionTaskConfig(name="t", predict_idx="holdout")
+
+
+def test_predict_idx_sequence_is_normalized_to_tuple_of_str():
+    cfg = RegressionTaskConfig(name="t", predict_idx=["comp_a", "comp_b"])
+    assert cfg.predict_idx == ("comp_a", "comp_b")
+    assert isinstance(cfg.predict_idx, tuple)
+
+
+def test_predict_idx_none_stays_none():
+    cfg = RegressionTaskConfig(name="t", predict_idx=None)
+    assert cfg.predict_idx is None
+
+
+def test_predict_idx_non_iterable_raises_type_error():
+    with pytest.raises(TypeError, match="predict_idx must be None"):
+        RegressionTaskConfig(name="t", predict_idx=5)  # type: ignore[arg-type]
+
+
+def test_existing_construction_pattern_still_works():
+    """Pre-refactor positional/keyword usage must remain valid (backward compatibility)."""
+    cfg = RegressionTaskConfig(name="bandgap", data_column="bandgap", enabled=True)
+    assert cfg.name == "bandgap"
+    assert cfg.data_column == "bandgap"
+    assert cfg.type == TaskType.REGRESSION
+    # New fields are inert for old-style configs.
+    assert cfg.data_files == ()
+    assert cfg.predict_idx is None
+
+
+@pytest.mark.parametrize("field", ["use_cls_token", "apply_layer_norm", "use_attention", "norm_first"])
+def test_transformer_rejects_string_booleans(field):
+    with pytest.raises(ValueError, match="must be a bool"):
+        TransformerEncoderConfig(input_dim=12, **{field: "false"})  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("dropout", [True, False, "0.1", None, [], float("nan"), float("inf"), -0.1, 1.1])
+def test_transformer_rejects_invalid_dropout_consistently(dropout):
+    with pytest.raises(ValueError, match="dropout must be finite and in"):
+        TransformerEncoderConfig(input_dim=12, dropout=dropout)
+
+
+@pytest.mark.parametrize("dropout", [0, 0.1, 1])
+def test_transformer_accepts_numeric_dropout_boundaries(dropout):
+    assert TransformerEncoderConfig(input_dim=12, dropout=dropout).dropout == dropout
+
+
+# --- OptimizerConfig -------------------------------------------------------------------------
+
+
+def test_optimizer_config_defaults_are_adamw_plus_plateau():
+    cfg = OptimizerConfig()
+    assert cfg.scheduler_enabled is True
+    assert cfg.betas == (0.9, 0.999)
+    assert (cfg.factor, cfg.patience, cfg.min_lr) == (0.5, 5, 1e-4)
+
+
+def test_optimizer_config_rejects_a_scheduler_that_cannot_reduce():
+    """min_lr is a floor: at or above lr, ReduceLROnPlateau fires but never changes the LR."""
+    with pytest.raises(ValueError, match="must be below lr"):
+        OptimizerConfig(lr=1e-4, min_lr=1e-4)
+    # Disabling the scheduler makes a constant LR the explicit intent, so the same pair is fine.
+    assert OptimizerConfig(lr=1e-4, min_lr=1e-4, scheduler_enabled=False).lr == 1e-4
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"lr": 0.0}, "lr must be > 0"),
+        ({"weight_decay": -1.0}, "weight_decay must be >= 0"),
+        ({"eps": 0.0}, "eps must be > 0"),
+        ({"betas": (0.9,)}, "two floats"),
+        ({"betas": (0.9, 1.0)}, "two floats"),
+        ({"mode": "lowest"}, "must be 'min' or 'max'"),
+        ({"factor": 1.5}, r"factor must be in \(0, 1\)"),
+        ({"patience": -1}, "patience must be >= 0"),
+    ],
+)
+def test_optimizer_config_validation(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        OptimizerConfig(**kwargs)
+
+
+def test_optimizer_config_has_no_scheduler_cadence_fields():
+    """The cadence is not a per-config choice, so there is no field to set it wrong with.
+
+    ``configure_optimizers`` declares ``interval="epoch"`` / ``frequency=1``. The only other value
+    ``interval`` could take is ``"step"``, i.e. stepping ReduceLROnPlateau once per batch — which
+    is #45, the bug that made ``patience`` count batches and cost a tuning campaign.
+    """
+    assert "interval" not in OptimizerConfig.__dataclass_fields__
+    assert "frequency" not in OptimizerConfig.__dataclass_fields__
+    with pytest.raises(TypeError):
+        OptimizerConfig(interval="step")  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        OptimizerConfig(frequency=2)  # type: ignore[call-arg]

@@ -1,11 +1,11 @@
-# Smoke-test config for `fm pretrain` — a fast CPU end-to-end run.
+# Smoke-test config for `yammi pretrain` — a fast CPU end-to-end run.
 #
 # 2 regression + 1 classification task over the qc dataset (pre-normalized columns +
 # integer material-type label), KMD-1d descriptors, sample=300 rows, replay interval=2,
 # a 2-run sweep, 2 epochs/step. Shares its catalog with the finetune/inverse/predict smoke
 # configs so the checkpoints chain cleanly.
 #
-#   fm pretrain --config samples/pretrain_smoke.toml
+#   yammi pretrain --config samples/pretrain_smoke.toml
 
 [data]
 composition_column = "composition"

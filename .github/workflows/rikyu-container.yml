@@ -82,7 +82,7 @@ jobs:
             VCS_REF=${{ github.sha }}
             SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
             EXPECTED_ARCH=aarch64
-            IMAGE_TITLE=foundation-model for RIKYU
+            IMAGE_TITLE=yammi for RIKYU
             IMAGE_DESCRIPTION=AArch64 PyTorch CUDA 13 runtime for RIKEN R-CCS RIKYU
           cache-from: type=gha
           # The public native ARM runner has limited local disk; export only the

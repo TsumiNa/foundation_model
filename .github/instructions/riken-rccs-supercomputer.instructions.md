@@ -44,7 +44,7 @@ services, and personal use.
 - SSH: `ssh riken-login` (already configured).
 - Keep the login host, user, and identity file in local SSH configuration, not in this repository.
 - Home is available as `$HOME`.
-- No `foundation_model` clone was present when these instructions were written. Use separate clones
+- No `yammi` clone was present when these instructions were written. Use separate clones
   for incompatible execution environments:
   - GH200: `$HOME/projects/foundation_model-gh200`
   - H200/H100/A100: `$HOME/projects/foundation_model-x86-cuda`
@@ -198,7 +198,7 @@ normal environment for the NVIDIA partitions (`qc-gh200`, `ai-h200-brc`, `ai-h10
 `qc-a100`) on both AArch64 and x86_64:
 
 ```bash
-cd "$HOME/projects/<foundation_model-gh200-or-foundation_model-x86-cuda>"
+cd "$HOME/projects/<yammi-gh200-or-yammi-x86-cuda>"
 uv sync --frozen --all-groups
 .venv/bin/python -c \
   'import platform, torch; print(platform.machine(), torch.__version__, torch.version.cuda, torch.cuda.is_available())'
@@ -220,7 +220,7 @@ than repeatedly mutating one environment in place.
 Run `uv sync --frozen --all-groups` separately in the GH200 clone and the x86-CUDA clone; do not
 reuse the resulting `.venv`.
 
-The public default container `ghcr.io/tsumina/foundation_model:<project.version>` is the supported
+The public default container `ghcr.io/tsumina/yammi:<project.version>` is the supported
 x86-64 CUDA 13 image for `ai-h200-brc`. Convert it with SingularityCE and run with `--nv`; see
 `docs/container.md`. Do not use the AArch64 `rikyu-<project.version>` image on this partition.
 
@@ -253,7 +253,7 @@ cd "$PROJ"
 
 .venv/bin/python -c \
   'import torch; print(torch.cuda.get_device_name(), torch.version.cuda, torch.cuda.is_available())'
-.venv/bin/fm pretrain --config <toml> --output-dir <persistent-output-dir>
+.venv/bin/yammi pretrain --config <toml> --output-dir <persistent-output-dir>
 ```
 
 ### H200 (second choice; also adapt for A100)
@@ -277,7 +277,7 @@ cd "$PROJ"
 
 .venv/bin/python -c \
   'import torch; print(torch.cuda.get_device_name(), torch.version.cuda, torch.cuda.is_available())'
-.venv/bin/fm pretrain --config <toml> --output-dir <persistent-output-dir>
+.venv/bin/yammi pretrain --config <toml> --output-dir <persistent-output-dir>
 ```
 
 For `qc-a100`, change the partition and module to `qc-a100` and `system/qc-a100 nvhpc`, and replace

@@ -1,7 +1,7 @@
-# Formal `fm predict` config — evaluate a checkpoint on the test split. Catalog + model dims
+# Formal `yammi predict` config — evaluate a checkpoint on the test split. Catalog + model dims
 # match samples/pretrain.toml.
 #
-#   fm predict --config samples/predict.toml \
+#   yammi predict --config samples/predict.toml \
 #       --checkpoint artifacts/finetune/training/final_model.pt
 
 [data]

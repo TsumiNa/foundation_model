@@ -1,10 +1,10 @@
-# Formal `fm pretrain` config — replay-based continual pre-training over the qc dataset.
+# Formal `yammi pretrain` config — replay-based continual pre-training over the qc dataset.
 #
 # 2 regression + 2 kernel-regression + 1 classification head, KMD-1d descriptors, a single full
 # run with interval=1 replay. Extend `[datasets]` / `[[tasks]]` to add NEMAD / phonix property
 # heads (raw columns should be pre-normalized before use).
 #
-#   fm pretrain --config samples/pretrain.toml
+#   yammi pretrain --config samples/pretrain.toml
 
 [data]
 composition_column = "composition"

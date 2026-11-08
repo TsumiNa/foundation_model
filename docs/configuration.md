@@ -1,8 +1,8 @@
-# `fm` configuration reference
+# `yammi` configuration reference
 
-Every `fm` subcommand is driven by a single **TOML** file. This document is the authoritative
+Every `yammi` subcommand is driven by a single **TOML** file. This document is the authoritative
 schema: every section, every key, its type, default, constraint, and meaning. It is generated from
-and kept in sync with the config dataclasses in `src/foundation_model/workflows/` (`task_catalog.py`,
+and kept in sync with the config dataclasses in `src/yammi/workflows/` (`task_catalog.py`,
 `_sections.py`, `pretrain.py`, `finetune.py`, `inverse.py`, `predict.py`).
 
 - Ready-to-copy templates live in [`samples/`](../samples/) (`*.toml` formal, `*_smoke.toml` fast).
@@ -14,7 +14,7 @@ and kept in sync with the config dataclasses in `src/foundation_model/workflows/
 
 ## How a config is loaded
 
-The CLI (`fm <cmd> --config x.toml`) does exactly this: parse the TOML → apply `--set` and
+The CLI (`yammi <cmd> --config x.toml`) does exactly this: parse the TOML → apply `--set` and
 first-class-flag overrides onto the raw tree → build a validated `@dataclass` → write
 `run_provenance.json` (the fully resolved config) → run. No values are hidden; the provenance file
 records what actually ran.
@@ -126,17 +126,17 @@ One entry per prediction head. At least one is required; names must be unique.
 | `n_kernel` | int | `None` | positive int; KR only | Override `[model].n_kernel` for this head. |
 | `unit` | str | `None` | | Release metadata: physical unit of the target (e.g. `"eV"`), written into exported bundles. Ignored by training. |
 | `t_unit` | str | `None` | KR only | Release metadata: unit of the kernel-regression coordinate (e.g. `"K"`). |
-| `output_scale` | str | `None` | `"shape"`; reg/KR only; excludes `scaler` | Marks a head trained on per-row max-abs normalised targets (e.g. the DOS curve). It has no transform back to physical units, and `fm export` records it as shape-only. |
+| `output_scale` | str | `None` | `"shape"`; reg/KR only; excludes `scaler` | Marks a head trained on per-row max-abs normalised targets (e.g. the DOS curve). It has no transform back to physical units, and `yammi export` records it as shape-only. |
 
 ### `[[tasks]].scaler` — the task's target transform (or label encoder)
 
-A nested table on a task. It is used to inverse-transform predictions to physical units. `fm export` also
+A nested table on a task. It is used to inverse-transform predictions to physical units. `yammi export` also
 uses it to write the transform into a bundle: regression / KR heads need one unless `output_scale = "shape"`,
 and classification heads need their `LabelEncoder` for class names.
 
 | Key | Type | Default | Constraint | Description |
 |---|---|---|---|---|
-| `path` | str (path) | — | required | A fitted sklearn scaler / pipeline / `LabelEncoder` (joblib), or a `*_transforms.json` record of plain-data transforms (`foundation_model.data.targets`). |
+| `path` | str (path) | — | required | A fitted sklearn scaler / pipeline / `LabelEncoder` (joblib), or a `*_transforms.json` record of plain-data transforms (`yammi.data.targets`). |
 | `key` | str | `None` | required for `.json` | Key inside a dict-of-scalers pickle (`None` = the whole object), or the `tasks` key inside a JSON record. |
 
 ## Python-layer fields vs TOML keys
@@ -152,7 +152,7 @@ and classification heads need their `LabelEncoder` for class names.
 | `composition_column` | `[data].composition_column` | Global in TOML; the per-task override is Python-only. |
 | `split_column` | — | Honoured inside the data file (a `split` column); not a TOML key. |
 | `task_masking_ratio` | no direct key; set by the pretrain loop | Each step sets `1.0` for the newly introduced task and the ratio resolved from `[pretrain.replay].amount` / `.per_task` for every replaying task. Not settable per task for a scaling-law sweep — use `[datasets.<name>].sample`. |
-| `predict_idx` | `[predict].split` / `[predict].compositions` | Set for every task at once by `fm predict`, not per task. |
+| `predict_idx` | `[predict].split` / `[predict].compositions` | Set for every task at once by `yammi predict`, not per task. |
 | `optimizer` | `[training]` group settings + `[[tasks]].lr` / `.weight_decay` | See [`[training]`](#training--optimization-pretrain--finetune-only). |
 
 ## `[model]` — network architecture
@@ -552,9 +552,9 @@ Per-subcommand flags:
 | `publish BUNDLE` | `--repo owner/name` (**required**), `--tag v1.0.0`, `--visibility private\|gated\|public` (default `private`; `gated` = public page, downloads after manual approval), `--title`, `--card-extra FILE.md` (repeatable, appended to the card), `--overwrite-card`, `--dry-run` (check + write `README.md`, upload nothing). The token comes from `HF_TOKEN` / `hf auth login`. Every member is loaded back before upload. |
 | `export` | `--run PATH` (run dir or checkpoint; repeat for a suite, one member each), `--out DIR` (new or empty), `--license ID` (**required**, no default), `--member-id ID` (repeatable, in `--run` order; default `m000`, `m001`, …), `--set`. Reads only the catalog sections and `[model]`. |
 
-Run `fm <subcommand> --help` for the exact list.
+Run `yammi <subcommand> --help` for the exact list.
 
-`fm export` writes a release bundle (schema v2; v1 bundles still load): `config.json` (descriptor, architecture, heads with
+`yammi export` writes a release bundle (schema v2; v1 bundles still load): `config.json` (descriptor, architecture, heads with
 transforms / class names / units / `t` range and default grid, licence, provenance), `manifest.json`, and
 `members/<id>/model.safetensors`. It then loads every member back strictly and checks that its outputs
 are bit-identical to the source checkpoint's; an unverified bundle is removed. Format and interface:
@@ -610,9 +610,9 @@ dir = "artifacts/pretrain"
 ```
 
 ```bash
-fm pretrain --config pretrain.toml
-fm finetune --config finetune.toml --checkpoint artifacts/pretrain/runs/run00/training/final_model.pt
-fm predict  --config predict.toml  --checkpoint artifacts/finetune/training/final_model.pt --split test
+yammi pretrain --config pretrain.toml
+yammi finetune --config finetune.toml --checkpoint artifacts/pretrain/runs/run00/training/final_model.pt
+yammi predict  --config predict.toml  --checkpoint artifacts/finetune/training/final_model.pt --split test
 ```
 
 See [`samples/`](../samples/) for complete formal + smoke configs of all four subcommands.
