@@ -61,7 +61,7 @@ On `riken-login`, convert the versioned default image to SIF once:
 cd "$HOME/projects/foundation_model-x86-cuda"
 VERSION=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' pyproject.toml | head -n 1)
 mkdir -p "$HOME/containers"
-singularity pull "$HOME/containers/yammi_cuda13-$VERSION.sif" \
+singularity pull "$HOME/containers/yammi-$VERSION.sif" \
   "docker://ghcr.io/tsumina/yammi:$VERSION"
 ```
 
@@ -79,9 +79,10 @@ For normal tasks, bind datasets, configs, checkpoints, and outputs into the read
 ```bash
 singularity exec --nv \
   --bind "$RCCS_GROUP_DIR:/work" \
-  "$HOME/containers/yammi_cuda13-$VERSION.sif" \
+  "$HOME/containers/yammi-$VERSION.sif" \
   yammi pretrain --config /work/configs/pretrain.toml --output-dir /work/runs/pretrain
 ```
 
-Do not use the default AMD64 image on RIKYU, and do not use the RIKYU AArch64 image on the H200
-partition.
+The same tag works on RIKYU: there Apptainer pulls the AArch64 variant (see
+`docs/rikyu_container.md` for RIKYU's registry-mirror workaround). Use one SIF per architecture; a SIF
+converted on an x86-64 login node does not run on Grace nodes.
