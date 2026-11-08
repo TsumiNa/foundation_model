@@ -20,6 +20,7 @@ from that file alone, and :func:`load_member` loads a member with ``strict=True`
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import re
 import shutil
@@ -383,6 +384,14 @@ def _bundle_config_init_compat(self: BundleConfig, *args: Any, fm_version: str |
     _bundle_config_init(self, *args, **kwargs)
 
 
+_init_signature = inspect.signature(_bundle_config_init)
+# Keep the named dataclass fields visible to introspection (inspect.signature, API tooling), plus the alias.
+_bundle_config_init_compat.__signature__ = _init_signature.replace(  # type: ignore[attr-defined]
+    parameters=[
+        *_init_signature.parameters.values(),
+        inspect.Parameter("fm_version", inspect.Parameter.KEYWORD_ONLY, default=None, annotation="str | None"),
+    ]
+)
 BundleConfig.__init__ = _bundle_config_init_compat  # type: ignore[method-assign]
 
 

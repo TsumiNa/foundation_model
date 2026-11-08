@@ -362,6 +362,12 @@ def test_bundle_config_accepts_the_deprecated_fm_version_keyword(catalog_raw: di
         built = type(config)(descriptor=config.descriptor, model=config.model, heads=config.heads,
                              license=config.license, fm_version="1.0.0")  # type: ignore[call-arg]  # fmt: skip
     assert built.yammi_version == "1.0.0"
+    # The public signature still names every field (introspection), plus the deprecated alias.
+    import inspect
+
+    params = inspect.signature(type(config)).parameters
+    assert {"descriptor", "model", "heads", "license", "yammi_version", "fm_version"} <= set(params)
+    assert params["fm_version"].kind is inspect.Parameter.KEYWORD_ONLY
     # A config.json written before 2.1.1 carries only fm_version.
     legacy = {k: v for k, v in config.to_dict().items() if k != "yammi_version"} | {"fm_version": "1.0.1"}
     assert type(config).from_dict(legacy).yammi_version == "1.0.1"
