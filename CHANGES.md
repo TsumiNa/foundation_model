@@ -10,9 +10,10 @@ Found while building a demo of the released models for colleagues:
 - **No download progress bars for cached members.** A member already complete in the Hugging Face cache
   is read from it without asking the Hub, so loading 10 cached members no longer prints 10 "Fetching N
   files" bars. The revision is still resolved to a commit first, so a moved tag is still followed.
-- **`yammi_version` replaces the leftover `fm_version`** in `config.json`, `prediction_info.json`, a
-  fine-tune's `derived_from` record and `PretrainedModel.derived_from()`. Bundles written before read as
-  before; `BundleConfig.fm_version` remains as a deprecated alias.
+- **`yammi_version` is the version key** in `config.json`, `prediction_info.json`, a fine-tune's `derived_from`
+  record and `PretrainedModel` provenance. The old `fm_version` key is still written next to it (bundles stay
+  readable by schema-2 readers such as 2.1.0), bundles with only `fm_version` read as before, and
+  `BundleConfig(fm_version=...)` / `.fm_version` keep working with a `DeprecationWarning`.
 - **`yammi inverse --pretrained` reports in physical units.** A scenario's `SUMMARY.md` lists the targets
   as written (value and unit, class names) and adds the achieved mean ± std of each regression target in
   physical units. It used to show only the training-scale value (a 2.5 eV target read `band_gap→1.09964`).

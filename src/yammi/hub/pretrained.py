@@ -384,6 +384,7 @@ class PretrainedModel:
             "member": self.member.id,
             "license": self.config.license,
             "yammi_version": self.config.yammi_version,
+            "fm_version": self.config.yammi_version,  # pre-2.1.1 key, kept for existing readers
         }
 
     def __repr__(self) -> str:

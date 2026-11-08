@@ -58,7 +58,8 @@ def run(
             assert cfg.pretrained_root is not None  # set by build_inverse_config with the converted targets
             model, bundle_config, _ = load_member(cfg.pretrained_root, cfg.pretrained_member)
             transforms = {h.name: h.transform for h in bundle_config.heads if h.transform is not None}
-            units = {h.name: h.unit for h in bundle_config.heads}
+            # shape-only heads predict a normalised curve: never label their targets in physical units
+            units = {h.name: "shape" if h.output_scale == "shape" else h.unit for h in bundle_config.heads}
         else:
             model, _ = rebuild_model(cfg, catalog)
             transforms, units = {}, {}

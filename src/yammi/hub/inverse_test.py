@@ -135,6 +135,9 @@ def test_shape_head_targets_stay_on_the_shape_scale(bundle_and_ckpt: tuple[Path,
                  seeds={"strategy": "explicit", "explicit": _SEEDS}, pretrained=str(bundle))
     )  # fmt: skip
     np.testing.assert_allclose(np.array(cfg.scenarios[0].targets[0].points), [[0.0, 0.5], [2.0, 1.0]])
+    inverse_run(cfg)  # the report must not label a shape target with the head's physical unit
+    md = (tmp_path / "x" / "s" / "SUMMARY.md").read_text()
+    assert "- dos ~ curve (2 points)" in md and "states/eV" not in md
 
 
 def test_engine_uses_the_snapshot_the_targets_were_converted_with(

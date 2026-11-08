@@ -501,6 +501,7 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
             "member": member.id,
             "license": bundle_config.license,
             "yammi_version": bundle_config.yammi_version,
+            "fm_version": bundle_config.yammi_version,  # pre-2.1.1 key, kept for existing readers
         }
         bundle_dir = save_derived(
             rec.paths.root / "bundle",

@@ -277,6 +277,7 @@ def test_fm_predict_pretrained_cli(bundle: Path, tmp_path: Path) -> None:
     # No "#member": every member is combined, with a spread column.
     assert info["members"] == ["m000", "m001", "m002"] and info["combined"] and info["member"] is None
     assert info["license"] == "cc-by-nc-sa-4.0" and info["units"]["dos"] == "shape"
+    assert info["yammi_version"] == info["fm_version"]  # the pre-2.1.1 key stays for existing readers
     assert "band_gap:std" in table.columns and "seebeck:std" in pd.read_csv(out / "seebeck_curve.csv").columns
 
     one = tmp_path / "pred_one"

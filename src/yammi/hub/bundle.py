@@ -24,6 +24,7 @@ import json
 import re
 import shutil
 import tempfile
+import warnings
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
@@ -339,6 +340,7 @@ class BundleConfig:
         return {
             "schema_version": self.schema_version,
             "yammi_version": self.yammi_version,
+            "fm_version": self.yammi_version,  # the schema-2 key before yammi 2.1.1; older readers need it
             "license": self.license,
             "descriptor": self.descriptor.to_dict(),
             "model": model,
@@ -365,6 +367,23 @@ class BundleConfig:
             schema_version=schema,
             yammi_version=_writer_version(data),
         )
+
+
+_bundle_config_init = BundleConfig.__init__
+
+
+def _bundle_config_init_compat(self: BundleConfig, *args: Any, fm_version: str | None = None, **kwargs: Any) -> None:
+    """Accept the pre-2.1.1 keyword ``fm_version`` (construction and ``dataclasses.replace``); it wins over
+    ``yammi_version`` because ``replace`` passes the current ``yammi_version`` along with the change."""
+    if fm_version is not None:
+        warnings.warn(
+            "BundleConfig(fm_version=...) is deprecated; use yammi_version.", DeprecationWarning, stacklevel=2
+        )
+        kwargs["yammi_version"] = fm_version
+    _bundle_config_init(self, *args, **kwargs)
+
+
+BundleConfig.__init__ = _bundle_config_init_compat  # type: ignore[method-assign]
 
 
 @dataclass(frozen=True)
