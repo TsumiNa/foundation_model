@@ -52,7 +52,7 @@ jobs:
           {
             echo "tags<<EOF"
             echo "ghcr.io/$repository:rikyu-sha-${GITHUB_SHA}"
-            if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/master" ]]; then
+            if [[ ("$GITHUB_EVENT_NAME" == "push" || "$GITHUB_EVENT_NAME" == "workflow_dispatch") && "$GITHUB_REF" == "refs/heads/master" ]]; then
               echo "ghcr.io/$repository:rikyu-${version,,}"
             fi
             echo "EOF"
