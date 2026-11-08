@@ -1,5 +1,12 @@
 # Recent Updates
 
+## 2026-11-08 (2.0.0 container — one multi-arch image)
+
+- `ghcr.io/tsumina/yammi:<version>` / `:latest` / `:sha-<sha>` now hold both `linux/amd64` and
+  `linux/arm64`; Docker / Apptainer / SingularityCE pull the host's variant and only that one. The
+  separate `rikyu-*` tags are gone (RIKYU pulls `:<version>` like every other machine).
+  `scripts/rikyu_pull_container.sh` writes `~/containers/yammi-<version>.sif`.
+
 ## 2026-11-08 (2.0.0 — the project is now YAMMI)
 
 **YAMMI — Yet Another Materials Model, Inverse-ready** (pronounced like *yummy*). The PyPI name

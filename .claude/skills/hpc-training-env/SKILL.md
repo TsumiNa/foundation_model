@@ -18,14 +18,13 @@ it in place** when a machine changes (never delete; they survive migrations).
    preferred compute platform when available).
 3. Else **default to the LOCAL machine**.
 
-- On **RIKYU and RIKEN R-CCS, prefer the project container** over a bare uv env — and match the
-  image to the node ARCH (both are CUDA 13 + Python 3.14 + locked deps; authoritative doc:
-  `docs/container.md`):
-  `ghcr.io/tsumina/yammi:<version>|latest|sha-<sha>` (linux/amd64 — x86 nodes incl.
-  R-CCS ai-h200-brc, converted to SIF there) · `:rikyu-<version>|rikyu-sha-<sha>` (linux/arm64 —
-  RIKYU Grace/GB200 ONLY; its ghcr mirror caveat + `scripts/rikyu_pull_container.sh` are in the
-  RIKYU instructions). Never run the `rikyu-*` image on x86. Fall back to `uv sync --frozen`
-  only where no container runtime or no matching-arch image exists.
+- On **RIKYU and RIKEN R-CCS, prefer the project container** over a bare uv env:
+  `ghcr.io/tsumina/yammi:<version>|latest|sha-<sha>` is ONE multi-arch image (linux/amd64 +
+  linux/arm64, CUDA 13 + Python 3.14 + locked deps); the pull picks the host's variant, so the same
+  name serves x86 nodes (R-CCS ai-h200-brc) and Grace nodes (RIKYU GB200, R-CCS GH200). RIKYU's ghcr
+  mirror caveat + `scripts/rikyu_pull_container.sh` are in the RIKYU instructions; authoritative doc
+  `docs/container.md`. Pre-2.0 experiments pin `ghcr.io/tsumina/foundation_model[:rikyu-*]` images
+  of their era. Fall back to `uv sync --frozen` only where no container runtime exists.
 - **Preflight EVERY chosen target before committing work — local included.** Minimum checks:
   reachable; repo at the intended commit; env resolves (container pulls / `uv sync --frozen`
   exits clean); GPU visible (`python -c "import torch; print(torch.cuda.is_available())"` or MPS

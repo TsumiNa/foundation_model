@@ -1,29 +1,31 @@
 # Container images
 
-The project publishes public CUDA 13 OCI images to GitHub Container Registry. Image versions are
-read from `pyproject.toml`.
+The project publishes one public CUDA 13 OCI image to GitHub Container Registry. It is
+**multi-arch**: each tag holds a `linux/amd64` and a `linux/arm64` variant. Docker, Apptainer and
+SingularityCE pull the variant that matches the host, so the same name works on x86-64 nodes and on
+Grace nodes (RIKYU's GB200, R-CCS's GH200), and a machine downloads only its own variant. The version
+is read from `pyproject.toml`.
 
-| Target | Platform | Tags |
-|---|---|---|
-| Default NVIDIA CUDA 13 | `linux/amd64` | `sha-<git-sha>`; `<project.version>` and `latest` from `master` |
-| RIKEN R-CCS RIKYU | `linux/arm64` | `rikyu-sha-<git-sha>`; `rikyu-<project.version>` from `master` |
+| Tag | Published by |
+|---|---|
+| `sha-<git-sha>` | every build that is not a pull request (immutable) |
+| `<project.version>`, `latest` | builds of `master` (push or manual run) |
 
-For example, version `0.2.1` publishes:
+For example, version `2.0.0` publishes:
 
 ```text
-ghcr.io/tsumina/yammi:0.2.1
+ghcr.io/tsumina/yammi:2.0.0
 ghcr.io/tsumina/yammi:latest
-ghcr.io/tsumina/yammi:rikyu-0.2.1
+ghcr.io/tsumina/yammi:sha-<git-sha>
 ```
 
-Every published build also receives an immutable commit-SHA tag. Version and `latest` tags are
-updated only by a push to `master`, so a manual workflow run from a feature branch cannot replace
-a released image.
+A manual run from a feature branch publishes only its SHA tag, so it cannot replace a released image.
+Images before 2.0.0 were published as `ghcr.io/tsumina/foundation_model`, with separate `rikyu-*`
+AArch64 tags.
 
-Both images use Python 3.14, PyTorch's CUDA 13.0 wheel, and the same locked application
-dependencies. The default image is suitable for x86-64 NVIDIA data-center GPUs whose host driver
-supports CUDA 13, including the R-CCS Cloud `ai-h200-brc` H200 partition. The RIKYU image is the
-AArch64 counterpart for Grace/GB200 nodes.
+Both variants are built from `Dockerfile.cuda13` on native runners, with Python 3.14, PyTorch's CUDA
+13.0 wheel and the same locked application dependencies. They need a host driver that supports CUDA
+13, for example the R-CCS Cloud `ai-h200-brc` H200 partition (x86-64) or RIKYU (AArch64).
 
 ## R-CCS Cloud H200
 

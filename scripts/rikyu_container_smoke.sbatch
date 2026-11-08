@@ -13,7 +13,7 @@ PROJ=${PROJ:-$HOME/projects/foundation_model}
 cd "$PROJ"
 
 VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
-IMAGE=${IMAGE:-$HOME/containers/yammi_rikyu-$VERSION.sif}
+IMAGE=${IMAGE:-$HOME/containers/yammi-$VERSION.sif}
 
 test -r "$IMAGE"
 
