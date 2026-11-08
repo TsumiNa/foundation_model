@@ -51,9 +51,13 @@ experiments/<group>/
 
 ## Tracking & provenance (repo policy)
 
-- Tracked: README, configs, scripts, analysis CODE. Untracked (gitignore): results/, artifacts/,
-  generated csv/png/pptx — they travel by rsync between machines (mirror to the SAME relative
-  path locally; exclude checkpoints on routine mirrors).
+- **Nothing under `experiments/` is in git** (the whole folder is git-ignored since 2026-11-08):
+  README, configs, scripts, analysis code and results all travel by rsync between machines —
+  mirror to the SAME relative path, exclude checkpoints on routine mirrors. A cluster run therefore
+  needs the experiment folder rsynced there, not just a `git pull`.
+- What an experiment needs from the code is in `src/` (tracked). If a script turns out to be
+  reusable, move it into `src/` or `scripts/` (tracked) instead of pointing other code at
+  `experiments/`.
 - Every run writes `run_provenance.json` (resolved config + git commit); launchers record the
   commit at launch. Execution events (submissions, TIMEOUTs, resumes) go into the README
   execution log as they happen — the README is the experiment's lab notebook.

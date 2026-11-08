@@ -76,10 +76,6 @@ ENV/
 ehthumbs.db
 Thumbs.db
 
-# Experiment RESULTS are sensitive — never sync via git; use rsync within the team.
-# Configs, job scripts, and analysis code stay tracked for reproducibility.
-experiments/**/results/
-experiments/**/reference/
-experiments/**/*.png
-experiments/**/*.html
-experiments/**/*.csv
+# Experiments (configs, job scripts, analysis code, results) are not kept in git. They travel by rsync
+# between machines; each experiment's README is its record (see the experiment-layout skill).
+experiments/
