@@ -106,7 +106,9 @@ def _front_matter(config: BundleConfig, *, gated: bool) -> list[str]:
         if nc:
             label = "I will use these weights and any model derived from them for non-commercial purposes only"
             lines.append(f"  {_yaml_str(label)}: checkbox")
-        lines.append(f"  {_yaml_str(f'I accept the {config.license} licence terms')}: checkbox")
+        # The Hub rejects metadata keys containing "." or "$", and licence ids such as cc-by-4.0 have one;
+        # the prompt above names the licence, so the checkbox refers to it.
+        lines.append(f"  {_yaml_str('I accept the licence terms stated above')}: checkbox")
     lines.append("---")
     return lines
 
@@ -175,7 +177,8 @@ def render_card(
         "## Use",
         "",
         "```bash",
-        "pip install 'foundation-model[hub]'",
+        "# Not on PyPI: the PyPI project named foundation-model is unrelated.",
+        "pip install 'foundation-model[hub] @ git+https://github.com/TsumiNa/foundation_model'",
         "hf auth login   # gated repository: request access on this page first",
         "```",
         "",
