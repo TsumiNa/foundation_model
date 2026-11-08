@@ -83,3 +83,15 @@ def test_existing_output_refused(tmp_path):
     (tmp_path / "release").mkdir()
     with pytest.raises(FileExistsError):
         module.build(src, tmp_path / "release")
+
+
+def test_nothing_to_exclude_still_builds(tmp_path):
+    src = source_folder(tmp_path)
+    mp = pd.read_parquet(src / "mp_properties.parquet")
+    mp["MP id"] = mp["id"]  # every licence resolved
+    mp.to_parquet(src / "mp_properties.parquet")
+    out = tmp_path / "release"
+    module.build(src, out)
+    excluded = pd.read_csv(out / "licence_excluded_rows_20261108.csv")
+    assert excluded.empty and list(excluded.columns) == ["id", "composition", "split", "source_file"]
+    assert set(pd.read_parquet(out / "other.parquet").id) == {"mp-2", "qa-9"}

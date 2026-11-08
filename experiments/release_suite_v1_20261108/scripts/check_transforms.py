@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from foundation_model.cli.main import load_raw_config
-from foundation_model.data.targets import ClassLabels, normalize_max_abs
+from foundation_model.data.targets import ClassLabels, normalize_max_abs, strip_inverse_guard
 from foundation_model.hub.export import _head_spec
 from foundation_model.workflows._sections import build_model_section
 from foundation_model.workflows.task_catalog import TaskCatalog, build_task_catalog_config
@@ -55,7 +55,9 @@ def main(path: str) -> int:
             print(f"FAIL {name:26s} export: {exc}")
             continue
         file = data_dir / row.file
-        df = tables.setdefault(row.file, pd.read_parquet(file))
+        if row.file not in tables:
+            tables[row.file] = pd.read_parquet(file)
+        df = tables[row.file]
         norm_col = task["column"]
         if row.raw_file != row.file:
             record = json.loads(Path(task["scaler"]["path"]).read_text())["tasks"][task["scaler"]["key"]]
@@ -77,8 +79,10 @@ def main(path: str) -> int:
             how = f"per-row max-abs over {ok.sum()} curves"
         else:
             ok = df[norm_col].notna()
-            transform = spec.transform
-            assert transform is not None
+            # The export guard clips at the training-split range; held-out rows past it are valid, so compare
+            # with the normalisation itself (preprocessing clips such as phonix-db's stay).
+            assert spec.transform is not None
+            transform = strip_inverse_guard(spec.transform)
             if spec.kind == "kernel_regression":
                 pairs = zip(as_rows(df.loc[ok, row.raw_column]), as_rows(df.loc[ok, norm_col]))
                 err = max(float(np.nanmax(np.abs(transform.transform(r) - n))) for r, n in pairs)

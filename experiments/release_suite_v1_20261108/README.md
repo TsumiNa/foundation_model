@@ -20,7 +20,8 @@ order**: same data, same split manifest, same training seed, same hyper-paramete
   Materials Project ids whose licence tag could not be read (65 table rows: 31 properties, 3 DOS curves, 31
   `material_type` rows), and adds class names for `is_metal` / `is_gap_direct`.
   Its `provenance_20261108.json` records script sha256 `381bb7c8…`, the file before `ruff format`
-  rewrapped one line (no code change; the committed file hashes `c69623bb…`).
+  rewrapped one line. Review of #113 later added one branch (an empty exclusion table when no id is
+  dropped) that this build never reached, so the committed file hashes differently; the output is the same.
 - Split manifest: `split_manifest_20261016.csv` (same file for every stage).
 - Recipe: the default hybrid replay (`resample = "epoch"`, `amount = max(1500, 0.3 N)`), then one
   full-model consolidation of all heads. Model / optimiser values are the ones adopted by
@@ -32,7 +33,7 @@ order**: same data, same split manifest, same training seed, same hyper-paramete
 
 | Path | What |
 |---|---|
-| `scripts/make_configs.py` | writes every config below from the task index; `--set v1` (41 tasks) or `--set full` (64) |
+| `scripts/make_configs.py` | writes every config below from the task index; `--set v1` (41 tasks); `--set full` (64) stops until its scaler mappings exist |
 | `configs/pretrain_v1.toml`, `consolidate_v1.toml` | training; **no scalers** (see below) |
 | `configs/export_v1.toml` | the same catalog with each task's scaler / label encoder, for `fm export` |
 | `configs/members_v1.txt` | member id → `task_order_seed` (20261108 + i) |
@@ -41,7 +42,7 @@ order**: same data, same split manifest, same training seed, same hyper-paramete
 | `scripts/export.sbatch` | `fm export` of all members into one bundle, then `load_suite` / `predict` / `fm predict --pretrained` on it |
 | `scripts/submit.sh` | `smoke`, `suite`, `export` |
 
-Outputs (untracked) on RIKYU under `/data1/rkp00067/rku00225/fm/release_suite_v1/{smoke,members}/`; the
+Outputs (untracked) on RIKYU under `$OUTBASE/{smoke,members}/` (default `$RIKYU_GROUP_DIR/fm/release_suite_v1`); the
 published bundle is `members/bundle_v101/` (exported with 1.0.1; the 1.0.0 export was cancelled).
 
 ### Why training runs without scalers
@@ -88,11 +89,12 @@ saturate with a `SaturationWarning`. The published bundle is exported with the 1
 
 ## Plan: the remaining 23 tasks (not started)
 
-`make_configs.py --set full` writes the 64-task configs (KKR-CPA HEA 7, QMOF 4, Catalysis-Hub 12 added to
-the 41). Before launching:
+The 64-task set adds KKR-CPA HEA 7, QMOF 4 and Catalysis-Hub 12 to the 41. Before launching:
 
-1. Run `check_transforms.py configs/export_full.toml`. The HEA / QMOF / Catalysis-Hub raw values sit in
-   separate `_raw` tables, so their data check needs a row alignment that is not written yet.
+1. Add the 23 tasks' scalers / label encoders to `SCALERS` in `make_configs.py`: until then
+   `--set full` stops without writing configs. Then run `check_transforms.py configs/export_full.toml`.
+   The HEA / QMOF / Catalysis-Hub raw values sit in separate `_raw` tables, so their data check needs a
+   row alignment that is not written yet.
 2. Decide where the new tasks sit in the order: the HEA tables have 51k training rows per task (7 tasks on
    one composition set of equiatomic quaternaries), Catalysis-Hub 12 tasks have 135–1,063.
 3. Smoke, then measure one member's wall clock before choosing PACK: 64 steps with replay growing every step

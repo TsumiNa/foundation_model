@@ -60,6 +60,8 @@ assert not nan_cols, f"NaN predictions in {nan_cols}"
 guarded = [h.name for h in model.config.heads if h.transform is not None and h.transform.steps[-1].kind == "clip"
            and getattr(h.transform.steps[-1], "guard", False)]
 print(f"schema {model.config.schema_version}; {len(guarded)} guarded heads: {guarded}")
+# A schema-1 bundle (exported before 1.0.1) has no guards and can still return NaN past the training range.
+assert model.config.schema_version >= 2 and guarded, "bundle has no inverse guards; export with 1.0.1+"
 # Far past the training range the guarded heads saturate instead of returning NaN.
 import numpy as np
 for name in guarded:

@@ -9,16 +9,21 @@
 # interrupted pretrain resumes from its last completed step. The export job waits on the suite with
 # afterok; if the suite fails, cancel the pending export and resubmit both.
 #
-# Env: SET (v1), VERSION (1.0.0), PACK (5), RIKYU_ACCOUNT (optional, never stored in the repo).
+# Env: SET (v1); TRAIN_VERSION (1.0.0, the image v1 was trained with); EXPORT_VERSION (1.0.1: the first
+# release that guards bounded inverses, so older images must not export); PACK (5); OUTBASE, or
+# RIKYU_GROUP_DIR to derive it; RIKYU_ACCOUNT (optional). Accounts and group paths are never stored here.
 
 set -euo pipefail
 EXP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJ="$(cd "$EXP/../.." && pwd)"
 SET=${SET:-v1}
-VERSION=${VERSION:-1.0.0}
+TRAIN_VERSION=${TRAIN_VERSION:-1.0.0}
+EXPORT_VERSION=${EXPORT_VERSION:-1.0.1}
 PACK=${PACK:-5}
-IMAGE=${IMAGE:-$HOME/containers/foundation-model_rikyu-$VERSION.sif}
-OUTBASE=${OUTBASE:-/data1/rkp00067/rku00225/fm/release_suite_$SET}
+TRAIN_IMAGE=${TRAIN_IMAGE:-$HOME/containers/foundation-model_rikyu-$TRAIN_VERSION.sif}
+EXPORT_IMAGE=${EXPORT_IMAGE:-$HOME/containers/foundation-model_rikyu-$EXPORT_VERSION.sif}
+OUTBASE=${OUTBASE:-${RIKYU_GROUP_DIR:?set OUTBASE, or RIKYU_GROUP_DIR to the group storage}/fm/release_suite_$SET}
+case "$EXPORT_VERSION" in 0.* | 1.0.0) echo "EXPORT_VERSION $EXPORT_VERSION has no inverse guards; use 1.0.1+" >&2; exit 2 ;; esac
 LOGDIR=${LOGDIR:-$HOME/jobs/release_suite_$SET}
 ACCOUNT=()
 [ -n "${RIKYU_ACCOUNT:-}" ] && ACCOUNT=(--account="$RIKYU_ACCOUNT")
@@ -26,27 +31,29 @@ STAGE=${1:?usage: submit.sh smoke|suite|export}
 mkdir -p "$LOGDIR"
 cd "$LOGDIR"
 
-common="ALL,PROJ=$PROJ,IMAGE=$IMAGE,EXPECT_VERSION=$VERSION,SET=$SET"
+common="ALL,PROJ=$PROJ,SET=$SET"
+train_env="$common,IMAGE=$TRAIN_IMAGE,EXPECT_VERSION=$TRAIN_VERSION"
+export_env="$common,IMAGE=$EXPORT_IMAGE,EXPECT_VERSION=$EXPORT_VERSION"
 n=$(grep -c . "$EXP/configs/members_$SET.txt")
 case "$STAGE" in
     smoke)
         out="$OUTBASE/smoke"; mkdir -p "$out"
         jid=$(sbatch --parsable "${ACCOUNT[@]}" --array=0 --time=02:00:00 --job-name=fm-release-smoke \
-            --export="$common,OUTROOT=$out,PACK=2,SMOKE=1" "$EXP/scripts/suite.sbatch")
+            --export="$train_env,OUTROOT=$out,PACK=2,SMOKE=1" "$EXP/scripts/suite.sbatch")
         eid=$(sbatch --parsable "${ACCOUNT[@]}" --dependency=afterok:"$jid" --time=01:00:00 \
-            --export="$common,OUTROOT=$out,MEMBER_LIMIT=2" "$EXP/scripts/export.sbatch")
+            --export="$export_env,OUTROOT=$out,MEMBER_LIMIT=2" "$EXP/scripts/export.sbatch")
         ;;
     suite)
         out="$OUTBASE/members"; mkdir -p "$out"
         jid=$(sbatch --parsable "${ACCOUNT[@]}" --array=0-$(((n + PACK - 1) / PACK - 1)) \
-            --export="$common,OUTROOT=$out,PACK=$PACK" "$EXP/scripts/suite.sbatch")
+            --export="$train_env,OUTROOT=$out,PACK=$PACK" "$EXP/scripts/suite.sbatch")
         eid=$(sbatch --parsable "${ACCOUNT[@]}" --dependency=afterok:"$jid" \
-            --export="$common,OUTROOT=$out" "$EXP/scripts/export.sbatch")
+            --export="$export_env,OUTROOT=$out" "$EXP/scripts/export.sbatch")
         ;;
     export)
         out="$OUTBASE/members"; jid=-
-        eid=$(sbatch --parsable "${ACCOUNT[@]}" --export="$common,OUTROOT=$out" "$EXP/scripts/export.sbatch")
+        eid=$(sbatch --parsable "${ACCOUNT[@]}" --export="$export_env,OUTROOT=$out" "$EXP/scripts/export.sbatch")
         ;;
     *) echo "unknown stage $STAGE" >&2; exit 2 ;;
 esac
-echo "stage=$STAGE set=$SET members=$n pack=$PACK image=$IMAGE out=$out train_job=$jid export_job=$eid git=$(git -C "$PROJ" rev-parse --short HEAD)"
+echo "stage=$STAGE set=$SET members=$n pack=$PACK train_image=$TRAIN_IMAGE export_image=$EXPORT_IMAGE out=$out train_job=$jid export_job=$eid git=$(git -C "$PROJ" rev-parse --short HEAD)"

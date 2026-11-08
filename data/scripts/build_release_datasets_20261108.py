@@ -97,7 +97,12 @@ def build(source: Path, destination: Path) -> dict:
             index.loc[i, f"n_{split}"] = int((labeled & d.split.eq(split)).sum())
     index.to_csv(staging / "task_index.csv", index=False)
     joblib.dump(encoders, staging / f"label_encoders_{DATE}.pkl.z")
-    pd.concat(removed, ignore_index=True).to_csv(staging / f"licence_excluded_rows_{DATE}.csv", index=False)
+    excluded_rows = (
+        pd.concat(removed, ignore_index=True)
+        if removed
+        else pd.DataFrame(columns=["id", "composition", "split", "source_file"])
+    )
+    excluded_rows.to_csv(staging / f"licence_excluded_rows_{DATE}.csv", index=False)
 
     result = dict(
         date=DATE,

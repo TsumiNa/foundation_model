@@ -253,7 +253,8 @@ def main() -> None:
     tasks = tasks_for(pd.read_csv(ROOT / DATA / "task_index.csv"), args.which)
     missing = set(tasks.task) - set(SCALERS) - SHAPE_HEADS
     if missing:
-        raise SystemExit(f"no scaler mapping for {sorted(missing)}")
+        # --set full stops here until SCALERS covers the HEA / QMOF / Catalysis-Hub tasks (README, plan step 1).
+        raise SystemExit(f"--set {args.which} is not supported yet: no scaler mapping for {sorted(missing)}")
     (EXP / "configs" / f"pretrain_{args.which}.toml").write_text(pretrain(tasks, args.which), encoding="utf-8")
     (EXP / "configs" / f"consolidate_{args.which}.toml").write_text(consolidate(tasks, args.which), encoding="utf-8")
     (EXP / "configs" / f"export_{args.which}.toml").write_text(export(tasks, args.which), encoding="utf-8")
