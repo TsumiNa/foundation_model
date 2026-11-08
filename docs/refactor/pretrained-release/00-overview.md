@@ -74,7 +74,7 @@ A single exported model is a bundle with one member, so there is only one format
 
 | Key | Contents |
 |---|---|
-| `schema_version`, `fm_version` | the loader refuses a newer schema and names the `yammi` version that wrote it |
+| `schema_version`, `yammi_version` (`fm_version` before 2.1.1) | the loader refuses a newer schema and names the `yammi` version that wrote it |
 | `descriptor` | `kind = "kmd"`, `n_grids`, the element list, and the sha256 of `element_features.csv`. The loader checks the hash so the input is identical to training. Precomputed descriptors cannot be exported |
 | `model` | the full `[model]` section: encoder type and widths, Transformer settings, autoencoder, head and kernel-regression widths, `n_kernel` |
 | `heads` | per task: name, kind, display name, unit, per-task width overrides. Classification adds `num_classes` and class names. Kernel regression adds `t` name and unit, `t_min` / `t_max`, the training mesh and `n_kernel`. Kernel centres and widths are parameters inside the weights |

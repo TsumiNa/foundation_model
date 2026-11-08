@@ -20,10 +20,12 @@ from that file alone, and :func:`load_member` loads a member with ``strict=True`
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import re
 import shutil
 import tempfile
+import warnings
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
@@ -83,11 +85,16 @@ class BundleError(ValueError):
     """A bundle is malformed, from a newer schema, or does not match this installation."""
 
 
-def fm_version() -> str:
+def yammi_version() -> str:
     try:
         return version("yammi")
     except PackageNotFoundError:  # pragma: no cover - running from an uninstalled tree
         return "unknown"
+
+
+def _writer_version(data: Mapping[str, Any]) -> str:
+    """The yammi version that wrote a config.json; bundles before yammi 2.1.1 call it ``fm_version``."""
+    return str(data.get("yammi_version", data.get("fm_version", "unknown")))
 
 
 def _jsonable(obj: Any) -> Any:
@@ -306,7 +313,7 @@ class BundleConfig:
     license: str
     provenance: Mapping[str, Any] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
-    fm_version: str = field(default_factory=fm_version)
+    yammi_version: str = field(default_factory=yammi_version)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "heads", tuple(self.heads))
@@ -315,6 +322,11 @@ class BundleConfig:
         names = [h.name for h in self.heads]
         if len(set(names)) != len(names) or AE_NAME in names:
             raise BundleError(f"head names must be unique and must not be {AE_NAME!r}: {names}.")
+
+    @property
+    def fm_version(self) -> str:
+        """Deprecated name of ``yammi_version`` (kept for code written against yammi < 2.1.1)."""
+        return self.yammi_version
 
     def head(self, name: str) -> HeadSpec:
         for h in self.heads:
@@ -328,7 +340,8 @@ class BundleConfig:
             model.pop("transformer", None)  # build_model_section rejects [model.transformer] for MLPs
         return {
             "schema_version": self.schema_version,
-            "fm_version": self.fm_version,
+            "yammi_version": self.yammi_version,
+            "fm_version": self.yammi_version,  # the schema-2 key before yammi 2.1.1; older readers need it
             "license": self.license,
             "descriptor": self.descriptor.to_dict(),
             "model": model,
@@ -344,7 +357,7 @@ class BundleConfig:
         if schema > SCHEMA_VERSION:
             raise BundleError(
                 f"bundle schema {schema} is newer than this installation supports ({SCHEMA_VERSION}); "
-                f"it was written by yammi {data.get('fm_version')}. Upgrade yammi."
+                f"it was written by yammi {_writer_version(data)}. Upgrade yammi."
             )
         return cls(
             descriptor=DescriptorSpec.from_dict(data["descriptor"]),
@@ -353,8 +366,33 @@ class BundleConfig:
             license=data.get("license", ""),
             provenance=dict(data.get("provenance") or {}),
             schema_version=schema,
-            fm_version=str(data.get("fm_version", "unknown")),
+            yammi_version=_writer_version(data),
         )
+
+
+_bundle_config_init = BundleConfig.__init__
+
+
+def _bundle_config_init_compat(self: BundleConfig, *args: Any, fm_version: str | None = None, **kwargs: Any) -> None:
+    """Accept the pre-2.1.1 keyword ``fm_version`` (construction and ``dataclasses.replace``); it wins over
+    ``yammi_version`` because ``replace`` passes the current ``yammi_version`` along with the change."""
+    if fm_version is not None:
+        warnings.warn(
+            "BundleConfig(fm_version=...) is deprecated; use yammi_version.", DeprecationWarning, stacklevel=2
+        )
+        kwargs["yammi_version"] = fm_version
+    _bundle_config_init(self, *args, **kwargs)
+
+
+_init_signature = inspect.signature(_bundle_config_init)
+# Keep the named dataclass fields visible to introspection (inspect.signature, API tooling), plus the alias.
+_bundle_config_init_compat.__signature__ = _init_signature.replace(  # type: ignore[attr-defined]
+    parameters=[
+        *_init_signature.parameters.values(),
+        inspect.Parameter("fm_version", inspect.Parameter.KEYWORD_ONLY, default=None, annotation="str | None"),
+    ]
+)
+BundleConfig.__init__ = _bundle_config_init_compat  # type: ignore[method-assign]
 
 
 @dataclass(frozen=True)

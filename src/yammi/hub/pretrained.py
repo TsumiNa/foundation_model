@@ -38,7 +38,9 @@ from yammi.utils.kmd_plus import formula_to_composition
 from .bundle import (
     CONFIG_FILE,
     MANIFEST_FILE,
+    MEMBER_FILE,
     MEMBERS_DIR,
+    WEIGHTS_FILE,
     BundleConfig,
     BundleError,
     HeadSpec,
@@ -187,14 +189,43 @@ def _explained(exc: BaseException, repo: str, revision: str | None) -> BaseExcep
     return None
 
 
-def _snapshot(repo: str, revision: str | None, patterns: list[str], token: str | bool | None, cache_dir: Any) -> Path:
-    """Download ``patterns`` of a Hub repository into the local cache; returns the snapshot directory."""
+def _snapshot(
+    repo: str,
+    revision: str | None,
+    patterns: list[str],
+    token: str | bool | None,
+    cache_dir: Any,
+    required: Sequence[str] = (),
+) -> Path:
+    """Download ``patterns`` of a Hub repository into the local cache; returns the snapshot directory.
+
+    When ``required`` (paths relative to the snapshot) are all in the cache already, the cached snapshot
+    is returned without contacting the Hub, so a cached load prints no download progress bars.
+    ``revision`` should be a commit (see ``_pin``): a commit's cached files cannot be stale.
+    """
     try:
         from huggingface_hub import snapshot_download
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise ImportError(
-            "loading from the Hugging Face Hub needs the optional extra: pip install 'yammi[hub]'"
+            "loading from the Hugging Face Hub needs the `hub` extra: "
+            "pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi' (or `uv sync --extra hub` in a clone)"
         ) from exc
+    if required:
+        try:
+            cached = Path(
+                snapshot_download(
+                    repo_id=repo,
+                    revision=revision,
+                    allow_patterns=patterns,
+                    token=token,
+                    cache_dir=cache_dir,
+                    local_files_only=True,
+                )
+            )
+        except Exception:  # noqa: BLE001 - not cached (or partly): download below
+            cached = None
+        if cached is not None and all((cached / rel).is_file() for rel in required):
+            return cached
     try:
         snap = snapshot_download(
             repo_id=repo, revision=revision, allow_patterns=patterns, token=token, cache_dir=cache_dir
@@ -239,7 +270,8 @@ def _commit(repo: str, revision: str | None, token: str | bool | None, cache_dir
         from huggingface_hub.errors import OfflineModeIsEnabled
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise ImportError(
-            "loading from the Hugging Face Hub needs the optional extra: pip install 'yammi[hub]'"
+            "loading from the Hugging Face Hub needs the `hub` extra: "
+            "pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi' (or `uv sync --extra hub` in a clone)"
         ) from exc
     unreachable: tuple[type[BaseException], ...] = (OfflineModeIsEnabled, *_network_errors())
     try:
@@ -293,7 +325,9 @@ def _fetch(src: Source, members: Sequence[str], token: str | bool | None, cache_
     """The local snapshot of a pinned Hub source with its metadata and ``members`` (empty = metadata only)."""
     assert src.repo is not None
     patterns = [*_METADATA, *(f"{MEMBERS_DIR}/{m}/*" for m in members)]
-    return _snapshot(src.repo, src.revision, patterns, token, cache_dir)
+    required = [CONFIG_FILE, MANIFEST_FILE]
+    required += [f"{MEMBERS_DIR}/{m}/{name}" for m in members for name in (MEMBER_FILE, WEIGHTS_FILE)]
+    return _snapshot(src.repo, src.revision, patterns, token, cache_dir, required=required)
 
 
 class PretrainedModel:
@@ -349,7 +383,8 @@ class PretrainedModel:
             "revision": self.revision,
             "member": self.member.id,
             "license": self.config.license,
-            "fm_version": self.config.fm_version,
+            "yammi_version": self.config.yammi_version,
+            "fm_version": self.config.yammi_version,  # pre-2.1.1 key, kept for existing readers
         }
 
     def __repr__(self) -> str:

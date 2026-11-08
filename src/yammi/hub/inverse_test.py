@@ -85,6 +85,13 @@ def test_bundle_path_equals_catalog_path_after_unit_conversion(
         assert "band_gap_after_mean_physical" in row_a and "band_gap_after_mean_physical" not in row_b
     scenario = json.loads((tmp_path / "a" / "s" / "scenario.json").read_text())
     assert scenario["pretrained"] == str(bundle) and scenario["targets_physical"][1]["classes"] == ["metal"]
+    # The bundle run's report shows the targets as written (eV, class names) and the achieved values in eV;
+    # the checkpoint run's report stays on the training scale.
+    unit = read_config(bundle).head("band_gap").unit
+    md_a = (tmp_path / "a" / "s" / "SUMMARY.md").read_text()
+    assert f"- band_gap → 1.5 {unit}" in md_a and "P(phase ∈ {metal})" in md_a and f"band_gap ({unit})" in md_a
+    md_b = (tmp_path / "b" / "s" / "SUMMARY.md").read_text()
+    assert f"band_gap→{normalised[0]['value']:g}" in md_b and "physical units" not in md_b
 
 
 def test_element_seeds_need_no_data(bundle_and_ckpt: tuple[Path, Path], tmp_path: Path) -> None:
@@ -128,6 +135,9 @@ def test_shape_head_targets_stay_on_the_shape_scale(bundle_and_ckpt: tuple[Path,
                  seeds={"strategy": "explicit", "explicit": _SEEDS}, pretrained=str(bundle))
     )  # fmt: skip
     np.testing.assert_allclose(np.array(cfg.scenarios[0].targets[0].points), [[0.0, 0.5], [2.0, 1.0]])
+    inverse_run(cfg)  # the report must not label a shape target with the head's physical unit
+    md = (tmp_path / "x" / "s" / "SUMMARY.md").read_text()
+    assert "- dos ~ curve (2 points)" in md and "states/eV" not in md
 
 
 def test_engine_uses_the_snapshot_the_targets_were_converted_with(

@@ -554,6 +554,27 @@ def strip_inverse_guard(transform: TargetTransform) -> TargetTransform:
     return transform
 
 
+def inverse_in_range(transform: TargetTransform, raw: Any) -> np.ndarray:
+    """Training-scale values → physical units, NaN where the inverse is not meaningful.
+
+    NaN past a final guard clip (:func:`guard_inverse_domain`): there the inverse would return the most
+    extreme training value, which is almost always far from the truth (``PretrainedModel.predict`` treats
+    those outputs the same way). NaN also where the inverse is not finite.
+    """
+    x = _as_1d(raw)  # the shape TargetTransform.inverse returns, so the mask lines up with it
+    with np.errstate(invalid="ignore", over="ignore"):
+        values = np.asarray(transform.inverse(x), dtype=float)
+    last = transform.steps[-1] if transform.steps else None
+    if isinstance(last, ClipStep) and last.guard:
+        beyond = np.zeros(x.shape, dtype=bool)
+        if last.upper is not None:
+            beyond |= x > last.upper
+        if last.lower is not None:
+            beyond |= x < last.lower
+        values = np.where(beyond, np.nan, values)
+    return np.where(np.isfinite(values), values, np.nan)
+
+
 def _inside(bound: float, transform: TargetTransform, direction: int) -> float:
     """``bound`` moved ``direction`` (towards the interior) one ulp at a time until its inverse is finite.
 

@@ -395,15 +395,69 @@ def plot_element_frequency(results: list[dict[str, Any]], seeds: list[str], rec:
     plt.close(fig)
 
 
-def write_scenario_md(sc_dir: Path, scenario: ScenarioConfig, summary: list[dict[str, Any]]) -> None:
+def _report_label(spec: TargetSpec, raw: Mapping[str, Any] | None, unit: str | None) -> str:
+    """A target as the user wrote it: physical value and class names for a bundle run, else ``target_label``."""
+    if raw is None:
+        return target_label(spec)
+    suffix = f" {unit}" if unit and unit != "shape" else ""
+    if spec.kind is TargetKind.VALUE and raw.get("value") is not None:
+        return f"{spec.task} → {float(raw['value']):g}{suffix}"
+    if spec.kind is TargetKind.CURVE:
+        return f"{spec.task} ~ curve ({len(raw.get('points') or [])} points{',' + suffix if suffix else ''})"
+    if spec.kind is TargetKind.CLASS:
+        classes = ",".join(str(c) for c in (raw.get("classes") or spec.classes or []))
+        return f"P({spec.task} ∈ {{{classes}}}){'↑' if spec.direction == 'high' else '↓'}"
+    if spec.kind is TargetKind.DIRECTION:
+        return f"{spec.task} {'↑' if spec.direction == 'high' else '↓'}"  # monotone transforms: same on either scale
+    return target_label(spec)
+
+
+def _physical_cell(row: Mapping[str, Any], task: str) -> str:
+    """``mean ± std`` of the in-range candidates, plus ``(n out of range)`` when some were left out."""
+    mean, std = row.get(f"{task}_after_mean_physical"), row.get(f"{task}_after_std_physical")
+    out = int(row.get(f"{task}_out_of_range_physical") or 0)
+    cell = "—" if mean is None else f"{mean:.3g} ± {std:.2g}"
+    return f"{cell} ({out} out of range)" if out else cell
+
+
+def write_scenario_md(
+    sc_dir: Path,
+    scenario: ScenarioConfig,
+    summary: list[dict[str, Any]],
+    *,
+    physical: Sequence[Mapping[str, Any]] | None = None,
+    units: Mapping[str, str | None] | None = None,
+) -> None:
+    """``physical`` (bundle runs): the targets as written, so the report shows physical units, plus the
+    achieved mean ± std of each regression target in physical units."""
+    units = units or {}
+    raw_by_task = {str(t.get("task")): t for t in physical or []}
     lines = [f"# Inverse design — {scenario.name}", "", "Targets:"]
-    lines.extend(f"- {target_label(t)}  (weight {t.weight:g})" for t in scenario.targets)
+    lines.extend(
+        f"- {_report_label(t, raw_by_task.get(t.task) if physical is not None else None, units.get(t.task))}"
+        f"  (weight {t.weight:g})"
+        for t in scenario.targets
+    )
+    shown = [
+        t.task
+        for t in scenario.targets
+        if physical is not None and summary and f"{t.task}_after_mean_physical" in summary[0]
+    ]
+    if shown:
+        lines += [
+            "",
+            "Achieved values are the mean ± std over the candidates, in physical units. Candidates past the range a",
+            "head can express in physical units are left out and counted in brackets (their value would be the",
+            "most extreme training value, not an achieved property).",
+        ]
     lines.append("")
-    lines.append("| path | method | objective (mean±std, lower = better) | elapsed(s) |")
-    lines.append("|---|---|---|---|")
+    extra = "".join(f" {task} ({units.get(task) or '-'}) |" for task in shown)
+    lines.append(f"| path | method | objective (mean±std, lower = better) |{extra} elapsed(s) |")
+    lines.append("|---|---|---|" + "---|" * len(shown) + "---|")
     for row in summary:
+        cells = "".join(f" {_physical_cell(row, task)} |" for task in shown)
         lines.append(
-            f"| {row['path']} | {row['method']} | {row['objective_mean']}±{row['objective_std']} | {row['elapsed_s']} |"
+            f"| {row['path']} | {row['method']} | {row['objective_mean']}±{row['objective_std']} |{cells} {row['elapsed_s']} |"
         )
     (sc_dir / "SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

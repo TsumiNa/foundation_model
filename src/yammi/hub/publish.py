@@ -29,7 +29,10 @@ def _api(token: str | None) -> Any:
     try:
         from huggingface_hub import HfApi
     except ImportError as exc:  # pragma: no cover - depends on the environment
-        raise ImportError("publishing needs the optional extra: pip install 'yammi[hub]'") from exc
+        raise ImportError(
+            "publishing needs the `hub` extra: "
+            "pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi' (or `uv sync --extra hub` in a clone)"
+        ) from exc
     return HfApi(token=token)
 
 
@@ -94,7 +97,7 @@ def publish(
             repo_id,
             tag=tag,
             revision=getattr(commit, "oid", None),
-            tag_message=f"yammi {config.fm_version}, schema {config.schema_version}",
+            tag_message=f"yammi {config.yammi_version}, schema {config.schema_version}",
         )
     if not str(url):
         raise BundleError(f"the Hub returned no URL for {repo_id}.")

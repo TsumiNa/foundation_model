@@ -215,7 +215,7 @@ def _fake_hub(monkeypatch: pytest.MonkeyPatch, bundle: Path, tmp_path: Path) -> 
         calls.append(["<resolve v1>"])
         return "c0ffee"
 
-    def snapshot(repo, revision, patterns, token, cache_dir):  # noqa: ANN001
+    def snapshot(repo, revision, patterns, token, cache_dir, required=()):  # noqa: ANN001
         assert repo == "owner/fm" and revision == "c0ffee"  # every download uses the pinned commit
         calls.append(list(patterns))
         for file in bundle.rglob("*"):
@@ -277,6 +277,7 @@ def test_fm_predict_pretrained_cli(bundle: Path, tmp_path: Path) -> None:
     # No "#member": every member is combined, with a spread column.
     assert info["members"] == ["m000", "m001", "m002"] and info["combined"] and info["member"] is None
     assert info["license"] == "cc-by-nc-sa-4.0" and info["units"]["dos"] == "shape"
+    assert info["yammi_version"] == info["fm_version"]  # the pre-2.1.1 key stays for existing readers
     assert "band_gap:std" in table.columns and "seebeck:std" in pd.read_csv(out / "seebeck_curve.csv").columns
 
     one = tmp_path / "pred_one"
@@ -371,6 +372,30 @@ def test_hub_access_errors_say_what_to_do(
     monkeypatch.setattr(huggingface_hub, "snapshot_download", fail)
     with pytest.raises(BundleError, match=says):
         pretrained_mod._snapshot("owner/fm", "v9", ["config.json"], None, tmp_path)
+
+
+@pytest.mark.parametrize("complete", [True, False])
+def test_snapshot_reads_a_complete_cache_without_the_hub(
+    complete: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cached member loads without a Hub request (and so without progress bars); a partial cache downloads."""
+    huggingface_hub = pytest.importorskip("huggingface_hub")
+    snap = tmp_path / "snap"
+    (snap / "members" / "m000").mkdir(parents=True)
+    for rel in ("config.json", "manifest.json", "members/m000/member.json"):
+        (snap / rel).write_text("{}")
+    if complete:
+        (snap / "members" / "m000" / "model.safetensors").write_bytes(b"")
+    calls: list[bool] = []
+
+    def snapshot_download(**kwargs: object) -> str:
+        calls.append(bool(kwargs.get("local_files_only")))
+        return str(snap)
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
+    src = pretrained_mod.Source(repo="owner/fm", revision="c0ffee", member="m000")
+    assert pretrained_mod._fetch(src, ["m000"], None, tmp_path) == snap
+    assert calls == ([True] if complete else [True, False])
 
 
 def test_suite_treats_an_infinite_member_output_as_out_of_range(bundle: Path, monkeypatch: pytest.MonkeyPatch) -> None:

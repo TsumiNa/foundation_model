@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from yammi.workflows.inverse.report import (
+    _physical_cell,
     _format_channel,
     _format_channel_delta,
     _row_parts,
@@ -71,3 +72,11 @@ def test_row_width_grows_with_target_count() -> None:
     narrow = _row_width_pt(_row_parts(comp, " (obj=0.20, FE=0.83)", None))
     wide = _row_width_pt(_row_parts(comp, " (obj=0.20, FE=0.83, mag=-0.14, QC=88.6%)", None))
     assert wide > narrow > 0
+
+
+def test_physical_cell_counts_out_of_range_candidates() -> None:
+    row = {"g_after_mean_physical": 2.04, "g_after_std_physical": 0.12, "g_out_of_range_physical": 0}
+    assert _physical_cell(row, "g") == "2.04 ± 0.12"
+    assert _physical_cell({**row, "g_out_of_range_physical": 3}, "g") == "2.04 ± 0.12 (3 out of range)"
+    none = {"g_after_mean_physical": None, "g_after_std_physical": None, "g_out_of_range_physical": 8}
+    assert _physical_cell(none, "g") == "— (8 out of range)"

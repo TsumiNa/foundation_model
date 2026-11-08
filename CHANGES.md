@@ -1,5 +1,30 @@
 # Recent Updates
 
+## 2026-11-09 (2.1.1 — quieter, clearer output for users of the released models)
+
+Found while building a demo of the released models for colleagues:
+
+- **Quieter logs.** Building a model logged its structure and every head at INFO, hundreds of lines per
+  member, so `yammi predict` and `load_suite` flooded the terminal. These messages are DEBUG now;
+  `YAMMI_LOG_LEVEL=DEBUG` (or `WARNING`, ...) sets the level.
+- **No download progress bars for cached members.** A member already complete in the Hugging Face cache
+  is read from it without asking the Hub, so loading 10 cached members no longer prints 10 "Fetching N
+  files" bars. The revision is still resolved to a commit first, so a moved tag is still followed.
+- **`yammi_version` is the version key** in `config.json`, `prediction_info.json`, a fine-tune's `derived_from`
+  record and `PretrainedModel` provenance. The old `fm_version` key is still written next to it (bundles stay
+  readable by schema-2 readers such as 2.1.0), bundles with only `fm_version` read as before, and
+  `BundleConfig(fm_version=...)` / `.fm_version` keep working with a `DeprecationWarning`.
+- **`yammi inverse --pretrained` reports in physical units.** A scenario's `SUMMARY.md` lists the targets
+  as written (value and unit, class names) and adds the achieved mean ± std of each regression target in
+  physical units. It used to show only the training-scale value (a 2.5 eV target read `band_gap→1.09964`).
+  Candidates past the range a head can express in physical units are left out of those statistics and
+  counted (`<task>_out_of_range_physical`), as the prediction API returns NaN for them; their physical
+  values in `results.json` are null. New helper `yammi.data.targets.inverse_in_range`.
+- **Install instructions never name the PyPI placeholder.** The missing-`hub`-extra errors said
+  `pip install 'yammi[hub]'`, which resolves to the empty PyPI placeholder; they now give the GitHub URL
+  (or `uv sync --extra hub` in a clone). README, docs, the model card template and the `yammi-pretrained` skill
+  show both ways: `pip install` from the GitHub URL, or a clone with `uv sync --frozen` for the locked versions.
+
 ## 2026-11-09 (2.1.0 — findings from testing the released models)
 
 Tested `TsumiNa/yammi@v1.0.0` as outside users would: input formats, every head and member, curve grids,

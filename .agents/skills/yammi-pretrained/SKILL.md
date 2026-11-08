@@ -26,8 +26,11 @@ and fine-tuned models are non-commercial and ShareAlike. Pin releases: `TsumiNa/
 
   The image's entrypoint is `yammi` (Docker: `... <image> predict ...`; Apptainer: `exec ... yammi predict`).
   Without a GPU drop `--gpus all` / `--nv`; prediction is fast on CPU too.
-- **Python** only to script it or develop on yammi: `pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'`
-  (not on PyPI yet; the PyPI name `yammi` is a placeholder). Python 3.12–3.14.
+- **Python** only to script it or develop on yammi: `pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'`,
+  or for the locked dependency versions `git clone https://github.com/TsumiNa/yammi.git` and
+  `uv sync --frozen --no-dev --extra hub` in the clone (its `.venv`). Not on PyPI yet: the PyPI name `yammi` is
+  an empty placeholder, so always give the GitHub URL. Python 3.12–3.14.
+  `YAMMI_LOG_LEVEL=WARNING` quiets the INFO log.
 - **Offline compute nodes.** Run once where the Hub is reachable (fills `~/.cache/huggingface/hub`, or
   `$HF_HOME/hub`), then `HF_HUB_OFFLINE=1` works from the cache. On clusters point `HF_HOME` at group
   storage.

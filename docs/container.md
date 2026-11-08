@@ -34,12 +34,12 @@ Hugging Face Hub. Nothing else needs to be installed: no repository checkout, no
 
 ```bash
 # Apptainer / SingularityCE bind $HOME, so the host's `hf auth login` token and cache are used.
-apptainer exec --nv yammi-2.0.1.sif \
+apptainer exec --nv yammi-2.1.1.sif \
   yammi predict --pretrained TsumiNa/yammi@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
 
 # Docker: pass the token (gated repository) and keep the download cache on the host.
 docker run --rm --gpus all -e HF_TOKEN -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
-  -v "$PWD:/workspace" ghcr.io/tsumina/yammi:2.0.1 \
+  -v "$PWD:/workspace" ghcr.io/tsumina/yammi:2.1.1 \
   predict --pretrained TsumiNa/yammi@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
 ```
 

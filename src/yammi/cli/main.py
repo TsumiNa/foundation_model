@@ -479,7 +479,8 @@ def _predict_pretrained(
         "members": members,
         "combined": "mean of the members whose output stays in range; <task>:std is their spread" if combine else None,
         "license": first.license,
-        "fm_version": first.config.fm_version,
+        "yammi_version": first.config.yammi_version,
+        "fm_version": first.config.yammi_version,  # pre-2.1.1 key, kept for existing readers
         "units": {t: first.units()[t] for t in wanted},
         "files": written,
     }

@@ -69,7 +69,7 @@ def catalog_raw(tmp_path: Path) -> dict:
             {"name": "phase", "kind": "classification", "dataset": "d", "column": "label", "num_classes": 3,
              "scaler": {"path": pre, "key": "label_encoder"}},
             {"name": "dos", "kind": "kernel_regression", "dataset": "d", "column": "dos", "t_column": "dos_e",
-             "t_unit": "eV", "output_scale": "shape"},
+             "unit": "states/eV", "t_unit": "eV", "output_scale": "shape"},
             {"name": "seebeck", "kind": "kernel_regression", "dataset": "d", "column": "seebeck",
              "t_column": "temperature", "unit": "V/K", "t_unit": "K", "scaler": {"path": pre, "key": "seebeck_scaler"}},
         ],
@@ -122,7 +122,8 @@ def test_export_round_trip_two_members(catalog_raw: dict, tmp_path: Path) -> Non
 def test_config_json_is_self_contained(catalog_raw: dict, tmp_path: Path) -> None:
     out = _export(catalog_raw, [_checkpoint(catalog_raw, tmp_path / "c.pt", 0)], tmp_path / "b")
     payload = json.loads((out / CONFIG_FILE).read_text())
-    assert {"schema_version", "fm_version", "license", "descriptor", "model", "heads", "provenance"} <= set(payload)
+    assert {"schema_version", "yammi_version", "license", "descriptor", "model", "heads", "provenance"} <= set(payload)
+    assert payload["fm_version"] == payload["yammi_version"]  # the pre-2.1.1 key stays for schema-2 readers
     assert "transformer" not in payload["model"]  # MLP model: no [model.transformer]
     gap = next(h for h in payload["heads"] if h["name"] == "band_gap")
     assert [s["kind"] for s in gap["transform"]["steps"]] == ["standard_scaler", "power_transformer"]
@@ -347,3 +348,26 @@ def test_schema_v1_bundles_still_load(catalog_raw: dict, tmp_path: Path) -> None
     (out / CONFIG_FILE).write_text(json.dumps(payload))
     assert read_config(out).schema_version == 1
     load_member(out, "m000")
+
+
+def test_bundle_config_accepts_the_deprecated_fm_version_keyword(catalog_raw: dict, tmp_path: Path) -> None:
+    import dataclasses
+
+    config = read_config(_export(catalog_raw, [_checkpoint(catalog_raw, tmp_path / "c.pt", 0)], tmp_path / "b"))
+    with pytest.warns(DeprecationWarning, match="yammi_version"):
+        old = dataclasses.replace(config, fm_version="1.0.1")  # type: ignore[call-arg]  # runtime-only alias
+    assert old.yammi_version == old.fm_version == "1.0.1"
+    assert dataclasses.replace(old, yammi_version="2.1.1").yammi_version == "2.1.1"
+    with pytest.warns(DeprecationWarning):
+        built = type(config)(descriptor=config.descriptor, model=config.model, heads=config.heads,
+                             license=config.license, fm_version="1.0.0")  # type: ignore[call-arg]  # fmt: skip
+    assert built.yammi_version == "1.0.0"
+    # The public signature still names every field (introspection), plus the deprecated alias.
+    import inspect
+
+    params = inspect.signature(type(config)).parameters
+    assert {"descriptor", "model", "heads", "license", "yammi_version", "fm_version"} <= set(params)
+    assert params["fm_version"].kind is inspect.Parameter.KEYWORD_ONLY
+    # A config.json written before 2.1.1 carries only fm_version.
+    legacy = {k: v for k, v in config.to_dict().items() if k != "yammi_version"} | {"fm_version": "1.0.1"}
+    assert type(config).from_dict(legacy).yammi_version == "1.0.1"
