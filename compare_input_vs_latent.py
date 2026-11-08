@@ -18,8 +18,8 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
-from foundation_model.models.model_config import (
+from yammi.models.flexible_multi_task_model import FlexibleMultiTaskModel
+from yammi.models.model_config import (
     MLPEncoderConfig,
     RegressionTaskConfig,
     AutoEncoderTaskConfig,

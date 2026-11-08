@@ -1,4 +1,4 @@
-foundation-model
+yammi
 Copyright 2025-2026 TsumiNa
 
 The source code of this product is licensed under the Apache License,
@@ -18,7 +18,7 @@ changes made are listed in notebooks/teaching_inverse_design/data/README.md.
 
 -------------------------------------------------------------------------------
 
-src/foundation_model/utils/element_features.csv is derived from the
+src/yammi/utils/element_features.csv is derived from the
 `elements_completed` table of XenonPy (https://github.com/yoshida-lab/XenonPy),
 distributed under the following license:
 
