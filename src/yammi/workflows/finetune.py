@@ -94,7 +94,7 @@ class FinetuneConfig:
             raise ValueError(f"finetune.tasks references unknown task(s): {unknown}.")
 
 
-def _with_class_counts(raw: Mapping[str, Any], pretrained: str) -> Mapping[str, Any]:
+def _with_class_counts(raw: Mapping[str, Any], pretrained: str) -> tuple[Mapping[str, Any], tuple[str, ...]]:
     """Fill ``num_classes`` of classification tasks that leave it out, when fine-tuning a released bundle.
 
     An existing head takes the bundle's count (the user's data may not show every class). A new head
@@ -111,14 +111,14 @@ def _with_class_counts(raw: Mapping[str, Any], pretrained: str) -> Mapping[str, 
 
     tasks = list(raw.get("tasks", []))
     if not any(is_classification(t) and "num_classes" not in t for t in tasks):
-        return raw
+        return raw, ()
     from yammi.data.composition_sources import read_data_file
     from yammi.hub.bundle import read_config
     from yammi.hub.pretrained import resolve
 
     heads = {h.name: h for h in read_config(resolve(pretrained)[0]).heads}
     datasets = raw.get("datasets", {})
-    filled = []
+    filled, counted = [], []
     for task in tasks:
         if is_classification(task) and "num_classes" not in task:
             task = dict(task)
@@ -126,13 +126,33 @@ def _with_class_counts(raw: Mapping[str, Any], pretrained: str) -> Mapping[str, 
             if head is not None and head.num_classes:
                 task["num_classes"] = head.num_classes
             else:
+                counted.append(str(task.get("name")))
                 path = datasets.get(task.get("dataset", ""), {}).get("path")
                 if path is None or "column" not in task:
                     raise ValueError(f"Task '{task.get('name')}': give num_classes, or a dataset and column to count.")
                 labels = read_data_file(str(path))[task["column"]].dropna()
                 task["num_classes"] = _class_count(str(task.get("name")), labels)
         filled.append(task)
-    return {**raw, "tasks": filled}
+    return {**raw, "tasks": filled}, tuple(counted)
+
+
+def _recount_after_filtering(raw: Mapping[str, Any], counted: Sequence[str]) -> Mapping[str, Any]:
+    """Recount inferred class counts on the rows the catalog keeps (min_elements, sample, dropped rows).
+
+    The first count, on the raw file, only lets the catalog config be built; this one sees the same
+    composition-keyed rows that :func:`_target_inputs` builds the class vocabulary from.
+    """
+    if not counted:
+        return raw
+    catalog = TaskCatalog(build_task_catalog_config({k: raw[k] for k in _CATALOG_KEYS if k in raw}))
+    frames = catalog.task_frames(list(counted))
+    tasks = []
+    for task in raw.get("tasks", []):
+        if task.get("name") in counted:
+            labels = frames[task["name"]][catalog.task_spec(task["name"]).column].dropna()
+            task = {**task, "num_classes": _class_count(str(task["name"]), labels)}
+        tasks.append(task)
+    return {**raw, "tasks": tasks}
 
 
 def _class_count(name: str, labels: Any) -> int:
@@ -161,7 +181,8 @@ def build_finetune_config(
     )
     resolved_pretrained = pretrained if pretrained is not None else ft_raw.get("pretrained")
     if resolved_pretrained is not None:
-        raw = _with_class_counts(raw, str(resolved_pretrained))
+        raw, counted = _with_class_counts(raw, str(resolved_pretrained))
+        raw = _recount_after_filtering(raw, counted)
     catalog = build_task_catalog_config({k: raw[k] for k in _CATALOG_KEYS if k in raw})
     training = build_training_section(raw.get("training", {}))
 

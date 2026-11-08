@@ -301,3 +301,20 @@ def test_num_classes_inference_accepts_kind_aliases(bundle: Path, user_data: Pat
             task["kind"] = "CLF"  # the catalog's case-insensitive legacy spelling
     counts = {t.name: t.num_classes for t in build_finetune_config(raw).catalog.tasks}
     assert counts["phase"] == 3
+
+
+def test_inferred_class_count_follows_the_rows_the_catalog_keeps(bundle: Path, user_data: Path, tmp_path: Path) -> None:
+    """A class present only in a row min_elements drops is not counted."""
+    from yammi.workflows.finetune import _target_inputs
+
+    data = pd.read_parquet(user_data)
+    data["grade"] = (["A", "B"] * len(data))[: len(data)]
+    lone = pd.DataFrame({"composition": ["Fe"], "grade": ["C"], "split": ["train"]})
+    pd.concat([data, lone], ignore_index=True).to_parquet(user_data)
+    raw = _raw(user_data, bundle, tmp_path / "ft", ["grade"])
+    raw["datasets"]["mine"]["min_elements"] = 2
+    raw["tasks"].append({"name": "grade", "kind": "classification", "dataset": "mine", "column": "grade"})
+    cfg = build_finetune_config(raw)
+    assert {t.name: t.num_classes for t in cfg.catalog.tasks}["grade"] == 2
+    labels = _target_inputs(cfg, read_config(bundle))["grade"]
+    assert labels.classes == ("A", "B")
