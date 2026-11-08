@@ -32,6 +32,8 @@ mkdir -p "$LOGDIR"
 cd "$LOGDIR"
 
 common="ALL,PROJ=$PROJ,SET=$SET"
+# --export=ALL carries the login shell's variables into the jobs, so a SMOKE or MEMBER_LIMIT left over
+# from a debug run is set explicitly on every job (each key once: Slurm does not promise which duplicate wins).
 train_env="$common,IMAGE=$TRAIN_IMAGE,EXPECT_VERSION=$TRAIN_VERSION"
 export_env="$common,IMAGE=$EXPORT_IMAGE,EXPECT_VERSION=$EXPORT_VERSION"
 n=$(grep -c . "$EXP/configs/members_$SET.txt")
@@ -46,13 +48,13 @@ case "$STAGE" in
     suite)
         out="$OUTBASE/members"; mkdir -p "$out"
         jid=$(sbatch --parsable "${ACCOUNT[@]}" --array=0-$(((n + PACK - 1) / PACK - 1)) \
-            --export="$train_env,OUTROOT=$out,PACK=$PACK" "$EXP/scripts/suite.sbatch")
+            --export="$train_env,OUTROOT=$out,PACK=$PACK,SMOKE=0" "$EXP/scripts/suite.sbatch")
         eid=$(sbatch --parsable "${ACCOUNT[@]}" --dependency=afterok:"$jid" \
-            --export="$export_env,OUTROOT=$out" "$EXP/scripts/export.sbatch")
+            --export="$export_env,OUTROOT=$out,MEMBER_LIMIT=" "$EXP/scripts/export.sbatch")
         ;;
     export)
         out="$OUTBASE/members"; jid=-
-        eid=$(sbatch --parsable "${ACCOUNT[@]}" --export="$export_env,OUTROOT=$out" "$EXP/scripts/export.sbatch")
+        eid=$(sbatch --parsable "${ACCOUNT[@]}" --export="$export_env,OUTROOT=$out,MEMBER_LIMIT=" "$EXP/scripts/export.sbatch")
         ;;
     *) echo "unknown stage $STAGE" >&2; exit 2 ;;
 esac
