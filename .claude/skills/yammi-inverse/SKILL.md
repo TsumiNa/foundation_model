@@ -9,8 +9,11 @@ Machine-independent skill: pick the execution target and preflight it per the hp
 skill (default local; RIKYU/R-CCS prefer the container); lay files out per experiment-layout.
 
 `yammi inverse --config inv.toml --checkpoint <final_model.pt> [--output-dir D] [--steps N]
-[--scenario NAME]`. Reference config: `experiments/rikyu_task_scaling/make_configs.py`
-(`inv.toml`). The objective is fully user-specified — there is no built-in target.
+[--scenario NAME]`, or `--pretrained TsumiNa/yammi@v1.0.0` (or `[inverse] pretrained = ...`) for a
+released bundle — see the yammi-pretrained skill for that mode (physical-unit targets, `elements` /
+`explicit` seeds). Reference config (local experiment folder, outside git):
+`experiments/rikyu_task_scaling/make_configs.py` (`inv.toml`). The objective is fully user-specified —
+there is no built-in target.
 
 ## Targets (per scenario, any mix)
 
@@ -27,9 +30,10 @@ weight = 2.0          # >1 prioritises this term; too high starves the others
 # kernel_regression: points = [[t, y], ...]   classification: classes = [..] (+ direction)
 ```
 
-**Units are z-scored**: `y_z = (y − μ_task) / σ_task` with μ, σ from the task's TRAINING split —
-so `value = ±1.0` means one standard deviation from the training mean. Say this explicitly in
-reports. Separate scenarios per target pair beat one joint many-target scenario when the user
+**Units (checkpoint mode) are z-scored**: `y_z = (y − μ_task) / σ_task` with μ, σ from the task's
+TRAINING split — so `value = ±1.0` means one standard deviation from the training mean. Say this
+explicitly in reports. With `--pretrained` (a bundle) targets are in **physical units** instead,
+converted with the bundle's transforms; reports add `<task>_after_mean_physical`. Separate scenarios per target pair beat one joint many-target scenario when the user
 wants per-target difficulty visible.
 
 ## Seeds

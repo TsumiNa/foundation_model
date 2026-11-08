@@ -45,7 +45,8 @@ def test_front_matter_and_body(bundle: Path) -> None:
     assert "| `band_gap` | regression | value | eV |" in card
     assert "dimensionless" in card  # the shape-only DOS head
     assert "temperature ∈ [300" in card and "2 members; default `m000`" in card
-    assert 'load_pretrained("owner/fm")' in card and "rehearsal" in card
+    assert 'load_suite("owner/fm")' in card and 'load_pretrained("owner/fm#m001")' in card and "rehearsal" in card
+    assert "yammi-pretrained" in card and ".agents/skills/" in card  # agent skill install hint
 
 
 @pytest.mark.parametrize(

@@ -74,8 +74,17 @@ class SaturationWarning(UserWarning):
     """
 
 
-def _to_physical(head: HeadSpec, raw: np.ndarray) -> np.ndarray:
+#: How :meth:`PretrainedModel.predict` reports an output past the range a head can express in physical units.
+#: ``"nan"`` (default): NaN, with a :class:`SaturationWarning`. Measured on the v1 suite's test split, such
+#: outputs were almost always far off when returned as the most extreme training value (R² of
+#: ``total_magnetization`` fell from 0.25 to -24 on 3 % of rows). ``"clip"``: that extreme training value.
+SATURATED_MODES = ("nan", "clip")
+
+
+def _to_physical(head: HeadSpec, raw: np.ndarray, saturated: str = "nan") -> np.ndarray:
     """Training-scale head outputs → physical units, warning when values saturate or cannot be inverted."""
+    if saturated not in SATURATED_MODES:
+        raise ValueError(f"saturated must be one of {SATURATED_MODES}, got {saturated!r}.")
     if head.transform is None:
         return raw
     with np.errstate(invalid="ignore", over="ignore"):
@@ -90,11 +99,24 @@ def _to_physical(head: HeadSpec, raw: np.ndarray) -> np.ndarray:
         )
     last = head.transform.steps[-1] if head.transform.steps else None
     if isinstance(last, ClipStep):
-        beyond = int((raw > last.upper).sum()) if last.upper is not None else 0
-        beyond += int((raw < last.lower).sum()) if last.lower is not None else 0
-        if beyond:
+        beyond = np.zeros(np.shape(raw), dtype=bool)
+        if last.upper is not None:
+            beyond |= raw > last.upper
+        if last.lower is not None:
+            beyond |= raw < last.lower
+        n = int(beyond.sum())
+        if n and last.guard and saturated == "nan":
+            values = np.where(beyond, np.nan, values)
             warnings.warn(
-                f"{head.name}: {beyond} prediction(s) lie beyond the training range and are returned as the "
+                f"{head.name}: {n} prediction(s) lie past the range this head can express in physical units and "
+                "are NaN. An ensemble (load_suite(...).predict, or yammi predict without #member) keeps the "
+                "members that stay in range; saturated='clip' returns the most extreme training value instead.",
+                SaturationWarning,
+                stacklevel=3,
+            )
+        elif n:
+            warnings.warn(
+                f"{head.name}: {n} prediction(s) lie beyond the training range and are returned as the "
                 "most extreme training value.",
                 SaturationWarning,
                 stacklevel=3,
@@ -135,6 +157,36 @@ def parse_source(source: str | Path, *, revision: str | None = None, member: str
     return Source(repo=match["repo"], revision=revision or match["rev"], member=member or match["member"])
 
 
+def _explained(exc: BaseException, repo: str, revision: str | None) -> BaseException | None:
+    """A BundleError that says what to do about a Hub access error, or None if ``exc`` is something else."""
+    try:
+        from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError, RevisionNotFoundError
+    except ImportError:  # pragma: no cover
+        return None
+    page = f"https://huggingface.co/{repo}"
+    if isinstance(exc, GatedRepoError):
+        return BundleError(
+            f"{repo} is gated: request access on {page}, then log in with `hf auth login` (or set HF_TOKEN). "
+            "In a container, mount ~/.cache/huggingface or pass HF_TOKEN."
+        )
+    if isinstance(exc, RevisionNotFoundError):
+        tags: list[str] = []
+        try:
+            from huggingface_hub import HfApi
+
+            tags = [t.name for t in HfApi().list_repo_refs(repo).tags]
+        except Exception:  # noqa: BLE001 - the listing is a courtesy
+            pass
+        return BundleError(
+            f"{repo} has no revision {revision!r}" + (f"; its release tags are {tags}." if tags else ".")
+        )
+    if isinstance(exc, RepositoryNotFoundError):
+        return BundleError(
+            f"no model repository {repo} on the Hub, or it is private and you are not logged in (`hf auth login`)."
+        )
+    return None
+
+
 def _snapshot(repo: str, revision: str | None, patterns: list[str], token: str | bool | None, cache_dir: Any) -> Path:
     """Download ``patterns`` of a Hub repository into the local cache; returns the snapshot directory."""
     try:
@@ -143,9 +195,16 @@ def _snapshot(repo: str, revision: str | None, patterns: list[str], token: str |
         raise ImportError(
             "loading from the Hugging Face Hub needs the optional extra: pip install 'yammi[hub]'"
         ) from exc
-    return Path(
-        snapshot_download(repo_id=repo, revision=revision, allow_patterns=patterns, token=token, cache_dir=cache_dir)
-    )
+    try:
+        snap = snapshot_download(
+            repo_id=repo, revision=revision, allow_patterns=patterns, token=token, cache_dir=cache_dir
+        )
+    except Exception as exc:
+        explained = _explained(exc, repo, revision)
+        if explained is None:
+            raise
+        raise explained from exc
+    return Path(snap)
 
 
 _METADATA = [CONFIG_FILE, MANIFEST_FILE, "README.md"]
@@ -176,7 +235,7 @@ def _commit(repo: str, revision: str | None, token: str | bool | None, cache_dir
     bundle downloaded once on a login node loads anywhere that shares the cache.
     """
     try:
-        from huggingface_hub import HfApi, snapshot_download
+        from huggingface_hub import HfApi
         from huggingface_hub.errors import OfflineModeIsEnabled
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise ImportError(
@@ -186,24 +245,38 @@ def _commit(repo: str, revision: str | None, token: str | bool | None, cache_dir
     try:
         sha = HfApi().model_info(repo, revision=revision, token=token).sha
     except unreachable as online_error:
-        try:  # the snapshot directory of a cached revision is named after its commit
-            snap = snapshot_download(
-                repo_id=repo,
-                revision=revision,
-                allow_patterns=[CONFIG_FILE],
-                token=token,
-                cache_dir=cache_dir,
-                local_files_only=True,
-            )
-        except Exception:
-            raise BundleError(
-                f"cannot reach the Hub for {repo}@{revision or 'main'} ({online_error}) and it is not in the "
-                "local cache; download it once where the Hub is reachable."
-            ) from online_error
-        sha = Path(snap).name
+        sha = _cached_commit(repo, revision, token, cache_dir, online_error)
+    except Exception as exc:
+        explained = _explained(exc, repo, revision)
+        if explained is None:
+            raise
+        raise explained from exc
     if not sha:
         raise BundleError(f"the Hub did not resolve {repo}@{revision or 'main'} to a commit.")
     return str(sha)
+
+
+def _cached_commit(
+    repo: str, revision: str | None, token: str | bool | None, cache_dir: Any, online_error: BaseException
+) -> str:
+    """The commit of a revision already in the local cache (its snapshot directory is named after it)."""
+    from huggingface_hub import snapshot_download
+
+    try:
+        snap = snapshot_download(
+            repo_id=repo,
+            revision=revision,
+            allow_patterns=[CONFIG_FILE],
+            token=token,
+            cache_dir=cache_dir,
+            local_files_only=True,
+        )
+    except Exception:
+        raise BundleError(
+            f"cannot reach the Hub for {repo}@{revision or 'main'} ({online_error}) and it is not in the "
+            "local cache; download it once where the Hub is reachable."
+        ) from online_error
+    return Path(snap).name
 
 
 def _pin(src: Source, token: str | bool | None, cache_dir: Any = None) -> Source:
@@ -256,11 +329,21 @@ class PretrainedModel:
             self.model,
             heads=self.config.heads,
             task_order=self.member.task_order,
-            derived_from=self.derived_from(),
+            derived_from=self._as_source(),
             provenance=provenance,
         )
 
-    def derived_from(self) -> dict[str, Any]:
+    def derived_from(self) -> dict[str, Any] | None:
+        """Where this bundle came from, if it was derived (fine-tuned or saved) from another; else None.
+
+        The record holds ``source``, ``revision`` (commit), ``member``, ``license`` and the yammi version
+        that wrote the source. Earlier generations are in ``config.provenance["lineage"]``.
+        """
+        record = self.config.provenance.get("derived_from")
+        return dict(record) if record is not None else None
+
+    def _as_source(self) -> dict[str, Any]:
+        """This model as the ``derived_from`` record of a bundle made from it."""
         return {
             "source": self.source,
             "revision": self.revision,
@@ -324,12 +407,19 @@ class PretrainedModel:
     # -- outputs ---------------------------------------------------------------------------------
 
     def predict(
-        self, compositions: Sequence[str], tasks: Sequence[str] | None = None, *, probabilities: bool = False
+        self,
+        compositions: Sequence[str],
+        tasks: Sequence[str] | None = None,
+        *,
+        probabilities: bool = False,
+        saturated: str = "nan",
     ) -> pd.DataFrame:
         """Scalar heads on ``compositions``: one column per task, in physical units.
 
         ``tasks = None`` predicts every regression and classification head. A classification task gives
-        the class name; ``probabilities=True`` adds a ``"<task>:<class>"`` column per class.
+        the class name; ``probabilities=True`` adds a ``"<task>:<class>"`` column per class. An output
+        past the range a head can express is NaN (``saturated="nan"``) or the most extreme training value
+        (``"clip"``); see :data:`SATURATED_MODES`.
         """
         names = tasks or [h.name for h in self.config.heads if h.kind != "kernel_regression"]
         heads = [self._head(n, ("regression", "classification")) for n in names]
@@ -341,7 +431,7 @@ class PretrainedModel:
                 raw = self.model.task_heads[head.name](h)
                 if head.kind == "regression":
                     values = raw.squeeze(-1).cpu().numpy().astype(float)
-                    out[head.name] = _to_physical(head, values)
+                    out[head.name] = _to_physical(head, values, saturated)
                 else:
                     assert head.classes is not None
                     prob = torch.softmax(raw, dim=-1).cpu().numpy()
@@ -352,7 +442,9 @@ class PretrainedModel:
         out.attrs["units"] = {head.name: self.units()[head.name] for head in heads}
         return out
 
-    def predict_curve(self, compositions: Sequence[str], task: str, t: Any = None) -> pd.DataFrame:
+    def predict_curve(
+        self, compositions: Sequence[str], task: str, t: Any = None, *, saturated: str = "nan"
+    ) -> pd.DataFrame:
         """A kernel-regression head as a long table ``composition, <t_name>, <task>``.
 
         ``t = None`` uses the head's default grid. ``t`` may also be one 1-D grid shared by every
@@ -366,7 +458,7 @@ class PretrainedModel:
         with torch.no_grad():
             eh, et = expand_for_kernel_regression(h, [torch.tensor(g, dtype=torch.float32) for g in grids])
             raw = self.model.task_heads[head.name](eh, t=et).squeeze(-1).cpu().numpy().astype(float)
-        values = _to_physical(head, raw)
+        values = _to_physical(head, raw, saturated)
         t_col = head.t_name or "t"
         out = pd.DataFrame(
             {
@@ -441,6 +533,74 @@ class Suite:
     def __iter__(self) -> Iterator[PretrainedModel]:
         for member_id in self.member_ids:
             yield self[member_id]
+
+    def predict(
+        self, compositions: Sequence[str], tasks: Sequence[str] | None = None, *, probabilities: bool = False
+    ) -> pd.DataFrame:
+        """Every member's prediction, combined: the recommended way to predict with a suite.
+
+        Regression: the median over the members whose output stays in range, and ``"<task>:std"``, their
+        standard deviation (a spread, usable as an uncertainty). NaN only when every member is out of
+        range. Classification: the class with the highest mean probability over members;
+        ``probabilities=True`` adds the mean ``"<task>:<class>"`` columns. On the v1 suite's test split the
+        combination had a higher R² than the default member on 26 of 29 regression heads.
+        """
+        models = list(self)
+        names = list(tasks) if tasks else [h.name for h in models[0].heads if h.kind != "kernel_regression"]
+        kinds = {n: models[0]._head(n, ("regression", "classification")).kind for n in names}  # noqa: SLF001
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SaturationWarning)  # summarised below, once per head
+            per = [m.predict(compositions, names, probabilities=True, saturated="nan") for m in models]
+        out = pd.DataFrame({"composition": list(compositions)})
+        for name in names:
+            if kinds[name] == "regression":
+                stack = np.stack([p[name].to_numpy(float) for p in per])
+                kept = np.isfinite(stack).sum(axis=0)
+                with warnings.catch_warnings(), np.errstate(invalid="ignore"):
+                    warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN columns stay NaN
+                    out[name] = np.nanmedian(stack, axis=0)
+                    out[f"{name}:std"] = np.nanstd(stack, axis=0)
+                _warn_dropped(name, kept, len(models))
+            else:
+                head = models[0].config.head(name)
+                assert head.classes is not None
+                cols = [f"{name}:{c}" for c in head.classes.classes]
+                prob = np.mean([p[cols].to_numpy(float) for p in per], axis=0)
+                out[name] = head.classes.names(prob.argmax(axis=1))
+                if probabilities:
+                    out[cols] = prob
+        out.attrs["units"] = {n: models[0].units()[n] for n in names}
+        out.attrs["members"] = [m.member.id for m in models]
+        return out
+
+    def predict_curve(self, compositions: Sequence[str], task: str, t: Any = None) -> pd.DataFrame:
+        """A curve head combined over members: the median of in-range members and ``"<task>:std"``."""
+        models = list(self)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SaturationWarning)
+            per = [m.predict_curve(compositions, task, t, saturated="nan") for m in models]
+        out = per[0].drop(columns=[task]).copy()
+        stack = np.stack([p[task].to_numpy(float) for p in per])
+        with warnings.catch_warnings(), np.errstate(invalid="ignore"):
+            warnings.simplefilter("ignore", RuntimeWarning)
+            out[task] = np.nanmedian(stack, axis=0)
+            out[f"{task}:std"] = np.nanstd(stack, axis=0)
+        _warn_dropped(task, np.isfinite(stack).sum(axis=0), len(models))
+        out.attrs = {**per[0].attrs, "members": [m.member.id for m in models]}
+        return out
+
+
+def _warn_dropped(name: str, kept: np.ndarray, n_members: int) -> None:
+    """One warning per head: rows where some members were out of range, and rows left NaN."""
+    partial = int(((kept > 0) & (kept < n_members)).sum())
+    empty = int((kept == 0).sum())
+    if partial or empty:
+        warnings.warn(
+            f"{name}: on {partial} row(s) some of the {n_members} members were out of range and left out of the "
+            f"median; {empty} row(s) are NaN because every member was.",
+            SaturationWarning,
+            stacklevel=3,
+        )
 
 
 def load_pretrained(

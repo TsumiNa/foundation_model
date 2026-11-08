@@ -98,6 +98,10 @@ def test_save_keeps_licence_and_records_source(bundle: Path, tmp_path: Path) -> 
     a = load_pretrained(bundle).predict(_FORMULAS[:3], ["band_gap"])
     b = load_pretrained(saved).predict(_FORMULAS[:3], ["band_gap"])
     pd.testing.assert_frame_equal(a, b)
+    # derived_from() reports where a bundle came from; an original bundle came from nowhere.
+    assert load_pretrained(bundle).derived_from() is None
+    record = load_pretrained(saved).derived_from()
+    assert record is not None and record["source"] == str(bundle) and record["member"] == "m000"
 
 
 def test_pretrained_config_rejections(bundle: Path, user_data: Path, tmp_path: Path) -> None:
@@ -236,29 +240,45 @@ def test_shape_input_overrides_a_configured_scaler(tmp_path: Path) -> None:
     np.testing.assert_array_equal(catalog.inverse_transform("c", np.array([0.5])), [0.5])
 
 
-def test_new_head_guard_applies_to_predictions_not_labels(bundle: Path, user_data: Path, tmp_path: Path) -> None:
+def test_new_head_transform_is_invertible_everywhere(bundle: Path, user_data: Path, tmp_path: Path) -> None:
+    """A heavy right tail would fit Yeo-Johnson lambda < 0; new heads get one whose inverse has no bound."""
     from yammi.data.targets import ClipStep, fit_default
     from yammi.workflows.finetune import _target_inputs
 
-    # A heavy right tail makes the fitted Yeo-Johnson lambda negative; the largest value is held out.
     frame = pd.read_parquet(user_data)
     frame["hardness_GPa"] = np.random.default_rng(5).lognormal(0.0, 2.5, len(frame))
     extreme = frame.index[frame["split"] == "test"][0]
     frame.loc[extreme, "hardness_GPa"] = frame["hardness_GPa"].max() * 50
     frame.to_parquet(user_data)
     train = frame.loc[frame["split"] == "train", "hardness_GPa"].to_numpy()
-    fitted = fit_default(train)
-    assert np.isfinite(fitted.inverse_domain()[1])
+    assert fit_default(train).inverse_domain() == (-np.inf, np.inf)
 
     out = tmp_path / "ft"
     cfg = build_finetune_config(_raw(user_data, bundle, out, ["hardness"]))
     labels = _target_inputs(cfg, read_config(bundle))["hardness"]
     assert not any(isinstance(s, ClipStep) for s in labels.steps)  # held-out labels keep their values
     held_out = labels.transform(np.array([frame.loc[extreme, "hardness_GPa"]]))[0]
-    assert held_out > fitted.transform(train).max()
+    np.testing.assert_allclose(labels.inverse(np.array([held_out])), [frame.loc[extreme, "hardness_GPa"]], rtol=1e-8)
 
     finetune_run(cfg)
-    guarded = read_config(out / "bundle").head("hardness").transform
-    assert guarded is not None and isinstance(guarded.steps[-1], ClipStep)
-    assert guarded.steps[-1].upper == pytest.approx(fitted.transform(train).max())
-    assert np.isfinite(guarded.inverse(np.array([held_out + 10.0]))).all()
+    head = read_config(out / "bundle").head("hardness").transform
+    assert head is not None and not any(isinstance(s, ClipStep) and s.guard for s in head.steps)  # nothing to guard
+    assert np.isfinite(head.inverse(np.array([held_out + 10.0, -50.0]))).all()
+
+
+def test_num_classes_may_be_left_out(bundle: Path, user_data: Path, tmp_path: Path) -> None:
+    """An existing head takes the bundle's class count, a new head counts its labels."""
+    data = pd.read_parquet(user_data)
+    data["grade"] = (["A", "B"] * len(data))[: len(data)]
+    data.to_parquet(user_data)
+    raw = _raw(user_data, bundle, tmp_path / "ft", ["phase", "grade"])
+    for task in raw["tasks"]:
+        task.pop("num_classes", None)
+    raw["tasks"].append({"name": "grade", "kind": "classification", "dataset": "mine", "column": "grade"})
+    cfg = build_finetune_config(raw)
+    counts = {t.name: t.num_classes for t in cfg.catalog.tasks}
+    assert counts["phase"] == 3 and counts["grade"] == 2
+    finetune_run(cfg)
+    derived = load_pretrained(tmp_path / "ft" / "bundle")
+    classes = derived.config.head("grade").classes
+    assert classes is not None and classes.classes == ("A", "B")

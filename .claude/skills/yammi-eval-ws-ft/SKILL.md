@@ -16,7 +16,12 @@ Two complementary probes per checkpoint — always report both, they answer diff
 | **ft** (finetune) | `yammi finetune --config ft.toml --checkpoint <ckpt>` with `freeze_encoder = true` | *representation quality* — the frozen encoder cannot hide damage |
 | scratch baseline | the ws config **without** `--checkpoint` (3 seeds) | the k=0 reference band |
 
-Reference configs: `experiments/rikyu_task_scaling/make_configs.py` (`ws_n*.toml`, `ft.toml`).
+Reference configs (local experiment folder, outside git): `experiments/rikyu_task_scaling/make_configs.py`
+(`ws_n*.toml`, `ft.toml`).
+
+For a **released bundle** instead of a training checkpoint, use `yammi finetune --pretrained` (see the
+yammi-pretrained skill): data in physical units, no `[model]` / scalers, a derived bundle as output.
+New heads there fit Yeo-Johnson with lambda kept in [0, 2] (yammi ≥ 2.1.0) and infer `num_classes`.
 
 ## Config essentials
 
@@ -34,7 +39,7 @@ Reference configs: `experiments/rikyu_task_scaling/make_configs.py` (`ws_n*.toml
 
 ws: standard pretrain outputs (`metrics_table.csv`, final_model.pt — the model used by inverse).
 ft: `training/finetune_summary.json` with `metrics_before` / `metrics_after` per task.
-Collector: `experiments/rikyu_task_scaling/analysis/collect.py` → `scaling.csv`;
+Collector (local): `experiments/rikyu_task_scaling/analysis/collect.py` → `scaling.csv`;
 curves: `analysis/plot_scaling.py`.
 
 ## Execution & scale

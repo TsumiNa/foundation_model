@@ -94,6 +94,37 @@ class FinetuneConfig:
             raise ValueError(f"finetune.tasks references unknown task(s): {unknown}.")
 
 
+def _with_class_counts(raw: Mapping[str, Any], pretrained: str) -> Mapping[str, Any]:
+    """Fill ``num_classes`` of classification tasks that leave it out, when fine-tuning a released bundle.
+
+    An existing head takes the bundle's count (the user's data may not show every class); a new head
+    counts the distinct labels in its column. Explicit values are kept and checked later.
+    """
+    tasks = list(raw.get("tasks", []))
+    if not any(t.get("kind") == "classification" and "num_classes" not in t for t in tasks):
+        return raw
+    from yammi.data.composition_sources import read_data_file
+    from yammi.hub.bundle import read_config
+    from yammi.hub.pretrained import resolve
+
+    heads = {h.name: h for h in read_config(resolve(pretrained)[0]).heads}
+    datasets = raw.get("datasets", {})
+    filled = []
+    for task in tasks:
+        if task.get("kind") == "classification" and "num_classes" not in task:
+            task = dict(task)
+            head = heads.get(task.get("name", ""))
+            if head is not None and head.num_classes:
+                task["num_classes"] = head.num_classes
+            else:
+                path = datasets.get(task.get("dataset", ""), {}).get("path")
+                if path is None or "column" not in task:
+                    raise ValueError(f"Task '{task.get('name')}': give num_classes, or a dataset and column to count.")
+                task["num_classes"] = int(read_data_file(str(path))[task["column"]].dropna().nunique())
+        filled.append(task)
+    return {**raw, "tasks": filled}
+
+
 def build_finetune_config(
     raw: Mapping[str, Any],
     *,
@@ -104,15 +135,16 @@ def build_finetune_config(
     """Normalize a parsed-TOML tree into a :class:`FinetuneConfig`."""
 
     reject_unknown("<root>", raw, _FINETUNE_ROOT_KEYS)
-    catalog = build_task_catalog_config({k: raw[k] for k in _CATALOG_KEYS if k in raw})
-    training = build_training_section(raw.get("training", {}))
-
     ft_raw = dict(raw.get("finetune", {}))
     reject_unknown(
         "finetune", ft_raw, {"checkpoint", "pretrained", "tasks", "epochs", "freeze_encoder", "add_new_tasks"}
     )
-
     resolved_pretrained = pretrained if pretrained is not None else ft_raw.get("pretrained")
+    if resolved_pretrained is not None:
+        raw = _with_class_counts(raw, str(resolved_pretrained))
+    catalog = build_task_catalog_config({k: raw[k] for k in _CATALOG_KEYS if k in raw})
+    training = build_training_section(raw.get("training", {}))
+
     resolved_checkpoint = checkpoint if checkpoint is not None else ft_raw.get("checkpoint")
     if resolved_pretrained is not None:
         if "model" in raw:
@@ -509,6 +541,14 @@ def _fit(model: Any, catalog: TaskCatalog, cfg: FinetuneConfig, rec: RunRecorder
     after: dict[str, dict[str, float]] = {}
     for name in cfg.tasks:
         after[name] = evaluate_task(model, catalog, name, rec, eval_dir, is_new=True, test_keys=test_keys)
+        lost = int(after[name].get("nonfinite", 0) or 0)
+        if lost:
+            # These metrics leave such rows out; a bundle made from this model returns them as NaN (or, with
+            # saturated="clip", as the most extreme training value), so its predictions score lower.
+            logger.warning(
+                f"{name}: {lost} test prediction(s) fall outside the range the head's transform can invert and "
+                "are left out of the metrics above."
+            )
 
     return {
         "epochs_run": trainer.current_epoch,

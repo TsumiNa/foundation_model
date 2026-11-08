@@ -8,6 +8,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import shutil
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -153,6 +154,47 @@ def test_saturated_predictions_warn_and_return_the_bound(bundle: Path) -> None:
     np.testing.assert_allclose(out, np.minimum(raw, cap))
 
 
+def test_past_a_guard_is_nan_by_default_or_the_bound_on_request(bundle: Path) -> None:
+    _set_gap_steps(bundle, [{"kind": "identity"}])
+    raw = load_pretrained(bundle).predict(_COMPS, ["band_gap"])["band_gap"].to_numpy(dtype=float)
+    cap = float(np.sort(raw)[1])
+    _set_gap_steps(bundle, [{"kind": "identity"}, {"kind": "clip", "lower": None, "upper": cap, "guard": True}])
+    with pytest.warns(SaturationWarning, match="are NaN"):
+        out = load_pretrained(bundle).predict(_COMPS, ["band_gap"])["band_gap"].to_numpy(dtype=float)
+    np.testing.assert_array_equal(np.isnan(out), raw > cap)
+    np.testing.assert_allclose(out[raw <= cap], raw[raw <= cap])
+    with pytest.warns(SaturationWarning, match="most extreme training value"):
+        clipped = load_pretrained(bundle).predict(_COMPS, ["band_gap"], saturated="clip")["band_gap"]
+    np.testing.assert_allclose(clipped, np.minimum(raw, cap))
+    with pytest.raises(ValueError, match="saturated must be one of"):
+        load_pretrained(bundle).predict(_COMPS, ["band_gap"], saturated="drop")
+
+
+def test_suite_predict_combines_members_and_skips_out_of_range_ones(bundle: Path) -> None:
+    suite = load_suite(bundle)
+    per = np.stack([m.predict(_COMPS, ["band_gap"])["band_gap"].to_numpy(float) for m in suite])
+    probs = np.mean([m.predict(_COMPS, ["phase"], probabilities=True).filter(like="phase:").to_numpy(float)
+                     for m in suite], axis=0)  # fmt: skip
+    combined = load_suite(bundle).predict(_COMPS, ["band_gap", "phase"], probabilities=True)
+    np.testing.assert_allclose(combined["band_gap"], np.median(per, axis=0))
+    np.testing.assert_allclose(combined["band_gap:std"], per.std(axis=0))
+    classes = ["insulator", "metal", "semiconductor"]
+    assert list(combined["phase"]) == [classes[i] for i in probs.argmax(axis=1)]
+    assert combined.attrs["members"] == ["m000", "m001", "m002"]
+
+    # A guard below some members' outputs: those members drop out of the median on that row only.
+    _set_gap_steps(bundle, [{"kind": "identity"}])
+    per = np.stack([m.predict(_COMPS, ["band_gap"])["band_gap"].to_numpy(float) for m in load_suite(bundle)])
+    cap = float(np.median(per))
+    _set_gap_steps(bundle, [{"kind": "identity"}, {"kind": "clip", "lower": None, "upper": cap, "guard": True}])
+    with pytest.warns(SaturationWarning, match="left out of the median"):
+        got = load_suite(bundle).predict(_COMPS, ["band_gap"])["band_gap"].to_numpy(float)
+    kept = np.where(per <= cap, per, np.nan)
+    with np.errstate(invalid="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        np.testing.assert_allclose(got, np.nanmedian(kept, axis=0))
+
+
 def test_uninvertible_predictions_warn_instead_of_silent_nan(bundle: Path) -> None:
     # A bundle exported before 1.0.1: Yeo-Johnson lambda = -1 and no guard. Its inverse is defined only
     # below z = 1, i.e. below a training-scale value of 1 - 1000, which every prediction exceeds.
@@ -232,7 +274,18 @@ def test_fm_predict_pretrained_cli(bundle: Path, tmp_path: Path) -> None:
     assert list(table["composition"]) == _COMPS and "phase:metal" in table.columns
     assert (out / "seebeck_curve.csv").exists() and (out / "dos_curve.csv").exists()
     info = json.loads((out / "prediction_info.json").read_text())
-    assert info["member"] == "m000" and info["license"] == "cc-by-nc-sa-4.0" and info["units"]["dos"] == "shape"
+    # No "#member": every member is combined, with a spread column.
+    assert info["members"] == ["m000", "m001", "m002"] and info["combined"]
+    assert info["license"] == "cc-by-nc-sa-4.0" and info["units"]["dos"] == "shape"
+    assert "band_gap:std" in table.columns and "seebeck:std" in pd.read_csv(out / "seebeck_curve.csv").columns
+
+    one = tmp_path / "pred_one"
+    result = runner.invoke(main, ["predict", "--pretrained", f"{bundle}#m001", "--compositions", "Fe2 Al3",
+                                  "--tasks", "band_gap", "--output-dir", str(one)])  # fmt: skip
+    assert result.exit_code == 0, result.output
+    info = json.loads((one / "prediction_info.json").read_text())
+    assert info["members"] == ["m001"] and info["combined"] is None
+    assert list(pd.read_csv(one / "predictions.csv").columns) == ["composition", "band_gap"]
 
     result = runner.invoke(main, ["predict", "--pretrained", str(bundle), "--compositions", "Fe2 Al3",
                                   "--output-dir", str(out), "--checkpoint", "x.pt"])  # fmt: skip
@@ -288,3 +341,33 @@ def test_offline_and_not_cached_says_so(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(huggingface_hub, "snapshot_download", missing)
     with pytest.raises(BundleError, match="not in the local cache"):
         pretrained_mod._commit("owner/fm", "v1", None)
+
+
+@pytest.mark.parametrize(
+    ("error", "says"),
+    [
+        ("GatedRepoError", "is gated: request access on https://huggingface.co/owner/fm"),
+        ("RevisionNotFoundError", "has no revision 'v9'"),
+        ("RepositoryNotFoundError", "no model repository owner/fm"),
+    ],
+)
+def test_hub_access_errors_say_what_to_do(
+    error: str, says: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+    import huggingface_hub
+    from huggingface_hub import errors
+
+    response = httpx.Response(404, request=httpx.Request("GET", "https://huggingface.co/api/models/owner/fm"))
+    exc = getattr(errors, error)("hub said no", response=response)
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise exc
+
+    monkeypatch.setattr(huggingface_hub.HfApi, "model_info", fail)
+    monkeypatch.setattr(huggingface_hub.HfApi, "list_repo_refs", fail)
+    with pytest.raises(BundleError, match=says):
+        pretrained_mod._commit("owner/fm", "v9", None)
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fail)
+    with pytest.raises(BundleError, match=says):
+        pretrained_mod._snapshot("owner/fm", "v9", ["config.json"], None, tmp_path)

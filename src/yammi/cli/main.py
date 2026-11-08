@@ -448,12 +448,20 @@ def _predict_pretrained(
     if not comps:
         raise click.UsageError("--pretrained needs --compositions and/or --compositions-file.")
 
-    model = load_pretrained(source)
-    wanted = [t.strip() for t in tasks.split(",")] if tasks else model.tasks
-    heads = {h.name: h for h in model.heads}
+    from yammi.hub import load_suite
+    from yammi.hub.pretrained import parse_source
+
+    # No "#member": combine every member (median of in-range members, plus a :std column). The suite's
+    # spread is an uncertainty, and the combination was more accurate than one member on most heads.
+    suite = load_suite(source) if parse_source(source).member is None else None
+    combine = suite is not None and len(suite) > 1
+    first = suite[suite.member_ids[0]] if suite is not None and combine else load_pretrained(source)
+    model: Any = suite if combine else first
+    wanted = [t.strip() for t in tasks.split(",")] if tasks else first.tasks
+    heads = {h.name: h for h in first.heads}
     unknown = [t for t in wanted if t not in heads]
     if unknown:
-        raise click.UsageError(f"unknown task(s) {unknown}; the bundle has {model.tasks}.")
+        raise click.UsageError(f"unknown task(s) {unknown}; the bundle has {first.tasks}.")
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     scalar = [t for t in wanted if heads[t].kind != "kernel_regression"]
@@ -464,16 +472,21 @@ def _predict_pretrained(
     for task in (t for t in wanted if heads[t].kind == "kernel_regression"):
         model.predict_curve(comps, task).to_csv(out / f"{task}_curve.csv", index=False)
         written.append(f"{task}_curve.csv")
+    members = suite.member_ids if suite is not None and combine else [first.member.id]
     info = {
         "source": source,
-        "member": model.member.id,
-        "license": model.license,
-        "fm_version": model.config.fm_version,
-        "units": {t: model.units()[t] for t in wanted},
+        "members": members,
+        "combined": "median of the members whose output stays in range; <task>:std is their spread"
+        if combine
+        else None,
+        "license": first.license,
+        "fm_version": first.config.fm_version,
+        "units": {t: first.units()[t] for t in wanted},
         "files": written,
     }
     (out / "prediction_info.json").write_text(json.dumps(info, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    click.echo(f"wrote {', '.join(written)} to {out} (member {model.member.id}, licence {model.license})")
+    who = f"{len(members)} members combined" if combine else f"member {members[0]}"
+    click.echo(f"wrote {', '.join(written)} to {out} ({who}, licence {first.license})")
 
 
 _EXPORT_CATALOG_KEYS = ("data", "descriptor", "datasets", "tasks")

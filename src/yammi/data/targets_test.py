@@ -199,7 +199,11 @@ def test_fit_default_equals_the_sklearn_recipe_and_ignores_nan() -> None:
     with_nan = np.concatenate([x, [np.nan, np.inf]])
     fitted = fit_default(with_nan)
     pipe = make_pipeline(StandardScaler(), PowerTransformer(method="yeo-johnson")).fit(x.reshape(-1, 1))
-    np.testing.assert_allclose(fitted.transform(x), pipe.transform(x.reshape(-1, 1)).ravel(), rtol=0, atol=TOL)
+    lam = float(pipe[-1].lambdas_[0])
+    if 0.0 <= lam <= 2.0:  # the sklearn recipe as is; outside [0, 2] lmbda is clamped (test below)
+        np.testing.assert_allclose(fitted.transform(x), pipe.transform(x.reshape(-1, 1)).ravel(), rtol=0, atol=TOL)
+    else:
+        assert next(st for st in fitted.steps if isinstance(st, PowerTransformerStep)).lmbda in (0.0, 2.0)
     with pytest.raises(ValueError, match="at least 2"):
         fit_default([1.0, np.nan])
 
@@ -272,7 +276,9 @@ def test_power_transformer_image_is_where_the_inverse_is_defined(
 def test_guard_saturates_at_the_training_range_on_the_bounded_side_only() -> None:
     rng = np.random.default_rng(1)
     heavy = rng.lognormal(0.0, 2.0, 2000)  # heavy right tail: the fitted Yeo-Johnson lambda is negative
-    t = fit_default(heavy)
+    # The sklearn recipe itself (fit_default would clamp lambda): bundles fitted elsewhere keep such transforms.
+    t = from_sklearn(make_pipeline(StandardScaler(), PowerTransformer(method="yeo-johnson")).fit(heavy.reshape(-1, 1)))
+    assert isinstance(t, TargetTransform)
     assert np.isfinite(t.inverse_domain()[1]) and not np.isfinite(t.inverse_domain()[0])
     scaled = t.transform(heavy)
     with np.errstate(all="ignore"):
@@ -322,8 +328,10 @@ def test_domain_keeps_bounds_from_earlier_steps() -> None:
 
 
 def test_strip_removes_only_a_guard() -> None:
-    t = fit_default(np.random.default_rng(2).lognormal(0.0, 2.0, 500))
-    g = guard_inverse_domain(t, t.transform(np.random.default_rng(2).lognormal(0.0, 2.0, 500)))
+    heavy = np.random.default_rng(2).lognormal(0.0, 2.0, 500)
+    t = from_sklearn(make_pipeline(StandardScaler(), PowerTransformer(method="yeo-johnson")).fit(heavy.reshape(-1, 1)))
+    assert isinstance(t, TargetTransform)
+    g = guard_inverse_domain(t, t.transform(heavy))
     assert g is not t and strip_inverse_guard(g) == t
     assert strip_inverse_guard(t) is t
     phonix = TargetTransform((Log1pStep(clip_lower=0.0), StandardScalerStep(mean=1.0, scale=2.0), ClipStep(upper=5.0)))
@@ -346,3 +354,23 @@ def test_guard_flag_serialises_only_when_set() -> None:
     assert TargetTransform.from_dict(marked.to_dict()) == marked
     v1 = TargetTransform.from_dict({"steps": [{"kind": "clip", "lower": None, "upper": 1.0}]})
     assert v1.steps[0] == ClipStep(upper=1.0) and not v1.steps[0].guard  # type: ignore[union-attr]
+
+
+def test_fit_default_keeps_yeo_johnson_invertible_everywhere() -> None:
+    """A zero-inflated target would fit lmbda < 0 (a bounded, steep inverse); the default clamps it."""
+    rng = np.random.default_rng(0)
+    x = np.where(rng.random(5000) < 0.72, 0.0, rng.gamma(2.0, 150.0, 5000))
+    from sklearn.pipeline import make_pipeline  # type: ignore[import-untyped]
+    from sklearn.preprocessing import PowerTransformer, StandardScaler  # type: ignore[import-untyped]
+
+    raw = make_pipeline(StandardScaler(), PowerTransformer(method="yeo-johnson")).fit(x.reshape(-1, 1))
+    assert raw[-1].lambdas_[0] < 0  # the case being fixed
+    fitted = fit_default(x)
+    power = next(s for s in fitted.steps if isinstance(s, PowerTransformerStep))
+    assert 0.0 <= power.lmbda <= 2.0
+    z = fitted.transform(x)
+    assert abs(z.mean()) < 1e-9 and abs(z.std() - 1) < 1e-9
+    np.testing.assert_allclose(fitted.inverse(z), x, atol=1e-8)
+    assert np.isfinite(fitted.inverse(np.array([-50.0, 50.0]))).all()
+    lo, hi = fitted.inverse_domain()
+    assert lo == -np.inf and hi == np.inf

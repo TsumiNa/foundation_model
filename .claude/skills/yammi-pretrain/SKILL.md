@@ -37,7 +37,7 @@ yammi finetune --config <exp>/configs/consolidate.toml \
 ```
 
 The consolidation config = same catalog + `[finetune]` with all task heads listed,
-`freeze_encoder = false`, masking 1.0 (reference: `experiments/replay_epoch_sweep/configs/
+`freeze_encoder = false`, masking 1.0 (reference, local experiment folder: `experiments/replay_epoch_sweep/configs/
 joint_retrain_full24.toml`). From a healthy replay run it early-stops far below the cap
 (measured: 76 epochs) and mainly benefits big tasks. `yammi finetune` has **no --resume** — give
 it walltime once.
@@ -75,6 +75,21 @@ configs untouched (`--set 'pretrain.replay.resample="epoch"'` etc.).
   its own introduction; the consolidation pass is what closes the remaining big-task gap.
 - Multi-task co-training gave NO net transfer benefit on this task set; don't promise transfer.
 - material_type (classification) is insensitive to replay settings (±0.005) — not a tuning target.
+
+## Release suites (measured on v1, 2026-11-08: 41 tasks, 10 members)
+
+- Members that differ only in task order: `run_seed = "fixed"` (one training seed for all) and
+  `task_order = "random"` with `task_order_seed = <base + i>` per member; pin the expensive curve tasks
+  to a final block with `task_order_groups`. `class_weights = "none"` on classification heads.
+- Cost: 41 steps + consolidation at PACK=5 on 2 GB200 took ~19 h wall (37.8 GPU-h); curve steps ~1–2 h
+  each. The 24-task PACK=6 numbers above overestimate this by ~5×.
+- Consolidation (full-model fine-tune at the end) gave nothing on 41 tasks (mean R² 0.666 → 0.664);
+  it still is the released model. Keep training configs **scaler-free** (per-step metrics stay in the
+  normalised space) and put scalers only in the export config.
+- Export: `yammi export --config export.toml --run <member run>... --license <id> --out <bundle>`;
+  bounded inverse transforms get guards at the training range (schema 2). Publish with
+  `yammi publish <bundle> --repo owner/name --tag vX --visibility gated --card-extra <md>`; the card
+  can carry extra sections (data sources, the held-out accuracy table).
 
 ## Outputs
 
