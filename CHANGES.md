@@ -1,5 +1,13 @@
 # Recent Updates
 
+## 2026-11-08 (1.0.2 — gated model cards upload; install line)
+
+- `fm publish --visibility gated` was refused by the Hub: the licence checkbox put the licence id
+  (`cc-by-nc-sa-4.0`) in a metadata key, and the Hub rejects keys containing "." or "$". The checkbox now
+  reads "I accept the licence terms stated above"; the gating prompt above it names the licence.
+- The model card, README and `docs/pretrained_models.md` said `pip install 'foundation-model[hub]'`, which
+  installs an unrelated PyPI project of that name. They now install from the GitHub repository.
+
 ## 2026-11-08 (1.0.1 — predictions past a transform's range; local member selection)
 
 - **No more silent NaN.** A Yeo-Johnson step with λ < 0 (or > 2), and any Box-Cox step, has an inverse that

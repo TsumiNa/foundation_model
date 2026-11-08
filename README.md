@@ -7,7 +7,7 @@ gradient-based inverse design on top of the trained checkpoint.
 your own data, or run inverse design:
 
 ```bash
-pip install 'foundation-model[hub]'
+pip install 'foundation-model[hub] @ git+https://github.com/TsumiNa/foundation_model'   # not on PyPI: that name is another project
 fm predict --pretrained TsumiNa/fm@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
 ```
 
