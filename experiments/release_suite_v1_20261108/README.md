@@ -71,6 +71,20 @@ saturate with a `SaturationWarning`. The published bundle is exported with the 1
 - 2026-11-08: 1.0.1 merged (#111); the 1.0.0 export job 297121 cancelled. Smoke export check on container
   1.0.1 (297514) passed: schema 2, 15 guarded heads, no NaN. Final export 297515 (container 1.0.1,
   `members/bundle_v101`) waits on 297120.
+- 2026-11-08: training 297120 completed, 00:58 → 20:06 JST (array tasks 18 h 39 min and 19 h 08 min).
+  Export 297515 passed in 1 min (10 members, no NaN, 15 guarded heads). Compute: 37.8 GPU-h on GB200,
+  about 11,400 JPY before tax at 300 JPY/GPU-h. The 4–5 day estimate was far too high: the seven curve
+  steps took about 1–2 h each, not the much longer times assumed.
+- 2026-11-08: consolidation (fm finetune, full model) early-stopped at 26–46 epochs and did not help.
+  Mean test primary metric over 10 members, before → after: regression R² 0.666 → 0.664 (per member
+  −0.009 … +0.004; 6 lower, 2 higher, 2 equal), classification 0.802 → 0.800. The released bundle holds
+  the consolidated models, as planned.
+- 2026-11-08: published to `TsumiNa/fm` (gated, tag v1.0.0). The first upload was refused: the Hub
+  rejects metadata keys containing ".", and the licence checkbox key held `cc-by-nc-sa-4.0`. The card's
+  `pip install 'foundation-model[hub]'` would also install an unrelated PyPI project. Both fixed in
+  1.0.2 (PR #112); card regenerated from that branch, v1.0.0 re-tagged on the corrected card. Verified:
+  a fresh-cache download matches the local bundle bit for bit (default member and `#m004`), and a clean
+  venv installed from GitHub predicts scalars and curves from `TsumiNa/fm@v1.0.0`.
 
 ## Plan: the remaining 23 tasks (not started)
 
