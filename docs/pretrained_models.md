@@ -32,6 +32,25 @@ A *source* is a local bundle directory, optionally `<dir>#member`, or a Hub repo
 
 ## Predict
 
+**Recommended: all members combined.** A release holds several members that differ only in the order in
+which pretraining met the tasks. Combined, they are more accurate than one member (higher held-out R² on
+27 of 29 regression heads of v1), and their spread is an uncertainty:
+
+```python
+from yammi.hub import load_suite
+
+suite = load_suite("TsumiNa/yammi@v1.0.0")
+suite.predict(["Fe2O3", "NaCl"], ["band_gap", "is_metal"])   # band_gap, band_gap:std, is_metal
+suite.predict_curve(["Bi2Te3"], "zt", t=[300, 400, 500])     # composition, T, zt, zt:std
+```
+
+Regression: the mean of the members whose output stays in range, and `<task>:std` across them.
+Classification: the class with the highest mean probability (`probabilities=True` adds the mean
+`<task>:<class>` columns). `yammi predict --pretrained owner/name` does this by default; add `#m003` for
+one member. The model card's accuracy table lists the held-out R² / accuracy of every head.
+
+One member:
+
 ```python
 from yammi.hub import load_pretrained
 
@@ -53,10 +72,12 @@ model.predict_curve(["Bi2Te3", "PbTe"], "seebeck", t=[[300, 350], [400, 450, 500
   The prediction itself is not renormalised, so its peak is near but not exactly 1.
 - **Extrapolation.** A curve head knows the `t` range it was trained on (`model.config.head(name).t_range`).
   Points outside that range raise `ExtrapolationWarning` but are still predicted.
-- **Saturation.** Some heads' transforms cannot be inverted past the training range (a Yeo-Johnson
-  λ < 0 maps every physical value below a bound). For those heads a prediction past the training range
-  comes back as the most extreme training value and raises `SaturationWarning`; the bundle marks them
-  with a final `clip` step (`model.config.head(name).transform.saturates`).
+- **Out of range → NaN.** Some heads' transforms cannot be inverted past the training range (a
+  Yeo-Johnson λ < 0 maps every physical value below a bound); the bundle marks them with a final
+  `clip` step with `guard: true`. A single member returns a prediction past that range as **NaN** and
+  raises `SaturationWarning`. `saturated="clip"` returns the most extreme training value instead, but
+  on v1's test split those values were almost always far off (one head's R² fell from 0.25 to −24
+  when they were kept). The combined prediction leaves out only the members that are out of range.
 - **Inputs.** Compositions are formula strings (`"Fe2O3"`, `"Fe0.5 Ni0.5"`). Anything the KMD descriptor
   cannot parse raises an error that names the composition. `model.latent(compositions)` gives the shared
   latent vectors.
@@ -66,13 +87,14 @@ Command line, with no config needed:
 ```bash
 yammi predict --pretrained TsumiNa/yammi@v1.0.0 \
     --compositions "Fe2O3,NaCl" --compositions-file more.txt --output-dir pred/
-# → predictions.csv, <task>_curve.csv per curve head, prediction_info.json (member, licence, units)
+# → predictions.csv (with <task>:std), <task>_curve.csv per curve head,
+#   prediction_info.json (members, licence, units). Add "#m003" to the source for one member.
 ```
 
-### Suites
+### Members one by one
 
-A release can hold many members (up to ~100) that differ only in the order in which pretraining met the
-tasks. They are interchangeable, so the first *k* are a random sample:
+A release can hold many members (up to ~100). They are interchangeable, so the first *k* are a random
+sample:
 
 ```python
 from yammi.hub import load_suite
@@ -128,7 +150,10 @@ yammi finetune --config my_finetune.toml
 - **Existing heads** use the bundle's own transform, so their outputs stay in the same units. A
   classification head accepts labels as the bundle's class names. A shape-only head normalises each of
   your curves the same way it was trained.
-- **New heads** fit `StandardScaler → PowerTransformer(yeo-johnson)` on your training split and store it.
+- **New heads** fit `StandardScaler → PowerTransformer(yeo-johnson)` on your training split and store it,
+  with λ kept in [0, 2] so that every prediction can be inverted (outside it, a zero-inflated target
+  saturated 7 % of its test predictions). A new classification head takes its class names from the
+  labels; `num_classes` may be left out (an existing head takes the bundle's count).
 - **Output.** `runs/my_finetune/bundle` is a new bundle. Load it with `load_pretrained` like any other.
   It keeps the source licence and records where it came from (`provenance.derived_from`).
 - **Not available.** Replaying the pretraining data (rehearsal) is impossible: the data are not

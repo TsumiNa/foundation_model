@@ -459,7 +459,30 @@ def fit_default(train_values: Any) -> TargetTransform:
     pipe.fit(x.reshape(-1, 1))
     result = from_sklearn(pipe)
     assert isinstance(result, TargetTransform)
-    return result
+    return _invertible_everywhere(result, x)
+
+
+def _invertible_everywhere(transform: TargetTransform, train_values: np.ndarray) -> TargetTransform:
+    """Keep a fitted Yeo-Johnson ``lmbda`` in [0, 2], where its inverse has no bound.
+
+    Outside that interval the inverse ends at a finite value near the training extreme and is very steep
+    before it. A head trained on such a scale turns small output errors into very large physical ones,
+    and outputs past the end cannot be expressed at all: measured on a zero-inflated target (72 % zeros,
+    lmbda = -3.0), 7 % of test predictions saturated and R² fell from 0.39 to -2.4. The nearest admissible
+    lmbda is used and the standardisation refitted on the training values.
+    """
+    steps = list(transform.steps)
+    for i, step in enumerate(steps):
+        if isinstance(step, PowerTransformerStep) and step.method == "yeo-johnson" and not 0.0 <= step.lmbda <= 2.0:
+            before = TargetTransform(tuple(steps[:i])).transform(train_values)
+            lam = min(max(step.lmbda, 0.0), 2.0)
+            plain = PowerTransformerStep(method="yeo-johnson", lmbda=lam, standardize=False)
+            z = plain.forward(before)
+            scale = float(np.std(z)) or 1.0
+            steps[i] = PowerTransformerStep(
+                method="yeo-johnson", lmbda=lam, standardize=step.standardize, mean=float(np.mean(z)), scale=scale
+            )
+    return TargetTransform(tuple(steps))
 
 
 def _map_interval(step: Step, lo: float, hi: float) -> tuple[float, float]:

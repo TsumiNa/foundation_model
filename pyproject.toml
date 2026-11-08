@@ -1,6 +1,6 @@
 [project]
 name = "yammi"
-version = "2.0.1"
+version = "2.1.0"
 description = "YAMMI — Yet Another Materials Model, Inverse-ready: multi-task property prediction and inverse design from chemical composition"
 readme = "README.md"
 authors = [{ name = "TsumiNa", email = "liu.chang.1865@gmail.com" }]

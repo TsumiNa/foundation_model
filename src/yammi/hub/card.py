@@ -217,12 +217,23 @@ def render_card(
         "```",
         "",
         "```python",
-        "from yammi.hub import load_pretrained",
+        "from yammi.hub import load_pretrained, load_suite",
         "",
-        f'model = load_pretrained("{repo}")          # default member; "{repo}#m001" for another',
-        f'model.predict(["Fe2O3", "NaCl"], tasks={scalar!r})',
     ]
-    if curve is not None:
+    if n > 1:
+        lines += [
+            f'suite = load_suite("{repo}")   # all {n} members, combined: mean of in-range members + ":std"',
+            f'suite.predict(["Fe2O3", "NaCl"], tasks={scalar!r})',
+        ]
+        if curve is not None:
+            lines.append(
+                f'suite.predict_curve(["Bi2Te3"], "{curve.name}")   # on the default {curve.t_name or "t"} grid'
+            )
+        lines += ["", f'model = load_pretrained("{repo}#m001")   # one member (default: {manifest.default})']
+    else:
+        lines.append(f'model = load_pretrained("{repo}")')
+    lines.append(f'model.predict(["Fe2O3", "NaCl"], tasks={scalar!r})')
+    if curve is not None and n == 1:
         lines.append(f'model.predict_curve(["Bi2Te3"], "{curve.name}")   # on the default {curve.t_name or "t"} grid')
     lines += [
         "```",
@@ -230,13 +241,26 @@ def render_card(
         "Command line (the same subcommands inside the container):",
         "",
         "```bash",
-        f'yammi predict  --pretrained {repo} --compositions "Fe2O3,NaCl" --output-dir pred/',
+        f'yammi predict  --pretrained {repo} --compositions "Fe2O3,NaCl" --output-dir pred/'
+        + ("   # members combined; #m001 for one" if n > 1 else ""),
         f"yammi finetune --pretrained {repo} --config my_tasks.toml   # your tasks only, physical units",
         f"yammi inverse  --pretrained {repo} --config design.toml     # targets in physical units",
         "```",
         "",
         "Fine-tuning adds new heads or adapts existing ones on your own data. No pretraining data are released, "
         "so post-training that replays them (rehearsal) is not possible.",
+        "",
+        "**With an AI coding agent.** The repository ships an agent skill, `yammi-pretrained`, with these "
+        "commands, the input and output conventions, and the pitfalls. Install it where your agent reads skills, "
+        "for example for Claude Code:",
+        "",
+        "```bash",
+        "git clone --depth 1 https://github.com/TsumiNa/yammi /tmp/yammi",
+        "cp -r /tmp/yammi/.claude/skills/yammi-pretrained ~/.claude/skills/   # or <project>/.claude/skills/",
+        "```",
+        "",
+        "Agents that read `.agents/skills/` (Codex and others) take the same folder from `.agents/skills/`. "
+        "Without a skill, point the agent at `docs/pretrained_models.md` in the repository.",
         "",
         "## Limitations",
         "",
@@ -245,8 +269,13 @@ def render_card(
         "that depend on it, such as cell volume or moment per formula unit, carry that caveat.",
         "- Curve heads are trained on the listed `t` ranges. Outside them, `predict_curve` warns that it is "
         "extrapolating.",
-        "- Where a head's target transform cannot be inverted past the training range, a prediction beyond it "
-        "comes back as the most extreme training value, with a `SaturationWarning`.",
+        "- Some heads' target transforms cannot be inverted past the training range. A single member returns "
+        'such a prediction as NaN with a `SaturationWarning` (`saturated="clip"` gives the most extreme '
+        "training value instead); the combined prediction uses the members that stay in range.",
+        "- Elements absent from the training data (for example noble gases in most compounds) get predictions "
+        "without any warning; treat them as unreliable.",
+        "- Regression heads are unbounded: a quantity that cannot be negative (band gap, moduli) can come out "
+        "slightly below zero.",
         "",
         "## Licence",
         "",

@@ -28,10 +28,26 @@ pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'
 ```
 
 ```python
-from yammi.hub import load_pretrained
-model = load_pretrained("TsumiNa/yammi@v1.0.0")
-model.predict(["Fe2O3", "NaCl"], tasks=["band_gap", "is_metal"])
+from yammi.hub import load_suite
+suite = load_suite("TsumiNa/yammi@v1.0.0")          # all members, combined; <task>:std is their spread
+suite.predict(["Fe2O3", "NaCl"], tasks=["band_gap", "is_metal"])
 ```
+
+`yammi predict` combines the members by default too (`#m003` after the source picks one). The model card
+on the Hub lists the held-out accuracy of every head.
+
+**With an AI coding agent.** `.claude/skills/yammi-pretrained` (and the same folder under `.agents/skills/`
+for Codex and other agents) teaches an agent these commands, the conventions and the pitfalls. Copy it
+to where your agent reads skills, for example `~/.claude/skills/` or `<project>/.claude/skills/`:
+
+```bash
+git clone --depth 1 https://github.com/TsumiNa/yammi /tmp/yammi
+cp -r /tmp/yammi/.claude/skills/yammi-pretrained ~/.claude/skills/
+```
+
+Inside this repository the skills are already in place: `yammi-pretrained` for released models, and
+`yammi-pretrain`, `yammi-eval-ws-ft`, `yammi-inverse`, `hpc-training-env` and `experiment-layout` for
+training and research.
 
 Container details (token, cache, offline compute nodes): [docs/container.md](docs/container.md). See
 [docs/pretrained_models.md](docs/pretrained_models.md). It covers fine-tuning (`yammi finetune

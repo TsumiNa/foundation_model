@@ -116,7 +116,7 @@ One entry per prediction head. At least one is required; names must be unique.
 | `dataset` | str | — | must match a `[datasets.<name>]` | Which dataset supplies this task's column(s). |
 | `column` | str | — | required | Target column. |
 | `t_column` | str | `None` | required iff `kind = kernel_regression`; forbidden otherwise | The sequence x-axis column (e.g. energies for DOS, temperatures for ZT). |
-| `num_classes` | int | `None` | required iff `kind = classification`, `>= 2`; forbidden otherwise | Number of classes. |
+| `num_classes` | int | `None` | required iff `kind = classification` (may be left out when fine-tuning a released bundle), `>= 2`; forbidden otherwise | Number of classes. Fine-tuning a bundle infers it when omitted: an existing head takes the bundle's count, a new head counts its string labels or takes `max index + 1` for integer labels. |
 | `class_weights` | str | `"balanced"` (classification) | `"balanced"` \| `"none"`; classification only — setting it on another kind raises | Per-class weights in the cross-entropy: `"balanced"` = inverse class frequency `N / (num_classes · N_c)` computed on the training split (the historical default), `"none"` = unweighted. Prefer `"none"` for heads with many classes, where the weights trade top-1 accuracy for rare classes that are not learnable anyway. |
 | `lr` | float | `None` | `> 0` | Per-task learning-rate override (else `[training]`'s LR for this head's kind). |
 | `weight_decay` | float | `None` | `>= 0` | Per-task weight-decay override (else `[training]`'s weight decay for this head's kind). |
@@ -379,7 +379,7 @@ finetune/inverse/predict consume. Enable to *also* emit Lightning `.ckpt` files.
 **Fine-tuning a released bundle** (`pretrained`): the bundle supplies the architecture and every existing
 head. The catalog lists only **your** tasks, with data in **physical units** and no `[tasks.scaler]`.
 
-- **Existing heads** (same task name as in the bundle; the kind and `num_classes` must match) use the bundle's
+- **Existing heads** (same task name as in the bundle; the kind and, if given, `num_classes` must match) use the bundle's
   target transform. Shape-only heads get the per-row max-abs normalisation. Classification labels may be
   given as the bundle's class names.
   - Units are **not converted**: give data in the head's units. A different `unit` / `t_unit` is an error,
@@ -387,8 +387,10 @@ head. The catalog lists only **your** tasks, with data in **physical units** and
   - `output_scale` is inherited when omitted.
   - Per-task `lr` / `weight_decay` apply as for new heads.
   - A fine-tuned curve head's `t` range and default grid are widened to cover your training `t`.
-- **New heads** fit `StandardScaler → PowerTransformer(yeo-johnson)` on their training split. A new
-  classification head takes its class names from string labels, or `"0"…"n-1"` for integer labels. A new
+- **New heads** fit `StandardScaler → PowerTransformer(yeo-johnson)` on their training split, with λ kept
+  in [0, 2] so that every prediction can be inverted. A new
+  classification head takes its class names from string labels (over every labelled row, not only the
+  training split), or `"0"…"n-1"` for integer labels; `num_classes` may be left out. A new
   curve head may set `output_scale = "shape"`.
 - **Outputs.** Besides `training/final_model.pt`, the run writes `<output>/bundle`. That derived bundle keeps
   the source licence (ShareAlike licences cannot change) and records `derived_from` (source, revision,

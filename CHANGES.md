@@ -1,5 +1,34 @@
 # Recent Updates
 
+## 2026-11-09 (2.1.0 — findings from testing the released models)
+
+Tested `TsumiNa/yammi@v1.0.0` as outside users would: input formats, every head and member, curve grids,
+error paths, CLI vs API, fine-tuning on three unseen tasks and a new classification head, inverse design,
+offline use. Fixes:
+
+- **Out-of-range predictions are NaN, not the training extreme.** For heads whose inverse is bounded
+  (15 of v1's 41), 0.4–3.6 % of held-out predictions per member landed past the bound and came back as
+  the most extreme training value, which was almost always far off (`total_magnetization` R² 0.25 → −24).
+  `predict` / `predict_curve` now return NaN there with a `SaturationWarning`; `saturated="clip"` keeps
+  the old behaviour.
+- **Combined predictions.** `Suite.predict` / `Suite.predict_curve`: mean of the members that stay in
+  range, plus `<task>:std` (member spread). It had a higher held-out R² than the default member on 27 of 29
+  regression heads. `yammi predict --pretrained owner/name` combines all members unless `#member` is given
+  (`prediction_info.json` adds `members` and `combined`; `member` is null when members are combined).
+- **New heads fine-tuned from a bundle stay invertible.** `fit_default` keeps Yeo-Johnson λ in [0, 2].
+  A zero-inflated target (HEA Curie temperature, 72 % zeros) had fitted λ = −3: test R² −2.4, now 0.82.
+  The fine-tune log warns when its metrics leave out non-finite predictions.
+- **`num_classes` may be left out** for classification tasks when fine-tuning a bundle: an existing head
+  takes the bundle's count, a new head counts its labels (it failed before).
+- **`PretrainedModel.derived_from()`** reports where a derived bundle came from (None for an original). It
+  used to describe the model itself.
+- **Clear Hub errors**: gated repository without access, unknown revision (lists the release tags), unknown
+  or private repository — instead of raw 401/404 errors with request ids.
+- Model card: the combined usage first, an "Accuracy on held-out compositions" section (via
+  `--card-extra`), limitations for unseen elements and unbounded heads, and how to install the agent skill.
+- New skill `yammi-pretrained` (`.claude/skills`, `.agents/skills`) for using released models; the other
+  skills point to it and note the 2.x behaviour. README: how to give the skill to an agent.
+
 ## 2026-11-08 (2.0.1 — one multi-arch image; the container is the default way in; offline loading)
 
 - `ghcr.io/tsumina/yammi:<version>` / `:latest` / `:sha-<sha>` now hold both `linux/amd64` and
