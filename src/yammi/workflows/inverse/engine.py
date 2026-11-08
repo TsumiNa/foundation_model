@@ -58,9 +58,10 @@ def run(
             assert cfg.pretrained_root is not None  # set by build_inverse_config with the converted targets
             model, bundle_config, _ = load_member(cfg.pretrained_root, cfg.pretrained_member)
             transforms = {h.name: h.transform for h in bundle_config.heads if h.transform is not None}
+            units = {h.name: h.unit for h in bundle_config.heads}
         else:
             model, _ = rebuild_model(cfg, catalog)
-            transforms = {}
+            transforms, units = {}, {}
         _validate_heads(model, cfg)
         device = resolve_device(cfg.accelerator)
         model.to(device)
@@ -82,7 +83,9 @@ def run(
         all_summary: dict[str, Any] = {}
         for scenario in scenarios:
             logger.info(f"=== scenario '{scenario.name}' ({len(cfg.paths)} paths) ===")
-            summary = _run_scenario(cfg, catalog, model, scenario, seeds, x_seed, rec, transforms=transforms)
+            summary = _run_scenario(
+                cfg, catalog, model, scenario, seeds, x_seed, rec, transforms=transforms, units=units
+            )
             all_summary[scenario.name] = summary
 
         (rec.paths.root / "inverse_design.json").write_text(json.dumps(all_summary, indent=2), encoding="utf-8")
@@ -113,6 +116,7 @@ def _run_scenario(
     rec: RunRecorder,
     *,
     transforms: Mapping[str, Any] | None = None,
+    units: Mapping[str, str | None] | None = None,
 ) -> list[dict[str, Any]]:
     """``transforms`` (bundle runs) map each regression channel back to physical units in the reports."""
     sc_dir = rec.paths.root / scenario.name
@@ -209,7 +213,7 @@ def _run_scenario(
     )
     (sc_dir / "targets.json").write_text(json.dumps(target_dump, indent=2), encoding="utf-8")
     (sc_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    write_scenario_md(sc_dir, scenario, summary)
+    write_scenario_md(sc_dir, scenario, summary, physical=cfg.physical_targets.get(scenario.name), units=units)
 
     # figures
     rel = scenario.name

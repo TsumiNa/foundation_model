@@ -85,6 +85,13 @@ def test_bundle_path_equals_catalog_path_after_unit_conversion(
         assert "band_gap_after_mean_physical" in row_a and "band_gap_after_mean_physical" not in row_b
     scenario = json.loads((tmp_path / "a" / "s" / "scenario.json").read_text())
     assert scenario["pretrained"] == str(bundle) and scenario["targets_physical"][1]["classes"] == ["metal"]
+    # The bundle run's report shows the targets as written (eV, class names) and the achieved values in eV;
+    # the checkpoint run's report stays on the training scale.
+    unit = read_config(bundle).head("band_gap").unit
+    md_a = (tmp_path / "a" / "s" / "SUMMARY.md").read_text()
+    assert f"- band_gap → 1.5 {unit}" in md_a and "P(phase ∈ {metal})" in md_a and f"band_gap ({unit})" in md_a
+    md_b = (tmp_path / "b" / "s" / "SUMMARY.md").read_text()
+    assert f"band_gap→{normalised[0]['value']:g}" in md_b and "physical units" not in md_b
 
 
 def test_element_seeds_need_no_data(bundle_and_ckpt: tuple[Path, Path], tmp_path: Path) -> None:

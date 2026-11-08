@@ -83,11 +83,16 @@ class BundleError(ValueError):
     """A bundle is malformed, from a newer schema, or does not match this installation."""
 
 
-def fm_version() -> str:
+def yammi_version() -> str:
     try:
         return version("yammi")
     except PackageNotFoundError:  # pragma: no cover - running from an uninstalled tree
         return "unknown"
+
+
+def _writer_version(data: Mapping[str, Any]) -> str:
+    """The yammi version that wrote a config.json; bundles before yammi 2.1.1 call it ``fm_version``."""
+    return str(data.get("yammi_version", data.get("fm_version", "unknown")))
 
 
 def _jsonable(obj: Any) -> Any:
@@ -306,7 +311,7 @@ class BundleConfig:
     license: str
     provenance: Mapping[str, Any] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
-    fm_version: str = field(default_factory=fm_version)
+    yammi_version: str = field(default_factory=yammi_version)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "heads", tuple(self.heads))
@@ -315,6 +320,11 @@ class BundleConfig:
         names = [h.name for h in self.heads]
         if len(set(names)) != len(names) or AE_NAME in names:
             raise BundleError(f"head names must be unique and must not be {AE_NAME!r}: {names}.")
+
+    @property
+    def fm_version(self) -> str:
+        """Deprecated name of ``yammi_version`` (kept for code written against yammi < 2.1.1)."""
+        return self.yammi_version
 
     def head(self, name: str) -> HeadSpec:
         for h in self.heads:
@@ -328,7 +338,7 @@ class BundleConfig:
             model.pop("transformer", None)  # build_model_section rejects [model.transformer] for MLPs
         return {
             "schema_version": self.schema_version,
-            "fm_version": self.fm_version,
+            "yammi_version": self.yammi_version,
             "license": self.license,
             "descriptor": self.descriptor.to_dict(),
             "model": model,
@@ -344,7 +354,7 @@ class BundleConfig:
         if schema > SCHEMA_VERSION:
             raise BundleError(
                 f"bundle schema {schema} is newer than this installation supports ({SCHEMA_VERSION}); "
-                f"it was written by yammi {data.get('fm_version')}. Upgrade yammi."
+                f"it was written by yammi {_writer_version(data)}. Upgrade yammi."
             )
         return cls(
             descriptor=DescriptorSpec.from_dict(data["descriptor"]),
@@ -353,7 +363,7 @@ class BundleConfig:
             license=data.get("license", ""),
             provenance=dict(data.get("provenance") or {}),
             schema_version=schema,
-            fm_version=str(data.get("fm_version", "unknown")),
+            yammi_version=_writer_version(data),
         )
 
 

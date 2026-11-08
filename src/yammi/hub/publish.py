@@ -94,7 +94,7 @@ def publish(
             repo_id,
             tag=tag,
             revision=getattr(commit, "oid", None),
-            tag_message=f"yammi {config.fm_version}, schema {config.schema_version}",
+            tag_message=f"yammi {config.yammi_version}, schema {config.schema_version}",
         )
     if not str(url):
         raise BundleError(f"the Hub returned no URL for {repo_id}.")

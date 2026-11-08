@@ -203,9 +203,9 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
         self.task_log_sigmas = nn.ParameterDict()
         self._disabled_task_log_sigma_buffers: dict[str, torch.Tensor] = {}
         if self.enable_learnable_loss_balancer:
-            logger.info("Learnable task uncertainty (task_log_sigmas) is ENABLED.")
+            logger.debug("Learnable task uncertainty (task_log_sigmas) is ENABLED.")
         else:
-            logger.info("Learnable task uncertainty (task_log_sigmas) is DISABLED.")
+            logger.debug("Learnable task uncertainty (task_log_sigmas) is DISABLED.")
 
         # Initialize model components
         self._init_foundation_encoder()
@@ -222,24 +222,24 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
         self._metrics_updated: dict[str, set[str]] = {"val": set(), "test": set()}
         self._init_stage_metrics()
 
-        logger.info("Initializing FlexibleMultiTaskModel...")
-        logger.info("Registered Task Heads:")
+        logger.debug("Initializing FlexibleMultiTaskModel...")
+        logger.debug("Registered Task Heads:")
         task_info_df = self.registered_tasks_info
         if not task_info_df.empty:
             # Log as a formatted table if pandas is available and dataframe is not empty
             # For a cleaner log, convert DataFrame to string
             task_info_str = task_info_df.to_string(index=False)
             for line in task_info_str.split("\n"):
-                logger.info(f"  {line}")
+                logger.debug(f"  {line}")
         else:
-            logger.info("  No task heads configured.")
+            logger.debug("  No task heads configured.")
 
-        logger.info("FlexibleMultiTaskModel Structure:")
+        logger.debug("FlexibleMultiTaskModel Structure:")
         # Convert the model's string representation into multiple log lines for readability
         model_structure_str = str(self)
         for line in model_structure_str.split("\n"):
-            logger.info(f"  {line}")
-        logger.info("FlexibleMultiTaskModel initialization complete.")
+            logger.debug(f"  {line}")
+        logger.debug("FlexibleMultiTaskModel initialization complete.")
 
     def _init_foundation_encoder(self):
         """Initialize the foundation encoder."""
@@ -550,11 +550,11 @@ class FlexibleMultiTaskModel(InverseDesignMixin, L.LightningModule):
         self._track_task_types()
 
         for task_config in task_configs:
-            logger.info(
+            logger.debug(
                 f"Added task '{task_config.name}' (type={task_config.type.value}, enabled={task_config.enabled})."
             )
         if activated:
-            logger.info(f"Activated tasks during add_task: {', '.join(activated)}")
+            logger.debug(f"Activated tasks during add_task: {', '.join(activated)}")
         return self
 
     def enable_task(self, *task_names: str) -> "FlexibleMultiTaskModel":

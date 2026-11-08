@@ -21,7 +21,7 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
-from .bundle import BundleConfig, Manifest, fm_version
+from .bundle import BundleConfig, Manifest, yammi_version
 
 __all__ = ["HF_LICENSES", "render_card"]
 
@@ -67,14 +67,14 @@ def _cc_terms(license_id: str) -> str | None:
 
 def _image() -> str:
     """The container image of the yammi release writing the card (multi-arch: amd64 and arm64)."""
-    version = fm_version()
+    version = yammi_version()
     return f"ghcr.io/tsumina/yammi:{version if version != 'unknown' else 'latest'}"
 
 
-def _writer(fm_version: str) -> str:
+def _writer(version: str) -> str:
     """Name the release that wrote a bundle: before 2.0 the package was published as foundation-model."""
-    major = fm_version.split(".", 1)[0]
-    return f"foundation-model {fm_version} (now yammi)" if major.isdigit() and int(major) < 2 else f"yammi {fm_version}"
+    major = version.split(".", 1)[0]
+    return f"foundation-model {version} (now yammi)" if major.isdigit() and int(major) < 2 else f"yammi {version}"
 
 
 def _yaml_str(value: str) -> str:
@@ -180,7 +180,7 @@ def render_card(
         f"a kernel mean descriptor (KMD) of the composition ({config.descriptor.n_grids} grids over "
         f"{len(config.descriptor.elements)} elements). One shared encoder feeds {len(config.heads)} task heads.",
         "",
-        f"- Bundle schema {config.schema_version}, written by {_writer(config.fm_version)}.",
+        f"- Bundle schema {config.schema_version}, written by {_writer(config.yammi_version)}.",
         f"- Weights licence: **{config.license}**.",
         f"- {n} member{'s' if n != 1 else ''}; default `{manifest.default}`."
         + (" Members differ only in the order in which pretraining met the tasks." if n > 1 else ""),

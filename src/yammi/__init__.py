@@ -1,6 +1,7 @@
 # Copyright 2026 TsumiNa.
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 import sys
 
 import torch
@@ -22,7 +23,8 @@ logger.add(
     format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
     "<level>{level: <8}</level> | "
     "<cyan>{module}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-    level="INFO",  # Set default logging level to INFO
+    # INFO by default; YAMMI_LOG_LEVEL=DEBUG also shows the model structure and every head as it is built.
+    level=os.environ.get("YAMMI_LOG_LEVEL", "INFO").upper(),
     colorize=True,
 )
 

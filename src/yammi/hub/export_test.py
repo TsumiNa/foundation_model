@@ -122,7 +122,7 @@ def test_export_round_trip_two_members(catalog_raw: dict, tmp_path: Path) -> Non
 def test_config_json_is_self_contained(catalog_raw: dict, tmp_path: Path) -> None:
     out = _export(catalog_raw, [_checkpoint(catalog_raw, tmp_path / "c.pt", 0)], tmp_path / "b")
     payload = json.loads((out / CONFIG_FILE).read_text())
-    assert {"schema_version", "fm_version", "license", "descriptor", "model", "heads", "provenance"} <= set(payload)
+    assert {"schema_version", "yammi_version", "license", "descriptor", "model", "heads", "provenance"} <= set(payload)
     assert "transformer" not in payload["model"]  # MLP model: no [model.transformer]
     gap = next(h for h in payload["heads"] if h["name"] == "band_gap")
     assert [s["kind"] for s in gap["transform"]["steps"]] == ["standard_scaler", "power_transformer"]

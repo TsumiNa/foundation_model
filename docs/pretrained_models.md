@@ -23,8 +23,10 @@ Install into your own environment only to call yammi from Python or to develop o
 the `[hub]` extra pulls `huggingface_hub`):
 
 ```bash
-pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'
+pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'          # or ...yammi@v2.1.1 to pin a release
 ```
+
+yammi logs at INFO; set `YAMMI_LOG_LEVEL=WARNING` for less, `DEBUG` to see the model structure as it is built.
 
 A *source* is a local bundle directory, optionally `<dir>#member`, or a Hub repository written
 `owner/name[@revision][#member]`, for example `TsumiNa/yammi@v1.0.0#m003`. The released suites live in
@@ -195,8 +197,9 @@ yammi inverse --config my_design.toml
 ```
 
 Targets are converted with the bundle's transforms. Curve targets `points = [[t, y], ...]` take `t` and
-`y` in physical units, or in shape units for shape-only heads. Reports add `<task>_after_mean_physical`,
-and `scenario.json` keeps the targets as you wrote them.
+`y` in physical units, or in shape units for shape-only heads. Reports add `<task>_after_mean_physical`;
+each scenario's `SUMMARY.md` lists the targets as you wrote them with the achieved values in physical
+units, and `scenario.json` keeps the targets as written.
 
 ## Licence
 
