@@ -80,7 +80,8 @@ def test_custom_licence_is_quoted_and_not_paraphrased(bundle: Path) -> None:
 def test_install_line_points_at_the_code_repository(bundle: Path) -> None:
     card = _card(bundle, "cc-by-4.0")
     assert "git clone https://github.com/TsumiNa/yammi.git" in card and "uv sync --frozen --no-dev --extra hub" in card
-    assert "pip install" not in card  # not on PyPI yet: the PyPI name is a placeholder
+    assert "pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'" in card
+    assert "pip install 'yammi[hub]'\n" not in card  # never the bare name: on PyPI it is a placeholder
 
 
 def test_no_gating_form_when_not_gated(bundle: Path) -> None:

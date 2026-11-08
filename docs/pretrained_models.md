@@ -19,8 +19,14 @@ apptainer exec --nv docker://ghcr.io/tsumina/yammi:latest yammi predict --pretra
   --compositions "Fe2O3,NaCl" --output-dir pred/
 ```
 
-Install locally only to call yammi from Python or to develop on it. yammi is not on PyPI yet: clone the
-repository and install it with [uv](https://docs.astral.sh/uv/) (the `hub` extra pulls `huggingface_hub`):
+Install locally only to call yammi from Python or to develop on it. yammi is not on PyPI yet (the PyPI
+name is an empty placeholder), so install it from GitHub; the `hub` extra pulls `huggingface_hub`:
+
+```bash
+pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'   # into a Python 3.12–3.14 environment
+```
+
+For the exact dependency versions of `uv.lock`, clone the repository and use [uv](https://docs.astral.sh/uv/):
 
 ```bash
 git clone https://github.com/TsumiNa/yammi.git

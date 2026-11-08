@@ -29,7 +29,10 @@ def _api(token: str | None) -> Any:
     try:
         from huggingface_hub import HfApi
     except ImportError as exc:  # pragma: no cover - depends on the environment
-        raise ImportError("publishing needs the `hub` extra: run `uv sync --extra hub` in your yammi clone") from exc
+        raise ImportError(
+            "publishing needs the `hub` extra: "
+            "pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi' (or `uv sync --extra hub` in a clone)"
+        ) from exc
     return HfApi(token=token)
 
 
