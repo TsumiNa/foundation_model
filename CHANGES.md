@@ -17,6 +17,9 @@ Found while building a demo of the released models for colleagues:
 - **`yammi inverse --pretrained` reports in physical units.** A scenario's `SUMMARY.md` lists the targets
   as written (value and unit, class names) and adds the achieved mean ± std of each regression target in
   physical units. It used to show only the training-scale value (a 2.5 eV target read `band_gap→1.09964`).
+  Candidates past the range a head can express in physical units are left out of those statistics and
+  counted (`<task>_out_of_range_physical`), as the prediction API returns NaN for them; their physical
+  values in `results.json` are null. New helper `yammi.data.targets.inverse_in_range`.
 - **Install instructions never name the PyPI placeholder.** The missing-`hub`-extra errors said
   `pip install 'yammi[hub]'`, which resolves to the empty PyPI placeholder; they now give the GitHub URL
   (or `uv sync --extra hub` in a clone). README, docs, the model card template and the `yammi-pretrained` skill

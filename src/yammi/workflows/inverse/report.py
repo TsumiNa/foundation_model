@@ -412,6 +412,14 @@ def _report_label(spec: TargetSpec, raw: Mapping[str, Any] | None, unit: str | N
     return target_label(spec)
 
 
+def _physical_cell(row: Mapping[str, Any], task: str) -> str:
+    """``mean ± std`` of the in-range candidates, plus ``(n out of range)`` when some were left out."""
+    mean, std = row.get(f"{task}_after_mean_physical"), row.get(f"{task}_after_std_physical")
+    out = int(row.get(f"{task}_out_of_range_physical") or 0)
+    cell = "—" if mean is None else f"{mean:.3g} ± {std:.2g}"
+    return f"{cell} ({out} out of range)" if out else cell
+
+
 def write_scenario_md(
     sc_dir: Path,
     scenario: ScenarioConfig,
@@ -436,15 +444,18 @@ def write_scenario_md(
         if physical is not None and summary and f"{t.task}_after_mean_physical" in summary[0]
     ]
     if shown:
-        lines += ["", "Achieved values are the mean ± std over the candidates, in physical units."]
+        lines += [
+            "",
+            "Achieved values are the mean ± std over the candidates, in physical units. Candidates past the range a",
+            "head can express in physical units are left out and counted in brackets (their value would be the",
+            "most extreme training value, not an achieved property).",
+        ]
     lines.append("")
     extra = "".join(f" {task} ({units.get(task) or '-'}) |" for task in shown)
     lines.append(f"| path | method | objective (mean±std, lower = better) |{extra} elapsed(s) |")
     lines.append("|---|---|---|" + "---|" * len(shown) + "---|")
     for row in summary:
-        cells = "".join(
-            f" {row[f'{task}_after_mean_physical']:.3g} ± {row[f'{task}_after_std_physical']:.2g} |" for task in shown
-        )
+        cells = "".join(f" {_physical_cell(row, task)} |" for task in shown)
         lines.append(
             f"| {row['path']} | {row['method']} | {row['objective_mean']}±{row['objective_std']} |{cells} {row['elapsed_s']} |"
         )

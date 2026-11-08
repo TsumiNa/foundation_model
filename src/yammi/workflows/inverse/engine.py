@@ -26,6 +26,8 @@ from loguru import logger  # noqa: E402
 
 
 from .._engine import descriptor_tensor, resolve_device  # noqa: E402
+from yammi.data.targets import inverse_in_range  # noqa: E402
+
 from ..recording import RunRecorder  # noqa: E402
 from ..task_catalog import TaskCatalog  # noqa: E402
 from .config import InverseConfig, InverseMethod, ScenarioConfig, TargetKind, target_label, TargetSpec  # noqa: E402
@@ -153,8 +155,13 @@ def _run_scenario(
 
     transforms = dict(transforms or {})
     for r in results:  # physical-unit copies of the regression channels (released bundles only)
+        # Candidates past a head's guarded range are None (NaN), as in PretrainedModel.predict: the inverse
+        # would report the most extreme training value, which is not an achieved property.
         physical = {
-            s.task: transforms[s.task].inverse(np.asarray(r["channels_after_decode"][s.task], dtype=float)).tolist()
+            s.task: [
+                None if np.isnan(v) else float(v)
+                for v in inverse_in_range(transforms[s.task], r["channels_after_decode"][s.task])
+            ]
             for s in scenario.targets
             if s.task in transforms and s.kind in (TargetKind.VALUE, TargetKind.DIRECTION)
         }
@@ -255,7 +262,11 @@ def _summarise(results: list[dict[str, Any]], specs: Sequence[TargetSpec]) -> li
             row[f"{s.task}_after_std"] = round(float(vals.std()), 3)
             phys = r.get("channels_after_decode_physical", {}).get(s.task)
             if phys is not None:
-                row[f"{s.task}_after_mean_physical"] = float(np.mean(phys))
-                row[f"{s.task}_after_std_physical"] = float(np.std(phys))
+                v = np.array([np.nan if p is None else p for p in phys], dtype=float)
+                ok = v[np.isfinite(v)]
+                # Mean / std over the candidates in range (None when none is); the rest are counted.
+                row[f"{s.task}_after_mean_physical"] = float(ok.mean()) if ok.size else None
+                row[f"{s.task}_after_std_physical"] = float(ok.std()) if ok.size else None
+                row[f"{s.task}_out_of_range_physical"] = int(v.size - ok.size)
         rows.append(row)
     return rows

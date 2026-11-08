@@ -28,6 +28,7 @@ from yammi.data.targets import (
     fit_default,
     from_sklearn,
     guard_inverse_domain,
+    inverse_in_range,
     normalize_max_abs,
     strip_inverse_guard,
 )
@@ -293,6 +294,22 @@ def test_guard_saturates_at_the_training_range_on_the_bounded_side_only() -> Non
     assert np.isfinite(far[1]) and far[1] < heavy.min()  # the open side still extrapolates
     np.testing.assert_allclose(g.transform(heavy), scaled)  # training values are untouched
     assert TargetTransform.from_dict(json.loads(json.dumps(g.to_dict()))) == g
+
+
+def test_inverse_in_range_is_nan_past_a_guard_only() -> None:
+    """Past a guard clip the inverse would be the training extreme: NaN instead, as the prediction API does."""
+    rng = np.random.default_rng(3)
+    heavy = rng.lognormal(0.0, 2.0, 500)
+    t = from_sklearn(make_pipeline(StandardScaler(), PowerTransformer(method="yeo-johnson")).fit(heavy.reshape(-1, 1)))
+    assert isinstance(t, TargetTransform)
+    scaled = t.transform(heavy)
+    g = guard_inverse_domain(t, scaled)
+    out = inverse_in_range(g, np.array([scaled[0], scaled.max() + 1.0]))
+    assert out[0] == pytest.approx(heavy[0]) and np.isnan(out[1])
+    assert np.isfinite(g.inverse(np.array([scaled.max() + 1.0]))).all()  # the plain inverse would clip
+    # A clip that is part of the normalisation (not a guard) still saturates, as before.
+    plain_clip = TargetTransform((StandardScalerStep(mean=0.0, scale=1.0), ClipStep(upper=5.0)))
+    assert inverse_in_range(plain_clip, np.array([9.0]))[0] == pytest.approx(5.0)
 
 
 def test_guard_leaves_an_everywhere_invertible_transform_alone() -> None:
