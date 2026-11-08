@@ -5,7 +5,7 @@ description: Generate a self-contained interactive HTML viewer for experiment re
 
 # Self-contained interactive results viewer (HTML)
 
-Canonical reference implementation: `experiments/rikyu_task_scaling/analysis/build_trajectory_viewer.py`
+Canonical reference implementation (a local experiment folder, outside git; rsync it from a machine that has it): `experiments/rikyu_task_scaling/analysis/build_trajectory_viewer.py`
 (build: `.venv/bin/python <script> <MIRROR_DIR> <REPLAY_N>`). Adapt it rather than starting from
 scratch. The requirements below were converged on with the user across many review rounds —
 treat them as hard constraints unless the user says otherwise.
@@ -71,4 +71,4 @@ report the file size (warn if it grew unexpectedly — trim frame rate or thresh
 ## Delivery
 
 Send the built HTML(s) with SendUserFile; commit only the builder script (built HTML and any
-result data stay out of git per repo policy — `experiments/**/*.html` is git-ignored).
+result data stay out of git per repo policy — the whole `experiments/` folder is git-ignored).

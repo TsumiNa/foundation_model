@@ -13,13 +13,13 @@ do not retrofit).
 ## Single experiment
 
 ```
-experiments/<experiment>/
+experiments/<experiment>/   # nothing here is in git (see "Tracking & provenance")
   README.md          # question, design, execution log, outcome — updated as the experiment runs
-  configs/           # this experiment's TOML configs                          [tracked]
-  scripts/           # launchers, job scripts, workers, collectors             [tracked]
-  analysis/          # analysis code [tracked]; generated figures [untracked]
-  results/           # collected metrics tables, summaries, reports, decks     [untracked]
-  artifacts/         # raw run outputs & intermediate results, one subdir per run  [untracked]
+  configs/           # this experiment's TOML configs
+  scripts/           # launchers, job scripts, workers, collectors
+  analysis/          # analysis code; generated figures
+  results/           # collected metrics tables, summaries, reports, decks
+  artifacts/         # raw run outputs & intermediate results, one subdir per run
     <run>/           #   the workflow's own layout (training/stepNN_*/, checkpoints, logs,
                      #   run_provenance.json) lands here unmodified
 ```
@@ -51,9 +51,13 @@ experiments/<group>/
 
 ## Tracking & provenance (repo policy)
 
-- Tracked: README, configs, scripts, analysis CODE. Untracked (gitignore): results/, artifacts/,
-  generated csv/png/pptx — they travel by rsync between machines (mirror to the SAME relative
-  path locally; exclude checkpoints on routine mirrors).
+- **Nothing under `experiments/` is in git** (the whole folder is git-ignored since 2026-11-08):
+  README, configs, scripts, analysis code and results all travel by rsync between machines —
+  mirror to the SAME relative path, exclude checkpoints on routine mirrors. A cluster run therefore
+  needs the experiment folder rsynced there, not just a `git pull`.
+- What an experiment needs from the code is in `src/` (tracked). If a script turns out to be
+  reusable, move it into `src/` or `scripts/` (tracked) instead of pointing other code at
+  `experiments/`.
 - Every run writes `run_provenance.json` (resolved config + git commit); launchers record the
   commit at launch. Execution events (submissions, TIMEOUTs, resumes) go into the README
   execution log as they happen — the README is the experiment's lab notebook.

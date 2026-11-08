@@ -398,8 +398,8 @@ from `[pretrain.replay].amount` / `[pretrain.replay].per_task`, so those keys va
 replay budget, not as a per-task scaling-law dial. To sweep training-set size from the CLI, use
 `[datasets.<name>].sample` (or `--sample`), which caps rows for a whole dataset.
 
-A worked scaling-law study driven entirely from the CLI lives in
-[`experiments/rikyu_task_scaling/`](experiments/rikyu_task_scaling/).
+A worked scaling-law study was driven entirely from the CLI (`experiments/rikyu_task_scaling/`, kept
+outside git with the other experiment folders).
 
 ## Inverse design
 
