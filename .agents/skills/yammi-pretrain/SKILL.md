@@ -42,7 +42,7 @@ joint_retrain_full24.toml`). From a healthy replay run it early-stops far below 
 (measured: 76 epochs) and mainly benefits big tasks. `yammi finetune` has **no --resume** — give
 it walltime once.
 
-Why these choices (all measured; see experiments/replay_epoch_sweep/HYBRID_RECIPE.md):
+Why these choices (all measured; see experiments/replay_epoch_sweep/HYBRID_RECIPE.md, a local folder outside git):
 - epoch resampling: +0.022…+0.126 mean R² over frozen subsets at every budget; zero regressions.
 - hybrid amounts: fixed-count starves big tasks (deficit plateau ~0.045 → 0.025–0.031 hybrid);
   pure ratio starves small tasks (r0.5: 0.085 vs ≤0.01 at full coverage). max(floor, r·N) is the

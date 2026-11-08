@@ -70,7 +70,7 @@ later — see the results-viewer-html skill).
 `seeds.json` (order = candidate index in all arrays), per scenario `summary.json` /
 `results.json` / `trajectories/<path>.npz` (`targets (S,B,T)`, `weights (S,B,94)`, `labels`),
 `inverse_design.json` marker (use for skip-if-done). Analysis stack under
-`experiments/rikyu_task_scaling/analysis/`: `collect.py` (inverse.csv with scenario column),
+`experiments/rikyu_task_scaling/analysis/` (local, outside git): `collect.py` (inverse.csv with scenario column),
 `plot_inverse.py`, `plot_diversity.py`, `candidate_regularity.py` (per-seed L1 fingerprint
 analysis — requires the model-independent seed design).
 
