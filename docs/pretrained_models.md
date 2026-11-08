@@ -19,11 +19,13 @@ apptainer exec --nv docker://ghcr.io/tsumina/yammi:latest yammi predict --pretra
   --compositions "Fe2O3,NaCl" --output-dir pred/
 ```
 
-Install into your own environment only to call yammi from Python or to develop on it (not on PyPI yet;
-the `[hub]` extra pulls `huggingface_hub`):
+Install locally only to call yammi from Python or to develop on it. yammi is not on PyPI yet: clone the
+repository and install it with [uv](https://docs.astral.sh/uv/) (the `hub` extra pulls `huggingface_hub`):
 
 ```bash
-pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'
+git clone https://github.com/TsumiNa/yammi.git
+cd yammi && uv sync --frozen --no-dev --extra hub     # the locked environment in .venv
+source .venv/bin/activate
 ```
 
 yammi logs at INFO; set `YAMMI_LOG_LEVEL=WARNING` for less, `DEBUG` to see the model structure as it is built.

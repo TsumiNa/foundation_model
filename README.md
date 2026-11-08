@@ -20,11 +20,14 @@ apptainer pull yammi.sif docker://ghcr.io/tsumina/yammi:latest
 apptainer exec --nv yammi.sif yammi predict --pretrained TsumiNa/yammi@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
 ```
 
-For scripting from Python, or developing on top of yammi, install it into your own environment (not on
-PyPI yet):
+For scripting from Python, or developing on top of yammi, install it locally. yammi is not on PyPI
+yet: clone this repository and install it with [uv](https://docs.astral.sh/uv/), which also fetches a
+matching Python:
 
 ```bash
-pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'
+git clone https://github.com/TsumiNa/yammi.git
+cd yammi && uv sync --frozen --no-dev --extra hub     # the locked environment in .venv
+source .venv/bin/activate
 ```
 
 ```python

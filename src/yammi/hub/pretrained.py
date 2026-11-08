@@ -207,7 +207,7 @@ def _snapshot(
         from huggingface_hub import snapshot_download
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise ImportError(
-            "loading from the Hugging Face Hub needs the optional extra: pip install 'yammi[hub]'"
+            "loading from the Hugging Face Hub needs the `hub` extra: run `uv sync --extra hub` in your yammi clone"
         ) from exc
     if required:
         try:
@@ -269,7 +269,7 @@ def _commit(repo: str, revision: str | None, token: str | bool | None, cache_dir
         from huggingface_hub.errors import OfflineModeIsEnabled
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise ImportError(
-            "loading from the Hugging Face Hub needs the optional extra: pip install 'yammi[hub]'"
+            "loading from the Hugging Face Hub needs the `hub` extra: run `uv sync --extra hub` in your yammi clone"
         ) from exc
     unreachable: tuple[type[BaseException], ...] = (OfflineModeIsEnabled, *_network_errors())
     try:

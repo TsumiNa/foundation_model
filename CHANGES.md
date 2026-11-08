@@ -16,6 +16,9 @@ Found while building a demo of the released models for colleagues:
 - **`yammi inverse --pretrained` reports in physical units.** A scenario's `SUMMARY.md` lists the targets
   as written (value and unit, class names) and adds the achieved mean ± std of each regression target in
   physical units. It used to show only the training-scale value (a 2.5 eV target read `band_gap→1.09964`).
+- **Install from a clone with uv**, everywhere: README, docs, the model card template and the `yammi-pretrained`
+  skill no longer show `pip install`, which read as if yammi were on PyPI (the PyPI name is a placeholder).
+  The missing-`hub`-extra errors now say `uv sync --extra hub` instead of `pip install 'yammi[hub]'`.
 
 ## 2026-11-09 (2.1.0 — findings from testing the released models)
 
