@@ -13,13 +13,13 @@ do not retrofit).
 ## Single experiment
 
 ```
-experiments/<experiment>/
+experiments/<experiment>/   # nothing here is in git (see "Tracking & provenance")
   README.md          # question, design, execution log, outcome — updated as the experiment runs
-  configs/           # this experiment's TOML configs                          [tracked]
-  scripts/           # launchers, job scripts, workers, collectors             [tracked]
-  analysis/          # analysis code [tracked]; generated figures [untracked]
-  results/           # collected metrics tables, summaries, reports, decks     [untracked]
-  artifacts/         # raw run outputs & intermediate results, one subdir per run  [untracked]
+  configs/           # this experiment's TOML configs
+  scripts/           # launchers, job scripts, workers, collectors
+  analysis/          # analysis code; generated figures
+  results/           # collected metrics tables, summaries, reports, decks
+  artifacts/         # raw run outputs & intermediate results, one subdir per run
     <run>/           #   the workflow's own layout (training/stepNN_*/, checkpoints, logs,
                      #   run_provenance.json) lands here unmodified
 ```
