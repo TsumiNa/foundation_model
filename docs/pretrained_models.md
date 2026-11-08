@@ -23,7 +23,7 @@ Install into your own environment only to call yammi from Python or to develop o
 the `[hub]` extra pulls `huggingface_hub`):
 
 ```bash
-pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'          # or ...yammi@v2.1.1 to pin a release
+pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'
 ```
 
 yammi logs at INFO; set `YAMMI_LOG_LEVEL=WARNING` for less, `DEBUG` to see the model structure as it is built.

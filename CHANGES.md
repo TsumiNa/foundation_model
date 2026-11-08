@@ -16,8 +16,6 @@ Found while building a demo of the released models for colleagues:
 - **`yammi inverse --pretrained` reports in physical units.** A scenario's `SUMMARY.md` lists the targets
   as written (value and unit, class names) and adds the achieved mean ± std of each regression target in
   physical units. It used to show only the training-scale value (a 2.5 eV target read `band_gap→1.09964`).
-- Git tags `v<version>` mark releases, so `pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi@v2.1.1'`
-  pins one.
 
 ## 2026-11-09 (2.1.0 — findings from testing the released models)
 
