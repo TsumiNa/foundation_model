@@ -306,6 +306,8 @@ def test_inverse_in_range_is_nan_past_a_guard_only() -> None:
     g = guard_inverse_domain(t, scaled)
     out = inverse_in_range(g, np.array([scaled[0], scaled.max() + 1.0]))
     assert out[0] == pytest.approx(heavy[0]) and np.isnan(out[1])
+    column = inverse_in_range(g, np.array([[scaled[0]], [scaled.max() + 1.0]]))  # (n, 1), as inverse accepts
+    assert column.shape == (2,) and column[0] == pytest.approx(heavy[0]) and np.isnan(column[1])
     assert np.isfinite(g.inverse(np.array([scaled.max() + 1.0]))).all()  # the plain inverse would clip
     # A clip that is part of the normalisation (not a guard) still saturates, as before.
     plain_clip = TargetTransform((StandardScalerStep(mean=0.0, scale=1.0), ClipStep(upper=5.0)))

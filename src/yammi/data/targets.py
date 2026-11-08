@@ -561,7 +561,7 @@ def inverse_in_range(transform: TargetTransform, raw: Any) -> np.ndarray:
     extreme training value, which is almost always far from the truth (``PretrainedModel.predict`` treats
     those outputs the same way). NaN also where the inverse is not finite.
     """
-    x = np.asarray(raw, dtype=float)
+    x = _as_1d(raw)  # the shape TargetTransform.inverse returns, so the mask lines up with it
     with np.errstate(invalid="ignore", over="ignore"):
         values = np.asarray(transform.inverse(x), dtype=float)
     last = transform.steps[-1] if transform.steps else None
