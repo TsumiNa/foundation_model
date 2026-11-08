@@ -27,6 +27,32 @@ Both variants are built from `Dockerfile.cuda13` on native runners, with Python 
 13.0 wheel and the same locked application dependencies. They need a host driver that supports CUDA
 13, for example the R-CCS Cloud `ai-h200-brc` H200 partition (x86-64) or RIKYU (AArch64).
 
+## Released models from inside the container
+
+The image includes the `[hub]` extra, so `--pretrained owner/name` downloads a released bundle from the
+Hugging Face Hub. Nothing else needs to be installed: no repository checkout, no training data.
+
+```bash
+# Apptainer / SingularityCE bind $HOME, so the host's `hf auth login` token and cache are used.
+apptainer exec --nv yammi-2.0.1.sif \
+  yammi predict --pretrained TsumiNa/yammi@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
+
+# Docker: pass the token (gated repository) and keep the download cache on the host.
+docker run --rm --gpus all -e HF_TOKEN -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
+  -v "$PWD:/workspace" ghcr.io/tsumina/yammi:2.0.1 \
+  predict --pretrained TsumiNa/yammi@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
+```
+
+- **Gated repository.** Request access on the model page first; the token must belong to an approved
+  account.
+- **Cache location.** Downloads go to `$HF_HOME/hub` (default `~/.cache/huggingface/hub`). On clusters, set
+  `HF_HOME` to group storage to keep them off a small home quota.
+- **Offline nodes.** Compute nodes without internet need the bundle in the cache first. Run the command
+  once on the login node, then set `HF_HUB_OFFLINE=1` in the job. Alternatively, download with
+  `hf download TsumiNa/yammi --revision v1.0.0 --local-dir bundle/` and pass `--pretrained bundle/`.
+- **Other subcommands.** `yammi finetune` and `yammi inverse` take the same `--pretrained` source (or
+  `[finetune] pretrained = ...`); bind the directory that holds your data and configs.
+
 ## R-CCS Cloud H200
 
 On `riken-login`, convert the versioned default image to SIF once:

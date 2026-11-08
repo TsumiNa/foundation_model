@@ -1,11 +1,20 @@
 # Recent Updates
 
-## 2026-11-08 (2.0.0 container — one multi-arch image)
+## 2026-11-08 (2.0.1 — one multi-arch image; the container is the default way in; offline loading)
 
 - `ghcr.io/tsumina/yammi:<version>` / `:latest` / `:sha-<sha>` now hold both `linux/amd64` and
   `linux/arm64`; Docker / Apptainer / SingularityCE pull the host's variant and only that one. The
   separate `rikyu-*` tags are gone (RIKYU pulls `:<version>` like every other machine).
   `scripts/rikyu_pull_container.sh` writes `~/containers/yammi-<version>.sif`.
+- The image now installs the `[hub]` extra (`huggingface_hub`), so `yammi … --pretrained owner/name`
+  works inside it. Before, it failed with a missing-module error. `docs/container.md` shows how to pass
+  the token and cache.
+- **Loading from the cache offline works.** `load_pretrained` / `--pretrained owner/name@rev` asked the Hub
+  which commit a revision points to even when the files were cached, so `HF_HUB_OFFLINE=1` (or a compute
+  node without network) failed. When the Hub cannot be reached it now reads the commit from the local
+  cache, and says so plainly when the revision is not cached either.
+- README, `docs/pretrained_models.md` and model cards lead with the container (Docker / Apptainer); a pip
+  install is for scripting from Python or developing on yammi.
 
 ## 2026-11-08 (2.0.0 — the project is now YAMMI)
 

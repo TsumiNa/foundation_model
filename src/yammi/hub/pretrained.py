@@ -151,31 +151,69 @@ def _snapshot(repo: str, revision: str | None, patterns: list[str], token: str |
 _METADATA = [CONFIG_FILE, MANIFEST_FILE, "README.md"]
 
 
-_METADATA = [CONFIG_FILE, MANIFEST_FILE, "README.md"]
-
-
-def _commit(repo: str, revision: str | None, token: str | bool | None) -> str:
-    """The commit a (possibly symbolic) Hub revision points to right now."""
+def _network_errors() -> tuple[type[BaseException], ...]:
+    """Transport errors of the HTTP client huggingface_hub uses (httpx from 1.0, requests before)."""
+    errors: list[type[BaseException]] = []
     try:
-        from huggingface_hub import HfApi
+        import httpx
+
+        errors.append(httpx.TransportError)
+    except ImportError:  # pragma: no cover - huggingface_hub < 1.0
+        pass
+    try:
+        import requests  # type: ignore[import-untyped]
+
+        errors += [requests.ConnectionError, requests.Timeout]
+    except ImportError:  # pragma: no cover
+        pass
+    return tuple(errors)
+
+
+def _commit(repo: str, revision: str | None, token: str | bool | None, cache_dir: Any = None) -> str:
+    """The commit a (possibly symbolic) Hub revision points to: asked of the Hub, else read from the cache.
+
+    Offline (``HF_HUB_OFFLINE=1``, or no network, as on many compute nodes) the local cache answers, so a
+    bundle downloaded once on a login node loads anywhere that shares the cache.
+    """
+    try:
+        from huggingface_hub import HfApi, snapshot_download
+        from huggingface_hub.errors import OfflineModeIsEnabled
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise ImportError(
             "loading from the Hugging Face Hub needs the optional extra: pip install 'yammi[hub]'"
         ) from exc
-    sha = HfApi().model_info(repo, revision=revision, token=token).sha
+    unreachable: tuple[type[BaseException], ...] = (OfflineModeIsEnabled, *_network_errors())
+    try:
+        sha = HfApi().model_info(repo, revision=revision, token=token).sha
+    except unreachable as online_error:
+        try:  # the snapshot directory of a cached revision is named after its commit
+            snap = snapshot_download(
+                repo_id=repo,
+                revision=revision,
+                allow_patterns=[CONFIG_FILE],
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=True,
+            )
+        except Exception:
+            raise BundleError(
+                f"cannot reach the Hub for {repo}@{revision or 'main'} ({online_error}) and it is not in the "
+                "local cache; download it once where the Hub is reachable."
+            ) from online_error
+        sha = Path(snap).name
     if not sha:
         raise BundleError(f"the Hub did not resolve {repo}@{revision or 'main'} to a commit.")
     return str(sha)
 
 
-def _pin(src: Source, token: str | bool | None) -> Source:
+def _pin(src: Source, token: str | bool | None, cache_dir: Any = None) -> Source:
     """Resolve a Hub source's revision to its commit once, so every later download reads one snapshot.
 
     A branch or tag can move between the metadata download and the weights download; a commit cannot.
     """
     if src.repo is None:
         return src
-    return Source(repo=src.repo, revision=_commit(src.repo, src.revision, token), member=src.member)
+    return Source(repo=src.repo, revision=_commit(src.repo, src.revision, token, cache_dir), member=src.member)
 
 
 def _fetch(src: Source, members: Sequence[str], token: str | bool | None, cache_dir: Any) -> Path:
@@ -440,7 +478,7 @@ def resolve(
     if src.path is not None:
         wanted = src.member or read_manifest(src.path).default
         return src.path, Source(path=src.path, member=wanted)
-    pinned = _pin(src, token)
+    pinned = _pin(src, token, cache_dir)
     chosen: str = pinned.member or read_manifest(_fetch(pinned, [], token, cache_dir)).default
     root = _fetch(pinned, [chosen], token, cache_dir)
     return root, Source(repo=pinned.repo, revision=pinned.revision, member=chosen)
@@ -460,7 +498,7 @@ def load_suite(
         raise BundleError(f"{source!r} names member {src.member!r}; load_suite loads all members.")
     if src.path is not None:
         return Suite(src.path, str(source))
-    pinned = _pin(src, token)
+    pinned = _pin(src, token, cache_dir)
     root = _fetch(pinned, [], token, cache_dir)
     return Suite(
         root,
