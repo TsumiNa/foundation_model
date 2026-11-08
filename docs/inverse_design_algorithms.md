@@ -1,7 +1,7 @@
 # Inverse-design algorithms — loss & design intent
 
 Reference for the two inverse-design routines in
-[`flexible_multi_task_model.py`](../src/foundation_model/models/flexible_multi_task_model.py):
+[`flexible_multi_task_model.py`](../src/yammi/models/flexible_multi_task_model.py):
 `optimize_latent` (latent-space gradient descent) and `optimize_composition` (differentiable
 KMD). Written as a one-stop sheet so the loss formulas, what each term is *for*, and the
 user-facing knobs are all in one place — ready to drop into a slide deck or the paper.

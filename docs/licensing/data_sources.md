@@ -24,7 +24,7 @@ Input features shipped with the package:
 
 | Item | Origin | Licence | How verified |
 |---|---|---|---|
-| `src/foundation_model/utils/element_features.csv` (58 features × 94 elements, H–Pu) | matches XenonPy `elements_completed` (58 properties of 94 elements, H to Pu) | BSD-3-Clause (XenonPy) | XenonPy documentation; the match is by shape and column names, the file carries no provenance line |
+| `src/yammi/utils/element_features.csv` (58 features × 94 elements, H–Pu) | matches XenonPy `elements_completed` (58 properties of 94 elements, H to Pu) | BSD-3-Clause (XenonPy) | XenonPy documentation; the match is by shape and column names, the file carries no provenance line |
 
 ## What the licences require of a weights release
 
@@ -50,7 +50,7 @@ The release ships no training data with the weights. The repository itself track
 
 | File | Contents | Licence |
 |---|---|---|
-| `src/foundation_model/utils/element_features.csv` | element features, model input, shipped in the package | BSD-3-Clause (XenonPy); full notice in `NOTICE` |
+| `src/yammi/utils/element_features.csv` | element features, model input, shipped in the package | BSD-3-Clause (XenonPy); full notice in `NOTICE` |
 | `notebooks/teaching_inverse_design/data/qc_inverse_design_teaching.parquet` | teaching table: 29,802 compositions × 5 properties, derived from HYPOD-X, Materials Project, Starrydata2, NEMAD and phonix-db | CC BY 4.0; sources, changes and citations in `notebooks/teaching_inverse_design/data/README.md` |
 
 The teaching table is not a sample of the pretraining set in every column. Its `tc` (10,458 rows) and `klat`

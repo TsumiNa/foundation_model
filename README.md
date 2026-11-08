@@ -1,24 +1,25 @@
-# Foundation Model for Material Properties
+# YAMMI — Yet Another Materials Model, Inverse-ready
 
-A multi-task learning model for predicting material properties from composition descriptors, with
-gradient-based inverse design on top of the trained checkpoint.
+YAMMI (pronounced like *yummy*, /ˈjʌmi/) is a multi-task model that predicts material properties from
+chemical composition alone, with gradient-based inverse design on top of the trained checkpoint. Up to
+1.x it was published as `foundation-model`; `import foundation_model` still works as a deprecated alias.
 
 **Using a released model** needs no training data. Use it to predict in physical units, fine-tune on
 your own data, or run inverse design:
 
 ```bash
-pip install 'foundation-model[hub] @ git+https://github.com/TsumiNa/foundation_model'   # not on PyPI: that name is another project
-fm predict --pretrained TsumiNa/fm@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
+pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'   # not on PyPI yet
+yammi predict --pretrained TsumiNa/yammi@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
 ```
 
 ```python
-from foundation_model.hub import load_pretrained
-model = load_pretrained("TsumiNa/fm@v1.0.0")
+from yammi.hub import load_pretrained
+model = load_pretrained("TsumiNa/yammi@v1.0.0")
 model.predict(["Fe2O3", "NaCl"])
 ```
 
-See [docs/pretrained_models.md](docs/pretrained_models.md). It covers fine-tuning (`fm finetune
---pretrained`), inverse design (`fm inverse --pretrained`), the licence of the weights and the 1.0
+See [docs/pretrained_models.md](docs/pretrained_models.md). It covers fine-tuning (`yammi finetune
+--pretrained`), inverse design (`yammi inverse --pretrained`), the licence of the weights and the 1.0
 stability promise.
 
 ## Model Architecture
@@ -84,8 +85,8 @@ For the detailed forward / loss / inverse-design diagrams, see
 ## Installation
 
 ```bash
-git clone https://github.com/TsumiNa/foundation_model.git
-cd foundation_model
+git clone https://github.com/TsumiNa/yammi.git
+cd yammi
 uv sync --frozen --all-groups
 ```
 
@@ -97,26 +98,26 @@ RIKYU-specific Apptainer details are in [docs/rikyu_container.md](docs/rikyu_con
 
 ## Usage
 
-Everything runs through a single console command, **`fm`**. Four subcommands train and use models;
+Everything runs through a single console command, **`yammi`**. Four subcommands train and use models;
 each reads a TOML config and writes `run_provenance.json` + `run.log` into its output directory. Two more
-turn runs into release bundles and publish them (`fm export`, `fm publish`; see
-[docs/pretrained_models.md](docs/pretrained_models.md)). `fm predict`, `fm finetune` and `fm inverse`
+turn runs into release bundles and publish them (`yammi export`, `yammi publish`; see
+[docs/pretrained_models.md](docs/pretrained_models.md)). `yammi predict`, `yammi finetune` and `yammi inverse`
 also take `--pretrained SOURCE` to work from a released bundle instead of a checkpoint and catalog.
 
 ```bash
 # 1. Replay-based continual pre-training (interval replay, optional n_runs sweep).
-fm pretrain --config samples/pretrain.toml
+yammi pretrain --config samples/pretrain.toml
 
 # 2. Frozen-encoder fine-tuning of selected heads on a checkpoint.
-fm finetune --config samples/finetune.toml \
+yammi finetune --config samples/finetune.toml \
     --checkpoint artifacts/pretrain/training/final_model.pt
 
 # 3. Inverse design (scenarios × latent/composition algorithm paths).
-fm inverse  --config samples/inverse.toml \
+yammi inverse  --config samples/inverse.toml \
     --checkpoint artifacts/finetune/training/final_model.pt
 
 # 4. Evaluate / predict with an arbitrary checkpoint.
-fm predict  --config samples/predict.toml \
+yammi predict  --config samples/predict.toml \
     --checkpoint artifacts/finetune/training/final_model.pt
 ```
 
@@ -129,7 +130,7 @@ flags `--config`, `--output-dir`, `--set section.key=value`, `--seed`, `--accele
 - `--sample` caps rows for a fast smoke run.
 
 `predict --pretrained` reads no config or data, so it rejects `--set`, `--seed`, `--accelerator` and
-`--sample`. `export` and `publish` have their own options (`fm export --help`, `fm publish --help`;
+`--sample`. `export` and `publish` have their own options (`yammi export --help`, `yammi publish --help`;
 [docs/configuration.md](docs/configuration.md#cli-flags)). `*_smoke.toml` companions under [`samples/`](samples/) run the whole
 chain end-to-end on CPU in minutes.
 
@@ -179,9 +180,9 @@ ready-to-copy templates.
     directly, with optional element whitelist (`allowed_elements`), per-element step scaling
     (`element_step_scale`), seed-vs-uniform mix (`seed_blend`), and per-output entropy penalty
     (`diversity_scale ∈ [0, 1]`).
-- **Replay-based continual pre-training** (`fm pretrain`) with interval replay, per-step
+- **Replay-based continual pre-training** (`yammi pretrain`) with interval replay, per-step
   checkpoints + parquet predictions, forgetting-trajectory plots, and an optional `n_runs` sweep;
-  inverse design (`fm inverse`) produces a paper-grade output folder (figures + JSON + SUMMARY.md
+  inverse design (`yammi inverse`) produces a paper-grade output folder (figures + JSON + SUMMARY.md
   per scenario).
 
 ### Loss Weighting Strategy
@@ -271,7 +272,7 @@ per-task; compositions without a valid descriptor are dropped with a warning.
 ### Example 1 — Pre-training
 
 ```bash
-fm pretrain --config samples/pretrain_smoke.toml --max-epochs 60
+yammi pretrain --config samples/pretrain_smoke.toml --max-epochs 60
 ```
 
 ```toml
@@ -306,11 +307,11 @@ dir = "artifacts/example"
 ### Example 2 — Freeze the encoder, fine-tune only task heads
 
 ```bash
-fm finetune --config samples/finetune_smoke.toml \
+yammi finetune --config samples/finetune_smoke.toml \
     --checkpoint artifacts/pretrain/training/final_model.pt --tasks formation_energy
 ```
 
-`fm finetune` freezes the encoder (`freeze_encoder = true`, the default) and every head not in
+`yammi finetune` freezes the encoder (`freeze_encoder = true`, the default) and every head not in
 `finetune.tasks`, keeping the built-in autoencoder head trainable; the loss-balancer scalars
 (`task_log_sigmas`) are frozen so the objective weighting can't drift.
 
@@ -338,7 +339,7 @@ Use this group size with a KMD descriptor configured with `n_grids = 8`. For ind
 tokens, select `tokenization = "feature"` and omit `group_size`. The Python API remains available:
 
 ```python
-from foundation_model.models.model_config import TransformerEncoderConfig
+from yammi.models.model_config import TransformerEncoderConfig
 
 encoder_config = TransformerEncoderConfig(
     input_dim=128, d_model=256, num_layers=4, nhead=4, dropout=0.1,
@@ -405,14 +406,14 @@ design on the checkpoint:
 
 ```bash
 # 1. Replay-based continual pre-training — saves training/final_model.pt under the output dir.
-fm pretrain --config samples/pretrain.toml
+yammi pretrain --config samples/pretrain.toml
 
 # 2. (Optional) targeted frozen-encoder fine-tune of the inverse-design heads.
-fm finetune --config samples/finetune.toml \
+yammi finetune --config samples/finetune.toml \
     --checkpoint artifacts/pretrain/training/final_model.pt
 
 # 3. Per-scenario sweep — 3 scenarios × the 11 default paths (3 latent α + 8 composition configs).
-fm inverse  --config samples/inverse.toml \
+yammi inverse  --config samples/inverse.toml \
     --checkpoint artifacts/finetune/training/final_model.pt
 ```
 

@@ -16,11 +16,11 @@ import pytest
 import torch
 from scipy.signal import savgol_filter
 
-from foundation_model.models.model_config import KernelRegressionTaskConfig
-from foundation_model.workflows._engine import build_empty_model, build_head_config
-from foundation_model.workflows._sections import ModelSectionConfig, TrainingSectionConfig
-from foundation_model.workflows.predict import PredictConfig, run as predict_run
-from foundation_model.workflows.task_catalog import TaskCatalog, build_task_catalog_config
+from yammi.models.model_config import KernelRegressionTaskConfig
+from yammi.workflows._engine import build_empty_model, build_head_config
+from yammi.workflows._sections import ModelSectionConfig, TrainingSectionConfig
+from yammi.workflows.predict import PredictConfig, run as predict_run
+from yammi.workflows.task_catalog import TaskCatalog, build_task_catalog_config
 
 from process_agis_data import AGISPreprocessingConfig, load_agis_curves, prepare_agis, standardize_fold
 

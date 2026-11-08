@@ -14,10 +14,10 @@ import re
 import sys
 from pathlib import Path
 
-from foundation_model.models.model_config import TransformerOptions
-from foundation_model.workflows import _sections as S
-from foundation_model.workflows import task_catalog as TC
-from foundation_model.workflows.pretrain import ReplayConfig
+from yammi.models.model_config import TransformerOptions
+from yammi.workflows import _sections as S
+from yammi.workflows import task_catalog as TC
+from yammi.workflows.pretrain import ReplayConfig
 
 doc = Path("docs/configuration.md").read_text()
 

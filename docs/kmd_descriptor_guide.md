@@ -171,10 +171,10 @@ from_object = formula_to_composition(Composition("SiO2"))
 
 ### 4.1 本项目的实际生产调用链
 
-在 `foundation_model` 中，`component_features` 不是从训练任务的数据集读取的，而是来自与 `kmd_plus.py` 同目录的内置文件：
+在 `yammi` 中，`component_features` 不是从训练任务的数据集读取的，而是来自与 `kmd_plus.py` 同目录的内置文件：
 
 ```text
-src/foundation_model/utils/element_features.csv
+src/yammi/utils/element_features.csv
 ```
 
 模块导入时以第一列作为元素索引读取该文件：

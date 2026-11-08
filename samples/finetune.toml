@@ -1,7 +1,7 @@
-# Formal `fm finetune` config — frozen-encoder fine-tuning of selected heads on a pretrain
+# Formal `yammi finetune` config — frozen-encoder fine-tuning of selected heads on a pretrain
 # checkpoint. Catalog + model dims match samples/pretrain.toml.
 #
-#   fm finetune --config samples/finetune.toml \
+#   yammi finetune --config samples/finetune.toml \
 #       --checkpoint artifacts/pretrain/training/final_model.pt
 
 [data]

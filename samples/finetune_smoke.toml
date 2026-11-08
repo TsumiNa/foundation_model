@@ -1,8 +1,8 @@
-# Smoke-test config for `fm finetune` — fine-tune one head on a pretrain-smoke checkpoint.
+# Smoke-test config for `yammi finetune` — fine-tune one head on a pretrain-smoke checkpoint.
 #
 # The catalog + model dims match samples/pretrain_smoke.toml so the checkpoint loads cleanly.
 #
-#   fm finetune --config samples/finetune_smoke.toml \
+#   yammi finetune --config samples/finetune_smoke.toml \
 #       --checkpoint artifacts/pretrain_smoke/runs/run00/training/final_model.pt
 
 [data]

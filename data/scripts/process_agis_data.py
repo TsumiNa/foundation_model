@@ -27,7 +27,7 @@ from scipy.signal import savgol_filter
 from sklearn.pipeline import Pipeline  # type: ignore[import-untyped]
 from sklearn.preprocessing import FunctionTransformer, StandardScaler  # type: ignore[import-untyped]
 
-from foundation_model.data.composition_sources import normalize_composition
+from yammi.data.composition_sources import normalize_composition
 
 _PRESSURES_GPA = (0, 10, 20)
 _RHO_COLUMNS = {"rho (muOhm cm)", "rho_xx (muOhm cm)"}
@@ -308,7 +308,7 @@ def prepare_agis(input_dir: Path, output_dir: Path, config: AGISPreprocessingCon
         )
     manifest = {
         "created_utc": datetime.now(UTC).isoformat(),
-        "foundation_model_version": version("foundation-model"),
+        "yammi_version": version("yammi"),
         "numpy_version": version("numpy"),
         "sklearn_version": version("scikit-learn"),
         "config": asdict(config),

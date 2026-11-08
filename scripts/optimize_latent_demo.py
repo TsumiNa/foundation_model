@@ -21,9 +21,9 @@ import lightning as L
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from loguru import logger
 
-from foundation_model.data.datamodule import CompoundDataModule
-from foundation_model.models.flexible_multi_task_model import FlexibleMultiTaskModel
-from foundation_model.models.model_config import (
+from yammi.data.datamodule import CompoundDataModule
+from yammi.models.flexible_multi_task_model import FlexibleMultiTaskModel
+from yammi.models.model_config import (
     MLPEncoderConfig,
     OptimizerConfig,
     RegressionTaskConfig,

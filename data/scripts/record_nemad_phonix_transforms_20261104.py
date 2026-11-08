@@ -14,7 +14,7 @@ transforms were recovered on 2026-11-04 (docs/refactor/pretrained-release/00-ove
 
 This script rebuilds each transform from the raw table and the `_norm` table's split, applies it to
 every row, and checks that the result equals the `_norm` column to within 1e-12. Only when every table
-passes does it write the transforms (foundation_model.data.targets, plain JSON) beside the tables. The tables themselves
+passes does it write the transforms (yammi.data.targets, plain JSON) beside the tables. The tables themselves
 are not changed.
 
 Outputs (new files; nothing existing is overwritten):
@@ -33,7 +33,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from foundation_model.data.targets import ClipStep, Log1pStep, StandardScalerStep, TargetTransform
+from yammi.data.targets import ClipStep, Log1pStep, StandardScalerStep, TargetTransform
 
 DATA = Path(__file__).resolve().parent.parent
 TOL = 1e-12

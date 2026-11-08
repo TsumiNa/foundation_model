@@ -1,5 +1,21 @@
 # Recent Updates
 
+## 2026-11-08 (2.0.0 — the project is now YAMMI)
+
+**YAMMI — Yet Another Materials Model, Inverse-ready** (pronounced like *yummy*). The PyPI name
+`foundation-model` belongs to an unrelated project, and "foundation model" said nothing about materials.
+
+- Distribution, import package and command are all `yammi`: `pip install 'yammi[hub] @ git+https://github.com/TsumiNa/yammi'`,
+  `import yammi`, `yammi pretrain|finetune|inverse|predict|export|publish`. **The `fm` command is gone.**
+- `import foundation_model` (and `foundation_model.<module>`) still works and warns: it resolves to the same
+  module objects as `yammi`, so 1.x code and checkpoints pickled under the old module paths load unchanged.
+- The GitHub repository is `TsumiNa/yammi`, the released models `TsumiNa/yammi` on the Hugging Face Hub, the
+  containers `ghcr.io/tsumina/yammi`. GitHub and the Hub redirect the old addresses.
+- Bundle format unchanged (schema 2). Cards of bundles written before 2.0 name the writer as
+  "foundation-model 1.x (now yammi)".
+- Skills are `yammi-pretrain`, `yammi-eval-ws-ft`, `yammi-inverse`. Experiment folders are records and keep the
+  names and container versions they ran with.
+
 ## 2026-11-08 (1.0.2 — gated model cards upload; install line)
 
 - `fm publish --visibility gated` was refused by the Hub: the licence checkbox put the licence id

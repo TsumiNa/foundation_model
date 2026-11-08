@@ -1,12 +1,12 @@
 ---
 name: hpc-training-env
-description: Decide WHERE a workload runs (local/remote/container selection protocol + mandatory preflight), deploy the fm environment on machines and Slurm clusters, and run/babysit experiment fleets (setup, data transfer, job patterns, monitoring, result recovery). Use when picking an execution target, setting up an environment, or managing cluster jobs.
+description: Decide WHERE a workload runs (local/remote/container selection protocol + mandatory preflight), deploy the yammi environment on machines and Slurm clusters, and run/babysit experiment fleets (setup, data transfer, job patterns, monitoring, result recovery). Use when picking an execution target, setting up an environment, or managing cluster jobs.
 ---
 
 # Execution targets & the training environment
 
-This skill owns everything machine-specific — the workflow skills (fm-pretrain, fm-eval-ws-ft,
-fm-inverse) stay machine-independent and defer here. Machine-specific facts (login alias,
+This skill owns everything machine-specific — the workflow skills (yammi-pretrain, yammi-eval-ws-ft,
+yammi-inverse) stay machine-independent and defer here. Machine-specific facts (login alias,
 partitions, module names, quotas, account state) live in `.github/instructions/
 {rikyu,riken-rccs,ism-gpu-a100}-*.instructions.md` — read the relevant one first and **update
 it in place** when a machine changes (never delete; they survive migrations).
@@ -21,7 +21,7 @@ it in place** when a machine changes (never delete; they survive migrations).
 - On **RIKYU and RIKEN R-CCS, prefer the project container** over a bare uv env — and match the
   image to the node ARCH (both are CUDA 13 + Python 3.14 + locked deps; authoritative doc:
   `docs/container.md`):
-  `ghcr.io/tsumina/foundation_model:<version>|latest|sha-<sha>` (linux/amd64 — x86 nodes incl.
+  `ghcr.io/tsumina/yammi:<version>|latest|sha-<sha>` (linux/amd64 — x86 nodes incl.
   R-CCS ai-h200-brc, converted to SIF there) · `:rikyu-<version>|rikyu-sha-<sha>` (linux/arm64 —
   RIKYU Grace/GB200 ONLY; its ghcr mirror caveat + `scripts/rikyu_pull_container.sh` are in the
   RIKYU instructions). Never run the `rikyu-*` image on x86. Fall back to `uv sync --frozen`
@@ -39,7 +39,7 @@ it in place** when a machine changes (never delete; they survive migrations).
 # 1. SSH alias in ~/.ssh/config (key auth), then:
 git clone <repo> && cd <repo>
 uv sync --frozen --all-groups          # exact locked env; NEVER bare `uv sync` (relocks)
-.venv/bin/fm --help                    # entry point sanity
+.venv/bin/yammi --help                    # entry point sanity
 # 2. Data: parquets are NOT in git — rsync from a machine that has them:
 rsync -az <src>:.../data/ data/        # then rerun any derived-data prep scripts
 # 3. GPU smoke of the full chain AS A JOB (never CPU on the login node):

@@ -8,7 +8,7 @@ set -euo pipefail
 PROJ=${PROJ:-$HOME/projects/foundation_model}
 VERSION=$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["project"]["version"])' \
     "$PROJ/pyproject.toml")
-IMAGE=${IMAGE:-$HOME/containers/foundation-model_rikyu-$VERSION.sif}
+IMAGE=${IMAGE:-$HOME/containers/yammi_rikyu-$VERSION.sif}
 REGISTRY_CONFIG=$HOME/.config/containers/registries.conf
 
 if [[ -e "$IMAGE" ]]; then
@@ -34,5 +34,5 @@ printf '%s\n' \
     '[[registry]]' \
     'location = "ghcr.io"' >"$REGISTRY_CONFIG"
 
-apptainer pull "$IMAGE" "docker://ghcr.io/tsumina/foundation_model:rikyu-$VERSION"
+apptainer pull "$IMAGE" "docker://ghcr.io/tsumina/yammi:rikyu-$VERSION"
 echo "Pulled $IMAGE"

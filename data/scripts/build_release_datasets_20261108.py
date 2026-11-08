@@ -8,7 +8,7 @@ is never overwritten: ``data/fm_task_datasets_20261108_release/``. Two changes, 
    ``MP id``; the same legacy ``id`` is dropped from every other table that carries it (the DOS curves
    and the ``others`` rows of ``material_type``).
 2. **Class names for the binary MP heads.** ``is_metal`` and ``is_gap_direct`` were encoded as
-   ``int(bool)`` without a ``LabelEncoder``, and ``fm export`` needs class names. A ``LabelEncoder``
+   ``int(bool)`` without a ``LabelEncoder``, and ``yammi export`` needs class names. A ``LabelEncoder``
    fitted on ``[False, True]`` reproduces that encoding; the script checks it on every labelled row and
    writes it to ``label_encoders_20261108.pkl.z``.
 
@@ -124,7 +124,7 @@ def build(source: Path, destination: Path) -> dict:
         f"`licence_excluded_rows_{DATE}.csv`; see `docs/licensing/data_sources.md`, open item 1. The licence "
         "audit counted 30 `material_type` rows for these ids; matching by id finds 31, and all are dropped.\n\n"
         f"`label_encoders_{DATE}.pkl.z` holds `LabelEncoder([False, True])` for `is_metal` and `is_gap_direct`, "
-        "checked against the stored integer labels, so `fm export` can name their classes.\n\n"
+        "checked against the stored integer labels, so `yammi export` can name their classes.\n\n"
         "Splits, values, curves and normalisation are unchanged from the source folder, and the split manifest "
         "is the same file.\n"
     )

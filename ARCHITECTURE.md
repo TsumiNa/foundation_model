@@ -1,8 +1,8 @@
 ## Project Structure
 
 ```
-foundation_model/
-├── src/foundation_model/        # Main Python package
+yammi/
+├── src/yammi/        # Main Python package
 │   ├── models/                  # Neural network models
 │   │   ├── components/          # Reusable encoder + utility blocks
 │   │   │   ├── fc_layers.py     # LinearBlock / LinearLayer
@@ -30,9 +30,9 @@ foundation_model/
 │   │   ├── pretrained.py        #   load_pretrained / load_suite / predict in physical units
 │   │   ├── derive.py            #   derived bundles: inherited licence + lineage
 │   │   ├── card.py, publish.py  #   model card; push to the Hugging Face Hub
-│   ├── cli/                     # `fm` CLI — thin click dispatch → workflows
-│   │   └── main.py                       # fm {pretrain,finetune,inverse,predict,export,publish}
-│   └── workflows/               # Workflow engines behind the fm subcommands
+│   ├── cli/                     # `yammi` CLI — thin click dispatch → workflows
+│   │   └── main.py                       # yammi {pretrain,finetune,inverse,predict,export,publish}
+│   └── workflows/               # Workflow engines behind the yammi subcommands
 │       ├── task_catalog.py               # TOML → dataset/task/descriptor/scaler config + loaders
 │       ├── recording.py                  # RunRecorder: layout, provenance, checkpoints, metrics
 │       ├── _sections.py / _engine.py     # shared [model]/[training] configs + model build + eval
@@ -58,13 +58,13 @@ foundation_model/
 ├── CHANGES.md                   # Changelog
 ├── CLAUDE.md / AGENTS.md        # Repo-level coding guidelines
 ├── README.md                    # Top-level overview + quickstart
-├── pyproject.toml               # Dependencies + the `fm` entry point
+├── pyproject.toml               # Dependencies + the `yammi` entry point
 └── uv.lock
 ```
 
 ## Workflows & CLI
 
-The `fm` command (`cli/main.py`) is a thin [click](https://click.palletsprojects.com/) dispatch
+The `yammi` command (`cli/main.py`) is a thin [click](https://click.palletsprojects.com/) dispatch
 layer: it parses argv, loads a TOML config, applies `--set` / flag overrides, builds a validated
 `@dataclass` config via a `workflows.<mod>.build_*_config` builder, writes provenance, and calls
 exactly one `workflows.<mod>.run(cfg)`. It holds no business logic.
@@ -95,7 +95,7 @@ holds the design. Four rules hold everywhere:
 - **Strict loading only.** `load_member` loads with `strict=True` after checking every key and shape.
   The legacy `.pt` paths keep `strict=False`.
 - **Export proves itself.** `export.export_runs` reloads every member and compares its encoder and head
-  outputs with the checkpoint loaded through the `fm predict` catalog path (`torch.equal`). If they
+  outputs with the checkpoint loaded through the `yammi predict` catalog path (`torch.equal`). If they
   differ, the bundle is deleted.
 - **Units at the boundary.** Data enter and leave in physical units through `data/targets.py` transforms.
   `TaskCatalog(target_inputs=...)` applies them when fine-tuning a bundle, and the inverse config
@@ -138,13 +138,13 @@ If a model does eventually outgrow one card, the work is, in order:
 
 # Model architecture
 
-`FlexibleMultiTaskModel` ([src/foundation_model/models/flexible_multi_task_model.py](src/foundation_model/models/flexible_multi_task_model.py))
+`FlexibleMultiTaskModel` ([src/yammi/models/flexible_multi_task_model.py](src/yammi/models/flexible_multi_task_model.py))
 is a single-encoder, multi-head supervised model. Composition descriptors enter the encoder,
 get `tanh`'d at the model level, and feed every active task head.
 
 Target-driven search over *inputs* — `optimize_latent` / `optimize_composition`, a **use** of a
 trained model rather than part of training one — lives in
-[src/foundation_model/models/inverse_design/](src/foundation_model/models/inverse_design/).
+[src/yammi/models/inverse_design/](src/yammi/models/inverse_design/).
 `InverseDesignMixin` declares what the search needs from the model — four members (`encoder`,
 `task_heads`, `task_configs_map`, `_head`) — and the model class mixes it in; nothing on the
 training path calls any of it, and the only consumer is `workflows/inverse/`.
@@ -285,7 +285,7 @@ An `nn.ModuleDict`. All heads consume `h_task` of shape `(B, latent_dim)`.
 | `AutoEncoderHead` | enabled by `FlexibleMultiTaskModel(enable_autoencoder=True)` | `x̂ (B, input_dim)` — reconstruction of the original descriptor; **required for `optimize_latent(optimize_space="latent")`** |
 
 `disabled_task_heads` holds heads taken offline mid-run (e.g. by `model.disable_task(...)` during
-`fm finetune`'s head-only fine-tune), preserving their weights in the state-dict.
+`yammi finetune`'s head-only fine-tune), preserving their weights in the state-dict.
 
 During supervised training, kernel-regression point masks are applied before the head's forward
 pass, so missing or replay-masked curve points do not update its BatchNorm statistics. Masked

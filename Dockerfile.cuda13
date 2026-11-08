@@ -8,11 +8,11 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /uvx /bin/
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    PATH="/opt/foundation-model/.venv/bin:${PATH}" \
+    PATH="/opt/yammi/.venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-WORKDIR /opt/foundation-model
+WORKDIR /opt/yammi
 
 # Keep dependency installation cacheable independently of source changes.
 COPY pyproject.toml uv.lock ./
@@ -31,19 +31,19 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # for the wheel's license files (NOTICE carries the bundled XenonPy BSD-3-Clause
 # notice). Bind them and the source tree only while building/installing the
 # wheel so the raw repository files are not retained in an image layer.
-RUN --mount=type=bind,source=README.md,target=/opt/foundation-model/README.md \
-    --mount=type=bind,source=LICENSE,target=/opt/foundation-model/LICENSE \
-    --mount=type=bind,source=NOTICE,target=/opt/foundation-model/NOTICE \
-    --mount=type=bind,source=src,target=/opt/foundation-model/src \
+RUN --mount=type=bind,source=README.md,target=/opt/yammi/README.md \
+    --mount=type=bind,source=LICENSE,target=/opt/yammi/LICENSE \
+    --mount=type=bind,source=NOTICE,target=/opt/yammi/NOTICE \
+    --mount=type=bind,source=src,target=/opt/yammi/src \
     --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 
 ARG EXPECTED_ARCH=x86_64
-ARG IMAGE_TITLE="foundation-model CUDA 13"
-ARG IMAGE_DESCRIPTION="PyTorch CUDA 13 runtime for foundation-model"
+ARG IMAGE_TITLE="yammi CUDA 13"
+ARG IMAGE_DESCRIPTION="PyTorch CUDA 13 runtime for yammi"
 ARG IMAGE_VERSION
 ARG VCS_REF
-ARG SOURCE_URL=https://github.com/TsumiNa/foundation_model
+ARG SOURCE_URL=https://github.com/TsumiNa/yammi
 
 LABEL org.opencontainers.image.title="${IMAGE_TITLE}" \
       org.opencontainers.image.description="${IMAGE_DESCRIPTION}" \
@@ -58,8 +58,8 @@ WORKDIR /workspace
 RUN EXPECTED_ARCH="${EXPECTED_ARCH}" python -c \
     "import os, platform, torch; assert platform.machine() == os.environ['EXPECTED_ARCH']; assert torch.version.cuda == '13.0', torch.version.cuda" \
     && python -c \
-    "from importlib.metadata import distribution as d; f = {p.name for p in d('foundation-model').files or ()}; assert {'LICENSE', 'NOTICE'} <= f, sorted(f)[:20]" \
-    && fm --help >/dev/null
+    "from importlib.metadata import distribution as d; f = {p.name for p in d('yammi').files or ()}; assert {'LICENSE', 'NOTICE'} <= f, sorted(f)[:20]" \
+    && yammi --help >/dev/null
 
-ENTRYPOINT ["fm"]
+ENTRYPOINT ["yammi"]
 CMD ["--help"]
