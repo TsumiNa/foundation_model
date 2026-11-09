@@ -45,9 +45,11 @@ rsync -az <src>:.../data/ data/        # then rerun any derived-data prep script
 sbatch experiments/<exp>/jobs/smoke.sbatch   # pretrain→ws→ft→inverse at --sample 400
 ```
 
-Data/results policy: **experiments never travel through git** — the whole `experiments/` folder
+Data/results policy: **experiments never travel through git** — the `experiments/` folder
 (configs, job scripts, analysis code, results) is git-ignored. rsync the experiment folder to the
-cluster before submitting, and its outputs back afterwards.
+cluster before submitting, and its outputs back afterwards. The one exception is the index
+`experiments/README.md` (tracked): commit its row update when an experiment starts, finishes,
+or its data moves (experiment-layout skill).
 
 ## Slurm job patterns (all learned the hard way)
 
