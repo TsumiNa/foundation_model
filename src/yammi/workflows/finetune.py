@@ -472,13 +472,17 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
         section = bundle_config.model
         existing = [h.name for h in bundle_config.heads]
         if cfg.init == "random":
-            # The from-scratch control: same architecture and transforms, none of the released weights. Heads
-            # that are not trained here would stay random, so only the targets are kept.
+            # The from-scratch control: same architecture and transforms, none of the released weights. Every
+            # bundle head goes (an untrained one would stay random); a target the bundle has comes back as a fresh
+            # head built like a new one, from the training data (curve heads place their kernels on its
+            # coordinates), and keeps the bundle's transform through the catalog.
             seed_everything(cfg.training.seed, workers=True)
             model = build_model(bundle_config, cfg.training)
-            model.remove_tasks(*[name for name in existing if name not in cfg.tasks])
+            model.remove_tasks(*existing)
             existing = [name for name in existing if name in cfg.tasks]
-            logger.info(f"init = random: fresh weights, keeping heads {existing} and adding the new ones.")
+            for name in existing:
+                model.add_task(build_head_config(catalog, section, cfg.training, name, masking_ratio=1.0))
+            logger.info(f"init = random: fresh weights; rebuilt heads {existing}, adding the new ones.")
 
         # Classification heads being fine-tuned weight their loss from the user's labels, as configured.
         for name in cfg.tasks:
