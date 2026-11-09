@@ -241,12 +241,13 @@ yammi export --config release.toml --run runs/order_00 --run runs/order_01 ... \
 # Review the card, then push: gated = public page, downloads after manual approval.
 yammi publish bundles/fm-v1 --repo TsumiNa/yammi --tag v1.0.0 --visibility gated \
     --card-extra docs/licensing/citations.md --commercial-contact liu.chang@ism.ac.jp --dry-run
-yammi publish bundles/fm-v1 --repo TsumiNa/yammi --tag v1.0.0 --visibility gated \
-    --card-extra docs/licensing/citations.md --commercial-contact liu.chang@ism.ac.jp
+yammi publish bundles/fm-v1 --repo TsumiNa/yammi --tag v1.0.0 --visibility gated   # uploads the reviewed card
 ```
 
 `--commercial-contact` (non-commercial licences only) adds to the card and the access form that a commercial
-licence is available under a separate agreement, and whom to contact.
+licence is available under a separate agreement, and whom to contact. The second command keeps the
+`README.md` the dry run wrote; to regenerate it, repeat the card options with `--overwrite-card` (card options
+on a bundle that already has a card are refused without it).
 
 `release.toml` is the training catalog with `[model]`. Every head needs either a `[tasks.scaler]` (a
 fitted scaler pickle or a `*_transforms.json` record) or `output_scale = "shape"`. Classification heads

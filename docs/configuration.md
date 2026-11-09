@@ -375,6 +375,7 @@ finetune/inverse/predict consume. Enable to *also* emit Lightning `.ckpt` files.
 | `epochs` | int | `20` | | Fine-tune epochs (distinct from `[training].max_epochs`). |
 | `freeze_encoder` | bool | `true` | | Freeze the shared encoder + non-target heads (BatchNorm buffers included). |
 | `add_new_tasks` | bool | `true` | | If a target task isn't in the checkpoint, add a fresh head for it. |
+| `init` | str | `"pretrained"` | `pretrained`, `random` | Only with `--pretrained` (yammi ≥ 2.2.0). `"random"` trains the bundle's architecture, descriptor and transforms from fresh weights seeded by `[training].seed`, keeping only the heads being trained: a from-scratch control. Needs `freeze_encoder = false`; compare it with a pretrained run that also has `freeze_encoder = false`. |
 
 **Fine-tuning a released bundle** (`pretrained`): the bundle supplies the architecture and every existing
 head. The catalog lists only **your** tasks, with data in **physical units** and no `[tasks.scaler]`.
