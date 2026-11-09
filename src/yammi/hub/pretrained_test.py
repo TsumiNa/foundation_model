@@ -534,6 +534,10 @@ def test_unsafe_revision_names_are_not_written_to_the_cache(tmp_path: Path, revi
     assert [p for p in tmp_path.rglob("*") if p.is_file()] == []
     pretrained_mod._record_revision("owner/fm", "refs/pr/1", SHA, tmp_path)  # nested names are fine
     assert (tmp_path / "models--owner--fm" / "refs" / "refs" / "pr" / "1").read_text() == SHA
+    ref = tmp_path / "models--owner--fm" / "refs" / "main"
+    pretrained_mod._record_revision("owner/fm", None, "f" * 40, tmp_path)
+    pretrained_mod._record_revision("owner/fm", None, SHA, tmp_path)  # a moved branch is replaced
+    assert ref.read_text() == SHA and sorted(p.name for p in ref.parent.iterdir()) == ["main", "refs"]  # no temp files
 
 
 def test_a_snapshot_missing_requested_files_says_so(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

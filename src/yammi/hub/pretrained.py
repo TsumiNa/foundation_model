@@ -19,7 +19,9 @@ heads, which return class names (and optionally probabilities).
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 import warnings
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
@@ -314,12 +316,22 @@ def _record_revision(repo: str, revision: str | None, sha: str, cache_dir: Any) 
     if name == sha or name.startswith("/") or any(part in ("", ".", "..") for part in parts):
         return
     ref = _cache_folder(repo, cache_dir) / "refs" / Path(*parts)
+    tmp: str | None = None
     try:
-        if not ref.is_file() or ref.read_text() != sha:
-            ref.parent.mkdir(parents=True, exist_ok=True)
-            ref.write_text(sha)
+        if ref.is_file() and ref.read_text() == sha:
+            return
+        ref.parent.mkdir(parents=True, exist_ok=True)
+        # Write beside the ref and rename over it: a loader sharing the cache never reads a half-written ref.
+        fd, tmp = tempfile.mkstemp(dir=ref.parent, prefix=f".{ref.name}.", suffix=".tmp")
+        with os.fdopen(fd, "w") as fh:
+            fh.write(sha)
+        os.replace(tmp, ref)
+        tmp = None
     except OSError:  # a read-only cache: this load works, and the revision just stays unrecorded
         pass
+    finally:
+        if tmp is not None:
+            Path(tmp).unlink(missing_ok=True)
 
 
 def _cached_commit(repo: str, revision: str | None, cache_dir: Any, online_error: BaseException) -> str:
