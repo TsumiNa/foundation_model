@@ -69,6 +69,37 @@ def test_licence_terms_follow_the_licence(bundle: Path, license_id: str, says: s
     assert not [k for k in meta["extra_gated_fields"] if "." in k or "$" in k]
 
 
+def test_commercial_contact_offers_a_separate_licence(bundle: Path) -> None:
+    config, manifest = read_config(bundle), read_manifest(bundle)
+    card = render_card(config, manifest, repo_id="owner/fm", gated=True, commercial_contact="a.b@example.org")
+    meta = _front(card)
+    assert "separate agreement with the authors is available: contact a.b@example.org." in meta["extra_gated_prompt"]
+    nc_box = [k for k in meta["extra_gated_fields"] if "non-commercial purposes only" in k]
+    assert nc_box == [
+        "I will use these weights and any model derived from them for non-commercial purposes only, "
+        "unless I have a separate agreement with the authors"
+    ]
+    assert not [k for k in meta["extra_gated_fields"] if "." in k or "$" in k]
+    licence = card.split("## Licence")[1]
+    assert "must carry the same licence" in licence  # the public terms stay as they are
+    assert "contact [a.b@example.org](mailto:a.b@example.org)" in licence and "joint research agreement" in licence
+    assert "commercial licence by separate agreement (see Licence)" in card
+    url = render_card(config, manifest, gated=False, commercial_contact="https://example.org/licensing")
+    assert "contact https://example.org/licensing." in url and "mailto:" not in url
+    # Without a contact the card says nothing about it.
+    plain = _card(bundle)
+    assert "separate agreement" not in plain and "joint research" not in plain
+
+
+@pytest.mark.parametrize(("license_id", "contact"), [("cc-by-4.0", "a@b.org"), ("apache-2.0", "a@b.org"), (None, " ")])
+def test_commercial_contact_rejections(bundle: Path, license_id: str | None, contact: str) -> None:
+    config = read_config(bundle)
+    if license_id is not None:
+        config = replace(config, license=license_id)
+    with pytest.raises(ValueError, match="commercial_contact"):
+        render_card(config, read_manifest(bundle), commercial_contact=contact)
+
+
 def test_custom_licence_is_quoted_and_not_paraphrased(bundle: Path) -> None:
     card = _card(bundle, "Lab: Research-1.0 #internal")
     meta = _front(card)  # parses: YAML-significant characters are quoted everywhere

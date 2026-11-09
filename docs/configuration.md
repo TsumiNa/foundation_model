@@ -375,6 +375,7 @@ finetune/inverse/predict consume. Enable to *also* emit Lightning `.ckpt` files.
 | `epochs` | int | `20` | | Fine-tune epochs (distinct from `[training].max_epochs`). |
 | `freeze_encoder` | bool | `true` | | Freeze the shared encoder + non-target heads (BatchNorm buffers included). |
 | `add_new_tasks` | bool | `true` | | If a target task isn't in the checkpoint, add a fresh head for it. |
+| `init` | str | `"pretrained"` | `pretrained`, `random` | Only with `--pretrained` (yammi ≥ 2.2.0). `"random"` trains the bundle's architecture, descriptor and transforms from fresh weights seeded by `[training].seed`, keeping only the heads being trained: a from-scratch control. Needs `freeze_encoder = false`; compare it with a pretrained run that also has `freeze_encoder = false`. |
 
 **Fine-tuning a released bundle** (`pretrained`): the bundle supplies the architecture and every existing
 head. The catalog lists only **your** tasks, with data in **physical units** and no `[tasks.scaler]`.
@@ -551,7 +552,7 @@ Per-subcommand flags:
 | `inverse` | `--checkpoint PATH`, `--scenario NAME` (repeatable; run only these), `--steps N`, `--no-trajectory`, `--animation-formats gif,html,svg` |
 | `predict` | `--checkpoint PATH`, `--tasks a,b`, `--split train\|val\|test\|all`, `--compositions "Fe2 O3,Al2 O3"` (overrides split), `--no-metrics` |
 | `predict --pretrained SOURCE` | `SOURCE` = a bundle directory (optionally `<dir>#member`) or `owner/name[@revision][#member]`. No `--config`, `--checkpoint`, `--split` or data. Needs `--output-dir` and `--compositions` and/or `--compositions-file` (one per line). `--tasks` defaults to every head. Writes `predictions.csv` (scalar heads in physical units; classification as class name plus `<task>:<class>` probabilities), `<task>_curve.csv` per kernel-regression head (default grid), and `prediction_info.json` (member, licence, units). |
-| `publish BUNDLE` | `--repo owner/name` (**required**), `--tag v1.0.0`, `--visibility private\|gated\|public` (default `private`; `gated` = public page, downloads after manual approval), `--title`, `--card-extra FILE.md` (repeatable, appended to the card), `--overwrite-card`, `--dry-run` (check + write `README.md`, upload nothing). The token comes from `HF_TOKEN` / `hf auth login`. Every member is loaded back before upload. |
+| `publish BUNDLE` | `--repo owner/name` (**required**), `--tag v1.0.0`, `--visibility private\|gated\|public` (default `private`; `gated` = public page, downloads after manual approval), `--title`, `--card-extra FILE.md` (repeatable, appended to the card), `--commercial-contact EMAIL|URL` (non-commercial licences only: the card and the access form offer a commercial licence by separate agreement), `--overwrite-card`, `--dry-run` (check + write `README.md`, upload nothing). The token comes from `HF_TOKEN` / `hf auth login`. Every member is loaded back before upload. |
 | `export` | `--run PATH` (run dir or checkpoint; repeat for a suite, one member each), `--out DIR` (new or empty), `--license ID` (**required**, no default), `--member-id ID` (repeatable, in `--run` order; default `m000`, `m001`, …), `--set`. Reads only the catalog sections and `[model]`. |
 
 Run `yammi <subcommand> --help` for the exact list.

@@ -566,6 +566,13 @@ def export_cmd(
     type=click.Path(exists=True, dir_okay=False),
     help="Markdown file appended to the model card (repeatable), e.g. data citations.",
 )
+@click.option(
+    "--commercial-contact",
+    "commercial_contact",
+    default=None,
+    help="E-mail or URL for a commercial licence by separate agreement (non-commercial licences only); "
+    "the card offers it.",
+)
 @click.option("--overwrite-card", is_flag=True, default=False, help="Regenerate README.md even if the bundle has one.")
 @click.option("--dry-run", is_flag=True, default=False, help="Check the bundle and write the card; upload nothing.")
 def publish_cmd(
@@ -575,6 +582,7 @@ def publish_cmd(
     visibility: str,
     title: str | None,
     card_extra: tuple[str, ...],
+    commercial_contact: str | None,
     overwrite_card: bool,
     dry_run: bool,
 ) -> None:
@@ -589,6 +597,7 @@ def publish_cmd(
         visibility=visibility,  # type: ignore[arg-type]
         title=title,
         card_extra=read_extra(card_extra),
+        commercial_contact=commercial_contact,
         overwrite_card=overwrite_card,
         dry_run=dry_run,
     )

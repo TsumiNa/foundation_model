@@ -88,7 +88,8 @@ configs untouched (`--set 'pretrain.replay.resample="epoch"'` etc.).
   normalised space) and put scalers only in the export config.
 - Export: `yammi export --config export.toml --run <member run>... --license <id> --out <bundle>`;
   bounded inverse transforms get guards at the training range (schema 2). Publish with
-  `yammi publish <bundle> --repo owner/name --tag vX --visibility gated --card-extra <md>`; the card
+  `yammi publish <bundle> --repo owner/name --tag vX --visibility gated --card-extra <md>` (add
+  `--commercial-contact <email>` to offer a commercial licence by separate agreement); the card
   can carry extra sections (data sources, the held-out accuracy table).
 
 ## Outputs

@@ -170,6 +170,13 @@ yammi finetune --config my_finetune.toml
   released. With `freeze_encoder = true` the encoder and every head you do **not** list in `tasks` keep their
   predictions; the heads you list are trained (that is the point). With `false` the unlisted heads may
   drift too, since they share the encoder.
+- **A from-scratch control.** To measure what the released weights bring, train the same thing from
+  random weights: add `init = "random"` to `[finetune]`. A random encoder must train, so this needs
+  `freeze_encoder = false`, and the fine-tune to compare it with must also use `freeze_encoder = false`, on
+  the same split and settings, so that the initial weights are the only difference. (A frozen-encoder
+  fine-tune differs in what trains as well.) The run uses the bundle's architecture, descriptor and
+  transforms, with fresh weights seeded by `[training].seed`. Its bundle holds only the heads you listed,
+  and its provenance records `init = "random"`.
 
 From Python, after loading: `model.save("out/copy")` writes a one-member derived bundle.
 
@@ -218,6 +225,9 @@ release):
   with attribution, under the same licence. A derived bundle carries the licence automatically.
 - Models you train **from scratch** with this code on your own data are not covered. The code itself is
   Apache-2.0.
+- **Commercial use** is possible under a separate agreement with the authors: contact
+  [liu.chang@ism.ac.jp](mailto:liu.chang@ism.ac.jp). Use under such an agreement, or under a joint research
+  agreement with the authors, follows that agreement instead of the public licence.
 
 Data sources and their licences: [`docs/licensing/`](licensing/).
 
@@ -229,10 +239,15 @@ yammi export --config release.toml --run runs/order_00 --run runs/order_01 ... \
     --out bundles/fm-v1 --license cc-by-nc-sa-4.0
 
 # Review the card, then push: gated = public page, downloads after manual approval.
-yammi publish bundles/fm-v1 --repo TsumiNa/yammi --tag v1.0.0 \
-    --visibility gated --card-extra docs/licensing/citations.md --dry-run
-yammi publish bundles/fm-v1 --repo TsumiNa/yammi --tag v1.0.0 --visibility gated
+yammi publish bundles/fm-v1 --repo TsumiNa/yammi --tag v1.0.0 --visibility gated \
+    --card-extra docs/licensing/citations.md --commercial-contact liu.chang@ism.ac.jp --dry-run
+yammi publish bundles/fm-v1 --repo TsumiNa/yammi --tag v1.0.0 --visibility gated   # uploads the reviewed card
 ```
+
+`--commercial-contact` (non-commercial licences only) adds to the card and the access form that a commercial
+licence is available under a separate agreement, and whom to contact. The second command keeps the
+`README.md` the dry run wrote; to regenerate it, repeat the card options with `--overwrite-card` (card options
+on a bundle that already has a card are refused without it).
 
 `release.toml` is the training catalog with `[model]`. Every head needs either a `[tasks.scaler]` (a
 fitted scaler pickle or a `*_transforms.json` record) or `output_scale = "shape"`. Classification heads

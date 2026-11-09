@@ -11,6 +11,10 @@ for a gated repository, the access form. The body records:
 * how to load, predict, fine-tune and run inverse design;
 * the limits of the model, the licence terms and the data citations.
 
+With a non-commercial licence, ``commercial_contact`` (an e-mail address or a URL) adds that a commercial
+licence is available under a separate agreement with the authors, and that use under such an agreement (a
+joint research agreement, for instance) follows it instead of the public licence.
+
 Extra Markdown, for instance the citation list from ``docs/licensing/data_sources.md``, is appended
 verbatim.
 """
@@ -18,6 +22,7 @@ verbatim.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -65,6 +70,24 @@ def _cc_terms(license_id: str) -> str | None:
     return terms
 
 
+def _commercial_terms(license_id: str, contact: str | None) -> str | None:
+    """The sentence offering a commercial licence, or ``None``; only a non-commercial licence can offer one."""
+    if contact is None:
+        return None
+    if not contact.strip():
+        raise ValueError("commercial_contact must not be empty.")
+    if not _is_non_commercial(license_id):
+        raise ValueError(
+            f"commercial_contact needs a non-commercial licence; {license_id} already allows commercial use."
+        )
+    return f"For commercial use, a licence under a separate agreement with the authors is available: contact {contact.strip()}."
+
+
+def _contact_md(contact: str) -> str:
+    contact = contact.strip()
+    return f"[{contact}](mailto:{contact})" if re.fullmatch(r"[^@\s]+@[^@\s]+", contact) else contact
+
+
 def _image() -> str:
     """The container image of the yammi release writing the card (multi-arch: amd64 and arm64)."""
     version = yammi_version()
@@ -81,7 +104,7 @@ def _yaml_str(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)  # a JSON string is a valid YAML scalar
 
 
-def _front_matter(config: BundleConfig, *, gated: bool) -> list[str]:
+def _front_matter(config: BundleConfig, *, gated: bool, commercial_contact: str | None = None) -> list[str]:
     lic = config.license.lower()
     lines = ["---"]
     if lic in HF_LICENSES:
@@ -99,6 +122,7 @@ def _front_matter(config: BundleConfig, *, gated: bool) -> list[str]:
     if gated:
         nc = _is_non_commercial(lic)
         terms = _cc_terms(lic)
+        commercial = _commercial_terms(lic, commercial_contact)
         prompt = (
             "Access is reviewed by the authors. "
             + (
@@ -106,6 +130,7 @@ def _front_matter(config: BundleConfig, *, gated: bool) -> list[str]:
                 if terms
                 else f"These weights are licensed under {config.license}; see its terms. "
             )
+            + (f"{commercial} " if commercial else "")
             + "Models you train from scratch with the yammi code and your own data are not covered."
         )
         lines += [
@@ -117,6 +142,8 @@ def _front_matter(config: BundleConfig, *, gated: bool) -> list[str]:
         ]
         if nc:
             label = "I will use these weights and any model derived from them for non-commercial purposes only"
+            if commercial:
+                label += ", unless I have a separate agreement with the authors"
             lines.append(f"  {_yaml_str(label)}: checkbox")
         # The Hub rejects metadata keys containing "." or "$", and licence ids such as cc-by-4.0 have one;
         # the prompt above names the licence, so the checkbox refers to it.
@@ -158,8 +185,14 @@ def render_card(
     title: str | None = None,
     gated: bool = False,
     extra: Sequence[str] = (),
+    commercial_contact: str | None = None,
 ) -> str:
-    """The full ``README.md`` text for a bundle."""
+    """The full ``README.md`` text for a bundle.
+
+    ``commercial_contact``: see the module docstring; it raises ``ValueError`` for a licence that already
+    allows commercial use.
+    """
+    commercial = _commercial_terms(config.license, commercial_contact)
     repo = repo_id or "<owner>/<repo>"
     image = _image()
     access = (
@@ -171,7 +204,7 @@ def render_card(
     name = title or (repo_id.split("/")[-1] if repo_id else "yammi bundle")
     curve = next((h for h in config.heads if h.kind == "kernel_regression" and h.output_scale == "physical"), None)
     scalar = [h.name for h in config.heads if h.kind == "regression"][:2]
-    lines = _front_matter(config, gated=gated)
+    lines = _front_matter(config, gated=gated, commercial_contact=commercial_contact)
     lines += [
         "",
         f"# {name}",
@@ -181,7 +214,8 @@ def render_card(
         f"{len(config.descriptor.elements)} elements). One shared encoder feeds {len(config.heads)} task heads.",
         "",
         f"- Bundle schema {config.schema_version}, written by {_writer(config.yammi_version)}.",
-        f"- Weights licence: **{config.license}**.",
+        f"- Weights licence: **{config.license}**"
+        + ("; commercial licence by separate agreement (see Licence)." if commercial else "."),
         f"- {n} member{'s' if n != 1 else ''}; default `{manifest.default}`."
         + (" Members differ only in the order in which pretraining met the tasks." if n > 1 else ""),
         "",
@@ -291,6 +325,14 @@ def render_card(
         lines += [f"The weights are licensed under **{config.license}**: they {terms}.", ""]
     else:
         lines += [f"The weights are licensed under **{config.license}**; its own terms apply.", ""]
+    if commercial_contact is not None:
+        lines += [
+            "**Commercial use.** A commercial licence is available under a separate agreement with the authors: "
+            f"to use the weights, or models derived from them, commercially, contact {_contact_md(commercial_contact)}. "
+            "Use under such an agreement, or under a joint research agreement with the authors, follows that "
+            "agreement instead of this licence.",
+            "",
+        ]
     lines += [
         "Models trained **from scratch** with the yammi code (Apache-2.0) on your own data are not "
         "covered by this licence.",

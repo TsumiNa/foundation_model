@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from yammi.hub import load_pretrained, read_config, read_manifest
 from yammi.workflows.finetune import build_finetune_config
@@ -89,6 +90,115 @@ def test_derived_bundles_chain_their_lineage(bundle: Path, user_data: Path, tmp_
     prov = read_config(second / "bundle").provenance
     assert prov["derived_from"]["source"] == str(first / "bundle")
     assert prov["lineage"][0]["source"] == str(bundle)
+
+
+def test_random_init_is_a_from_scratch_control(bundle: Path, user_data: Path, tmp_path: Path) -> None:
+    """init = "random": the bundle's architecture and transforms, fresh weights, only the target heads kept."""
+    out = tmp_path / "scratch"
+    raw = _raw(user_data, bundle, out, ["band_gap", "hardness"], init="random", freeze_encoder=False)
+    summary = finetune_run(build_finetune_config(raw))
+    assert summary["init"] == "random" and summary["added_tasks"] == ["hardness"]
+
+    derived = read_config(out / "bundle")
+    assert [h.name for h in derived.heads] == ["band_gap", "hardness"]  # untrained heads are not kept
+    assert derived.provenance["init"] == "random" and derived.provenance["derived_from"]["init"] == "random"
+    # An existing target head keeps the source transform, so a scratch run is scored in the same units.
+    assert derived.head("band_gap").transform == read_config(bundle).head("band_gap").transform
+    assert read_manifest(out / "bundle").member().task_order == ("band_gap", "hardness")
+    pred = load_pretrained(out / "bundle").predict(_FORMULAS[:4], ["band_gap", "hardness"])
+    assert list(pred.columns[1:]) == ["band_gap", "hardness"]
+
+
+def _spy_fit(monkeypatch: pytest.MonkeyPatch, inspect) -> None:  # noqa: ANN001
+    """Run ``inspect(model, catalog)`` when training starts, before any optimisation step."""
+    import yammi.workflows.finetune as ft
+
+    real = ft._fit
+
+    def spy(model, catalog, cfg, rec):  # noqa: ANN001
+        inspect(model, catalog)
+        return real(model, catalog, cfg, rec)
+
+    monkeypatch.setattr(ft, "_fit", spy)
+
+
+def test_random_init_trains_from_fresh_weights(
+    bundle: Path, user_data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At the start of training the encoder is a fresh build for the seed, not the released one."""
+    from lightning import seed_everything
+
+    from yammi.hub.bundle import build_model, load_member
+    from yammi.workflows._sections import build_training_section
+
+    seen: dict = {}
+    _spy_fit(monkeypatch, lambda model, catalog: seen.update(
+        {k: v.detach().clone() for k, v in model.encoder.state_dict().items()}))  # fmt: skip
+    raw = _raw(user_data, bundle, tmp_path / "s", ["band_gap", "hardness"], init="random", freeze_encoder=False)
+    finetune_run(build_finetune_config(raw))
+
+    released = load_member(bundle)[0].encoder.state_dict()
+    seed_everything(raw["training"]["seed"], workers=True)
+    fresh = build_model(read_config(bundle), build_training_section(raw["training"])).encoder.state_dict()
+    assert seen.keys() == fresh.keys() and all(torch.equal(seen[k], fresh[k]) for k in fresh)
+    linear = [k for k in fresh if k.endswith("layer.weight")]  # BatchNorm starts at ones / zeros either way
+    assert linear and not any(torch.equal(seen[k], released[k]) for k in linear)
+
+
+def test_random_init_places_an_existing_curve_head_on_the_data(
+    bundle: Path, curve_data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A curve target the bundle has gets kernels on the training coordinates, as a new curve head does."""
+    from yammi.workflows.task_catalog import init_kernel_centers_sigmas
+
+    seen: dict = {}
+
+    def inspect(model, catalog):  # noqa: ANN001
+        params = dict(model.task_heads["seebeck"].named_parameters())
+        seen["centers"] = next(v for k, v in params.items() if k.endswith("centers")).detach().clone()
+        seen["expected"] = init_kernel_centers_sigmas(catalog._train_t_values("seebeck"), seen["centers"].numel())[0]
+
+    _spy_fit(monkeypatch, inspect)
+    out = tmp_path / "sc"
+    raw = _curve_raw(curve_data, bundle, out, ["seebeck"])
+    raw["finetune"].update(init="random", freeze_encoder=False)
+    finetune_run(build_finetune_config(raw))
+    assert torch.allclose(seen["centers"], torch.as_tensor(seen["expected"], dtype=torch.float32))
+    assert [h.name for h in read_config(out / "bundle").heads] == ["seebeck"]
+    curve = load_pretrained(out / "bundle").predict_curve(_FORMULAS[:2], "seebeck", t=[300, 600])
+    assert len(curve) == 4
+
+
+def test_random_init_keeps_a_per_task_head_architecture(
+    catalog_raw: dict,  # noqa: F811
+    curve_data: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A head the bundle built with its own n_kernel / x_hidden_dims keeps them; the fine-tune need not repeat them."""
+    from yammi.workflows.task_catalog import init_kernel_centers_sigmas
+
+    raw = {**catalog_raw, "tasks": [dict(t) for t in catalog_raw["tasks"]]}
+    seebeck = next(t for t in raw["tasks"] if t["name"] == "seebeck")
+    seebeck.update(n_kernel=7, x_hidden_dims=[12])
+    custom = _export(raw, [_checkpoint(raw, tmp_path / "c.pt", 1)], tmp_path / "custom")
+    assert read_config(custom).head("seebeck").n_kernel == 7
+
+    seen: dict = {}
+
+    def inspect(model, catalog):  # noqa: ANN001
+        params = dict(model.task_heads["seebeck"].named_parameters())
+        seen["centers"] = next(v for k, v in params.items() if k.endswith("centers")).detach().clone()
+        seen["expected"] = init_kernel_centers_sigmas(catalog._train_t_values("seebeck"), 7)[0]
+
+    _spy_fit(monkeypatch, inspect)
+    out = tmp_path / "sc"
+    ft = _curve_raw(curve_data, custom, out, ["seebeck"])  # no per-task architecture given here
+    ft["finetune"].update(init="random", freeze_encoder=False)
+    finetune_run(build_finetune_config(ft))
+    assert torch.allclose(seen["centers"], torch.as_tensor(seen["expected"], dtype=torch.float32))
+    head = read_config(out / "bundle").head("seebeck")
+    assert head.n_kernel == 7 and list(head.x_hidden_dims) == [12]
 
 
 def test_save_keeps_licence_and_records_source(bundle: Path, tmp_path: Path) -> None:

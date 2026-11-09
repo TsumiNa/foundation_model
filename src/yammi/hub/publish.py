@@ -44,6 +44,7 @@ def publish(
     visibility: Visibility = "private",
     title: str | None = None,
     card_extra: Sequence[str] = (),
+    commercial_contact: str | None = None,
     overwrite_card: bool = False,
     token: str | None = None,
     commit_message: str | None = None,
@@ -52,6 +53,8 @@ def publish(
     """Check, card and upload ``bundle`` to ``repo_id``; returns the repository URL.
 
     ``dry_run`` stops after writing the card and returns its path: nothing touches the network.
+    ``commercial_contact`` goes to :func:`~yammi.hub.card.render_card` (a commercial licence by separate
+    agreement, for a non-commercial licence).
     """
     if visibility not in ("private", "gated", "public"):
         raise ValueError(f"visibility must be private, gated or public, got {visibility!r}.")
@@ -61,11 +64,24 @@ def publish(
         load_member(path, member.id)
 
     card = path / CARD_FILE
+    if card.exists() and not overwrite_card and commercial_contact is not None:
+        raise ValueError(
+            f"{card} exists and would be kept, without the commercial-licence offer; pass overwrite_card "
+            "(--overwrite-card) to regenerate it with commercial_contact."
+        )
     if card.exists() and not overwrite_card:
         logger.info(f"keeping the existing {card} (pass overwrite_card to regenerate it).")
     else:
         card.write_text(
-            render_card(config, manifest, repo_id=repo_id, title=title, gated=visibility == "gated", extra=card_extra),
+            render_card(
+                config,
+                manifest,
+                repo_id=repo_id,
+                title=title,
+                gated=visibility == "gated",
+                extra=card_extra,
+                commercial_contact=commercial_contact,
+            ),
             encoding="utf-8",
         )
     if visibility == "public" and "nc" in config.license.lower().split("-"):

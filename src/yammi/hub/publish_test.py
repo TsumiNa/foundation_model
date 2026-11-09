@@ -108,3 +108,13 @@ def test_fm_publish_cli(bundle: Path, fake_api: type[FakeApi], tmp_path: Path) -
     assert "HYPOD-X" in (bundle / "README.md").read_text()
     result = CliRunner().invoke(main, ["publish", str(bundle), "--repo", "owner/fm", "--visibility", "secret"])
     assert result.exit_code != 0
+
+
+def test_publish_will_not_drop_the_commercial_offer_from_a_kept_card(bundle: Path) -> None:
+    (bundle / "README.md").write_text("# hand-written card\n")
+    with pytest.raises(ValueError, match="overwrite_card"):
+        publish(bundle, "owner/fm", commercial_contact="a@b.org", dry_run=True)
+    card = publish(
+        bundle, "owner/fm", visibility="gated", commercial_contact="a@b.org", overwrite_card=True, dry_run=True
+    )
+    assert "separate agreement" in Path(card).read_text()
