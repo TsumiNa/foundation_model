@@ -12,7 +12,9 @@ do not retrofit).
 
 There is **no repository-level `artifacts/` or `results/` folder**: every output lands inside the experiment
 that produced it (the old root `artifacts/` was dissolved on 2026-11-09). Folder names carry the start date,
-`<topic>_<YYYYMMDD>`.
+`<topic>_<YYYYMMDD>`. The `samples/` configs and the README examples default to `artifacts/...` for quick
+trial runs by package users; a git-ignored root `artifacts/` from such a trial is scratch, not an experiment.
+An experiment always sets its own output (`--output-dir experiments/<exp>/artifacts/<run>`).
 
 ## The index: `experiments/README.md`
 
