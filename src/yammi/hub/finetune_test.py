@@ -145,7 +145,7 @@ def test_random_init_trains_from_fresh_weights(
     assert linear and not any(torch.equal(seen[k], released[k]) for k in linear)
 
 
-def test_random_init_rebuilds_an_existing_curve_head_from_the_data(
+def test_random_init_places_an_existing_curve_head_on_the_data(
     bundle: Path, curve_data: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A curve target the bundle has gets kernels on the training coordinates, as a new curve head does."""
@@ -167,6 +167,38 @@ def test_random_init_rebuilds_an_existing_curve_head_from_the_data(
     assert [h.name for h in read_config(out / "bundle").heads] == ["seebeck"]
     curve = load_pretrained(out / "bundle").predict_curve(_FORMULAS[:2], "seebeck", t=[300, 600])
     assert len(curve) == 4
+
+
+def test_random_init_keeps_a_per_task_head_architecture(
+    catalog_raw: dict,  # noqa: F811
+    curve_data: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A head the bundle built with its own n_kernel / x_hidden_dims keeps them; the fine-tune need not repeat them."""
+    from yammi.workflows.task_catalog import init_kernel_centers_sigmas
+
+    raw = {**catalog_raw, "tasks": [dict(t) for t in catalog_raw["tasks"]]}
+    seebeck = next(t for t in raw["tasks"] if t["name"] == "seebeck")
+    seebeck.update(n_kernel=7, x_hidden_dims=[12])
+    custom = _export(raw, [_checkpoint(raw, tmp_path / "c.pt", 1)], tmp_path / "custom")
+    assert read_config(custom).head("seebeck").n_kernel == 7
+
+    seen: dict = {}
+
+    def inspect(model, catalog):  # noqa: ANN001
+        params = dict(model.task_heads["seebeck"].named_parameters())
+        seen["centers"] = next(v for k, v in params.items() if k.endswith("centers")).detach().clone()
+        seen["expected"] = init_kernel_centers_sigmas(catalog._train_t_values("seebeck"), 7)[0]
+
+    _spy_fit(monkeypatch, inspect)
+    out = tmp_path / "sc"
+    ft = _curve_raw(curve_data, custom, out, ["seebeck"])  # no per-task architecture given here
+    ft["finetune"].update(init="random", freeze_encoder=False)
+    finetune_run(build_finetune_config(ft))
+    assert torch.allclose(seen["centers"], torch.as_tensor(seen["expected"], dtype=torch.float32))
+    head = read_config(out / "bundle").head("seebeck")
+    assert head.n_kernel == 7 and list(head.x_hidden_dims) == [12]
 
 
 def test_random_init_rejections(bundle: Path, user_data: Path, tmp_path: Path) -> None:

@@ -472,17 +472,16 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
         section = bundle_config.model
         existing = [h.name for h in bundle_config.heads]
         if cfg.init == "random":
-            # The from-scratch control: same architecture and transforms, none of the released weights. Every
-            # bundle head goes (an untrained one would stay random); a target the bundle has comes back as a fresh
-            # head built like a new one, from the training data (curve heads place their kernels on its
-            # coordinates), and keeps the bundle's transform through the catalog.
+            # The from-scratch control: same architecture and transforms, none of the released weights. Heads
+            # that are not trained here would stay random, so only the targets are kept. Each kept head keeps the
+            # architecture of its HeadSpec (per-task overrides included); only its data-dependent start is
+            # redone, as for a new head: a curve head places its kernels on the training coordinates.
             seed_everything(cfg.training.seed, workers=True)
             model = build_model(bundle_config, cfg.training)
-            model.remove_tasks(*existing)
+            model.remove_tasks(*[name for name in existing if name not in cfg.tasks])
             existing = [name for name in existing if name in cfg.tasks]
-            for name in existing:
-                model.add_task(build_head_config(catalog, section, cfg.training, name, masking_ratio=1.0))
-            logger.info(f"init = random: fresh weights; rebuilt heads {existing}, adding the new ones.")
+            _init_kernels_from_data(model, catalog, existing)
+            logger.info(f"init = random: fresh weights, keeping heads {existing} and adding the new ones.")
 
         # Classification heads being fine-tuned weight their loss from the user's labels, as configured.
         for name in cfg.tasks:
@@ -562,6 +561,33 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
     finally:
         if owns_recorder:
             rec.close()
+
+
+def _init_kernels_from_data(model: Any, catalog: TaskCatalog, names: Sequence[str]) -> None:
+    """Put the kernels of each named curve head on its training coordinates, as a new head's are.
+
+    The head keeps its architecture (number of kernels included); heads without kernels are left alone.
+    """
+    import torch
+
+    from yammi.models.task_head.kernel_regression import _GaussianKernel
+
+    from .task_catalog import init_kernel_centers_sigmas
+
+    for name in names:
+        for module in model.task_heads[name].modules():
+            if not isinstance(module, _GaussianKernel):
+                continue
+            centers, sigmas = init_kernel_centers_sigmas(
+                catalog._train_t_values(name),  # noqa: SLF001
+                module.centers.numel(),
+            )
+            if not centers:  # no finite t in the training split: keep the head's default spacing
+                continue
+            with torch.no_grad():
+                module.centers.copy_(torch.as_tensor(centers, dtype=module.centers.dtype))
+                safe = torch.as_tensor(sigmas, dtype=module.log_sigmas.dtype).clamp_min(module.min_sigma)
+                module.log_sigmas.copy_(safe.log())
 
 
 def _fit(model: Any, catalog: TaskCatalog, cfg: FinetuneConfig, rec: RunRecorder) -> dict[str, Any]:

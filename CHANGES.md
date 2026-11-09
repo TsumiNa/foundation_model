@@ -6,9 +6,9 @@
   architecture from fresh weights, seeded by `[training].seed`, instead of the released ones. Everything else
   is the same as a fine-tune: descriptor, target transforms (an existing head keeps the bundle's, a new head
   fits its own), training settings, and the derived bundle. Only the heads being trained are kept, and the
-  bundle's provenance and `derived_from` record `init = "random"`. A target the bundle already has is
-  rebuilt like a new head, from the training data (a curve head places its kernels on the training
-  coordinates). Compared with a fine-tune that also has `freeze_encoder = false`, only the initial weights
+  bundle's provenance and `derived_from` record `init = "random"`. A target the bundle already has keeps
+  its head architecture (per-task overrides included) and gets a new head's data-dependent start: a curve
+  head places its kernels on the training coordinates. Compared with a fine-tune that also has `freeze_encoder = false`, only the initial weights
   differ.
 
 ## 2026-11-09 (2.1.2 — released models load from the cache when the Hub cannot answer or refuses; huggingface_hub 2.x)
