@@ -340,7 +340,7 @@ module load nvhpc
 
 PROJ=${PROJ:-$HOME/projects/foundation_model}
 VENV_PY="$PROJ/.venv/bin/python"
-PERSISTENT_OUT="$PROJ/artifacts/<run-name>"
+PERSISTENT_OUT="$PROJ/experiments/<experiment>/artifacts/<run-name>"  # experiment-layout skill
 
 cd "$PROJ"
 

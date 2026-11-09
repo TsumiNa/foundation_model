@@ -71,4 +71,4 @@ report the file size (warn if it grew unexpectedly — trim frame rate or thresh
 ## Delivery
 
 Send the built HTML(s) with SendUserFile; commit only the builder script (built HTML and any
-result data stay out of git per repo policy — the whole `experiments/` folder is git-ignored).
+result data stay out of git per repo policy — everything under `experiments/` is git-ignored except the index `experiments/README.md`).
