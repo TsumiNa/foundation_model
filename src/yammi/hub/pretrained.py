@@ -235,6 +235,14 @@ def _snapshot(
         if explained is None:
             raise
         raise explained from exc
+    # When the Hub cannot be asked, huggingface_hub returns the cached snapshot folder without checking that
+    # it holds the files asked for.
+    missing = [rel for rel in required if not (Path(snap) / rel).is_file()]
+    if missing:
+        raise BundleError(
+            f"{repo}@{revision}: {', '.join(missing)} not in the local cache, and the Hub did not provide them "
+            "(no network, offline mode, or access refused). Download them once where the Hub answers."
+        )
     return Path(snap)
 
 
@@ -242,32 +250,29 @@ _METADATA = [CONFIG_FILE, MANIFEST_FILE, "README.md"]
 
 
 def _network_errors() -> tuple[type[BaseException], ...]:
-    """Transport errors of the HTTP client huggingface_hub uses (httpx from 1.0, requests before)."""
-    errors: list[type[BaseException]] = []
-    try:
-        import httpx
+    """Transport errors of huggingface_hub's HTTP client (httpx2 since huggingface_hub 2.0)."""
+    import httpx2
 
-        errors.append(httpx.TransportError)
-    except ImportError:  # pragma: no cover - huggingface_hub < 1.0
-        pass
-    try:
-        import requests  # type: ignore[import-untyped]
+    return (httpx2.TransportError,)
 
-        errors += [requests.ConnectionError, requests.Timeout]
-    except ImportError:  # pragma: no cover
-        pass
-    return tuple(errors)
+
+_COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 
 
 def _commit(repo: str, revision: str | None, token: str | bool | None, cache_dir: Any = None) -> str:
     """The commit a (possibly symbolic) Hub revision points to: asked of the Hub, else read from the cache.
 
-    Offline (``HF_HUB_OFFLINE=1``, or no network, as on many compute nodes) the local cache answers, so a
-    bundle downloaded once on a login node loads anywhere that shares the cache.
+    A commit needs no lookup. A branch or tag resolved by the Hub is recorded in the local cache
+    (``refs/<revision>``, as ``snapshot_download`` does), because the files are then downloaded by commit.
+    When the Hub cannot answer (``HF_HUB_OFFLINE=1``, no network, as on many compute nodes) or refuses
+    (access withdrawn, repository made private, server error), the cache answers: a revision downloaded once
+    loads anywhere that shares the cache. A refusal is warned about; a revision the Hub does not have raises.
     """
+    if revision is not None and _COMMIT_RE.fullmatch(revision):
+        return revision
     try:
         from huggingface_hub import HfApi
-        from huggingface_hub.errors import OfflineModeIsEnabled
+        from huggingface_hub.errors import HfHubHTTPError, OfflineModeIsEnabled, RevisionNotFoundError
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise ImportError(
             "loading from the Hugging Face Hub needs the `hub` extra: "
@@ -277,20 +282,47 @@ def _commit(repo: str, revision: str | None, token: str | bool | None, cache_dir
     try:
         sha = HfApi().model_info(repo, revision=revision, token=token).sha
     except unreachable as online_error:
-        sha = _cached_commit(repo, revision, token, cache_dir, online_error)
-    except Exception as exc:
-        explained = _explained(exc, repo, revision)
-        if explained is None:
-            raise
-        raise explained from exc
+        return _cached_commit(repo, revision, cache_dir, online_error)
+    except RevisionNotFoundError as exc:
+        raise (_explained(exc, repo, revision) or exc) from exc
+    except HfHubHTTPError as exc:
+        refused = _explained(exc, repo, revision) or exc
+        sha = _cached_commit(repo, revision, cache_dir, refused)
+        warnings.warn(
+            f"the Hub refused {repo}@{revision or 'main'} ({refused}); loading the copy in the local cache "
+            f"(commit {sha[:12]}).",
+            stacklevel=3,
+        )
+        return sha
     if not sha:
         raise BundleError(f"the Hub did not resolve {repo}@{revision or 'main'} to a commit.")
+    _record_revision(repo, revision, str(sha), cache_dir)
     return str(sha)
 
 
-def _cached_commit(
-    repo: str, revision: str | None, token: str | bool | None, cache_dir: Any, online_error: BaseException
-) -> str:
+def _cache_folder(repo: str, cache_dir: Any) -> Path:
+    """The local cache folder of a Hub model repository (huggingface_hub's layout)."""
+    from huggingface_hub import constants
+
+    return Path(cache_dir if cache_dir is not None else constants.HF_HUB_CACHE) / f"models--{repo.replace('/', '--')}"
+
+
+def _record_revision(repo: str, revision: str | None, sha: str, cache_dir: Any) -> None:
+    """Write ``refs/<revision>`` = ``sha`` into the cache, so the revision resolves later without the Hub."""
+    name = revision or "main"
+    parts = name.split("/")
+    if name == sha or name.startswith("/") or any(part in ("", ".", "..") for part in parts):
+        return
+    ref = _cache_folder(repo, cache_dir) / "refs" / Path(*parts)
+    try:
+        if not ref.is_file() or ref.read_text() != sha:
+            ref.parent.mkdir(parents=True, exist_ok=True)
+            ref.write_text(sha)
+    except OSError:  # a read-only cache: this load works, and the revision just stays unrecorded
+        pass
+
+
+def _cached_commit(repo: str, revision: str | None, cache_dir: Any, online_error: BaseException) -> str:
     """The commit of a revision already in the local cache (its snapshot directory is named after it)."""
     from huggingface_hub import snapshot_download
 
@@ -299,14 +331,26 @@ def _cached_commit(
             repo_id=repo,
             revision=revision,
             allow_patterns=[CONFIG_FILE],
-            token=token,
             cache_dir=cache_dir,
             local_files_only=True,
         )
     except Exception:
+        snapshots = _cache_folder(repo, cache_dir) / "snapshots"
+        cached = (
+            sorted(d.name for d in snapshots.glob("*") if (d / CONFIG_FILE).is_file()) if snapshots.is_dir() else []
+        )
+        hint = (
+            f" The cache holds {repo} at commit {', '.join(cached)} but no record of which commit "
+            f"{revision or 'main'} is (downloads before yammi 2.1.2 did not record it); load one by commit, "
+            f"for example {repo}@{cached[0]}."
+            if cached
+            else " Download it once where the Hub answers."
+        )
+        if isinstance(online_error, BundleError):
+            raise BundleError(f"{online_error}{hint}") from online_error
         raise BundleError(
             f"cannot reach the Hub for {repo}@{revision or 'main'} ({online_error}) and it is not in the "
-            "local cache; download it once where the Hub is reachable."
+            f"local cache.{hint}"
         ) from online_error
     return Path(snap).name
 

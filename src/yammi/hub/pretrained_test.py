@@ -355,12 +355,9 @@ def test_offline_and_not_cached_says_so(monkeypatch: pytest.MonkeyPatch) -> None
 def test_hub_access_errors_say_what_to_do(
     error: str, says: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import httpx
     import huggingface_hub
-    from huggingface_hub import errors
 
-    response = httpx.Response(404, request=httpx.Request("GET", "https://huggingface.co/api/models/owner/fm"))
-    exc = getattr(errors, error)("hub said no", response=response)
+    exc = _hub_error(error, 404)
 
     def fail(*args: object, **kwargs: object) -> None:
         raise exc
@@ -390,6 +387,8 @@ def test_snapshot_reads_a_complete_cache_without_the_hub(
 
     def snapshot_download(**kwargs: object) -> str:
         calls.append(bool(kwargs.get("local_files_only")))
+        if not kwargs.get("local_files_only"):  # the download fills the cache
+            (snap / "members" / "m000" / "model.safetensors").write_bytes(b"")
         return str(snap)
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
@@ -415,3 +414,139 @@ def test_suite_treats_an_infinite_member_output_as_out_of_range(bundle: Path, mo
         got = suite.predict(_COMPS, ["band_gap"])
     np.testing.assert_allclose(got["band_gap"], np.mean(real[1:], axis=0))
     assert np.isfinite(got["band_gap:std"]).all()
+
+
+SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+def _hub_cache(bundle: Path, cache: Path, *, ref: str | None = None) -> Path:
+    """``bundle`` as huggingface_hub caches a download of ``owner/fm`` at commit SHA (no refs unless given)."""
+    folder = cache / "models--owner--fm"
+    shutil.copytree(bundle, folder / "snapshots" / SHA)
+    if ref is not None:
+        (folder / "refs").mkdir(parents=True)
+        (folder / "refs" / ref).write_text(SHA)
+    return folder
+
+
+def _hub_error(name: str, status: int) -> Exception:
+    import httpx2
+    from huggingface_hub import errors
+
+    response = httpx2.Response(status, request=httpx2.Request("GET", "https://huggingface.co/api/models/owner/fm"))
+    return getattr(errors, name)("hub said no", response=response)
+
+
+@pytest.mark.parametrize(
+    ("failure", "warns"),
+    [("offline", False), ("network", False), ("RepositoryNotFoundError", True), ("GatedRepoError", True)],
+)
+def test_a_downloaded_release_loads_when_the_hub_cannot_answer_or_refuses(
+    bundle: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str, warns: bool
+) -> None:
+    """Downloaded by tag while the Hub answered; later offline, or the repository went private: still loads."""
+    import types
+
+    import httpx2
+    import huggingface_hub
+    from huggingface_hub.errors import OfflineModeIsEnabled
+
+    cache = tmp_path / "hf"
+    folder = _hub_cache(bundle, cache)  # files cached by commit, as yammi downloads them; no refs yet
+    monkeypatch.setattr(huggingface_hub.HfApi, "model_info", lambda *a, **k: types.SimpleNamespace(sha=SHA))
+    online = load_pretrained("owner/fm@v1", cache_dir=cache)
+    assert (folder / "refs" / "v1").read_text() == SHA  # the tag is recorded for later
+
+    errors = {
+        "offline": OfflineModeIsEnabled("offline mode is enabled"),
+        "network": httpx2.ConnectError("down"),
+    }
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise errors[failure] if failure in errors else _hub_error(failure, 401)
+
+    monkeypatch.setattr(huggingface_hub.HfApi, "model_info", fail)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        later = load_pretrained("owner/fm@v1", cache_dir=cache)
+        suite = load_suite("owner/fm@v1", cache_dir=cache)
+    refused = [w for w in caught if "refused owner/fm@v1" in str(w.message)]
+    assert bool(refused) == warns and (not warns or "loading the copy in the local cache" in str(refused[0].message))
+    assert later.revision == SHA and later.member.id == online.member.id
+    comps = ["Fe2 Al3", "Ni Ti"]
+    pd.testing.assert_frame_equal(later.predict(comps), online.predict(comps))
+    assert len(suite.member_ids) == 3 and len(suite.predict(comps)) == len(comps)  # every member, from the cache
+
+
+def test_an_unrecorded_tag_names_the_cached_commits(
+    bundle: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cache filled by yammi < 2.1.2 has no refs: the error says how to load the cached commit instead."""
+    import huggingface_hub
+
+    cache = tmp_path / "hf"
+    _hub_cache(bundle, cache)
+
+    def private(*args: object, **kwargs: object) -> None:
+        raise _hub_error("RepositoryNotFoundError", 401)
+
+    monkeypatch.setattr(huggingface_hub.HfApi, "model_info", private)
+    with pytest.raises(
+        BundleError, match=f"no model repository owner/fm.*load one by commit, for example owner/fm@{SHA}"
+    ):
+        load_pretrained("owner/fm@v1", cache_dir=cache)
+    # Named by commit, the cached release loads without asking the Hub at all.
+    assert load_pretrained(f"owner/fm@{SHA}", cache_dir=cache).revision == SHA
+
+
+def test_refused_and_not_cached_still_explains(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import huggingface_hub
+
+    def gated(*args: object, **kwargs: object) -> None:
+        raise _hub_error("GatedRepoError", 403)
+
+    monkeypatch.setattr(huggingface_hub.HfApi, "model_info", gated)
+    with pytest.raises(BundleError, match="is gated: request access.*Download it once where the Hub answers"):
+        pretrained_mod._commit("owner/fm", "v1", None, cache_dir=tmp_path)
+
+
+def test_a_missing_revision_is_not_served_from_the_cache(
+    bundle: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Hub saying "no such revision" is an answer, not an outage: no fallback even when a ref is cached."""
+    import huggingface_hub
+
+    cache = tmp_path / "hf"
+    _hub_cache(bundle, cache, ref="v1")
+
+    def gone(*args: object, **kwargs: object) -> None:
+        raise _hub_error("RevisionNotFoundError", 404)
+
+    monkeypatch.setattr(huggingface_hub.HfApi, "model_info", gone)
+    monkeypatch.setattr(huggingface_hub.HfApi, "list_repo_refs", gone)
+    with pytest.raises(BundleError, match="has no revision 'v1'"):
+        pretrained_mod._commit("owner/fm", "v1", None, cache_dir=cache)
+
+
+@pytest.mark.parametrize("revision", ["../../escape", "/abs", "a//b", "."])
+def test_unsafe_revision_names_are_not_written_to_the_cache(tmp_path: Path, revision: str) -> None:
+    pretrained_mod._record_revision("owner/fm", revision, SHA, tmp_path)
+    assert [p for p in tmp_path.rglob("*") if p.is_file()] == []
+    pretrained_mod._record_revision("owner/fm", "refs/pr/1", SHA, tmp_path)  # nested names are fine
+    assert (tmp_path / "models--owner--fm" / "refs" / "refs" / "pr" / "1").read_text() == SHA
+
+
+def test_a_snapshot_missing_requested_files_says_so(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without the Hub, huggingface_hub hands back the cached folder unchecked; a missing member is named."""
+    import huggingface_hub
+
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    for rel in ("config.json", "manifest.json"):
+        (snap / rel).write_text("{}")
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda **kwargs: str(snap))
+    src = pretrained_mod.Source(repo="owner/fm", revision=SHA, member="m003")
+    with pytest.raises(
+        BundleError, match="members/m003/member.json, members/m003/model.safetensors not in the local cache"
+    ):
+        pretrained_mod._fetch(src, ["m003"], None, tmp_path)
