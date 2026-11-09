@@ -34,12 +34,12 @@ Hugging Face Hub. Nothing else needs to be installed: no repository checkout, no
 
 ```bash
 # Apptainer / SingularityCE bind $HOME, so the host's `hf auth login` token and cache are used.
-apptainer exec --nv yammi-2.1.1.sif \
+apptainer exec --nv yammi-2.1.2.sif \
   yammi predict --pretrained TsumiNa/yammi@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
 
 # Docker: pass the token (gated repository) and keep the download cache on the host.
 docker run --rm --gpus all -e HF_TOKEN -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
-  -v "$PWD:/workspace" ghcr.io/tsumina/yammi:2.1.1 \
+  -v "$PWD:/workspace" ghcr.io/tsumina/yammi:2.1.2 \
   predict --pretrained TsumiNa/yammi@v1.0.0 --compositions "Fe2O3,NaCl" --output-dir pred/
 ```
 
@@ -50,6 +50,11 @@ docker run --rm --gpus all -e HF_TOKEN -v "$HOME/.cache/huggingface:/root/.cache
 - **Offline nodes.** Compute nodes without internet need the bundle in the cache first. Run the command
   once on the login node, then set `HF_HUB_OFFLINE=1` in the job. Alternatively, download with
   `hf download TsumiNa/yammi --revision v1.0.0 --local-dir bundle/` and pass `--pretrained bundle/`.
+- **Cached releases keep loading.** A release downloaded once loads from the cache when the Hub cannot be
+  reached, and also when it refuses the request (access withdrawn, repository made private, server error);
+  yammi then warns. yammi before 2.1.2 did not record which commit a tag such as `v1.0.0` points to, so for a
+  cache filled by an older version, download once more where the Hub answers, or name the cached commit
+  (`TsumiNa/yammi@<commit>`; the error message lists it).
 - **Other subcommands.** `yammi finetune` and `yammi inverse` take the same `--pretrained` source (or
   `[finetune] pretrained = ...`); bind the directory that holds your data and configs.
 

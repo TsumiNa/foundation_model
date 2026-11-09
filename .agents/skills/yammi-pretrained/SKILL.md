@@ -33,7 +33,9 @@ and fine-tuned models are non-commercial and ShareAlike. Pin releases: `TsumiNa/
   `YAMMI_LOG_LEVEL=WARNING` quiets the INFO log.
 - **Offline compute nodes.** Run once where the Hub is reachable (fills `~/.cache/huggingface/hub`, or
   `$HF_HOME/hub`), then `HF_HUB_OFFLINE=1` works from the cache. On clusters point `HF_HOME` at group
-  storage.
+  storage. A cached release also loads when the Hub refuses (access withdrawn, repository made private), with a
+  warning. A cache filled by yammi < 2.1.2 has no record of the tag: re-download once, or load the cached commit
+  the error names (`TsumiNa/yammi@<commit>`).
 
 ## 2. Predict
 

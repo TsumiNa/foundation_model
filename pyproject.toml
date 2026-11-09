@@ -1,6 +1,6 @@
 [project]
 name = "yammi"
-version = "2.1.1"
+version = "2.1.2"
 description = "YAMMI — Yet Another Materials Model, Inverse-ready: multi-task property prediction and inverse design from chemical composition"
 readme = "README.md"
 authors = [{ name = "TsumiNa", email = "liu.chang.1865@gmail.com" }]
@@ -41,7 +41,7 @@ classifiers = [
 
 [project.optional-dependencies]
 # Download released bundles from the Hugging Face Hub (yammi.hub.load_pretrained).
-hub = ["huggingface_hub>=0.26"]  # update_repo_settings(private=...) is 0.26+
+hub = ["huggingface_hub>=2.4"]  # the locked and tested major version (httpx2 client)
 
 [project.scripts]
 yammi = "yammi.cli.main:main"

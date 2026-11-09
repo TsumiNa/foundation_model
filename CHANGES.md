@@ -1,5 +1,24 @@
 # Recent Updates
 
+## 2026-11-09 (2.1.2 — released models load from the cache when the Hub cannot answer or refuses; huggingface_hub 2.x)
+
+- **huggingface_hub 2.x everywhere.** The `hub` extra now requires `huggingface_hub>=2.4` (was `>=0.26`), and
+  the lock moves from 1.14.0 to 2.4.0, so the container, `uv sync` and a pip install from GitHub use the same
+  client. huggingface_hub 2.x talks HTTP through httpx2; yammi only knew httpx's errors, so under 2.x (what a
+  pip install already got) a network outage was not recognised and even a cached release failed without
+  network. The lock change also brings datasets 4.8.5 → 5.1.0 (dev group; 4.x requires huggingface_hub < 2),
+  pyarrow 22.0.0 → 26.0.1, click 8.3.3 → 8.5.1, hf-xet 1.5.0 → 1.8.0 and idna 3.11 → 3.20.
+- **The documented offline path works for tags.** yammi pins a revision to its commit and downloads by commit,
+  so huggingface_hub never recorded which commit a tag or branch pointed to, and `HF_HUB_OFFLINE=1` (or no
+  network) could not find `TsumiNa/yammi@v1.0.0` in a cache that held it. yammi now records `refs/<revision>`
+  in the cache when the Hub resolves a revision, as `snapshot_download` does.
+- **A refusal falls back to the cache.** When the Hub refuses (access withdrawn, repository made private,
+  server error), a revision downloaded earlier loads from the cache with a warning, as huggingface_hub's own
+  downloads do. A revision the Hub does not have still raises.
+- A full commit hash loads without asking the Hub. When a tag cannot be resolved from the cache, the error lists
+  the cached commits to load by commit (caches filled before 2.1.2 have no record of the tag). A cached snapshot
+  missing the requested member files raises naming them, instead of failing later on a missing file.
+
 ## 2026-11-09 (2.1.1 — quieter, clearer output for users of the released models)
 
 Found while building a demo of the released models for colleagues:
