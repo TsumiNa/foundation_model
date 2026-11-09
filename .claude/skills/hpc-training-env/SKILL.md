@@ -88,4 +88,5 @@ cluster before submitting, and its outputs back afterwards.
   mirrors.
 - Before any shutdown/migration deadline: full sweep **including checkpoints** (they are gone
   forever otherwise and are usually small — verify total size first), plus job logs; reconcile
-  file counts on both sides; audit `artifacts/` for directories from older experiments.
+  file counts on both sides; check that every run output sits in its own
+  experiment's `artifacts/`.

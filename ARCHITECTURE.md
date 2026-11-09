@@ -49,7 +49,7 @@ yammi/
 │       └── predict.py                    # arbitrary-checkpoint evaluation & prediction
 │
 ├── data/                        # Persistent datasets
-├── artifacts/                   # Run outputs (gitignored)
+├── experiments/                 # One folder per experiment, outputs inside (untracked; index README.md tracked)
 ├── samples/                     # TOML config templates (formal + *_smoke)
 ├── docs/                        # Algorithm reference + summaries
 ├── notebooks/                   # Experiments / analysis

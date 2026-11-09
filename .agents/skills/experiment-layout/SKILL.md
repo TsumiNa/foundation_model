@@ -10,6 +10,21 @@ One experiment = one folder that contains **everything the experiment owns**. No
 siblings. Applies to every NEW experiment (existing pre-convention folders are left as-is —
 do not retrofit).
 
+There is **no repository-level `artifacts/` or `results/` folder**: every output lands inside the experiment
+that produced it (the old root `artifacts/` was dissolved on 2026-11-09). Folder names carry the start date,
+`<topic>_<YYYYMMDD>`.
+
+## The index: `experiments/README.md`
+
+One table row per experiment: folder, date, question, outcome, where the data lives (local subfolders and any
+remote path), status. It is the entry point for finding data again and for cross-experiment analysis, and the
+only file under `experiments/` that is tracked in git.
+
+- **Add the row when the experiment is created** (question, folder, status `planned` / `running`); update it
+  when the outcome is known, when raw data moves (mirror, remote only, deleted), or when it is superseded.
+- Outcome: one sentence with the key numbers, the same as the experiment README's outcome; never a new claim.
+- Deleting or moving an experiment's data is recorded in its row (what is gone, what remains, the date).
+
 ## Single experiment
 
 ```
@@ -51,9 +66,9 @@ experiments/<group>/
 
 ## Tracking & provenance (repo policy)
 
-- **Nothing under `experiments/` is in git** (the whole folder is git-ignored since 2026-11-08):
-  README, configs, scripts, analysis code and results all travel by rsync between machines —
-  mirror to the SAME relative path, exclude checkpoints on routine mirrors. A cluster run therefore
+- **Nothing under `experiments/` is in git except the index `experiments/README.md`** (the folder
+  is git-ignored since 2026-11-08): README, configs, scripts, analysis code and results all travel
+  by rsync between machines — mirror to the SAME relative path, exclude checkpoints on routine mirrors. A cluster run therefore
   needs the experiment folder rsynced there, not just a `git pull`.
 - What an experiment needs from the code is in `src/` (tracked). If a script turns out to be
   reusable, move it into `src/` or `scripts/` (tracked) instead of pointing other code at

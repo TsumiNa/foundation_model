@@ -77,5 +77,7 @@ ehthumbs.db
 Thumbs.db
 
 # Experiments (configs, job scripts, analysis code, results) are not kept in git. They travel by rsync
-# between machines; each experiment's README is its record (see the experiment-layout skill).
-experiments/
+# between machines; each experiment's README is its record (see the experiment-layout skill). The index of
+# all experiments, experiments/README.md, is tracked so it survives clones and pulls.
+experiments/*
+!experiments/README.md
