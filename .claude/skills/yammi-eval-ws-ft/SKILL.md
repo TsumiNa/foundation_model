@@ -22,9 +22,10 @@ Reference configs (local experiment folder, outside git): `experiments/rikyu_tas
 For a **released bundle** instead of a training checkpoint, use `yammi finetune --pretrained` (see the
 yammi-pretrained skill): data in physical units, no `[model]` / scalers, a derived bundle as output.
 New heads there fit Yeo-Johnson with lambda kept in [0, 2] (yammi ≥ 2.1.0) and infer `num_classes`.
-The matching scratch baseline is the same config with `init = "random"` and `freeze_encoder = false` in
-`[finetune]` (yammi ≥ 2.2.0): same architecture, transforms and training, fresh weights seeded by
-`[training].seed`, so only the initial weights differ.
+The matching scratch baseline is the same config with `init = "random"` in `[finetune]` (yammi ≥ 2.2.0):
+same architecture, transforms and training, fresh weights seeded by `[training].seed`. Scratch needs
+`freeze_encoder = false`, so compare it with a pretrained run that **also** has `freeze_encoder = false`;
+only then do the two differ in the initial weights alone (a frozen pretrained run also trains fewer weights).
 
 ## Config essentials
 

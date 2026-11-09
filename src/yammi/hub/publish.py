@@ -64,6 +64,11 @@ def publish(
         load_member(path, member.id)
 
     card = path / CARD_FILE
+    if card.exists() and not overwrite_card and commercial_contact is not None:
+        raise ValueError(
+            f"{card} exists and would be kept, without the commercial-licence offer; pass overwrite_card "
+            "(--overwrite-card) to regenerate it with commercial_contact."
+        )
     if card.exists() and not overwrite_card:
         logger.info(f"keeping the existing {card} (pass overwrite_card to regenerate it).")
     else:
