@@ -170,6 +170,11 @@ yammi finetune --config my_finetune.toml
   released. With `freeze_encoder = true` the encoder and every head you do **not** list in `tasks` keep their
   predictions; the heads you list are trained (that is the point). With `false` the unlisted heads may
   drift too, since they share the encoder.
+- **A from-scratch control.** To measure what the released weights bring, train the same thing from
+  random weights: add `init = "random"` and `freeze_encoder = false` to `[finetune]`. The run uses the
+  bundle's architecture, descriptor and transforms, with fresh weights seeded by `[training].seed`. Its
+  bundle holds only the heads you listed, and its provenance records `init = "random"`. Compare it with the
+  fine-tune on the same split.
 
 From Python, after loading: `model.save("out/copy")` writes a one-member derived bundle.
 

@@ -1,5 +1,14 @@
 # Recent Updates
 
+## 2026-11-09 (2.2.0 — a from-scratch control for fine-tuning released models)
+
+- **`[finetune].init = "random"`** (with `--pretrained` and `freeze_encoder = false`) trains the bundle's
+  architecture from fresh weights, seeded by `[training].seed`, instead of the released ones. Everything else
+  is the same as a fine-tune: descriptor, target transforms (an existing head keeps the bundle's, a new head
+  fits its own), training settings, and the derived bundle. Only the heads being trained are kept, and the
+  bundle's provenance and `derived_from` record `init = "random"`. This makes "fine-tune vs. train from
+  scratch" a comparison in which only the initial weights differ.
+
 ## 2026-11-09 (2.1.2 — released models load from the cache when the Hub cannot answer or refuses; huggingface_hub 2.x)
 
 - **huggingface_hub 2.x everywhere.** The `hub` extra now requires `huggingface_hub>=2.4` (was `>=0.26`), and

@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from yammi.hub import load_pretrained, read_config, read_manifest
 from yammi.workflows.finetune import build_finetune_config
@@ -89,6 +90,47 @@ def test_derived_bundles_chain_their_lineage(bundle: Path, user_data: Path, tmp_
     prov = read_config(second / "bundle").provenance
     assert prov["derived_from"]["source"] == str(first / "bundle")
     assert prov["lineage"][0]["source"] == str(bundle)
+
+
+def test_random_init_is_a_from_scratch_control(bundle: Path, user_data: Path, tmp_path: Path) -> None:
+    """init = "random": the bundle's architecture and transforms, fresh weights, only the target heads kept."""
+    from safetensors.torch import load_file
+
+    def weights(root: Path) -> dict:
+        return load_file(str(root / "members" / "m000" / "model.safetensors"))
+
+    out = tmp_path / "scratch"
+    raw = _raw(user_data, bundle, out, ["band_gap", "hardness"], init="random", freeze_encoder=False)
+    summary = finetune_run(build_finetune_config(raw))
+    assert summary["init"] == "random" and summary["added_tasks"] == ["hardness"]
+
+    derived = read_config(out / "bundle")
+    assert [h.name for h in derived.heads] == ["band_gap", "hardness"]  # untrained heads are not kept
+    assert derived.provenance["init"] == "random" and derived.provenance["derived_from"]["init"] == "random"
+    # An existing target head keeps the source transform, so a scratch run is scored in the same units.
+    assert derived.head("band_gap").transform == read_config(bundle).head("band_gap").transform
+    assert read_manifest(out / "bundle").member().task_order == ("band_gap", "hardness")
+
+    released, scratch = weights(bundle), weights(out / "bundle")
+    # Linear weights (BatchNorm starts at ones / zeros in either case, and the test bundle barely trained).
+    shared = [k for k in scratch if k.startswith("encoder.") and k.endswith("layer.weight") and k in released]
+    assert shared and not any(torch.equal(released[k], scratch[k]) for k in shared)
+
+    # The seed picks the initialisation: another seed, other weights.
+    other = tmp_path / "scratch_seed4"
+    raw = _raw(user_data, bundle, other, ["band_gap", "hardness"], init="random", freeze_encoder=False)
+    raw["training"]["seed"] = 4
+    finetune_run(build_finetune_config(raw))
+    assert not torch.equal(weights(other / "bundle")[shared[0]], scratch[shared[0]])
+    pred = load_pretrained(out / "bundle").predict(_FORMULAS[:4], ["band_gap", "hardness"])
+    assert list(pred.columns[1:]) == ["band_gap", "hardness"]
+
+
+def test_random_init_rejections(bundle: Path, user_data: Path, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="needs freeze_encoder = false"):
+        build_finetune_config(_raw(user_data, bundle, tmp_path / "a", ["hardness"], init="random"))
+    with pytest.raises(ValueError, match='must be "pretrained" or "random"'):
+        build_finetune_config(_raw(user_data, bundle, tmp_path / "b", ["hardness"], init="zeros"))
 
 
 def test_save_keeps_licence_and_records_source(bundle: Path, tmp_path: Path) -> None:

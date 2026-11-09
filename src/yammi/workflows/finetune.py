@@ -20,6 +20,11 @@ physical units:
 
 The run also writes a derived bundle (``<output>/bundle``). It carries the source licence and
 ``derived_from``.
+
+``[finetune].init = "random"`` (bundles only) is the from-scratch control for such a fine-tune: the bundle's
+architecture, descriptor and target transforms, but freshly initialised weights (seeded by ``[training].seed``)
+in place of the released ones. Only the target heads are kept, since the others would be untrained, the
+encoder must train (``freeze_encoder = false``), and the derived bundle records ``init = "random"``.
 """
 
 from __future__ import annotations
@@ -77,10 +82,19 @@ class FinetuneConfig:
     epochs: int = 20  # fine-tune epochs (distinct from [training].max_epochs)
     freeze_encoder: bool = True  # freeze the shared encoder + non-target heads (BatchNorm buffers too)
     add_new_tasks: bool = True  # if a target task isn't in the checkpoint, add a fresh head for it
+    # "pretrained": start from the released weights. "random": the bundle's architecture and transforms with
+    # fresh weights, the from-scratch control for a fine-tune (bundles only; the encoder must train).
+    init: str = "pretrained"
 
     def __post_init__(self) -> None:
         if (self.checkpoint is None) == (self.pretrained is None):
             raise ValueError("give exactly one of a checkpoint (--checkpoint) or a released bundle (--pretrained).")
+        if self.init not in ("pretrained", "random"):
+            raise ValueError(f'finetune.init must be "pretrained" or "random", got {self.init!r}.')
+        if self.init == "random" and self.pretrained is None:
+            raise ValueError('finetune.init = "random" applies to a released bundle (--pretrained) only.')
+        if self.init == "random" and self.freeze_encoder:
+            raise ValueError('finetune.init = "random" needs freeze_encoder = false: a random encoder must train.')
         if self.checkpoint is not None:
             self.checkpoint = Path(self.checkpoint)
         self.output_dir = Path(self.output_dir)
@@ -177,7 +191,7 @@ def build_finetune_config(
     reject_unknown("<root>", raw, _FINETUNE_ROOT_KEYS)
     ft_raw = dict(raw.get("finetune", {}))
     reject_unknown(
-        "finetune", ft_raw, {"checkpoint", "pretrained", "tasks", "epochs", "freeze_encoder", "add_new_tasks"}
+        "finetune", ft_raw, {"checkpoint", "pretrained", "tasks", "epochs", "freeze_encoder", "add_new_tasks", "init"}
     )
     resolved_pretrained = pretrained if pretrained is not None else ft_raw.get("pretrained")
     if resolved_pretrained is not None:
@@ -212,6 +226,7 @@ def build_finetune_config(
         epochs=int(ft_raw.get("epochs", 20)),
         freeze_encoder=bool(ft_raw.get("freeze_encoder", True)),
         add_new_tasks=bool(ft_raw.get("add_new_tasks", True)),
+        init=str(ft_raw.get("init", "pretrained")),
     )
 
 
@@ -433,7 +448,7 @@ def _refreshed_curve(head: Any, catalog: TaskCatalog) -> Any:
 
 def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[str, Any]:
     """Fine-tune from a released bundle; writes the legacy checkpoint and a derived bundle."""
-    from yammi.hub.bundle import load_member
+    from yammi.hub.bundle import build_model, load_member
     from yammi.hub.derive import save_derived
     from yammi.hub.export import _head_spec
     from yammi.hub.pretrained import resolve
@@ -456,6 +471,14 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
         catalog = TaskCatalog(cfg.catalog, target_inputs=_target_inputs(cfg, bundle_config))
         section = bundle_config.model
         existing = [h.name for h in bundle_config.heads]
+        if cfg.init == "random":
+            # The from-scratch control: same architecture and transforms, none of the released weights. Heads
+            # that are not trained here would stay random, so only the targets are kept.
+            seed_everything(cfg.training.seed, workers=True)
+            model = build_model(bundle_config, cfg.training)
+            model.remove_tasks(*[name for name in existing if name not in cfg.tasks])
+            existing = [name for name in existing if name in cfg.tasks]
+            logger.info(f"init = random: fresh weights, keeping heads {existing} and adding the new ones.")
 
         # Classification heads being fine-tuned weight their loss from the user's labels, as configured.
         for name in cfg.tasks:
@@ -486,7 +509,7 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
             model.add_task(build_head_config(catalog, section, cfg.training, name, masking_ratio=1.0))
 
         fit = _fit(model, catalog, cfg, rec)
-        order = list(member.task_order) + added
+        order = [t for t in member.task_order if t in existing] + added
         rec.save_final_model(model, existing + added, _task_spec_dump(catalog, [t for t in cfg.tasks]))
 
         heads = [
@@ -494,6 +517,7 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
             if h.name in cfg.tasks
             else h
             for h in bundle_config.heads
+            if h.name in existing
         ] + [_head_spec(catalog, section, name) for name in added]
         derived_from = {
             "source": cfg.pretrained,
@@ -502,6 +526,7 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
             "license": bundle_config.license,
             "yammi_version": bundle_config.yammi_version,
             "fm_version": bundle_config.yammi_version,  # pre-2.1.1 key, kept for existing readers
+            **({"init": "random"} if cfg.init == "random" else {}),
         }
         bundle_dir = save_derived(
             rec.paths.root / "bundle",
@@ -510,7 +535,11 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
             heads=heads,
             task_order=order,
             derived_from=derived_from,
-            provenance={"finetuned_heads": list(cfg.tasks), "added_heads": added},
+            provenance={
+                "finetuned_heads": list(cfg.tasks),
+                "added_heads": added,
+                **({"init": "random"} if cfg.init == "random" else {}),
+            },
         )
         summary = {
             "from_pretrained": cfg.pretrained,
@@ -518,6 +547,7 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
             "license": bundle_config.license,
             "finetuned_heads": list(cfg.tasks),
             "added_tasks": added,
+            "init": cfg.init,
             "bundle": str(bundle_dir),
             "epochs": cfg.epochs,
             **fit,
