@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import tomllib
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -14,9 +15,11 @@ import torch
 
 from yammi.workflows._engine import AE_NAME, build_empty_model, build_head_config
 from yammi.workflows._sections import EarlyStoppingConfig, ModelSectionConfig, TrainingSectionConfig
-from yammi.workflows.finetune import apply_freeze_policy, build_finetune_config
+from yammi.workflows.finetune import FinetuneInit, apply_freeze_policy, build_finetune_config
 from yammi.workflows.finetune import run as finetune_run
 from yammi.workflows.recording import RunRecorder
+from yammi.hub.export_test import catalog_raw  # noqa: F401  (fixture used by bundle)
+from yammi.hub.finetune_test import _raw, bundle, user_data  # noqa: F401  (fixtures)
 from yammi.workflows.task_catalog import TaskCatalog, build_task_catalog_config
 
 _ELEMENTS = ["Fe", "Al", "Cu", "Ni", "Ti", "Zn", "Mg", "Ca", "Na", "Cl", "O", "Si"]
@@ -235,3 +238,20 @@ def test_add_new_task_disabled_raises(data_dir, tmp_path) -> None:
     cfg = _finetune_cfg(data_dir, tmp_path / "noadd", checkpoint=ckpt, tasks=["c"], add_new_tasks=False)
     with pytest.raises(ValueError, match="add_new_tasks"):
         finetune_run(cfg)
+
+
+def test_init_is_a_closed_choice_normalised_from_toml(
+    bundle: Path,  # noqa: F811
+    user_data: Path,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """``[finetune].init`` accepts the enum or its string; random needs a bundle and a training encoder."""
+    data, src = user_data, bundle
+    default = build_finetune_config(_raw(data, src, tmp_path / "d", ["hardness"]))
+    assert default.init is FinetuneInit.PRETRAINED
+    cfg = build_finetune_config(_raw(data, src, tmp_path / "r", ["hardness"], init="random", freeze_encoder=False))
+    assert cfg.init is FinetuneInit.RANDOM and cfg.init == "random"
+    with pytest.raises(ValueError, match="needs freeze_encoder = false"):
+        build_finetune_config(_raw(data, src, tmp_path / "a", ["hardness"], init="random"))
+    with pytest.raises(ValueError, match='must be "pretrained" or "random"'):
+        build_finetune_config(_raw(data, src, tmp_path / "b", ["hardness"], init="zeros"))

@@ -30,6 +30,7 @@ encoder must train (``freeze_encoder = false``), and the derived bundle records 
 from __future__ import annotations
 
 import json
+from enum import Enum
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,6 +68,13 @@ _FINETUNE_ROOT_KEYS = {"data", "descriptor", "datasets", "tasks", "model", "trai
 _CATALOG_KEYS = {"data", "descriptor", "datasets", "tasks"}
 
 
+class FinetuneInit(str, Enum):
+    """``[finetune].init``: start from the released weights, or from fresh ones (the from-scratch control)."""
+
+    PRETRAINED = "pretrained"
+    RANDOM = "random"
+
+
 @dataclass(kw_only=True)
 class FinetuneConfig:
     """``[finetune]`` + shared sections — frozen-encoder head fine-tuning config."""
@@ -84,16 +92,18 @@ class FinetuneConfig:
     add_new_tasks: bool = True  # if a target task isn't in the checkpoint, add a fresh head for it
     # "pretrained": start from the released weights. "random": the bundle's architecture and transforms with
     # fresh weights, the from-scratch control for a fine-tune (bundles only; the encoder must train).
-    init: str = "pretrained"
+    init: FinetuneInit | str = FinetuneInit.PRETRAINED
 
     def __post_init__(self) -> None:
         if (self.checkpoint is None) == (self.pretrained is None):
             raise ValueError("give exactly one of a checkpoint (--checkpoint) or a released bundle (--pretrained).")
-        if self.init not in ("pretrained", "random"):
-            raise ValueError(f'finetune.init must be "pretrained" or "random", got {self.init!r}.')
-        if self.init == "random" and self.pretrained is None:
+        try:
+            self.init = FinetuneInit(self.init)
+        except ValueError:
+            raise ValueError(f'finetune.init must be "pretrained" or "random", got {self.init!r}.') from None
+        if self.init is FinetuneInit.RANDOM and self.pretrained is None:
             raise ValueError('finetune.init = "random" applies to a released bundle (--pretrained) only.')
-        if self.init == "random" and self.freeze_encoder:
+        if self.init is FinetuneInit.RANDOM and self.freeze_encoder:
             raise ValueError('finetune.init = "random" needs freeze_encoder = false: a random encoder must train.')
         if self.checkpoint is not None:
             self.checkpoint = Path(self.checkpoint)
@@ -226,7 +236,7 @@ def build_finetune_config(
         epochs=int(ft_raw.get("epochs", 20)),
         freeze_encoder=bool(ft_raw.get("freeze_encoder", True)),
         add_new_tasks=bool(ft_raw.get("add_new_tasks", True)),
-        init=str(ft_raw.get("init", "pretrained")),
+        init=str(ft_raw.get("init", FinetuneInit.PRETRAINED.value)),
     )
 
 
@@ -471,7 +481,7 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
         catalog = TaskCatalog(cfg.catalog, target_inputs=_target_inputs(cfg, bundle_config))
         section = bundle_config.model
         existing = [h.name for h in bundle_config.heads]
-        if cfg.init == "random":
+        if cfg.init is FinetuneInit.RANDOM:
             # The from-scratch control: same architecture and transforms, none of the released weights. Heads
             # that are not trained here would stay random, so only the targets are kept. Each kept head keeps the
             # architecture of its HeadSpec (per-task overrides included); only its data-dependent start is
@@ -529,7 +539,7 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
             "license": bundle_config.license,
             "yammi_version": bundle_config.yammi_version,
             "fm_version": bundle_config.yammi_version,  # pre-2.1.1 key, kept for existing readers
-            **({"init": "random"} if cfg.init == "random" else {}),
+            **({"init": FinetuneInit.RANDOM.value} if cfg.init is FinetuneInit.RANDOM else {}),
         }
         bundle_dir = save_derived(
             rec.paths.root / "bundle",
@@ -541,7 +551,7 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
             provenance={
                 "finetuned_heads": list(cfg.tasks),
                 "added_heads": added,
-                **({"init": "random"} if cfg.init == "random" else {}),
+                **({"init": FinetuneInit.RANDOM.value} if cfg.init is FinetuneInit.RANDOM else {}),
             },
         )
         summary = {
@@ -550,7 +560,7 @@ def _run_pretrained(cfg: FinetuneConfig, recorder: RunRecorder | None) -> dict[s
             "license": bundle_config.license,
             "finetuned_heads": list(cfg.tasks),
             "added_tasks": added,
-            "init": cfg.init,
+            "init": FinetuneInit(cfg.init).value,
             "bundle": str(bundle_dir),
             "epochs": cfg.epochs,
             **fit,

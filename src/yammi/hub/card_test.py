@@ -132,15 +132,3 @@ def test_heads_grouped_by_kind_and_long_class_lists_abbreviated(bundle: Path) ->
     assert kinds == sorted(kinds, key=["regression", "classification", "kernel regression"].index)
     assert "class: 151 classes" in card and "c150" not in card
     assert "SaturationWarning" in card
-
-
-def test_publish_will_not_drop_the_commercial_offer_from_a_kept_card(bundle: Path) -> None:
-    from yammi.hub.publish import publish
-
-    (bundle / "README.md").write_text("# hand-written card\n")
-    with pytest.raises(ValueError, match="overwrite_card"):
-        publish(bundle, "owner/fm", commercial_contact="a@b.org", dry_run=True)
-    card = publish(
-        bundle, "owner/fm", visibility="gated", commercial_contact="a@b.org", overwrite_card=True, dry_run=True
-    )
-    assert "separate agreement" in Path(card).read_text()

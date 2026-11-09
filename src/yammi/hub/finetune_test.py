@@ -201,13 +201,6 @@ def test_random_init_keeps_a_per_task_head_architecture(
     assert head.n_kernel == 7 and list(head.x_hidden_dims) == [12]
 
 
-def test_random_init_rejections(bundle: Path, user_data: Path, tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="needs freeze_encoder = false"):
-        build_finetune_config(_raw(user_data, bundle, tmp_path / "a", ["hardness"], init="random"))
-    with pytest.raises(ValueError, match='must be "pretrained" or "random"'):
-        build_finetune_config(_raw(user_data, bundle, tmp_path / "b", ["hardness"], init="zeros"))
-
-
 def test_save_keeps_licence_and_records_source(bundle: Path, tmp_path: Path) -> None:
     saved = load_pretrained(bundle).save(tmp_path / "copy")
     config = read_config(saved)
