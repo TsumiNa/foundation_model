@@ -1,6 +1,14 @@
 # Recent Updates
 
-## 2026-11-09 (2.2.0 — a from-scratch control for fine-tuning released models)
+## 2026-11-09 (2.2.0 — a from-scratch control for fine-tuning released models; a commercial-licence offer on cards)
+
+- **`yammi publish --commercial-contact EMAIL|URL`** (`render_card(commercial_contact=...)`): for a
+  non-commercial licence, the model card and the access form say that a commercial licence is available under
+  a separate agreement with the authors, whom to contact, and that use under such an agreement (or a joint
+  research agreement) follows it instead of the public licence. The access form's non-commercial checkbox
+  reads "…, unless I have a separate agreement with the authors". A licence that already allows commercial
+  use is refused. Without the option the card is unchanged. The `TsumiNa/yammi` card carries the offer
+  (contact liu.chang@ism.ac.jp); the weights and the `v1.0.0` tag are unchanged.
 
 - **`[finetune].init = "random"`** (with `--pretrained` and `freeze_encoder = false`) trains the bundle's
   architecture from fresh weights, seeded by `[training].seed`, instead of the released ones. Everything else

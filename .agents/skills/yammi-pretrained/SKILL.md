@@ -8,7 +8,8 @@ description: Use the released YAMMI models (Hugging Face TsumiNa/yammi) — pred
 YAMMI (Yet Another Materials Model, Inverse-ready) predicts material properties from **chemical
 composition alone**. The released suite is `TsumiNa/yammi` on the Hugging Face Hub: 10 members that
 differ only in the order pretraining met the tasks; 41 heads; licence **CC BY-NC-SA 4.0** — results
-and fine-tuned models are non-commercial and ShareAlike. Pin releases: `TsumiNa/yammi@v1.0.0`.
+and fine-tuned models are non-commercial and ShareAlike; commercial use needs a separate agreement with the
+authors (liu.chang@ism.ac.jp). Pin releases: `TsumiNa/yammi@v1.0.0`.
 
 ## 1. Access and environment (check before anything else)
 

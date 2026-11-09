@@ -225,6 +225,9 @@ release):
   with attribution, under the same licence. A derived bundle carries the licence automatically.
 - Models you train **from scratch** with this code on your own data are not covered. The code itself is
   Apache-2.0.
+- **Commercial use** is possible under a separate agreement with the authors: contact
+  [liu.chang@ism.ac.jp](mailto:liu.chang@ism.ac.jp). Use under such an agreement, or under a joint research
+  agreement with the authors, follows that agreement instead of the public licence.
 
 Data sources and their licences: [`docs/licensing/`](licensing/).
 
@@ -236,10 +239,14 @@ yammi export --config release.toml --run runs/order_00 --run runs/order_01 ... \
     --out bundles/fm-v1 --license cc-by-nc-sa-4.0
 
 # Review the card, then push: gated = public page, downloads after manual approval.
-yammi publish bundles/fm-v1 --repo TsumiNa/yammi --tag v1.0.0 \
-    --visibility gated --card-extra docs/licensing/citations.md --dry-run
-yammi publish bundles/fm-v1 --repo TsumiNa/yammi --tag v1.0.0 --visibility gated
+yammi publish bundles/fm-v1 --repo TsumiNa/yammi --tag v1.0.0 --visibility gated \
+    --card-extra docs/licensing/citations.md --commercial-contact liu.chang@ism.ac.jp --dry-run
+yammi publish bundles/fm-v1 --repo TsumiNa/yammi --tag v1.0.0 --visibility gated \
+    --card-extra docs/licensing/citations.md --commercial-contact liu.chang@ism.ac.jp
 ```
+
+`--commercial-contact` (non-commercial licences only) adds to the card and the access form that a commercial
+licence is available under a separate agreement, and whom to contact.
 
 `release.toml` is the training catalog with `[model]`. Every head needs either a `[tasks.scaler]` (a
 fitted scaler pickle or a `*_transforms.json` record) or `output_scale = "shape"`. Classification heads
