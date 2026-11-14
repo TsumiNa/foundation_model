@@ -526,10 +526,10 @@ def _run_single(
             step_metrics[name] = metric
             metric_history[name].append((step, metric["primary"]))
 
-        # Scoped checkpoints also serve as standalone transfer initializers; their task order
-        # must describe every retained head, not just the replay subset of this fit.
-        saved_order = [*learned, task_name] if cfg.active_tasks is not None else list(active)
-        recorder.save_step_checkpoint(step, task_name, model, saved_order)
+        # The saved task order is every learned head in the order the run met them, not this fit's
+        # active subset (new task first): a --resume rebuilds the head order from it, and that order
+        # reaches the final model and an exported bundle's task_order.
+        recorder.save_step_checkpoint(step, task_name, model, list(active), task_sequence=[*learned, task_name])
         record = {"step": step, "new_task": task_name, "epochs_run": trainer.current_epoch, "metrics": step_metrics}
         records.append(record)
         recorder.append_record(record)
