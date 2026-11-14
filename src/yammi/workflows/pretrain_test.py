@@ -620,7 +620,7 @@ def test_active_tasks_replay_only_new_domain_and_retain_original_heads(
     assert fits == expected_fits
     assert evaluated == [("step03_a", "a"), ("step04_b", "a"), ("step04_b", "b")]
     final = torch.load(output / "training/final_model.pt", weights_only=True)
-    assert set(final["task_sequence"]) == {"dos", "c", "a", "b"}
+    assert final["task_sequence"] == ["dos", "c", "a", "b"]
     assert all(
         torch.equal(value, final["model"][key])
         for key, value in before.items()
@@ -763,6 +763,19 @@ def test_resume_continues_after_simulated_kill(smoke_dir, tmp_path) -> None:
     final = torch.load(out / "training" / "final_model.pt", weights_only=True)
     assert final["task_sequence"] == ["a", "b"]
     assert (out / "training" / "step02_b").exists()  # continued at the next step, in place
+
+
+def test_resume_keeps_the_task_order(smoke_dir, tmp_path) -> None:
+    # Killed after the last step: the resume rebuilds the heads from step02_b's checkpoint, whose fit trained
+    # [b, a]; the saved order must still be the run's [a, b], and it reaches final_model.pt.
+    out = tmp_path / "run"
+    _run_pretrain(build_pretrain_config(tomllib.loads(_ws_toml(smoke_dir, ["a", "b"])), output_dir=str(out)), out)
+    step = torch.load(out / "training" / "step02_b" / "checkpoint.pt", weights_only=True)
+    assert step["task_sequence"] == ["a", "b"] and step["active_tasks"] == ["b", "a"]
+    (out / "training" / "final_model.pt").unlink()
+    cfg = build_pretrain_config(tomllib.loads(_ws_toml(smoke_dir, ["a", "b"])), output_dir=str(out), resume=True)
+    _run_pretrain(cfg, out)
+    assert torch.load(out / "training" / "final_model.pt", weights_only=True)["task_sequence"] == ["a", "b"]
 
 
 def test_resume_skips_completed_run(smoke_dir, tmp_path) -> None:

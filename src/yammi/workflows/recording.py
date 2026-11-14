@@ -125,8 +125,15 @@ class RunRecorder:
 
     # -- checkpoints
 
-    def save_step_checkpoint(self, step: int, task: str, model: Any, active_tasks: list[str]) -> Path:
-        """``training/stepNN_<task>/checkpoint.pt`` with the replay schema."""
+    def save_step_checkpoint(
+        self, step: int, task: str, model: Any, active_tasks: list[str], task_sequence: list[str] | None = None
+    ) -> Path:
+        """``training/stepNN_<task>/checkpoint.pt`` with the replay schema.
+
+        ``task_sequence`` is every learned head in the order the run met them (defaults to ``active_tasks``);
+        ``active_tasks`` the heads this step's fit trained (new task first, then the replayed ones). A
+        ``--resume`` and the export read the order from ``task_sequence``.
+        """
 
         step_dir = self.paths.step_dir(step, task)
         step_dir.mkdir(parents=True, exist_ok=True)
@@ -135,7 +142,7 @@ class RunRecorder:
             path,
             {
                 "model": model.state_dict(),
-                "task_sequence": list(active_tasks),
+                "task_sequence": list(active_tasks if task_sequence is None else task_sequence),
                 "step": step,
                 "new_task": task,
                 "active_tasks": list(active_tasks),
